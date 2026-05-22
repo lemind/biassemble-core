@@ -177,7 +177,6 @@ specs/001-reflection-core/
 ├── architecture.md
 ├── quickstart.md
 ├── contracts/
-│   ├── reflection-api.openapi.yaml
 │   └── README.md
 └── tasks.md             # /speckit-tasks
 ```
