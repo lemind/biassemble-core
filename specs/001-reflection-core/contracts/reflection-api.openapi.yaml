@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: Biassemble AI Core — Reflection API
+  version: 1.0.0
+  description: |
+    Private HTTP API consumed by biassemble public backend when AI_CLIENT_MODE=core.
+    Source of truth for runtime validation is Zod in src/contracts/reflection.schemas.ts;
+    this file is generated/kept in sync via scripts/generate-openapi.ts.
+
+servers:
+  - url: https://{coreHost}
+    variables:
+      coreHost:
+        default: biassemble-core.example.com
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/reflection/question:
+    post:
+      operationId: generateQuestionBatch
+      summary: Generate 2–5 follow-up questions from a story
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateQuestionRequest'
+      responses:
+        '200':
+          description: Question batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionOutput'
+        '400':
+          description: Invalid input
+        '401':
+          description: Invalid API key
+        '502':
+          description: Provider failure
+
+  /v1/reflection/assessment:
+    post:
+      operationId: generateAssessment
+      summary: Generate bias assessment and reflection prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateAssessmentRequest'
+      responses:
+        '200':
+          description: Assessment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssessmentOutput'
+        '400':
+          description: Invalid input
+        '401':
+          description: Invalid API key
+        '502':
+          description: Provider failure
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    GenerateQuestionRequest:
+      type: object
+      required: [sessionId, story]
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        story:
+          type: string
+          minLength: 50
+          maxLength: 3000
+
+    QuestionOutput:
+      type: object
+      required: [questions, isComplete]
+      properties:
+        questions:
+          type: array
+          minItems: 2
+          maxItems: 5
+          items:
+            type: string
+            minLength: 1
+        isComplete:
+          type: boolean
+
+    GenerateAssessmentRequest:
+      type: object
+      required: [sessionId, story, questions, answers]
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        story:
+          type: string
+        questions:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        answers:
+          type: array
+          minItems: 1
+          items:
+            type: string
+
+    BiasItem:
+      type: object
+      required: [name, explanation, storyConnection, alternativePerspective]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        explanation:
+          type: string
+          minLength: 10
+        storyConnection:
+          type: string
+          minLength: 10
+        alternativePerspective:
+          type: string
+          minLength: 10
+
+    AssessmentOutput:
+      type: object
+      required: [biases, reflectionPrompt]
+      properties:
+        biases:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/BiasItem'
+        reflectionPrompt:
+          type: string
+          minLength: 10

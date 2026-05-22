@@ -193,9 +193,7 @@ From `backend/src/lib/ai/client.ts` and `core-client.ts`:
 ```json
 {
   "sessionId": "uuid",
-  "story": "string (50-3000 chars)",
-  "previousQuestions": ["optional"],
-  "previousAnswers": ["optional"]
+  "story": "string (50-3000 chars)"
 }
 ```
 
@@ -203,10 +201,12 @@ From `backend/src/lib/ai/client.ts` and `core-client.ts`:
 
 ```json
 {
-  "question": "string",
+  "questions": ["string", "string"],
   "isComplete": false
 }
 ```
+
+Must return **2–5** questions (matches public `questionOutputSchema`).
 
 #### POST /v1/reflection/assessment
 
@@ -230,7 +230,7 @@ From `backend/src/lib/ai/client.ts` and `core-client.ts`:
 }
 ```
 
-API.md states: **exactly 2** biases.
+Must return **at least 1** bias; no upper limit (matches public `assessmentOutputSchema`).
 
 **Errors** (API.md): 400, 401, 502.
 
@@ -267,16 +267,18 @@ Public `core-client.ts` POSTs `GenerateQuestionRequest` only (no `previousQuesti
 
 ---
 
-### 4.3 Documented contract inconsistencies (must reconcile in Core)
+### 4.3 Contract alignment (resolved)
 
-| Topic | biassemble-core/API.md | plan.md / architecture.md / public contracts.ts |
-|-------|------------------------|--------------------------------------------------|
-| Question response | Single `question` string | `questions` array (2–5) |
-| Question request | Optional `previousQuestions`, `previousAnswers` | `GenerateQuestionRequest` only `sessionId` + `story` |
-| Assessment biases | Exactly **2** | **min 1**, no max (plan § Biases) |
-| Answers API | Not specified | Public product API; not Core surface |
+`API.md`, public `contracts.ts`, and `core-client.ts` are aligned:
 
-**Init implication**: Core implementation must align with **public `contracts.ts` + `core-client.ts`** for integration to work, unless API.md is updated first. This document records both sources; it does not pick a winner.
+| Topic | Canonical contract |
+|-------|-------------------|
+| Question response | `questions` array, length **2–5**, plus `isComplete` |
+| Question request | `sessionId` + `story` only |
+| Assessment biases | **min 1**, no max |
+| Answers API | Public product API only; not a Core surface |
+
+**Init implication**: Core implementation MUST match **public `contracts.ts` + `core-client.ts`**.
 
 ---
 
@@ -506,7 +508,7 @@ tasks.md note: `AI_CLIENT_MODE=dev-mock` unblocks public E2E until Core is deplo
 
 Use this as a readiness list when starting the private repo. Items are **derived from documents above**, not new requirements.
 
-- [ ] Resolve §4.3 contract differences between `API.md` and public `contracts.ts`
+- [x] Resolve §4.3 contract differences between `API.md` and public `contracts.ts`
 - [ ] Implement `/v1/reflection/question` and `/v1/reflection/assessment` matching **integrated** contract
 - [ ] Bearer auth compatible with public `AI_CORE_API_KEY`
 - [ ] Return JSON parseable by public `parseJsonFromAi` + Zod schemas
