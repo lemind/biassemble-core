@@ -1,7 +1,5 @@
 # Feature Specification: AI Core Reflection MVP
 
-**Feature Branch**: `001-reflection-core`
-
 **Feature Directory**: `specs/001-reflection-core`
 
 **Created**: 2026-05-22

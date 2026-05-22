@@ -1,6 +1,6 @@
 # Implementation Plan: AI Core Reflection MVP
 
-**Branch**: `init` | **Date**: 2026-05-22 | **Spec**: [spec.md](spec.md) | **Architecture**: [architecture.md](architecture.md)
+**Date**: 2026-05-22 | **Spec**: [spec.md](spec.md) | **Architecture**: [architecture.md](architecture.md)
 
 **Input**: Feature specification from `specs/001-reflection-core/spec.md`
 
