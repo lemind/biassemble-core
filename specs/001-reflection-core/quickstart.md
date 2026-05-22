@@ -1,6 +1,6 @@
 # Quickstart: biassemble-core (local dev)
 
-**Feature**: `001-reflection-core` | **Branch**: `init`
+**Feature**: `001-reflection-core` | **Branch**: `001-reflection-core`
 
 ## Prerequisites
 
@@ -19,6 +19,8 @@ GEMINI_API_KEY=your-google-ai-studio-key
 GEMINI_MODEL=gemini-2.0-flash
 PORT=3001
 LOG_LEVEL=info
+AI_TIMEOUT_MS=10000
+AI_MAX_RETRIES=3
 ```
 
 ## Run Core locally
@@ -34,6 +36,7 @@ pnpm dev          # Fastify on PORT (default 3001)
 curl -s -X POST http://localhost:3001/v1/reflection/question \
   -H "Authorization: Bearer dev-secret-change-me" \
   -H "Content-Type: application/json" \
+  -H "x-request-id: test-001" \
   -d '{
     "sessionId": "00000000-0000-4000-8000-000000000001",
     "story": "I argued with my manager about a deadline. I felt they did not listen and I stopped sharing updates because I assumed they would reject any pushback anyway."
@@ -48,6 +51,7 @@ Expect `questions` array length between 2 and 5.
 curl -s -X POST http://localhost:3001/v1/reflection/assessment \
   -H "Authorization: Bearer dev-secret-change-me" \
   -H "Content-Type: application/json" \
+  -H "x-request-id: test-002" \
   -d '{
     "sessionId": "00000000-0000-4000-8000-000000000001",
     "story": "I argued with my manager about a deadline...",

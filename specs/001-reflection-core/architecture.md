@@ -25,95 +25,110 @@ biassemble-core/
 │   ├── routes/
 │   │   └── reflection.ts         # POST /v1/reflection/*
 │   ├── orchestrators/
-│   │   ├── retry.ts
+│   │   ├── retry.ts              # 3× exponential backoff
 │   │   └── reflection/
-│   │       ├── question.workflow.ts
-│   │       └── assessment.workflow.ts
+│   │       ├── question.service.ts
+│   │       └── assessment.service.ts
 │   ├── providers/
-│   │   ├── types.ts
+│   │   ├── types.ts              # Provider interface + CompletionOptions
 │   │   └── gemini.ts
 │   ├── prompts/
 │   │   ├── registry.ts
 │   │   ├── guardrails.md
 │   │   └── reflection/
-│   │       ├── question-batch.v1.md
-│   │       └── assessment.v1.md
+│   │       ├── question-batch/
+│   │       │   ├── system.md
+│   │       │   ├── examples.md
+│   │       │   └── schema.md
+│   │       └── assessment/
+│   │           ├── system.md
+│   │           ├── examples.md
+│   │           └── schema.md
 │   ├── parsers/
-│   │   └── json-from-llm.ts
+│   │   ├── json-from-llm.ts
+│   │   └── repair.ts             # invalid JSON → repair → revalidate → fallback → fail
 │   ├── contracts/
-│   │   └── reflection.schemas.ts
+│   │   └── reflection.schemas.ts  # Zod source of truth
 │   ├── catalog/
 │   │   └── bias-catalog.ts       # loads datasets/biases/taxonomy.v1.json
-│   └── lib/
-│       ├── auth.ts               # Bearer AI_CORE_API_KEY
-│       └── env.ts
+│   ├── lib/
+│   │   ├── auth.ts               # Bearer AI_CORE_API_KEY
+│   │   ├── env.ts                # Zod-validated env loader
+│   │   └── request-id.ts         # x-request-id tracing
+│   └── observability/
+│       └── logger.ts             # pino structured logs with latency, model, retries
 ├── datasets/
 │   └── biases/
-│       └── taxonomy.v1.json      # ~200 entries (seed; tier-a/b/c)
+│       └── taxonomy.v1.json      # ~30 Tier-A curated biases
 ├── evaluations/
 │   └── golden/reflection/
-├── openapi/
-│   └── reflection-api.yaml       # generated from Zod
-├── contracts/                    # spec-kit contract docs (see specs/.../contracts/)
 ├── tests/
 │   ├── unit/
 │   ├── integration/
 │   └── contract/
 ├── scripts/
-│   ├── generate-openapi.ts
 │   └── eval-reflection.ts
-└── specs/001-reflection-core/
+├── specs/001-reflection-core/
+├── .env.example
+├── package.json
+└── README.md
 ```
 
-## AI workflows
+## AI orchestrators
 
-### Question workflow
+### Question orchestrator
 
 ```text
 POST /v1/reflection/question
+  → request-id middleware
   → auth middleware
   → Zod parse body
-  → question.workflow.run()
-       → promptRegistry.render("question-batch@1.0.0", { story })
-       → provider.completeJson(schema: QuestionOutput)
+  → question.service.run()
+       → promptRegistry.render("question-batch", { story })
+       → provider.completeJson(schema: QuestionOutput, options: { timeoutMs })
        → parsers.extractJson + Zod safeParse
+       → repair pipeline on invalid JSON
        → retry up to 3 on parse/provider errors
   → 200 | 400 | 401 | 502
 ```
 
-### Assessment workflow
+### Assessment orchestrator
 
 ```text
 POST /v1/reflection/assessment
-  → auth + Zod
+  → request-id + auth + Zod
   → assert questions.length === answers.length
-  → assessment.workflow.run()
-       → biasCatalog.getShortlistForPrompt()  # tier-a + categories
-       → promptRegistry.render("assessment@1.0.0", { story, qaPairs, biasShortlist, biasCategories })
+  → assessment.service.run()
+       → biasCatalog.getShortlist()  # all 30 biases
+       → promptRegistry.render("assessment", { story, qaPairs, biasShortlist })
        → provider.completeJson(schema: AssessmentOutput)
-       → parse + Zod + optional name normalization (Tier 2)
+       → parse + repair + Zod + optional name normalization (Tier 2)
   → 200 | 400 | 401 | 502
 ```
 
-## Bias catalog strategy (200 biases)
+## Bias catalog strategy (~30 curated Tier-A biases)
 
 ```text
-taxonomy.v1.json (200 rows)
+taxonomy.v1.json (~30 rows)
         │
-        ├─► MVP prompt: categories + tier-a shortlist (~25–40 names)
+        ├─► MVP prompt: inject all 30 names + one-line definitions
         │
         ├─► Tier 2: fuzzy normalize output name → catalog id
         │
         └─► Tier 3: embed definitions → RAG top-k → inject into assessment prompt
 ```
 
+**No expansion** until evaluations justify it, retrieval exists, and confidence scoring is implemented.
+
 ## Contract & types
 
 | Artifact | Role |
 |----------|------|
 | `src/contracts/reflection.schemas.ts` | Runtime Zod (source of truth) |
-| `openapi/reflection-api.yaml` | Generated Swagger for humans / public CI |
+| `API.md` (repo root) | Short integration doc for public backend devs |
 | Public `biassemble/backend/.../contracts.ts` | Consumer copy until `@biassemble/ai-contracts` package |
+
+**No OpenAPI generation in MVP** — Zod contracts are sufficient.
 
 ## Deployment
 
@@ -127,6 +142,6 @@ taxonomy.v1.json (200 rows)
 
 | Tier | When | Adds |
 |------|------|------|
-| 1 | This feature | Workflows, Zod, Gemini, golden eval, catalog file |
-| 2 | Follow-up tasks | Provider bench, prompt versions, confidence, pino dashboards |
+| 1 | This feature | Orchestrators, Zod, Gemini, repair pipeline, x-request-id, golden eval, 30-bias catalog |
+| 2 | Follow-up tasks | Provider bench, prompt versions, confidence, benchmark scripts |
 | 3 | New spec | RAG, embeddings, fine-tune |

@@ -1,6 +1,6 @@
 # Feature Specification: AI Core Reflection MVP
 
-**Feature Branch**: `init`
+**Feature Branch**: `001-reflection-core`
 
 **Feature Directory**: `specs/001-reflection-core`
 
