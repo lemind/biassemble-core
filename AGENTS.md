@@ -7,6 +7,7 @@
 - Avoid abstractions before the third real use case.
 - Prefer boring, maintainable solutions.
 - Explicit code over clever code.
+- Measure before optimizing. Prefer profiling and instrumentation over assumptions.
 
 ## Communication
 
@@ -40,6 +41,8 @@
 - Business logic belongs in `services/`.
 - Never place prompts inside route handlers.
 - Avoid framework lock-in where practical.
+- Prefer existing platform/framework capabilities before adding libraries.
+- Database migrations must be reversible and reviewed before applying (no `:latest` in production without testing rollback).
 - Do not add product-specific architecture, paths, or constraints here — those belong in `specs/<feature>/plan.md` and `architecture.md`.
 
 ## AI Rules
@@ -118,3 +121,4 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - Premature RAG/vector DB.
 - Force-pushing or history rewriting.
 - Committing secrets or `.env` files.
+- Adding new dependencies (npm/pip/uv) without explicit approval and justification in PR.
