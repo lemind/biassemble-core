@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "biases": [
+    {
+      "id": "confirmation-bias",
+      "name": "Confirmation Bias",
+      "category": "information-processing",
+      "definition": "Seeking or interpreting information that confirms existing beliefs while discounting contradictory evidence.",
+      "detectionSignals": ["only looked for supporting evidence", "ignored counterexamples"],
+      "relatedIds": ["availability-heuristic"],
+      "mvpPriority": "tier-a"
+    },
+    {
+      "id": "anchoring-bias",
+      "name": "Anchoring Bias",
+      "category": "decision-making",
+      "definition": "Over-relying on the first piece of information encountered when making judgments.",
+      "detectionSignals": ["first number or impression drove the decision", "insufficient adjustment from initial anchor"],
+      "relatedIds": [],
+      "mvpPriority": "tier-a"
+    },
+    {
+      "id": "fundamental-attribution-error",
+      "name": "Fundamental Attribution Error",
+      "category": "social",
+      "definition": "Overemphasizing personality-based explanations for others' behavior while underemphasizing situational factors.",
+      "detectionSignals": ["they are just like that", "ignored context or constraints"],
+      "relatedIds": ["actor-observer-bias"],
+      "mvpPriority": "tier-a"
+    },
+    {
+      "id": "hindsight-bias",
+      "name": "Hindsight Bias",
+      "category": "memory",
+      "definition": "Believing past events were more predictable after they have already occurred.",
+      "detectionSignals": ["I knew it all along", "obvious in retrospect"],
+      "relatedIds": [],
+      "mvpPriority": "tier-b"
+    },
+    {
+      "id": "sunk-cost-fallacy",
+      "name": "Sunk Cost Fallacy",
+      "category": "decision-making",
+      "definition": "Continuing a course of action because of previously invested resources rather than future value.",
+      "detectionSignals": ["already invested too much to stop", "throwing good after bad"],
+      "relatedIds": [],
+      "mvpPriority": "tier-a"
+    }
+  ]
+}

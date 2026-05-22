@@ -10,16 +10,14 @@ Authorization: Bearer <AI_CORE_API_KEY>
 
 ## POST /v1/reflection/question
 
-Generate the next follow-up question.
+Generate a batch of contextual follow-up questions from the user's story (returned all at once).
 
 **Request body**
 
 ```json
 {
   "sessionId": "uuid",
-  "story": "string (50-3000 chars)",
-  "previousQuestions": ["optional"],
-  "previousAnswers": ["optional"]
+  "story": "string (50-3000 chars)"
 }
 ```
 
@@ -27,14 +25,16 @@ Generate the next follow-up question.
 
 ```json
 {
-  "question": "string",
+  "questions": ["string", "string"],
   "isComplete": false
 }
 ```
 
+Must return **2–5** questions (`questions` array length inclusive). Matches public `questionOutputSchema` (`QUESTIONS_MIN=2`, `QUESTIONS_MAX=5`).
+
 ## POST /v1/reflection/assessment
 
-Generate exactly two cognitive biases plus reflection prompt.
+Generate cognitive bias analysis plus reflection prompt.
 
 **Request body**
 
@@ -63,7 +63,7 @@ Generate exactly two cognitive biases plus reflection prompt.
 }
 ```
 
-Must return **exactly 2** biases (matches public `assessmentOutputSchema`).
+Must return **at least 1** bias; no upper limit (model decides how many are relevant). Matches public `assessmentOutputSchema`.
 
 ## Errors
 
