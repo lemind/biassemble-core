@@ -6,45 +6,203 @@
       "name": "Confirmation Bias",
       "category": "information-processing",
       "definition": "Seeking or interpreting information that confirms existing beliefs while discounting contradictory evidence.",
-      "detectionSignals": ["only looked for supporting evidence", "ignored counterexamples"],
-      "relatedIds": ["availability-heuristic"],
-      "mvpPriority": "tier-a"
+      "detectionSignals": ["only looked for supporting evidence", "ignored counterexamples"]
     },
     {
-      "id": "anchoring-bias",
+      "id": "anchoring",
       "name": "Anchoring Bias",
       "category": "decision-making",
       "definition": "Over-relying on the first piece of information encountered when making judgments.",
-      "detectionSignals": ["first number or impression drove the decision", "insufficient adjustment from initial anchor"],
-      "relatedIds": [],
-      "mvpPriority": "tier-a"
-    },
-    {
-      "id": "fundamental-attribution-error",
-      "name": "Fundamental Attribution Error",
-      "category": "social",
-      "definition": "Overemphasizing personality-based explanations for others' behavior while underemphasizing situational factors.",
-      "detectionSignals": ["they are just like that", "ignored context or constraints"],
-      "relatedIds": ["actor-observer-bias"],
-      "mvpPriority": "tier-a"
-    },
-    {
-      "id": "hindsight-bias",
-      "name": "Hindsight Bias",
-      "category": "memory",
-      "definition": "Believing past events were more predictable after they have already occurred.",
-      "detectionSignals": ["I knew it all along", "obvious in retrospect"],
-      "relatedIds": [],
-      "mvpPriority": "tier-b"
+      "detectionSignals": ["first number or impression drove the decision", "insufficient adjustment from initial anchor"]
     },
     {
       "id": "sunk-cost-fallacy",
       "name": "Sunk Cost Fallacy",
       "category": "decision-making",
       "definition": "Continuing a course of action because of previously invested resources rather than future value.",
-      "detectionSignals": ["already invested too much to stop", "throwing good after bad"],
-      "relatedIds": [],
-      "mvpPriority": "tier-a"
+      "detectionSignals": ["already invested too much to stop", "throwing good after bad"]
+    },
+    {
+      "id": "survivorship-bias",
+      "name": "Survivorship Bias",
+      "category": "information-processing",
+      "definition": "Focusing on surviving examples while overlooking failures that are not visible.",
+      "detectionSignals": ["only looked at success stories", "ignored those who failed"]
+    },
+    {
+      "id": "availability-heuristic",
+      "name": "Availability Heuristic",
+      "category": "memory",
+      "definition": "Overestimating the likelihood of events that are more easily recalled from memory.",
+      "detectionSignals": ["based on how easily examples came to mind", "vivid recent events dominated judgment"]
+    },
+    {
+      "id": "halo-effect",
+      "name": "Halo Effect",
+      "category": "social",
+      "definition": "Allowing one positive trait to influence overall judgment of a person or situation.",
+      "detectionSignals": ["one good quality colored everything", "generalized from a single trait"]
+    },
+    {
+      "id": "negativity-bias",
+      "name": "Negativity Bias",
+      "category": "information-processing",
+      "definition": "Giving more weight to negative experiences or information than positive ones.",
+      "detectionSignals": ["focused on what went wrong", "dismissed positive aspects"]
+    },
+    {
+      "id": "self-serving-bias",
+      "name": "Self-Serving Bias",
+      "category": "social",
+      "definition": "Attributing successes to oneself and failures to external factors.",
+      "detectionSignals": ["took credit for good outcomes", "blamed others or circumstances for bad outcomes"]
+    },
+    {
+      "id": "optimism-bias",
+      "name": "Optimism Bias",
+      "category": "decision-making",
+      "definition": "Believing that one is less likely to experience negative events than others.",
+      "detectionSignals": ["underestimated risks", "overestimated positive outcomes"]
+    },
+    {
+      "id": "hindsight-bias",
+      "name": "Hindsight Bias",
+      "category": "memory",
+      "definition": "Believing past events were more predictable after they have already occurred.",
+      "detectionSignals": ["I knew it all along", "obvious in retrospect"]
+    },
+    {
+      "id": "dunning-kruger-effect",
+      "name": "Dunning-Kruger Effect",
+      "category": "self-assessment",
+      "definition": "Overestimating one's own competence in areas of low skill or knowledge.",
+      "detectionSignals": ["overconfident in unfamiliar domain", "unaware of own limitations"]
+    },
+    {
+      "id": "fundamental-attribution-error",
+      "name": "Fundamental Attribution Error",
+      "category": "social",
+      "definition": "Overemphasizing personality-based explanations for others' behavior while underemphasizing situational factors.",
+      "detectionSignals": ["they are just like that", "ignored context or constraints"]
+    },
+    {
+      "id": "bandwagon-effect",
+      "name": "Bandwagon Effect",
+      "category": "social",
+      "definition": "Adopting beliefs or behaviors because many others do the same.",
+      "detectionSignals": ["everyone else was doing it", "followed the majority without question"]
+    },
+    {
+      "id": "cherry-picking",
+      "name": "Cherry-Picking",
+      "category": "information-processing",
+      "definition": "Selectively choosing evidence that supports one's position while ignoring contradictory data.",
+      "detectionSignals": ["only mentioned favorable data", "ignored inconvenient facts"]
+    },
+    {
+      "id": "framing-effect",
+      "name": "Framing Effect",
+      "category": "decision-making",
+      "definition": "Drawing different conclusions from the same information depending on how it is presented.",
+      "detectionSignals": ["reacted differently to same data presented differently", "wording changed the decision"]
+    },
+    {
+      "id": "gamblers-fallacy",
+      "name": "Gambler's Fallacy",
+      "category": "probability",
+      "definition": "Believing that past independent events affect the probability of future ones.",
+      "detectionSignals": ["due for a win after a streak", "expected a reversal based on past outcomes"]
+    },
+    {
+      "id": "just-world-hypothesis",
+      "name": "Just-World Hypothesis",
+      "category": "social",
+      "definition": "Assuming that people get what they deserve and deserve what they get.",
+      "detectionSignals": ["blamed the victim", "assumed outcomes reflect merit"]
+    },
+    {
+      "id": "moral-licensing",
+      "name": "Moral Licensing",
+      "category": "decision-making",
+      "definition": "Allowing oneself to act immorally after previously acting morally.",
+      "detectionSignals": ["I earned the right to do this", "compensating good behavior with indulgence"]
+    },
+    {
+      "id": "overconfidence-effect",
+      "name": "Overconfidence Effect",
+      "category": "self-assessment",
+      "definition": "Having excessive confidence in one's own answers or judgments beyond actual accuracy.",
+      "detectionSignals": ["was certain but wrong", "overestimated own abilities"]
+    },
+    {
+      "id": "placebo-effect",
+      "name": "Placebo Effect",
+      "category": "perception",
+      "definition": "Experiencing real effects from a treatment or intervention due to belief rather than its actual mechanism.",
+      "detectionSignals": ["believed it worked so it did", "expectation shaped the outcome"]
+    },
+    {
+      "id": "reactance",
+      "name": "Reactance",
+      "category": "social",
+      "definition": "Adopting a contrary stance when one's freedom of choice is threatened or restricted.",
+      "detectionSignals": ["pushed back when told what to do", "wanted the opposite of what was prescribed"]
+    },
+    {
+      "id": "selection-bias",
+      "name": "Selection Bias",
+      "category": "information-processing",
+      "definition": "Drawing conclusions from a non-representative sample due to flawed selection process.",
+      "detectionSignals": ["sample did not represent the whole", "ignored those who were not included"]
+    },
+    {
+      "id": "spotlight-effect",
+      "name": "Spotlight Effect",
+      "category": "social",
+      "definition": "Overestimating how much others notice or remember about one's appearance or actions.",
+      "detectionSignals": ["felt everyone was watching", "overestimated how noticeable the mistake was"]
+    },
+    {
+      "id": "status-quo-bias",
+      "name": "Status Quo Bias",
+      "category": "decision-making",
+      "definition": "Preferring things to stay the same rather than change, even when change is beneficial.",
+      "detectionSignals": ["preferred things as they were", "resisted change despite clear benefits"]
+    },
+    {
+      "id": "stereotyping",
+      "name": "Stereotyping",
+      "category": "social",
+      "definition": "Applying generalized beliefs about a group to an individual without individual assessment.",
+      "detectionSignals": ["assumed based on group membership", "generalized without evidence"]
+    },
+    {
+      "id": "temporal-discounting",
+      "name": "Temporal Discounting",
+      "category": "decision-making",
+      "definition": "Preferring smaller immediate rewards over larger delayed ones.",
+      "detectionSignals": ["chose short-term gain over long-term benefit", "discounted future consequences"]
+    },
+    {
+      "id": "third-person-effect",
+      "name": "Third-Person Effect",
+      "category": "social",
+      "definition": "Believing that media or persuasive messages affect others more than oneself.",
+      "detectionSignals": ["others are influenced but I am not", "overestimated impact on others"]
+    },
+    {
+      "id": "ultimate-attribution-error",
+      "name": "Ultimate Attribution Error",
+      "category": "social",
+      "definition": "Attributing negative outgroup behavior to disposition and positive behavior to luck or exception.",
+      "detectionSignals": ["their failures are because of who they are", "their successes are flukes"]
+    },
+    {
+      "id": "zero-risk-bias",
+      "name": "Zero-Risk Bias",
+      "category": "decision-making",
+      "definition": "Preferring to eliminate one risk entirely rather than reduce multiple risks significantly.",
+      "detectionSignals": ["preferred certainty over better overall outcome", "chose complete elimination over reduction"]
     }
   ]
 }

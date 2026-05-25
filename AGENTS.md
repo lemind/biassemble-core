@@ -42,6 +42,9 @@
 - Never place prompts inside route handlers.
 - Avoid framework lock-in where practical.
 - Prefer existing platform/framework capabilities before adding libraries.
+- **Constants**: Keep configuration constants in the file where they're used. Do not create a shared `constants.ts` prematurely. Extract only when a constant is used across 3+ modules.
+- **README**: Keep README as project-level information only (what, why, architecture, tech stack, quick start). Do not put process tracking, phase status, or task progress in README — that belongs in `specs/<feature>/tasks.md` and `specs/<feature>/plan.md`.
+- **Environment**: Always verify `.env` loading works before committing. Use `node --env-file=.env` (built into Node 22+) instead of relying on runtime libraries like `dotenv`. The `dev` and `start` scripts must include `--env-file=.env`.
 - Database migrations must be reversible and reviewed before applying (no `:latest` in production without testing rollback).
 - Do not add product-specific architecture, paths, or constraints here — those belong in `specs/<feature>/plan.md` and `architecture.md`.
 

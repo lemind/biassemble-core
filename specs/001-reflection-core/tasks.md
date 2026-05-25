@@ -16,27 +16,27 @@
 
 ---
 
-## Phase 1: Setup — Project scaffold + curated catalog
+## Phase 1: Setup — Project scaffold + curated catalog ✅
 
 **Purpose**: TypeScript project, Fastify server, Zod contracts, ~30 Tier-A bias catalog, health route, auth skeleton, request-id tracing, logger.
 
-- [ ] T001 Initialize `package.json`, `tsconfig.json` (strict), install Fastify 5, Zod, `@google/generative-ai`, pino, vitest (no `zod-to-openapi` — Zod contracts are sufficient)
-- [ ] T002 Create `src/server.ts` — Fastify bootstrap with health `GET /health` route
-- [ ] T003 Create Zod schemas mirroring API contract in `src/contracts/reflection.schemas.ts`:
+- [x] T001 Initialize `package.json`, `tsconfig.json` (strict), install Fastify 5, Zod, `@google/generative-ai`, pino, vitest (no `zod-to-openapi` — Zod contracts are sufficient)
+- [x] T002 Create `src/server.ts` — Fastify bootstrap with health `GET /health` route
+- [x] T003 Create Zod schemas mirroring API contract in `src/contracts/reflection.schemas.ts`:
   - `GenerateQuestionRequest` (sessionId uuid, story 50–3000 chars)
   - `QuestionOutput` (questions string[] length 2–5, isComplete boolean)
   - `GenerateAssessmentRequest` (sessionId, story, questions, answers)
   - `AssessmentOutput` (biases BiasItem[] min 1, reflectionPrompt min 10)
   - `BiasItem` (name, explanation min 10, storyConnection min 10, alternativePerspective min 10)
-- [ ] T004 [P] Create `src/lib/request-id.ts` — generate `x-request-id` (uuid), Fastify hook to attach to every request + response header
-- [ ] T005 [P] Create `src/observability/logger.ts` — pino structured logger with request-id, latency tracking helpers
-- [ ] T006 [P] Create `datasets/biases/taxonomy.v1.json` — **~30 curated Tier-A biases** only (confirmation bias, anchoring, sunk cost, survivorship, availability, halo, negativity, self-serving, optimism, hindsight, dunning-kruger, fundamental attribution error, bandwagon, cherry-picking, framing, gambler's fallacy, just-world hypothesis, moral licensing, overconfidence, placebo, reactance, selection bias, spotlight, status quo, stereotyping, temporal discounting, third-person effect, ultimate attribution error, zero-risk bias)
-- [ ] T007 [P] Implement `src/catalog/bias-catalog.ts` — `BiasCatalogService`: load JSON, `getShortlist()`, `getCategories()`
-- [ ] T008 Create `src/lib/auth.ts` — bearer token middleware; validate against `AI_CORE_API_KEY` env var
-- [ ] T009 Create `src/lib/env.ts` — env loader with Zod validation for `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_CORE_API_KEY`, `PORT`, `AI_TIMEOUT_MS`, `AI_MAX_RETRIES`
-- [ ] T010 Create `.env.example`, update `.gitignore`
+- [x] T004 [P] Create `src/lib/request-id.ts` — generate `x-request-id` (uuid), Fastify hook to attach to every request + response header
+- [x] T005 [P] Create `src/observability/logger.ts` — pino structured logger with request-id, latency tracking helpers
+- [x] T006 [P] Create `datasets/biases/taxonomy.v1.json` — **~30 curated Tier-A biases** only (confirmation bias, anchoring, sunk cost, survivorship, availability, halo, negativity, self-serving, optimism, hindsight, dunning-kruger, fundamental attribution error, bandwagon, cherry-picking, framing, gambler's fallacy, just-world hypothesis, moral licensing, overconfidence, placebo, reactance, selection bias, spotlight, status quo, stereotyping, temporal discounting, third-person effect, ultimate attribution error, zero-risk bias)
+- [x] T007 [P] Implement `src/catalog/bias-catalog.ts` — `BiasCatalogService`: load JSON, `getShortlist()`, `getCategories()`
+- [x] T008 Create `src/lib/auth.ts` — bearer token middleware; validate against `AI_CORE_API_KEY` env var
+- [x] T009 Create `src/lib/env.ts` — env loader with Zod validation for `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_CORE_API_KEY`, `PORT`, `AI_TIMEOUT_MS`, `AI_MAX_RETRIES`
+- [x] T010 Create `.env.example`, update `.gitignore`
 
-**Checkpoint**: Runnable empty Core with health endpoint, contracts, ~30-bias catalog, auth stub, request-id tracing, structured logger.
+**Checkpoint**: Runnable empty Core with health endpoint, contracts, ~30-bias catalog, auth stub, request-id tracing, structured logger. ✅
 
 ---
 
