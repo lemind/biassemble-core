@@ -38,26 +38,6 @@ MVP delivers 2 HTTP endpoints consumed by the public backend:
 - **Prompt registry** with directory-based structure (`system.md`, `examples.md`, `schema.md`)
 - **No OpenAPI generation** in MVP — Zod contracts are sufficient
 
-## Spec-kit stages (completed)
-
-| Stage | File | Status |
-|-------|------|--------|
-| Clarify | `specs/001-reflection-core/speckit.clarify.md` | ✅ |
-| Constitution | `.specify/memory/constitution.md` | ✅ |
-| Plan | `specs/001-reflection-core/plan.md` | ✅ |
-| Tasks | `specs/001-reflection-core/tasks.md` (37 tasks) | ✅ |
-| Checklist | `specs/001-reflection-core/checklists/requirements.md` (45 items) | ✅ |
-
-## Implementation phases
-
-| Phase | Outcome | Status |
-|-------|---------|--------|
-| 1 | Fastify scaffold, Zod contracts, ~30 biases, request-id, logger | ⬜ Not started |
-| 2 | Question + assessment endpoints with Gemini + repair pipeline | ⬜ Not started |
-| 3 | Evaluation golden set, Vercel deploy | ⬜ Not started |
-| 4 | Public integration hardening | ⬜ Not started |
-| 5 | Tier 2 enhancements (benchmarks, confidence scoring) | ⬜ Not started |
-
 ## Tech stack
 
 - **Runtime**: Node 22 LTS, TypeScript 5.x strict
@@ -79,5 +59,5 @@ pnpm dev
 Then verify:
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:3001/health
 # → {"status":"ok"}
