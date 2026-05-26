@@ -38,17 +38,20 @@ registerReflectionRoutes(server, {
   assessment: assessmentService,
 });
 
-// ─── Start ─────────────────────────────────────────────────
-const start = async () => {
-  try {
-    await server.listen({ port: env.PORT, host: "0.0.0.0" });
-    logger.info({ port: env.PORT }, "server started");
-  } catch (err) {
-    logger.error(err, "failed to start server");
-    process.exit(1);
-  }
-};
+// ─── Start (local dev only) ────────────────────────────────
+const isVercel = process.env.VERCEL === "1";
+if (!isVercel) {
+  const start = async () => {
+    try {
+      await server.listen({ port: env.PORT, host: "0.0.0.0" });
+      logger.info({ port: env.PORT }, "server started");
+    } catch (err) {
+      logger.error(err, "failed to start server");
+      process.exit(1);
+    }
+  };
+  start();
+}
 
-start();
-
+export default server;
 export { server };
