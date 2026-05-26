@@ -121,8 +121,6 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - Altering public APIs, DB schemas, or auth flows
 - Committing code — show summary of changes first, ask user to review before running `git commit`
 - Adding any code, heuristic, or file not explicitly listed in `tasks.md`
-</｜｜DSML｜｜parameter>
-</｜｜DSML｜｜invoke>
 
 ## Forbidden
 
