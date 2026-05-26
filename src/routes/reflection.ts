@@ -18,13 +18,10 @@ export function registerReflectionRoutes(
     assessment: AssessmentService;
   }
 ) {
-  // Apply auth to all routes in this file
-  server.addHook("preHandler", authHook);
-
   /**
    * POST /v1/reflection/question
    */
-  server.post("/v1/reflection/question", async (request, reply) => {
+  server.post("/v1/reflection/question", { preHandler: [authHook] }, async (request, reply) => {
     try {
       const body = GenerateQuestionRequestSchema.parse(request.body);
       
@@ -52,7 +49,7 @@ export function registerReflectionRoutes(
   /**
    * POST /v1/reflection/assessment
    */
-  server.post("/v1/reflection/assessment", async (request, reply) => {
+  server.post("/v1/reflection/assessment", { preHandler: [authHook] }, async (request, reply) => {
     try {
       const body = GenerateAssessmentRequestSchema.parse(request.body);
 
