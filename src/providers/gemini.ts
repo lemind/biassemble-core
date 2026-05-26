@@ -1,8 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
-import { DEFAULT_TEMPERATURE } from "../lib/constants.js";
 import type { Provider, CompletionRequest } from "./types.js";
+
+/** Default temperature for AI provider calls */
+const DEFAULT_TEMPERATURE = 0.7;
 
 const MODULE = "gemini-provider";
 
