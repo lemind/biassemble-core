@@ -34,3 +34,4 @@ coverage/
 # Misc
 .specify/
 pnpm-workspace.yaml
+.vercel
