@@ -32,4 +32,5 @@ coverage/
 .nyc_output/
 
 # Misc
-.specify/pnpm-workspace.yaml
+.specify/
+pnpm-workspace.yaml
