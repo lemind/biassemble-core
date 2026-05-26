@@ -118,20 +118,22 @@
 
 **Purpose**: Golden test set, eval script, Vercel deploy, smoke test with public backend.
 
-- [ ] T025 [P] Create `evaluations/golden/reflection/` with ≥5 seed stories and expected shape checks (parse rate, bias count, story-reference heuristic)
-- [ ] T026 Create `scripts/eval-reflection.ts` — run golden set through both orchestrators, assert parse rate ≥ 99%, story-reference heuristic ≥ 90%
-- [ ] T027 Create `vercel.json` if needed for Vercel Functions deployment
-- [ ] T028 Write unit tests:
+- [x] T025 [P] Create `evaluations/golden/reflection/` with ≥5 seed stories and expected shape checks (parse rate, bias count, story-reference heuristic)
+- [x] T026 Create `scripts/eval-reflection.ts` — run golden set through both orchestrators, assert parse rate ≥ 99%, story-reference heuristic ≥ 90%
+- [x] T027 Create `vercel.json` if needed for Vercel Functions deployment
+- [x] T028 Write unit tests:
   - `tests/unit/parsers/json-from-llm.test.ts` — structured JSON extraction
   - `tests/unit/parsers/repair.test.ts` — repair pipeline edge cases
   - `tests/unit/catalog/bias-catalog.test.ts` — load, getShortlist, getCategories
   - `tests/unit/contracts/reflection.schemas.test.ts` — Zod validation
   - `tests/unit/lib/request-id.test.ts` — x-request-id generation and propagation
-- [ ] T029 Write integration tests:
+- [x] T029 Write integration tests:
   - `tests/integration/question.test.ts` — mocked provider, full route
   - `tests/integration/assessment.test.ts` — mocked provider, full route
   - `tests/integration/repair-pipeline.test.ts` — malformed LLM output recovery
 - [ ] T030 Deploy to Vercel, document `AI_CORE_BASE_URL`, `AI_CORE_API_KEY` in public backend env
+</｜｜DSML｜｜parameter>
+</｜｜DSML｜｜invoke>
 
 **Checkpoint**: Eval green, Core deployed, public backend ready to connect.
 
