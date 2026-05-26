@@ -50,22 +50,22 @@
 
 **Independent Test**: `POST /v1/reflection/question` with valid story returns `{ questions: string[], isComplete: boolean }` where questions length is 2–5.
 
-- [ ] T011 [P] [US1] Implement provider abstraction in `src/providers/types.ts` — `Provider` interface with `completeJson({ system, user, responseSchema, options? })` and `CompletionOptions` type: `{ temperature?, maxTokens?, timeoutMs? }`
-- [ ] T012 [P] [US1] Implement Gemini provider in `src/providers/gemini.ts` — wraps `@google/generative-ai`, uses `GEMINI_MODEL` env, accepts `CompletionOptions`, returns structured JSON
-- [ ] T013 [P] [US1] Create prompt registry in `src/prompts/registry.ts` — load prompt files from directory structure, inject variables, guardrails
-- [ ] T014 [P] [US1] Write prompt directory `src/prompts/reflection/question-batch/`:
+- [x] T011 [P] [US1] Implement provider abstraction in `src/providers/types.ts` — `Provider` interface with `completeJson({ system, user, responseSchema, options? })` and `CompletionOptions` type: `{ temperature?, maxTokens?, timeoutMs? }`
+- [x] T012 [P] [US1] Implement Gemini provider in `src/providers/gemini.ts` — wraps `@google/generative-ai`, uses `GEMINI_MODEL` env, accepts `CompletionOptions`, returns structured JSON
+- [x] T013 [P] [US1] Create prompt registry in `src/prompts/registry.ts` — load prompt files from directory structure, inject variables, guardrails
+- [x] T014 [P] [US1] Write prompt directory `src/prompts/reflection/question-batch/`:
   - `system.md` — system prompt for question generation with 30-bias category shortlist, guardrails, JSON output instructions
   - `examples.md` — few-shot question generation examples
   - `schema.md` — output JSON schema for structured generation
-- [ ] T015 [P] [US1] Write `src/prompts/guardrails.md` — non-clinical framing instructions shared by all prompts
-- [ ] T016 [US1] Implement retry orchestrator in `src/orchestrators/retry.ts` — 3× exponential backoff (configurable via `AI_TIMEOUT_MS`), 502 on final failure, uses provider
-- [ ] T017 [US1] Implement `src/parsers/repair.ts` — repair pipeline:
+- [x] T015 [P] [US1] Write `src/prompts/guardrails.md` — non-clinical framing instructions shared by all prompts
+- [x] T016 [US1] Implement retry orchestrator in `src/orchestrators/retry.ts` — 3× exponential backoff (configurable via `AI_TIMEOUT_MS`), 502 on final failure, uses provider
+- [x] T017 [US1] Implement `src/parsers/repair.ts` — repair pipeline:
   - Attempt regex/structural fix on invalid JSON
   - Revalidate with Zod
   - If repair fails, attempt fallback model call
   - If fallback fails, return structured error for 502
-- [ ] T018 [US1] Implement `src/orchestrators/reflection/question.service.ts` — call provider with question prompt + schema, retry, parse, repair, validate with Zod, return `QuestionOutput`
-- [ ] T019 [US1] Implement `src/routes/reflection.ts` — `POST /v1/reflection/question` route:
+- [x] T018 [US1] Implement `src/orchestrators/reflection/question.service.ts` — call provider with question prompt + schema, retry, parse, repair, validate with Zod, return `QuestionOutput`
+- [x] T019 [US1] Implement `src/routes/reflection.ts` — `POST /v1/reflection/question` route:
   - Validate request body with Zod
   - Attach `x-request-id` to logs
   - Call `question.service`
@@ -81,22 +81,22 @@
 
 **Independent Test**: `POST /v1/reflection/assessment` with story, questions[], answers[] returns `{ biases: BiasItem[], reflectionPrompt: string }` with at least 1 bias.
 
-- [ ] T020 [P] [US2] Write prompt directory `src/prompts/reflection/assessment/`:
+- [x] T020 [P] [US2] Write prompt directory `src/prompts/reflection/assessment/`:
   - `system.md` — system prompt for assessment: category cheat-sheet (8–12 families), all 30 bias names + one-line definitions, guardrails, JSON output instructions
   - `examples.md` — few-shot assessment examples
   - `schema.md` — output JSON schema
-- [ ] T021 [US2] Implement `src/orchestrators/reflection/assessment.service.ts`:
+- [x] T021 [US2] Implement `src/orchestrators/reflection/assessment.service.ts`:
   - Call provider with assessment prompt + story + Q&A + `BiasCatalogService.getShortlist()`
   - Use retry orchestrator + repair pipeline
   - Parse, validate with Zod (`assessmentOutputSchema`)
   - Return `AssessmentOutput`
-- [ ] T022 [US2] Add `POST /v1/reflection/assessment` route in `src/routes/reflection.ts`:
+- [x] T022 [US2] Add `POST /v1/reflection/assessment` route in `src/routes/reflection.ts`:
   - Validate request body (check questions[] and answers[] same length)
   - Attach `x-request-id` to logs
   - Call `assessment.service`
   - Return `AssessmentOutput` JSON
 
-**Checkpoint**: `POST /v1/reflection/assessment` live with repair pipeline and tracing.
+**Checkpoint**: `POST /v1/reflection/assessment` live with repair pipeline and tracing. ✅
 
 ### User Story 3 — Secure service access (P2)
 
@@ -104,13 +104,13 @@
 
 **Independent Test**: Requests without valid bearer token are rejected with 401; valid credentials allow both endpoints.
 
-- [ ] T023 [P] [US3] Write integration tests for auth middleware in `tests/integration/auth.test.ts`:
+- [x] T023 [P] [US3] Write integration tests for auth middleware in `tests/integration/auth.test.ts`:
   - No token → 401
   - Wrong token → 401
   - Valid token → pass through to route handler
-- [ ] T024 [US3] Add auth middleware as Fastify hook on both reflection routes
+- [x] T024 [US3] Add auth middleware as Fastify hook on both reflection routes
 
-**Checkpoint**: Auth enforced on all reflection endpoints.
+**Checkpoint**: Auth enforced on all reflection endpoints. ✅
 
 ---
 
