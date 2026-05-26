@@ -1,9 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
+import { DEFAULT_TEMPERATURE } from "../lib/constants.js";
 import type { Provider, CompletionRequest } from "./types.js";
 
-const DEFAULT_TEMPERATURE = 0.7;
+const MODULE = "gemini-provider";
 
 export class GeminiProvider implements Provider {
   readonly mode = "gemini";
@@ -43,11 +44,17 @@ export class GeminiProvider implements Provider {
       try {
         return JSON.parse(text) as T;
       } catch (parseError) {
-        logger.error({ text, parseError }, "Failed to parse Gemini JSON output");
+        logger.error(
+          { module: MODULE, operation: "completeJson", text, parseError },
+          "Failed to parse Gemini JSON output"
+        );
         throw new Error("Malformed JSON from AI provider");
       }
     } catch (error) {
-      logger.error({ error }, "Gemini API call failed");
+      logger.error(
+        { module: MODULE, operation: "completeJson", error },
+        "Gemini API call failed"
+      );
       throw error;
     }
   }

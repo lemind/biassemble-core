@@ -9,6 +9,8 @@ import { logger } from "../observability/logger.js";
 import type { QuestionService } from "../orchestrators/reflection/question.service.js";
 import type { AssessmentService } from "../orchestrators/reflection/assessment.service.js";
 
+const MODULE = "routes";
+
 export function registerReflectionRoutes(
   server: FastifyInstance,
   services: {
@@ -39,7 +41,10 @@ export function registerReflectionRoutes(
           details: error.issues 
         });
       }
-      logger.error({ error, requestId: request.id }, "Question generation failed");
+      logger.error(
+        { module: MODULE, operation: "POST /v1/reflection/question", error, requestId: request.id },
+        "Question generation failed"
+      );
       return reply.status(502).send({ error: "AI provider failed" });
     }
   });
@@ -72,7 +77,10 @@ export function registerReflectionRoutes(
           details: error.issues 
         });
       }
-      logger.error({ error, requestId: request.id }, "Assessment generation failed");
+      logger.error(
+        { module: MODULE, operation: "POST /v1/reflection/assessment", error, requestId: request.id },
+        "Assessment generation failed"
+      );
       return reply.status(502).send({ error: "AI provider failed" });
     }
   });

@@ -1,6 +1,8 @@
 import type { ZodSchema } from "zod";
 import { logger } from "../observability/logger.js";
 
+const MODULE = "repair";
+
 /**
  * Attempts to repair malformed LLM JSON output.
  * Returns the parsed and validated result, or throws if repair fails.
@@ -18,7 +20,10 @@ export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
     const parsed = JSON.parse(cleaned);
     return schema.parse(parsed);
   } catch (error) {
-    logger.warn({ text, error }, "JSON repair failed basic parse/validate");
+    logger.warn(
+      { module: MODULE, operation: "tryRepairJson", text, error },
+      "JSON repair failed basic parse/validate"
+    );
     throw new Error("Failed to parse or validate LLM output");
   }
 }
@@ -38,17 +43,26 @@ export async function repairWithFallback<T>(
   try {
     return tryRepairJson(text, schema);
   } catch (repairError) {
-    logger.warn({ repairError }, "Repair attempt failed, trying fallback model call");
+    logger.warn(
+      { module: MODULE, operation: "repairWithFallback", repairError },
+      "Repair attempt failed, trying fallback model call"
+    );
   }
 
   // Step 2: Fallback model call
   if (fallbackProvider) {
     try {
       const result = await fallbackProvider();
-      logger.info("Fallback model call succeeded");
+      logger.info(
+        { module: MODULE, operation: "repairWithFallback" },
+        "Fallback model call succeeded"
+      );
       return result;
     } catch (fallbackError) {
-      logger.error({ fallbackError }, "Fallback model call also failed");
+      logger.error(
+        { module: MODULE, operation: "repairWithFallback", fallbackError },
+        "Fallback model call also failed"
+      );
     }
   }
 

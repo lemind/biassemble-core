@@ -1,10 +1,12 @@
 import { logger } from "../../observability/logger.js";
 import { AssessmentOutputSchema, type AssessmentOutput } from "../../contracts/reflection.schemas.js";
-import { tryRepairJson } from "../../parsers/repair.js";
+import { repairWithFallback } from "../../parsers/repair.js";
 import { withRetry } from "../retry.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { BiasCatalogService } from "../../catalog/bias-catalog.js";
+
+const MODULE = "assessment-service";
 
 export class AssessmentService {
   constructor(
@@ -34,19 +36,31 @@ export class AssessmentService {
 
     // 3. Generate with retry
     return await withRetry(async (attempt) => {
-      logger.info({ requestId, attempt }, "Calling AI provider for assessment");
+      logger.info(
+        { module: MODULE, operation: "generate", requestId, attempt },
+        "Calling AI provider for assessment"
+      );
 
       const raw = await this.provider.completeJson<any>({
         system,
         user,
       });
 
-      try {
-        return AssessmentOutputSchema.parse(raw);
-      } catch (error) {
-        logger.warn({ requestId, error, raw }, "Zod validation failed, trying repair");
-        return tryRepairJson(JSON.stringify(raw), AssessmentOutputSchema);
-      }
+      // Use the full repair pipeline: try repair, then fallback model call
+      return await repairWithFallback(
+        JSON.stringify(raw),
+        AssessmentOutputSchema,
+        async () => {
+          logger.warn(
+            { module: MODULE, operation: "generate", requestId },
+            "Attempting fallback model call for assessment generation"
+          );
+          return await this.provider.completeJson<AssessmentOutput>({
+            system,
+            user,
+          });
+        }
+      );
     });
   }
 }

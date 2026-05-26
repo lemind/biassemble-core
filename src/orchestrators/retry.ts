@@ -1,10 +1,13 @@
 import { logger } from "../observability/logger.js";
 import { env } from "../lib/env.js";
+import { DEFAULT_RETRY_BASE_DELAY_MS } from "../lib/constants.js";
 
 interface RetryOptions {
   maxRetries?: number;
   baseDelayMs?: number;
 }
+
+const MODULE = "retry";
 
 /**
  * Retries an async function with exponential backoff.
@@ -14,7 +17,7 @@ export async function withRetry<T>(
   options: RetryOptions = {}
 ): Promise<T> {
   const maxRetries = options.maxRetries ?? env.AI_MAX_RETRIES;
-  const baseDelayMs = options.baseDelayMs ?? 1000;
+  const baseDelayMs = options.baseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
 
   let lastError: unknown;
 
@@ -30,7 +33,7 @@ export async function withRetry<T>(
       const jitter = Math.random() * 200;
       
       logger.warn(
-        { attempt, delay: delay + jitter, error },
+        { module: MODULE, operation: "withRetry", attempt, delay: delay + jitter, error },
         "Operation failed, retrying..."
       );
 
@@ -38,6 +41,9 @@ export async function withRetry<T>(
     }
   }
 
-  logger.error({ lastError, attempts: maxRetries + 1 }, "Operation failed after all retries");
+  logger.error(
+    { module: MODULE, operation: "withRetry", lastError, attempts: maxRetries + 1 },
+    "Operation failed after all retries"
+  );
   throw lastError;
 }
