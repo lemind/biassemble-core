@@ -1,0 +1,8 @@
+{
+  "id": "financial-regret",
+  "title": "Regretting a major financial decision",
+  "story": "I invested a significant portion of my savings into a cryptocurrency project two years ago based on a friend's recommendation. The project has lost 80% of its value, but I keep holding on because I'm convinced it will recover and I don't want to admit I made a mistake. I've watched others sell at a loss and move on, but every time I consider selling, I tell myself that the moment I do, it'll skyrocket. My partner keeps asking me to cut our losses, and it's causing tension between us. I know the rational thing would be to sell, but I can't bring myself to do it.",
+  "expectedMinBiases": 2,
+  "expectedQuestionsCountRange": [2, 5],
+  "tags": ["finance", "regret", "sunk-cost", "investment"]
+}

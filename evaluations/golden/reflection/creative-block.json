@@ -1,0 +1,8 @@
+{
+  "id": "creative-block",
+  "title": "Creative block after career change",
+  "story": "I left my stable corporate job six months ago to become a freelance graphic designer. I had been building a portfolio for two years and felt ready, but now that I'm actually doing it full-time, I can't seem to produce anything I'm proud of. Every project feels derivative, and I keep comparing my early drafts to the established designers I admire. I've turned down paid work because I didn't think I could deliver, and I'm burning through my savings. My former colleagues tell me I'm talented and just need time, but I worry I made a huge mistake and that I'm not actually good enough to make this work.",
+  "expectedMinBiases": 2,
+  "expectedQuestionsCountRange": [2, 5],
+  "tags": ["career", "creative", "imposter-syndrome", "transition"]
+}

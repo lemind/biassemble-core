@@ -1,28 +1,26 @@
 import type { ZodSchema } from "zod";
 import { logger } from "../observability/logger.js";
+import { extractJson } from "./json-from-llm.js";
 
 const MODULE = "repair";
 
 /**
  * Attempts to repair malformed LLM JSON output.
+ * Uses extractJson for structural extraction, then parses and validates.
  * Returns the parsed and validated result, or throws if repair fails.
  */
 export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
-  let cleaned = text.trim();
+  // Step 1: Extract JSON structure (handles markdown, prose wrapping, trailing text)
+  const extracted = extractJson(text);
 
-  // 1. Strip markdown code blocks if present
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```(json)?\s*/, "").replace(/\s*```$/, "");
-  }
-
-  // 2. Try simple parse
+  // Step 2: Try parse
   try {
-    const parsed = JSON.parse(cleaned);
+    const parsed = JSON.parse(extracted);
     return schema.parse(parsed);
   } catch (error) {
     logger.warn(
-      { module: MODULE, operation: "tryRepairJson", text, error },
-      "JSON repair failed basic parse/validate"
+      { module: MODULE, operation: "tryRepairJson", text, extracted, error },
+      "JSON repair failed parse/validate after extraction"
     );
     throw new Error("Failed to parse or validate LLM output");
   }
@@ -32,14 +30,16 @@ export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
  * Full repair pipeline: attempt repair, then fallback model call, then fail.
  * 
  * Pipeline:
- *   invalid JSON → repair attempt → revalidate with Zod → fallback model call → fail → 502
+ *   invalid JSON → repair attempt (extractJson + parse + Zod validate)
+ *   → if fails → fallback model call
+ *   → if fallback fails → full failure → 502
  */
 export async function repairWithFallback<T>(
   text: string,
   schema: ZodSchema<T>,
   fallbackProvider: (() => Promise<T>) | null
 ): Promise<T> {
-  // Step 1: Try repair
+  // Step 1: Try repair (extractJson + parse + validate)
   try {
     return tryRepairJson(text, schema);
   } catch (repairError) {

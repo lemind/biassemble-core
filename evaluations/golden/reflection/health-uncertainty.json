@@ -1,0 +1,8 @@
+{
+  "id": "health-uncertainty",
+  "title": "Deciding on a medical procedure",
+  "story": "My doctor recommended a preventive surgery that has a 90% success rate but requires months of recovery. I've been going back and forth for weeks. The condition runs in my family - my mother went through it and said the recovery was the hardest thing she's ever done. I'm young and healthy now, so part of me thinks I should just wait and see if I even develop symptoms. But another part of me is terrified that waiting will make it worse and I'll regret not acting early. Every article I read seems to confirm whichever position I'm currently leaning toward, and I feel paralyzed by the decision.",
+  "expectedMinBiases": 2,
+  "expectedQuestionsCountRange": [2, 5],
+  "tags": ["health", "medical", "decision-fatigue"]
+}
