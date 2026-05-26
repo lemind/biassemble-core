@@ -131,7 +131,7 @@
   - `tests/integration/question.test.ts` — mocked provider, full route
   - `tests/integration/assessment.test.ts` — mocked provider, full route
   - `tests/integration/repair-pipeline.test.ts` — malformed LLM output recovery
-- [ ] T030 Deploy to Vercel, document `AI_CORE_BASE_URL`, `AI_CORE_API_KEY` in public backend env
+- [x] T030 Deploy to Vercel, document `AI_CORE_BASE_URL`, `AI_CORE_API_KEY` in public backend env
 </｜｜DSML｜｜parameter>
 </｜｜DSML｜｜invoke>
 
