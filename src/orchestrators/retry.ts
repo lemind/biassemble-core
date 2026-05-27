@@ -2,7 +2,8 @@ import { logger } from "../observability/logger.js";
 import { env } from "../lib/env.js";
 
 /** Default base delay for retry exponential backoff (ms) */
-const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+const DEFAULT_RETRY_BASE_DELAY_MS = 2000;
+
 
 interface RetryOptions {
   maxRetries?: number;
