@@ -99,6 +99,13 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - Preserve existing architecture unless explicitly requested.
 - Treat spec/plan/tasks updates as part of the change, not a follow-up chore.
 
+## Plan Compliance
+
+- **Follow the plan strictly.** Do not add features, heuristics, code, files, or logic that are not specified in `specs/<feature>/tasks.md` and `specs/<feature>/plan.md`.
+- If something seems missing from the plan, ask before adding it.
+- If you think a heuristic or enhancement would be valuable, document it in `specs/<feature>/possible-enhancements.md` — do not implement it.
+- Mark tasks as `[x]` in `tasks.md` only when the implementation matches the task description exactly.
+
 ## Autonomy
 
 ### Act without asking:
@@ -113,6 +120,7 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - Adding/removing dependencies or changing versions
 - Altering public APIs, DB schemas, or auth flows
 - Committing code — show summary of changes first, ask user to review before running `git commit`
+- Adding any code, heuristic, or file not explicitly listed in `tasks.md`
 
 ## Forbidden
 

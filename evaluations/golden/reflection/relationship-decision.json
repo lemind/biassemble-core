@@ -1,0 +1,8 @@
+{
+  "id": "relationship-decision",
+  "title": "Deciding whether to move in with partner",
+  "story": "My partner of two years wants us to move in together, but I keep making excuses to delay the decision. They've found a great apartment and can afford it, but I'm terrified of losing my independence. I've lived alone for six years and have a routine I love - morning runs, late-night reading, having friends over whenever I want. Every time I think about sharing space 24/7, I feel trapped. But I also know I love this person and see a future with them. My friends say I'm overthinking it, but I can't shake the feeling that I'll regret giving up my solo life.",
+  "expectedMinBiases": 2,
+  "expectedQuestionsCountRange": [2, 5],
+  "tags": ["relationship", "life-decision", "fear-of-change"]
+}

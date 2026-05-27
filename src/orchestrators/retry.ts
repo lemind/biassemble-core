@@ -1,8 +1,10 @@
 import { logger } from "../observability/logger.js";
 import { env } from "../lib/env.js";
+import { RateLimitError } from "../providers/gemini.js";
 
 /** Default base delay for retry exponential backoff (ms) */
-const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+const DEFAULT_RETRY_BASE_DELAY_MS = 2000;
+
 
 interface RetryOptions {
   maxRetries?: number;
@@ -13,6 +15,9 @@ const MODULE = "retry";
 
 /**
  * Retries an async function with exponential backoff.
+ * 
+ * Rate-limit errors (RateLimitError) are NOT retried — they will fail again immediately.
+ * Only transient errors (timeouts, 503s, network blips) trigger backoff.
  */
 export async function withRetry<T>(
   fn: (attempt: number) => Promise<T>,
@@ -27,6 +32,15 @@ export async function withRetry<T>(
     try {
       return await fn(attempt);
     } catch (error) {
+      // Rate-limit errors should NOT be retried — they will fail again immediately
+      if (error instanceof RateLimitError) {
+        logger.warn(
+          { module: MODULE, operation: "withRetry", error },
+          "Rate limit hit — not retrying"
+        );
+        throw error;
+      }
+
       lastError = error;
       
       if (attempt > maxRetries) break;

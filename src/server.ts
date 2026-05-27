@@ -9,46 +9,56 @@ import { QuestionService } from "./orchestrators/reflection/question.service.js"
 import { AssessmentService } from "./orchestrators/reflection/assessment.service.js";
 import { registerReflectionRoutes } from "./routes/reflection.js";
 
-const server = Fastify({
-  logger: false, // we use our own pino logger
-});
+/**
+ * Build and configure a Fastify instance with all routes and DI.
+ * Does NOT call listen() — caller decides whether to start or
+ * hand off to a serverless wrapper.
+ */
+export function buildApp() {
+  const server = Fastify({
+    logger: false, // we use our own pino logger
+  });
 
-// ─── Dependency Injection ──────────────────────────────────
+  // ─── Dependency Injection ──────────────────────────────────
 
-const provider = new GeminiProvider();
-const prompts = new PromptRegistry();
-const catalog = new BiasCatalogService();
+  const provider = new GeminiProvider();
+  const prompts = new PromptRegistry();
+  const catalog = new BiasCatalogService();
 
-const questionService = new QuestionService(provider, prompts);
-const assessmentService = new AssessmentService(provider, prompts, catalog);
+  const questionService = new QuestionService(provider, prompts);
+  const assessmentService = new AssessmentService(provider, prompts, catalog);
 
-// ─── Global hooks ──────────────────────────────────────────
-server.addHook("onRequest", requestIdHook);
+  // ─── Global hooks ──────────────────────────────────────────
+  server.addHook("onRequest", requestIdHook);
 
-// ─── Routes ────────────────────────────────────────────────
+  // ─── Routes ────────────────────────────────────────────────
 
-// Health route
-server.get("/health", async () => {
-  return { status: "ok" };
-});
+  // Health route
+  server.get("/health", async () => {
+    return { status: "ok" };
+  });
 
-// Reflection routes
-registerReflectionRoutes(server, {
-  question: questionService,
-  assessment: assessmentService,
-});
+  // Reflection routes
+  registerReflectionRoutes(server, {
+    question: questionService,
+    assessment: assessmentService,
+  });
 
-// ─── Start ─────────────────────────────────────────────────
-const start = async () => {
-  try {
-    await server.listen({ port: env.PORT, host: "0.0.0.0" });
-    logger.info({ port: env.PORT }, "server started");
-  } catch (err) {
-    logger.error(err, "failed to start server");
-    process.exit(1);
-  }
-};
+  return server;
+}
 
-start();
-
-export { server };
+// ─── Start (local dev only) ────────────────────────────────
+const isVercel = process.env.VERCEL === "1";
+if (!isVercel) {
+  const server = buildApp();
+  const start = async () => {
+    try {
+      await server.listen({ port: env.PORT, host: "0.0.0.0" });
+      logger.info({ port: env.PORT }, "server started");
+    } catch (err) {
+      logger.error(err, "failed to start server");
+      process.exit(1);
+    }
+  };
+  start();
+}

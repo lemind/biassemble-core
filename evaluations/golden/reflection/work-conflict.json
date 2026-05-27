@@ -1,0 +1,8 @@
+{
+  "id": "work-conflict",
+  "title": "Workplace disagreement with manager",
+  "story": "My manager publicly dismissed my proposal in a team meeting without giving me a chance to explain my reasoning. I had spent two weeks preparing that analysis, and he barely glanced at it before saying 'we've tried things like this before and they don't work.' The team went quiet, and I felt humiliated. Since then, I've stopped sharing ideas in meetings and feel like my contributions don't matter. I'm considering looking for a new job, but I've been at this company for five years and built strong relationships with my colleagues.",
+  "expectedMinBiases": 2,
+  "expectedQuestionsCountRange": [2, 5],
+  "tags": ["workplace", "conflict", "authority"]
+}
