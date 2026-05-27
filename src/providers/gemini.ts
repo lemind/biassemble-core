@@ -8,6 +8,24 @@ const DEFAULT_TEMPERATURE = 0.7;
 
 const MODULE = "gemini-provider";
 
+/**
+ * Thrown when Gemini returns a 429 rate-limit or quota-exhausted error.
+ * These should NOT be retried — they will fail again immediately.
+ */
+export class RateLimitError extends Error {
+  /** "daily" (quota) or "per-minute" (RPM) */
+  readonly limitType: "daily" | "per-minute";
+  /** ISO timestamp when the limit resets, if available */
+  readonly resetsAt?: string;
+
+  constructor(message: string, limitType: "daily" | "per-minute", resetsAt?: string) {
+    super(message);
+    this.name = "RateLimitError";
+    this.limitType = limitType;
+    this.resetsAt = resetsAt;
+  }
+}
+
 export class GeminiProvider implements Provider {
   readonly mode = "gemini";
   private client: GoogleGenerativeAI;
@@ -52,7 +70,28 @@ export class GeminiProvider implements Provider {
         );
         throw new Error("Malformed JSON from AI provider");
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      // Detect rate-limit / quota errors — these should NOT be retried
+      const err = error as Record<string, unknown>;
+      const status = err?.status as number | undefined;
+      const message = (err?.message as string | undefined) ?? String(error);
+
+      if (status === 429 || message.includes("429") || message.toLowerCase().includes("rate limit")) {
+        const isDaily = message.toLowerCase().includes("quota") || message.toLowerCase().includes("daily");
+        const resetsAt = extractResetTime(message);
+        logger.warn(
+          { module: MODULE, operation: "completeJson", status, limitType: isDaily ? "daily" : "per-minute", resetsAt },
+          "Gemini rate limit hit — not retrying"
+        );
+        throw new RateLimitError(
+          isDaily
+            ? "Daily API quota exhausted. Please try again tomorrow."
+            : "Too many requests. Please try again later.",
+          isDaily ? "daily" : "per-minute",
+          resetsAt
+        );
+      }
+
       logger.error(
         { module: MODULE, operation: "completeJson", error },
         "Gemini API call failed"
@@ -60,4 +99,19 @@ export class GeminiProvider implements Provider {
       throw error;
     }
   }
+}
+
+/**
+ * Try to extract a reset timestamp from a Gemini error message.
+ * Gemini sometimes includes "reset in X seconds" or similar.
+ */
+function extractResetTime(message: string): string | undefined {
+  const match = message.match(/reset\s+in\s+(\d+)\s+seconds/i);
+  if (match && match[1]) {
+    const seconds = parseInt(match[1], 10);
+    if (!isNaN(seconds)) {
+      return new Date(Date.now() + seconds * 1000).toISOString();
+    }
+  }
+  return undefined;
 }
