@@ -142,7 +142,7 @@
 **Purpose**: Verify public `core-client.ts` against live Core, runtime contract distribution.
 
 - [x] T031 Smoke E2E: Inngest job `biassemble/smoke-e2e` runs full reflection flow (story → questions → answers → assessment) via public API, asserts all output shapes. Trigger after deploy via `pnpm deploy:e2e`.
-- [x] T032 Core serves contracts at `GET /v1/contracts` — runtime JSON descriptions of all Zod schemas. Backend proxies to frontend via `GET /api/contracts`. Documented in `contracts/README.md`.
+- [x] T032 Core serves contracts at `GET /v1/contracts` — runtime JSON descriptions of all Zod schemas. Backend proxies to frontend via `GET /api/contracts`. Documented in `contracts/README.md`. ✅
 - [ ] T033 [DEFERRED] Fuzzy bias name → catalog id normalization — not needed yet.
 
 **Checkpoint**: Public E2E via Inngest smoke job. Contracts distributed at runtime.
