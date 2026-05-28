@@ -1,11 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { 
   GenerateQuestionRequestSchema,
   GenerateAssessmentRequestSchema,
-  QuestionOutputSchema,
-  AssessmentOutputSchema,
-  BiasItemSchema,
 } from "../contracts/reflection.schemas.js";
 import { authHook } from "../lib/auth.js";
 import { logger } from "../observability/logger.js";
@@ -14,61 +14,10 @@ import type { AssessmentService } from "../orchestrators/reflection/assessment.s
 
 const MODULE = "routes";
 
-/**
- * Convert a Zod schema into a JSON description object.
- * Walks the shape recursively to produce { fieldName: "type constraints" }.
- */
-function describeZodShape(schema: any): Record<string, any> {
-  const shape: Record<string, any> = {};
-  if (!schema._def?.typeName || !schema.shape) return {};
-
-  for (const [key, field] of Object.entries(schema.shape)) {
-    const f = field as any;
-    shape[key] = describeType(f);
-  }
-  return shape;
-}
-
-function describeType(field: any): string {
-  // ZodString
-  if (field._def?.typeName === "ZodString") {
-    const checks = field._def.checks || [];
-    // UUID detected via 'uuid' kind in checks array
-    if (checks.some((ch: any) => ch.kind === "uuid")) {
-      return "uuid";
-    }
-    const parts = ["string"];
-    for (const ch of checks) {
-      if (ch.kind === "min") parts.push(`min ${ch.value}`);
-      if (ch.kind === "max") parts.push(`max ${ch.value}`);
-    }
-    return parts.join(" ");
-  }
-  // ZodNumber
-  if (field._def?.typeName === "ZodNumber") {
-    return "number";
-  }
-  // ZodBoolean
-  if (field._def?.typeName === "ZodBoolean") {
-    return "boolean";
-  }
-  // ZodArray
-  if (field._def?.typeName === "ZodArray") {
-    const inner = describeType(field._def.type);
-    const checks = field._def.checks || [];
-    let prefix = inner;
-    for (const ch of checks) {
-      if (ch.kind === "min") prefix += ` min ${ch.value}`;
-      if (ch.kind === "max") prefix += ` max ${ch.value}`;
-    }
-    return `${prefix}[]`;
-  }
-  // ZodObject
-  if (field._def?.typeName === "ZodObject") {
-    return JSON.stringify(describeZodShape(field));
-  }
-  return "unknown";
-}
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CONTRACTS_JSON = JSON.parse(
+  readFileSync(resolve(__dirname, "..", "..", "contracts", "reflection.schemas.json"), "utf-8")
+);
 
 export function registerReflectionRoutes(
   server: FastifyInstance,
@@ -78,18 +27,11 @@ export function registerReflectionRoutes(
   }
 ) {
   /**
-   * GET /v1/contracts — public schema description (no auth)
+   * GET /v1/contracts — public JSON Schema (no auth)
+   * Generated from Zod schemas via `pnpm generate:contracts`.
    */
   server.get("/v1/contracts", async () => {
-    return {
-      reflection: {
-        GenerateQuestionRequest: describeZodShape(GenerateQuestionRequestSchema),
-        GenerateAssessmentRequest: describeZodShape(GenerateAssessmentRequestSchema),
-        QuestionOutput: describeZodShape(QuestionOutputSchema),
-        AssessmentOutput: describeZodShape(AssessmentOutputSchema),
-        BiasItem: describeZodShape(BiasItemSchema),
-      },
-    };
+    return CONTRACTS_JSON;
   });
 
   /**
