@@ -132,22 +132,20 @@
   - `tests/integration/assessment.test.ts` — mocked provider, full route
   - `tests/integration/repair-pipeline.test.ts` — malformed LLM output recovery
 - [x] T030 Deploy to Vercel, document `AI_CORE_BASE_URL`, `AI_CORE_API_KEY` in public backend env
-</｜｜DSML｜｜parameter>
-</｜｜DSML｜｜invoke>
 
 **Checkpoint**: Eval green, Core deployed, public backend ready to connect.
 
 ---
 
-## Phase 4: Public integration hardening
+## Phase 4: Public integration hardening ✅
 
-**Purpose**: Verify public `core-client.ts` against live Core, document contract, optional bias normalization.
+**Purpose**: Verify public `core-client.ts` against live Core, runtime contract distribution.
 
-- [ ] T031 Smoke E2E: public `AI_CLIENT_MODE=core` → full reflection flow (story → questions → answers → assessment) via deployed Core
-- [ ] T032 Document contract publish path: `@biassemble/ai-contracts` or OpenAPI CI in `contracts/README.md`
-- [ ] T033 [P] Add fuzzy bias name → catalog id normalization in `src/catalog/bias-catalog.ts` (Tier 2 starter)
+- [x] T031 Smoke E2E: Inngest job `biassemble/smoke-e2e` runs full reflection flow (story → questions → answers → assessment) via public API, asserts all output shapes. Trigger after deploy via `pnpm deploy:e2e`.
+- [x] T032 Core serves contracts at `GET /v1/contracts` — runtime JSON descriptions of all Zod schemas. Backend proxies to frontend via `GET /api/contracts`. Documented in `contracts/README.md`.
+- [ ] T033 [DEFERRED] Fuzzy bias name → catalog id normalization — not needed yet.
 
-**Checkpoint**: Public E2E green on `core` mode.
+**Checkpoint**: Public E2E via Inngest smoke job. Contracts distributed at runtime.
 
 ---
 
