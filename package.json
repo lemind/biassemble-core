@@ -10,7 +10,9 @@
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
-    "eval": "tsx scripts/eval-reflection.ts"
+    "eval": "tsx scripts/eval-reflection.ts",
+    "generate:contracts": "tsx scripts/generate-contracts.ts",
+    "deploy": "vercel deploy --prod"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

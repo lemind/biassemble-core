@@ -1,0 +1,162 @@
+{
+  "reflection": {
+    "GenerateQuestionRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "story": {
+          "type": "string",
+          "minLength": 50,
+          "maxLength": 3000
+        }
+      },
+      "required": [
+        "sessionId",
+        "story"
+      ],
+      "additionalProperties": false
+    },
+    "GenerateAssessmentRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "story": {
+          "type": "string",
+          "minLength": 1
+        },
+        "questions": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "answers": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "sessionId",
+        "story",
+        "questions",
+        "answers"
+      ],
+      "additionalProperties": false
+    },
+    "QuestionOutput": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "questions": {
+          "minItems": 2,
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "isComplete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "questions",
+        "isComplete"
+      ],
+      "additionalProperties": false
+    },
+    "AssessmentOutput": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "biases": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "explanation": {
+                "type": "string",
+                "minLength": 10
+              },
+              "storyConnection": {
+                "type": "string",
+                "minLength": 10
+              },
+              "alternativePerspective": {
+                "type": "string",
+                "minLength": 10
+              }
+            },
+            "required": [
+              "name",
+              "explanation",
+              "storyConnection",
+              "alternativePerspective"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reflectionPrompt": {
+          "type": "string",
+          "minLength": 10
+        }
+      },
+      "required": [
+        "biases",
+        "reflectionPrompt"
+      ],
+      "additionalProperties": false
+    },
+    "BiasItem": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 10
+        },
+        "storyConnection": {
+          "type": "string",
+          "minLength": 10
+        },
+        "alternativePerspective": {
+          "type": "string",
+          "minLength": 10
+        }
+      },
+      "required": [
+        "name",
+        "explanation",
+        "storyConnection",
+        "alternativePerspective"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

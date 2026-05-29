@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { 
   GenerateQuestionRequestSchema,
-  GenerateAssessmentRequestSchema 
+  GenerateAssessmentRequestSchema,
 } from "../contracts/reflection.schemas.js";
 import { authHook } from "../lib/auth.js";
 import { logger } from "../observability/logger.js";
@@ -11,6 +14,11 @@ import type { AssessmentService } from "../orchestrators/reflection/assessment.s
 
 const MODULE = "routes";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CONTRACTS_JSON = JSON.parse(
+  readFileSync(resolve(__dirname, "..", "..", "contracts", "reflection.schemas.json"), "utf-8")
+);
+
 export function registerReflectionRoutes(
   server: FastifyInstance,
   services: {
@@ -18,6 +26,14 @@ export function registerReflectionRoutes(
     assessment: AssessmentService;
   }
 ) {
+  /**
+   * GET /v1/contracts — public JSON Schema (no auth)
+   * Generated from Zod schemas via `pnpm generate:contracts`.
+   */
+  server.get("/v1/contracts", async () => {
+    return CONTRACTS_JSON;
+  });
+
   /**
    * POST /v1/reflection/question
    */
