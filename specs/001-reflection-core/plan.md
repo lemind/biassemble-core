@@ -256,16 +256,22 @@ biassemble-core/
 - Vercel deploy + document `AI_CORE_BASE_URL` for public backend
 - Smoke E2E: public `AI_CLIENT_MODE=core` → full reflection flow
 
-### Phase 4: Public integration hardening
+### Phase 4: Public integration hardening + versioning
 
 - Verify public `core-client.ts` against live Core
 - Document contract publish path (`@biassemble/ai-contracts` or OpenAPI CI)
-- Optional: normalize bias names to catalog ids (Tier 2 starter)
+- **Bias name normalization**: `src/catalog/normalize.ts` — fuzzy match LLM output names → catalog IDs
+- **Version stamping**: `prompt_version` and `schema_version` on every `QuestionOutput` and `AssessmentOutput`
+- `PromptRegistry.getVersion()` returns current prompt version from registry
+- `SCHEMA_VERSION` constant in contracts
+- Backend Drizzle schema: `prompt_version` and `schema_version` columns in `session_data`
+- Backend API: `GET /api/result/[id]` returns `prompt_version` and `schema_version`
+- Frontend types: `ResultResponse` includes optional version fields
 
-### Phase 5: Tier 2 slices (separate task batch)
+### Phase 5: Tier 2 slices (separate task batch — deferred)
 
 - Provider benchmark script (Gemini vs second provider)
-- Prompt version bump process
+- Prompt version bump process documentation
 - `scoring/confidence.ts` on assessment outputs
 - Evaluation expansion: adversarial, regression, provider-specific datasets
 
