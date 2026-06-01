@@ -68,6 +68,8 @@ describe("POST /v1/reflection/assessment — integration with MockProvider", () 
     const body = JSON.parse(response.body);
     expect(body.biases.length).toBeGreaterThanOrEqual(1);
     expect(typeof body.reflectionPrompt).toBe("string");
+    expect(typeof body.prompt_version).toBe("string");
+    expect(body.schema_version).toBe("1.0.0");
   });
 
   it("should return 400 for mismatched questions/answers length", async () => {

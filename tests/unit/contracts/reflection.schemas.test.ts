@@ -151,6 +151,8 @@ describe("QuestionOutputSchema", () => {
     const result = QuestionOutputSchema.parse({
       questions: ["Question one?", "Question two?"],
       isComplete: true,
+      prompt_version: "1.0.0",
+      schema_version: "1.0.0",
     });
     expect(result.questions.length).toBe(2);
   });
@@ -160,6 +162,8 @@ describe("QuestionOutputSchema", () => {
     const result = QuestionOutputSchema.parse({
       questions: qs,
       isComplete: false,
+      prompt_version: "1.0.0",
+      schema_version: "1.0.0",
     });
     expect(result.questions.length).toBe(5);
   });
@@ -169,6 +173,8 @@ describe("QuestionOutputSchema", () => {
       QuestionOutputSchema.parse({
         questions: ["Only one?"],
         isComplete: true,
+        prompt_version: "1.0.0",
+        schema_version: "1.0.0",
       })
     ).toThrow();
   });
@@ -178,6 +184,8 @@ describe("QuestionOutputSchema", () => {
       QuestionOutputSchema.parse({
         questions: Array.from({ length: 6 }, (_, i) => `Q ${i + 1}?`),
         isComplete: true,
+        prompt_version: "1.0.0",
+        schema_version: "1.0.0",
       })
     ).toThrow();
   });
@@ -186,32 +194,59 @@ describe("QuestionOutputSchema", () => {
     expect(() =>
       QuestionOutputSchema.parse({
         questions: ["Q1?", "Q2?"],
+        prompt_version: "1.0.0",
+        schema_version: "1.0.0",
+      })
+    ).toThrow();
+  });
+
+  it("should reject missing prompt_version", () => {
+    expect(() =>
+      QuestionOutputSchema.parse({
+        questions: ["Q1?", "Q2?"],
+        isComplete: true,
+        schema_version: "1.0.0",
+      })
+    ).toThrow();
+  });
+
+  it("should reject wrong schema_version", () => {
+    expect(() =>
+      QuestionOutputSchema.parse({
+        questions: ["Q1?", "Q2?"],
+        isComplete: true,
+        prompt_version: "1.0.0",
+        schema_version: "2.0.0",
       })
     ).toThrow();
   });
 });
 
 describe("AssessmentOutputSchema", () => {
+  const validAssessment = {
+    biases: [
+      {
+        name: "confirmation bias",
+        explanation: "This is a detailed explanation of the bias with enough characters.",
+        storyConnection: "This connects to the user's story with enough detail.",
+        alternativePerspective: "An alternative way of viewing the situation with enough depth.",
+      },
+    ],
+    reflectionPrompt: "Consider how confirmation bias might be affecting your decision-making process.",
+    prompt_version: "1.0.0",
+    schema_version: "1.0.0",
+  };
+
   it("should validate a valid assessment with 1 bias", () => {
-    const result = AssessmentOutputSchema.parse({
-      biases: [
-        {
-          name: "confirmation bias",
-          explanation: "This is a detailed explanation of the bias with enough characters.",
-          storyConnection: "This connects to the user's story with enough detail.",
-          alternativePerspective: "An alternative way of viewing the situation with enough depth.",
-        },
-      ],
-      reflectionPrompt: "Consider how confirmation bias might be affecting your decision-making process.",
-    });
+    const result = AssessmentOutputSchema.parse(validAssessment);
     expect(result.biases.length).toBe(1);
   });
 
   it("should reject empty biases array", () => {
     expect(() =>
       AssessmentOutputSchema.parse({
+        ...validAssessment,
         biases: [],
-        reflectionPrompt: "Some reflection prompt here.",
       })
     ).toThrow();
   });
@@ -219,14 +254,7 @@ describe("AssessmentOutputSchema", () => {
   it("should reject reflectionPrompt shorter than 10 characters", () => {
     expect(() =>
       AssessmentOutputSchema.parse({
-        biases: [
-          {
-            name: "test",
-            explanation: "A detailed explanation with enough characters to pass validation.",
-            storyConnection: "The connection to the story is described in detail here.",
-            alternativePerspective: "An alternative way to view this situation with depth.",
-          },
-        ],
+        ...validAssessment,
         reflectionPrompt: "short",
       })
     ).toThrow();
@@ -240,9 +268,40 @@ describe("AssessmentOutputSchema", () => {
       alternativePerspective: "Alternative perspective with enough characters to explain clearly.",
     };
     const result = AssessmentOutputSchema.parse({
+      ...validAssessment,
       biases: [bias, { ...bias, name: "confirmation bias" }],
-      reflectionPrompt: "Reflect on how these biases may apply to your situation.",
     });
     expect(result.biases.length).toBe(2);
+  });
+
+  it("should accept biasCatalogId as optional field", () => {
+    const result = AssessmentOutputSchema.parse({
+      ...validAssessment,
+      biases: [
+        {
+          ...validAssessment.biases[0],
+          biasCatalogId: "confirmation-bias",
+        },
+      ],
+    });
+    expect(result.biases[0].biasCatalogId).toBe("confirmation-bias");
+  });
+
+  it("should reject missing prompt_version", () => {
+    expect(() =>
+      AssessmentOutputSchema.parse({
+        ...validAssessment,
+        prompt_version: undefined,
+      })
+    ).toThrow();
+  });
+
+  it("should reject wrong schema_version", () => {
+    expect(() =>
+      AssessmentOutputSchema.parse({
+        ...validAssessment,
+        schema_version: "2.0.0",
+      })
+    ).toThrow();
   });
 });

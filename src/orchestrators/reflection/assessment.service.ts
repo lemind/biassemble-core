@@ -1,10 +1,11 @@
 import { logger } from "../../observability/logger.js";
-import { AssessmentOutputSchema, type AssessmentOutput } from "../../contracts/reflection.schemas.js";
+import { AssessmentOutputSchema, type AssessmentOutput, SCHEMA_VERSION } from "../../contracts/reflection.schemas.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { withRetry } from "../retry.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { BiasCatalogService } from "../../catalog/bias-catalog.js";
+import { normalizeBiasName } from "../../catalog/normalize.js";
 
 const MODULE = "assessment-service";
 
@@ -47,7 +48,7 @@ export class AssessmentService {
       });
 
       // Use the full repair pipeline: try repair, then fallback model call
-      return await repairWithFallback(
+      const parsed = await repairWithFallback(
         JSON.stringify(raw),
         AssessmentOutputSchema,
         async () => {
@@ -61,6 +62,25 @@ export class AssessmentService {
           });
         }
       );
+
+      // 4. Normalize bias names against catalog
+      const allBiases = this.catalog.getAll();
+      const normalizedBiases = parsed.biases.map((bias) => {
+        const result = normalizeBiasName(bias.name, allBiases);
+        return {
+          ...bias,
+          name: result.name,
+          ...(result.id ? { biasCatalogId: result.id } : {}),
+        };
+      });
+
+      // 5. Stamp version fields
+      return {
+        ...parsed,
+        biases: normalizedBiases,
+        prompt_version: this.prompts.getVersion(),
+        schema_version: SCHEMA_VERSION,
+      };
     });
   }
 }

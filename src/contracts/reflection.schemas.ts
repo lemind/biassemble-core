@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// ─── Constraints (local constants) ─────────────────────────
+// ─── Constants ────────────────────────────────────────────
 
 const STORY_MIN_LENGTH = 50;
 const STORY_MAX_LENGTH = 3000;
@@ -9,6 +9,12 @@ const QUESTIONS_MAX = 5;
 const BIASES_MIN_COUNT = 1;
 const BIAS_FIELD_MIN_LENGTH = 10;
 const REFLECTION_MIN_LENGTH = 10;
+
+/** Schema version carried in every response. Bump when breaking changes are made. */
+export const SCHEMA_VERSION = "1.0.0" as const;
+
+/** Prompt version carried in every response. Bump when prompts are updated. */
+export const PROMPT_VERSION = "1.0.0" as const;
 
 // ─── Request schemas ───────────────────────────────────────
 
@@ -28,6 +34,8 @@ export const GenerateAssessmentRequestSchema = z.object({
 
 export const BiasItemSchema = z.object({
   name: z.string().min(1),
+  /** Canonical catalog ID if the bias name was matched against the taxonomy. */
+  biasCatalogId: z.string().optional(),
   explanation: z.string().min(BIAS_FIELD_MIN_LENGTH),
   storyConnection: z.string().min(BIAS_FIELD_MIN_LENGTH),
   alternativePerspective: z.string().min(BIAS_FIELD_MIN_LENGTH),
@@ -36,11 +44,15 @@ export const BiasItemSchema = z.object({
 export const QuestionOutputSchema = z.object({
   questions: z.array(z.string().min(1)).min(QUESTIONS_MIN).max(QUESTIONS_MAX),
   isComplete: z.boolean(),
+  prompt_version: z.string(),
+  schema_version: z.literal(SCHEMA_VERSION),
 });
 
 export const AssessmentOutputSchema = z.object({
   biases: z.array(BiasItemSchema).min(BIASES_MIN_COUNT),
   reflectionPrompt: z.string().min(REFLECTION_MIN_LENGTH),
+  prompt_version: z.string(),
+  schema_version: z.literal(SCHEMA_VERSION),
 });
 
 // ─── Types ─────────────────────────────────────────────────

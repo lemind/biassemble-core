@@ -1,5 +1,5 @@
 import { logger } from "../../observability/logger.js";
-import { QuestionOutputSchema, type QuestionOutput } from "../../contracts/reflection.schemas.js";
+import { QuestionOutputSchema, type QuestionOutput, SCHEMA_VERSION } from "../../contracts/reflection.schemas.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { withRetry } from "../retry.js";
 import type { Provider } from "../../providers/types.js";
@@ -29,7 +29,7 @@ export class QuestionService {
       });
 
       // Use the full repair pipeline: try repair, then fallback model call
-      return await repairWithFallback(
+      const parsed = await repairWithFallback(
         JSON.stringify(raw),
         QuestionOutputSchema,
         async () => {
@@ -43,6 +43,13 @@ export class QuestionService {
           });
         }
       );
+
+      // Stamp version fields
+      return {
+        ...parsed,
+        prompt_version: this.prompts.getVersion(),
+        schema_version: SCHEMA_VERSION,
+      };
     });
   }
 }
