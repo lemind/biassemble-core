@@ -48,6 +48,11 @@ export function normalizeBiasName(
   }
 
   // 3. Token-overlap match
+  // ≥50% overlap means at least half the significant tokens match.
+  // Catches "confirmation bias" vs "confirmation" (2/2=1.0) and
+  // "anchoring effect" vs "anchoring bias" (1/2=0.5) while rejecting
+  // "optimism bias" vs "confirmation bias" (0/2=0.0).
+  const TOKEN_OVERLAP_THRESHOLD = 0.5;
   const inputTokens = tokenize(cleaned);
   let bestTokenOverlap: { entry: BiasEntry; overlap: number } | null = null;
 
@@ -57,33 +62,44 @@ export function normalizeBiasName(
     const maxLen = Math.max(inputTokens.length, catalogTokens.length);
     const ratio = maxLen > 0 ? overlap / maxLen : 0;
 
-    if (ratio >= 0.5 && (!bestTokenOverlap || overlap > bestTokenOverlap.overlap)) {
+    if (ratio >= TOKEN_OVERLAP_THRESHOLD && (!bestTokenOverlap || overlap > bestTokenOverlap.overlap)) {
       bestTokenOverlap = { entry: bias, overlap };
     }
   }
 
   if (bestTokenOverlap !== null) {
+    // Token overlap is a strong signal but not exact — cap at 0.8
+    // to leave room for exact matches (1.0) above.
+    const TOKEN_MATCH_CONFIDENCE = 0.8;
     return {
       id: bestTokenOverlap.entry.id,
       name: bestTokenOverlap.entry.name,
-      confidence: 0.8,
+      confidence: TOKEN_MATCH_CONFIDENCE,
     };
   }
 
-  // 4. Levenshtein distance ≤ 3 on lowercased, stripped name
+  // 4. Levenshtein distance on lowercased, stripped name
+  // ≤3 edits catches typos ("confrimation bias" → "confirmation bias")
+  // and minor variations ("anchoring-bias" → "anchoring bias") without
+  // over-matching unrelated terms.
+  const MAX_LEVENSHTEIN_DIST = 3;
   const stripped = lower.replace(/[^a-z0-9\s]/g, "").trim();
   let bestLevenshtein: { entry: BiasEntry; dist: number } | null = null;
 
   for (const bias of catalog) {
     const target = bias.name.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
     const dist = levenshtein(stripped, target);
-    if (dist <= 3 && (bestLevenshtein === null || dist < bestLevenshtein.dist)) {
+    if (dist <= MAX_LEVENSHTEIN_DIST && (bestLevenshtein === null || dist < bestLevenshtein.dist)) {
       bestLevenshtein = { entry: bias, dist };
     }
   }
 
   if (bestLevenshtein !== null) {
-    const confidence = Math.max(0, 1 - bestLevenshtein.dist * 0.15);
+    // Each edit distance point reduces confidence by 0.15, so:
+    // dist=1 → 0.85, dist=2 → 0.70, dist=3 → 0.55
+    // This keeps fuzzy matches below token-overlap (0.8) and exact (1.0).
+    const LEVENSHTEIN_CONFIDENCE_DECAY = 0.15;
+    const confidence = Math.max(0, 1 - bestLevenshtein.dist * LEVENSHTEIN_CONFIDENCE_DECAY);
     return {
       id: bestLevenshtein.entry.id,
       name: bestLevenshtein.entry.name,
