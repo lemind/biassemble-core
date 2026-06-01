@@ -105,6 +105,7 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - If something seems missing from the plan, ask before adding it.
 - If you think a heuristic or enhancement would be valuable, document it in `specs/<feature>/possible-enhancements.md` — do not implement it.
 - Mark tasks as `[x]` in `tasks.md` only when the implementation matches the task description exactly.
+- **Chronological ordering in tasks.md**: Add new sub-phases to the **end** of the current phase, not in the middle. Sub-phase letters (`4a`, `4b`, `4c`, `4d`) must reflect actual completion order, not planned order. If you add work after other sub-phases were already completed, give it the next letter in sequence.
 
 ## Autonomy
 
