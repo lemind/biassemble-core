@@ -143,7 +143,7 @@
 
 - [x] T031 Integration test: `biassemble/integration-test` (Inngest + local `pnpm test:integration`) runs full reflection flow via public API, asserts all output shapes. Trigger after deploy via `pnpm deploy:e2e`.
 - [x] T032 Core serves contracts at `GET /v1/contracts` — runtime JSON descriptions of all Zod schemas. Backend proxies to frontend via `GET /api/contracts`. Documented in `contracts/README.md`. ✅
-- [ ] T033 [DEFERRED] Fuzzy bias name → catalog id normalization — not needed yet.
+- [x] T033 Fuzzy bias name → catalog id normalization (`src/catalog/normalize.ts`).
 
 **Checkpoint**: Public E2E via Inngest smoke job. Contracts distributed at runtime.
 
@@ -153,10 +153,11 @@
 
 **Purpose**: Provider benchmarking, prompt versioning, confidence scoring, evaluation expansion.
 
-- [ ] T034 [P] Create provider benchmark script in `scripts/bench-providers.ts` (Gemini vs second provider)
-- [ ] T035 [P] Document prompt version bump process in `prompts/registry.ts` with `@1.0.0` tags
-- [ ] T036 [P] Implement `src/scoring/confidence.ts` — heuristic confidence scoring on assessment outputs
-- [ ] T037 [P] Expand evaluations: `evaluations/adversarial/`, `evaluations/regression/`, `evaluations/providers/`
+- [x] T038 [P] Stamp `prompt_version` and `schema_version` on every output — `PromptRegistry.getVersion()` in question + assessment services, `SCHEMA_VERSION` constant in contracts.
+- [ ] T034 [P] [DEFERRED] Create provider benchmark script in `scripts/bench-providers.ts` (Gemini vs second provider)
+- [ ] T035 [P] [DEFERRED] Document prompt version bump process in `prompts/registry.ts` with `@1.0.0` tags
+- [ ] T036 [P] [DEFERRED] Implement `src/scoring/confidence.ts` — heuristic confidence scoring on assessment outputs
+- [ ] T037 [P] [DEFERRED] Expand evaluations: `evaluations/adversarial/`, `evaluations/regression/`, `evaluations/providers/`
 
 **Checkpoint**: Tier 2 enhancements ready for separate task batch.
 
