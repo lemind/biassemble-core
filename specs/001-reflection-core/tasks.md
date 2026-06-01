@@ -149,7 +149,7 @@
 
 ---
 
-## Phase 5: Tier 2 slices (separate task batch — post-MVP)
+## Phase 5: Tier 2 slices (partial)
 
 **Purpose**: Provider benchmarking, prompt versioning, confidence scoring, evaluation expansion.
 
@@ -159,7 +159,7 @@
 - [ ] T036 [P] [DEFERRED] Implement `src/scoring/confidence.ts` — heuristic confidence scoring on assessment outputs
 - [ ] T037 [P] [DEFERRED] Expand evaluations: `evaluations/adversarial/`, `evaluations/regression/`, `evaluations/providers/`
 
-**Checkpoint**: Tier 2 enhancements ready for separate task batch.
+**Checkpoint**: T038 done (version stamping). T034–T037 deferred.
 
 ---
 
