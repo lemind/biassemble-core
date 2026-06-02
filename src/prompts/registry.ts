@@ -8,12 +8,19 @@ export type PromptTemplate = "question-batch" | "assessment";
 
 export class PromptRegistry {
   private guardrails: string;
+  private version: string;
 
-  constructor() {
+  constructor(version = "1.0.0") {
     this.guardrails = readFileSync(
       join(__dirname, "guardrails.md"),
       "utf-8"
     );
+    this.version = version;
+  }
+
+  /** Returns the current prompt version string. */
+  getVersion(): string {
+    return this.version;
   }
 
   render(template: PromptTemplate, variables: Record<string, string>): string {

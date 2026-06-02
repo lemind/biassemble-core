@@ -19,6 +19,8 @@ Core is **stateless** — no database. Entities below are **request/response DTO
 |-------|------|-------|
 | questions | string[] | Length 2–5; each min 1 char |
 | isComplete | boolean | Required |
+| prompt_version | string (optional) | Semver tag from PromptRegistry, e.g. `"1.0.0"` |
+| schema_version | string (optional) | Semver tag from contracts, e.g. `"1.0.0"` |
 
 ### GenerateAssessmentRequest
 
@@ -34,6 +36,7 @@ Core is **stateless** — no database. Entities below are **request/response DTO
 | Field | Type | Rules |
 |-------|------|-------|
 | name | string | Min 1; SHOULD match catalog name when possible |
+| biasCatalogId | string (optional) | Catalog ID after normalization via `normalize.ts` |
 | explanation | string | Min 10 |
 | storyConnection | string | Min 10; must reference user content |
 | alternativePerspective | string | Min 10 |
@@ -44,6 +47,8 @@ Core is **stateless** — no database. Entities below are **request/response DTO
 |-------|------|-------|
 | biases | BiasItem[] | Min 1; no max |
 | reflectionPrompt | string | Min 10 |
+| prompt_version | string (optional) | Semver tag from PromptRegistry, e.g. `"1.0.0"` |
+| schema_version | string (optional) | Semver tag from contracts, e.g. `"1.0.0"` |
 
 ## Internal: Bias catalog entry (MVP — ~30 Tier-A entries)
 
