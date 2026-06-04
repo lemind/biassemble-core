@@ -46,15 +46,10 @@
   - Add `modelName: string` to `AssessmentOutput`
   - Add `mode: "story_only" | "full"` to `GenerateAssessmentRequestSchema`
 
-- [ ] T003 [P] Create `src/contracts/run.schemas.ts`:
-  - NEW — Request schema for unified assessment endpoint:
-  - `AssessmentRequestSchema` with:
-    - `mode: "story_only" | "full"`
-    - `sessionId: string` (optional for story-only, required for full)
-    - `story: string` (min 50, max 3000)
-    - `questions?: string[]` (required when mode=full)
-    - `answers?: string[]` (required when mode=full)
-  - `CreateSessionRequestSchema` with `storyId: string`
+- [x] T003 [P] Add `CreateSessionRequestSchema` to `src/contracts/reflection.schemas.ts`:
+  - `CreateSessionRequestSchema` with `storyId: string` (uuid)
+  - Exported type `CreateSessionRequest`
+  - No new file — added to existing `reflection.schemas.ts` to avoid duplication with `GenerateAssessmentRequestSchema`
 
 **Checkpoint**: All Zod schemas defined and unit-testable. Entity relationships clear.
 
