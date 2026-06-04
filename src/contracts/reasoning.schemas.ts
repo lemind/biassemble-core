@@ -108,8 +108,8 @@ export const EvaluationMetricsSchema = z.object({
 });
 
 export const SystemMetricsSchema = z.object({
-  schema_parse_rate: z.number().min(0).max(1),
-  repair_rate: z.number().min(0).max(1),
+  schema_parse_rate: z.number().min(0).max(1).nullable(),
+  repair_rate: z.number().min(0).max(1).nullable(),
 });
 
 /** SHA-256 of the canonical input string: story + answers joined with '\n\n' */
