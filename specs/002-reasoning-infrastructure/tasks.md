@@ -20,7 +20,7 @@
 
 **Purpose**: Define all new Zod schemas and DB entities before implementation begins. No dependencies between these tasks.
 
-- [ ] T001 [P] Create `src/contracts/reasoning.schemas.ts` — NEW Zod schemas (all in one pass):
+- [x] T001 [P] Create `src/contracts/reasoning.schemas.ts` — NEW Zod schemas (all in one pass):
   - `PromptVersionSchema` as `z.string().min(1).brand("PromptVersion")`
   - `StoryAnalysis` (themes: string[], emotional_tone: string, key_events: string[], prompt_version: PromptVersion)
   - `InterpretationSchema` (interpretation: string, plausibility: number 0.0–1.0, supporting_evidence: string[], rejected?: boolean)
@@ -64,7 +64,7 @@
 
 **Purpose**: Build the evaluation metrics, system metrics, and persistence write path.
 
-- [ ] T101 [P] Create `src/evaluation/compute-evaluation-metrics.ts`:
+- [x] T101 [P] Create `src/evaluation/compute-evaluation-metrics.ts`:
   - `computeEvaluationMetrics(assessment, input)` — standalone pure function
   - Validates evidence excerpts against input text (verbatim substring matching)
   - Returns `{ evidence_grounded_rate: number | null, false_positive_rate: number | null }`
@@ -323,7 +323,7 @@
   - Hallucination rejection (excerpt not in input)
   - Empty edge cases (no biases, empty excerpts)
 
-- [ ] T503 [P] Create `tests/unit/evaluation/compute-evaluation-metrics.test.ts`:
+- [x] T503 [P] Create `tests/unit/evaluation/compute-evaluation-metrics.test.ts`:
   - `computeEvaluationMetrics` known cases: all grounded, partially grounded, none grounded
   - Empty bias list → evidence_grounded_rate is null
   - No no_bias assessments → false_positive_rate is null

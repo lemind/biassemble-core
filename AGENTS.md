@@ -91,6 +91,13 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 
 **Trigger examples** (docs update required): new `frontend/` or `backend/` package, API route added/renamed, env var moved server-side, phase completed, MVP scope narrowed or expanded.
 
+## Task Tracking
+
+- **Source of truth**: `specs/<feature>/tasks.md` — this is the only place task status is tracked.
+- **When you complete a task**: Open `tasks.md`, change `- [ ]` to `- [x]` for that task ID, and commit the change.
+- **Do not maintain a separate checklist** in your internal state or in tool parameters. The file is the record.
+- **If you notice a task is already done** (e.g., file exists, tests pass), mark it `[x]` in `tasks.md` — don't leave it stale.
+
 ## Workflow
 
 - Implement incrementally.
