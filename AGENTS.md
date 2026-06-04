@@ -28,6 +28,27 @@
 - Match existing naming conventions; do not rename variables without scope.
 - **Naming**: Use descriptive names that make purpose obvious (`loadAssessment`, `pollSessionStatus`, `stopPolling`). Avoid generic names like `fetch`, `data`, `result`, `check`, `cleanup`, `doStuff`. Don't over-verbose — `updateAnswer` is good, `updateCurrentAnswerTextInState` is not.
 
+## Repository Structure
+
+This project contains **two separate git repositories** in sibling directories:
+
+```
+/home/dl/_prog/biassemble/          ← NOT a git repo (workspace container only)
+├── biassemble/                     ← App repo (BE + FE), has its own .git
+│   ├── backend/
+│   ├── frontend/
+│   └── AGENTS.md
+│
+└── biassemble-core/                ← Core repo (private), has its own .git  ← YOU ARE HERE
+    ├── src/
+    └── AGENTS.md
+```
+
+- The parent `/home/dl/_prog/biassemble/` is **not** a git repository — it's a workspace container.
+- `biassemble/biassemble/` is the **app repo** (backend + frontend). Run git commands from `/home/dl/_prog/biassemble/biassemble/`.
+- `biassemble/biassemble-core/` is the **core repo** (private AI logic). Run git commands from `/home/dl/_prog/biassemble/biassemble-core/`.
+- Each repo has its own branch, commits, and PRs. They are independent.
+
 ## Git & Version Control
 
 - Commit atomically: one logical change per commit.
