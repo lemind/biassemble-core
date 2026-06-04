@@ -28,10 +28,6 @@ export const GenerateQuestionRequestSchema = z.object({
   story: z.string().min(STORY_MIN_LENGTH).max(STORY_MAX_LENGTH),
 });
 
-export const CreateSessionRequestSchema = z.object({
-  storyId: z.string().uuid(),
-});
-
 export const GenerateAssessmentRequestSchema = z.object({
   sessionId: z.string().uuid(),
   story: z.string().min(1),
@@ -73,7 +69,6 @@ export const AssessmentOutputSchema = z.object({
 // ─── Types ─────────────────────────────────────────────────
 
 export type GenerateQuestionRequest = z.infer<typeof GenerateQuestionRequestSchema>;
-export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;
 export type GenerateAssessmentRequest = z.infer<typeof GenerateAssessmentRequestSchema>;
 export type QuestionOutput = z.infer<typeof QuestionOutputSchema>;
 export type AssessmentOutput = z.infer<typeof AssessmentOutputSchema>;
