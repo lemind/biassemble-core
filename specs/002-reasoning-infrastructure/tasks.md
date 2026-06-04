@@ -67,12 +67,12 @@
   - `false_positive_rate` = proportion of assessments returning biases for no_bias stories; `null` when no no_bias assessments in dataset
   - No side effects, no imports from production path
 
-- [ ] T102 [P] Create `src/evaluation/compute-system-metrics.ts`:
+- [x] T102 [P] Create `src/evaluation/compute-system-metrics.ts`:
   - `computeSystemMetrics(responses)` — standalone pure function
   - Input: `Array<{ requiredRepair: boolean }>` — one entry per LLM response
-  - Returns `{ schema_parse_rate: number, repair_rate: number }`
-  - `schema_parse_rate` = proportion of responses that parsed without invoking repair pipeline
-  - `repair_rate` = proportion of responses that required repair (= 1 - schema_parse_rate)
+  - Returns `{ schema_parse_rate: number | null, repair_rate: number | null }`
+  - `schema_parse_rate` = proportion of responses that parsed without invoking repair pipeline; `null` when responses array is empty
+  - `repair_rate` = proportion of responses that required repair (= 1 - schema_parse_rate); `null` when responses array is empty
   - No side effects
 
 - [ ] T103 [P] Create `src/persistence/session-store.ts`:
@@ -323,7 +323,7 @@
   - Empty bias list → evidence_grounded_rate is null
   - No no_bias assessments → false_positive_rate is null
 
-- [ ] T504 [P] Create `tests/unit/evaluation/compute-system-metrics.test.ts`:
+- [x] T504 [P] Create `tests/unit/evaluation/compute-system-metrics.test.ts`:
   - `computeSystemMetrics` known cases: all parsed, some repaired, all repaired
   - Edge case: empty responses array
   - Edge case: single response
