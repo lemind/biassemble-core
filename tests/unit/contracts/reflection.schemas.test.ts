@@ -59,6 +59,7 @@ describe("GenerateAssessmentRequestSchema", () => {
     story: "a".repeat(100),
     questions: ["What makes you feel that way?", "Can you elaborate?"],
     answers: ["I feel frustrated.", "It's complicated."],
+    mode: "full",
   };
 
   it("should validate a valid request", () => {
@@ -235,6 +236,9 @@ describe("AssessmentOutputSchema", () => {
     reflectionPrompt: "Consider how confirmation bias might be affecting your decision-making process.",
     prompt_version: "1.0.0",
     schema_version: "1.0.0",
+    noBiasDetected: false,
+    inputContext: "story-only",
+    modelName: "gemini-2.0-flash",
   };
 
   it("should validate a valid assessment with 1 bias", () => {

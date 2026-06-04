@@ -37,7 +37,7 @@
   - NOTE: `stage` and `scope` are Zod enums. `stage` enum: `["initial_assessment", "post_questions_assessment"]`, `scope` enum: `["story_only", "story_plus_answers"]`
   - NOTE: `prompt_version` is required on every step schema and on `ReasoningTrace` itself. Missing prompt_version MUST throw at runtime.
 
-- [ ] T002 [P] Extend `src/contracts/reflection.schemas.ts`:
+- [x] T002 [P] Extend `src/contracts/reflection.schemas.ts`:
   - Import `EvidenceEntry` and `ReasoningTrace` from `reasoning.schemas.ts`
   - Add `evidence: EvidenceEntry[]` to `BiasItem`
   - Add `noBiasDetected: boolean` to `AssessmentOutput`
