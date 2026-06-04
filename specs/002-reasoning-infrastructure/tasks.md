@@ -75,7 +75,8 @@
   - `repair_rate` = proportion of responses that required repair (= 1 - schema_parse_rate); `null` when responses array is empty
   - No side effects
 
-- [ ] T103 [P] Create `src/persistence/session-store.ts`:
+- [x] T103 [P] Create `src/persistence/session-store.ts`:
+  > **Actual**: Superseded. File-based session-store was rejected. Instead defined typed ports in [`src/persistence/types.ts`](/src/persistence/types.ts) + [`src/persistence/ports.ts`](/src/persistence/ports.ts) (camelCase store boundary). Backend Drizzle implementation in [`biassemble/backend/src/drizzle/schema.ts`](/../backend/src/drizzle/schema.ts) (tables: `runs`, `reasoning_traces`, `eval_results`) + queries in [`biassemble/backend/src/lib/db/queries.ts`](/../backend/src/lib/db/queries.ts) (createRun, getRunsBySession, persistTrace, getTrace, persistEvalResult, getEvalResultByHash, getLatestEvalResults). Drizzle-first from day one — no file fallback, no feature flag. See also spec.md "Actual Implementation" section and plan.md "Actual Implementation" section.
   - Export `createSession(storyId: string): Promise<Session>`
   - Export `createRun(sessionId: string, runData: Omit<Run, 'id' | 'createdAt'>): Promise<Run>`
   - Export `getSession(id: string): Promise<Session | null>`
@@ -83,14 +84,16 @@
   - Default implementation: JSON files in `./data/sessions/` and `./data/runs/`
   - Feature-flagged: when `PERSIST_REASONING_TRACE=supabase`, use Supabase tables
 
-- [ ] T104 [P] Create `src/persistence/trace-store.ts`:
+- [x] T104 [P] Create `src/persistence/trace-store.ts`:
+  > **Actual**: Superseded. Same pattern as T103 — types/ports in [`src/persistence/types.ts`](/src/persistence/types.ts) + [`src/persistence/ports.ts`](/src/persistence/ports.ts), Drizzle tables in [`biassemble/backend/src/drizzle/schema.ts`](/../backend/src/drizzle/schema.ts). No file-based persistence, no `trace_type` column (removed from schema). Reasoning traces stored as `jsonb` on `reasoning_traces` table. Write/read via `persistTrace` / `getTrace` in [`biassemble/backend/src/lib/db/queries.ts`](/../backend/src/lib/db/queries.ts).
   - Export `persistReasoningTrace(runId: string, trace: ReasoningTrace): Promise<void>`
   - Export `getReasoningTrace(runId: string): Promise<ReasoningTrace | null>`
   - File path: `./data/reasoning-traces/{session_id}/{stage}/{run_id}.json`
   - Feature-flagged Supabase upgrade (T404)
   - Wire call added in T203 (assessment service)
 
-- [ ] T105 [P] Create `src/persistence/eval-results-store.ts`:
+- [x] T105 [P] Create `src/persistence/eval-results-store.ts`:
+  > **Actual**: Superseded. Same pattern as T103/T104. `eval_results` table defined in [`biassemble/backend/src/drizzle/schema.ts`](/../backend/src/drizzle/schema.ts) with `provider` column (not in original plan) and Drizzle enum constraint on `dataset`. Query functions in [`biassemble/backend/src/lib/db/queries.ts`](/../backend/src/lib/db/queries.ts) (persistEvalResult, getEvalResultByHash, getLatestEvalResults). File-based persistence not implemented.
   - Export `persistEvalResult(result: EvalResult): Promise<void>`
   - Export `getEvalResultByHash(inputHash: string, promptVersion: string): Promise<EvalResult | null>`
   - Export `getLatestEvalResults(promptVersion: string, limit: number): Promise<EvalResult[]>`

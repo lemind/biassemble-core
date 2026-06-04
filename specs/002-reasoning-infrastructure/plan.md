@@ -366,6 +366,18 @@ eval_results (standalone — linked to run optionally)
 
 ---
 
+### Actual Implementation (deviations from plan)
+
+**Persistence**: Rejected file-based persistence. Instead defined typed ports in `src/persistence/types.ts` + `src/persistence/ports.ts` (camelCase store boundary) and implemented Drizzle ORM tables in `biassemble/backend/src/drizzle/schema.ts` with query functions in `biassemble/backend/src/lib/db/queries.ts`. No feature flag, no file fallback, no Supabase migration step — Drizzle-first from day one.
+
+**Schema changes vs plan**:
+- `runs` includes `provider` column (not in original plan)
+- `reasoning_traces` has NO `trace_type` column (was planned but removed)
+- `eval_results` includes `provider` column
+- `stage`, `scope`, `dataset` use Drizzle enum constraints
+
+---
+
 ## Constitution Check
 
 *GATE: Pass*
