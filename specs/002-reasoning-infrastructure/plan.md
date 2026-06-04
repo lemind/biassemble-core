@@ -191,6 +191,25 @@ Existing assessment endpoint remains the primary API. Evidence binding and reaso
 
 ---
 
+### Phase 1b: DB Schema + Queries + Eval Job (extra, not in original plan)
+
+**Purpose**: Core-owned DB schema (`core` schema), query functions, and Inngest eval job. Schema defined but not wired into production path yet — ready for T404.
+
+**Overview**: Drizzle schema for `runs`, `reasoning_traces`, `eval_results` in `core` schema. Query functions for create/get/persist. Inngest eval job for CI-gate + nightly monitoring. Drizzle config with `schemaFilter: ["core"]`.
+
+| Task | File(s) | Description |
+|------|---------|-------------|
+| T1b1 | `src/db/schema.ts` | Drizzle schema: `runs` (id, session_id, provider, model_name, stage, scope, prompt_version, input_hash, created_at), `reasoning_traces` (id, run_id, trace jsonb, created_at), `eval_results` (id, run_id?, provider, model_name, prompt_version, dataset, evaluation_metrics jsonb, system_metrics jsonb, input_hash, passed, run_at). All in `core` schema via `pgSchema("core")`. |
+| T1b2 | `src/db/config.ts` | Drizzle connection config using `DATABASE_URL` env var. |
+| T1b3 | `src/db/queries.ts` | Query functions: `createRun`, `getRunsBySession`, `persistTrace`, `getTrace`, `persistEvalResult`, `getEvalResultByHash`, `getLatestEvalResults`. |
+| T1b4 | `drizzle.config.ts` | Drizzle Kit config: schema `./src/db/schema.ts`, out `./src/db/migrations`, dialect postgresql, schemaFilter `["core"]`. |
+| T1b5 | `src/jobs/client.ts` | Inngest client init with `INNGEST_APP_NAME` and `INNGEST_EVENT_KEY` env vars. |
+| T1b6 | `src/jobs/eval-job.ts` | Inngest eval function: runs golden + no_bias datasets, computes metrics, persists to eval_results. Accepts `triggerType: "gate" | "monitor"`. |
+
+**Checkpoint**: DB schema defined, queries work, eval job exists. Not wired into production path yet.
+
+---
+
 ### Phase 2: Reasoning Pipeline — Orchestrator Upgrade
 
 **Purpose**: Upgrade the assessment orchestrator to two-phase flow with intermediate reasoning + evidence binding.
@@ -392,3 +411,4 @@ eval_results (standalone — linked to run optionally)
 | VI Non-clinical | Existing `guardrails.md` applies to all new prompts |
 
 No complexity tracking violations.
+---

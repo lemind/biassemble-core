@@ -12,17 +12,24 @@
     "typecheck": "tsc --noEmit",
     "eval": "tsx scripts/eval-reflection.ts",
     "generate:contracts": "tsx scripts/generate-contracts.ts",
-    "deploy": "vercel deploy --prod"
+    "deploy": "vercel deploy --prod",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
+    "drizzle-orm": "^0.38.0",
     "fastify": "^5.2.1",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
+    "postgres": "^3.4.5",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "drizzle-kit": "^0.30.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

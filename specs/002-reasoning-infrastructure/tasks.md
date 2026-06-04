@@ -75,7 +75,7 @@
   - `repair_rate` = proportion of responses that required repair (= 1 - schema_parse_rate); `null` when responses array is empty
   - No side effects
 
-- [x] T103 [P] Create `src/persistence/session-store.ts`:
+- [SKIPPED] T103 [P] Create `src/persistence/session-store.ts`:
   > **Actual**: Superseded. File-based session-store was rejected. Instead defined typed ports in [`src/persistence/types.ts`](/src/persistence/types.ts) + [`src/persistence/ports.ts`](/src/persistence/ports.ts) (camelCase store boundary). Backend Drizzle implementation in [`biassemble/backend/src/drizzle/schema.ts`](/../backend/src/drizzle/schema.ts) (tables: `runs`, `reasoning_traces`, `eval_results`) + queries in [`biassemble/backend/src/lib/db/queries.ts`](/../backend/src/lib/db/queries.ts) (createRun, getRunsBySession, persistTrace, getTrace, persistEvalResult, getEvalResultByHash, getLatestEvalResults). Drizzle-first from day one — no file fallback, no feature flag. See also spec.md "Actual Implementation" section and plan.md "Actual Implementation" section.
   - Export `createSession(storyId: string): Promise<Session>`
   - Export `createRun(sessionId: string, runData: Omit<Run, 'id' | 'createdAt'>): Promise<Run>`
@@ -84,7 +84,7 @@
   - Default implementation: JSON files in `./data/sessions/` and `./data/runs/`
   - Feature-flagged: when `PERSIST_REASONING_TRACE=supabase`, use Supabase tables
 
-- [x] T104 [P] Create `src/persistence/trace-store.ts`:
+- [SKIPPED] T104 [P] Create `src/persistence/trace-store.ts`:
   > **Actual**: Superseded. Same pattern as T103 — types/ports in [`src/persistence/types.ts`](/src/persistence/types.ts) + [`src/persistence/ports.ts`](/src/persistence/ports.ts), Drizzle tables in [`biassemble/backend/src/drizzle/schema.ts`](/../backend/src/drizzle/schema.ts). No file-based persistence, no `trace_type` column (removed from schema). Reasoning traces stored as `jsonb` on `reasoning_traces` table. Write/read via `persistTrace` / `getTrace` in [`biassemble/backend/src/lib/db/queries.ts`](/../backend/src/lib/db/queries.ts).
   - Export `persistReasoningTrace(runId: string, trace: ReasoningTrace): Promise<void>`
   - Export `getReasoningTrace(runId: string): Promise<ReasoningTrace | null>`
@@ -92,7 +92,7 @@
   - Feature-flagged Supabase upgrade (T404)
   - Wire call added in T203 (assessment service)
 
-- [x] T105 [P] Create `src/persistence/eval-results-store.ts`:
+- [SKIPPED] T105 [P] Create `src/persistence/eval-results-store.ts`:
   > **Actual**: Superseded. Same pattern as T103/T104. `eval_results` table defined in [`biassemble/backend/src/drizzle/schema.ts`](/../backend/src/drizzle/schema.ts) with `provider` column (not in original plan) and Drizzle enum constraint on `dataset`. Query functions in [`biassemble/backend/src/lib/db/queries.ts`](/../backend/src/lib/db/queries.ts) (persistEvalResult, getEvalResultByHash, getLatestEvalResults). File-based persistence not implemented.
   - Export `persistEvalResult(result: EvalResult): Promise<void>`
   - Export `getEvalResultByHash(inputHash: string, promptVersion: string): Promise<EvalResult | null>`
@@ -102,6 +102,43 @@
   - Feature-flagged Supabase upgrade (T404)
 
 **Checkpoint**: All persistence write paths exist. Metrics functions return correct values for known test cases. Traces generated from Phase 2 forward are stored.
+
+---
+
+## Phase 1b: DB Schema + Queries + Eval Job (extra, not in original plan)
+
+**Purpose**: Core-owned DB schema (`core` schema), query functions, and Inngest eval job. Schema defined but not wired into production path yet — ready for T404.
+
+- [x] T1b1 Create `src/db/schema.ts`:
+  - Drizzle schema for `runs`, `reasoning_traces`, `eval_results` in `core` schema via `pgSchema("core")`
+  - `runs`: id (uuid PK), session_id (uuid, not null), provider (text), model_name (text), stage (enum: initial_assessment | post_questions_assessment), scope (enum: story_only | story_plus_answers), prompt_version (text), input_hash (text), created_at (timestamp)
+  - `reasoning_traces`: id (uuid PK), run_id (uuid, not null), trace (jsonb), created_at (timestamp)
+  - `eval_results`: id (uuid PK), run_id (uuid, optional), provider (text), model_name (text), prompt_version (text), dataset (enum: golden | no_bias | all), evaluation_metrics (jsonb), system_metrics (jsonb), input_hash (text), passed (boolean), run_at (timestamp)
+
+- [x] T1b2 Create `src/db/config.ts`:
+  - Drizzle connection config using `DATABASE_URL` env var
+  - Export `db` instance for use in queries
+
+- [x] T1b3 Create `src/db/queries.ts`:
+  - `createRun(data)` — insert run, return created run
+  - `getRunsBySession(sessionId)` — list runs for a session
+  - `persistTrace(runId, trace)` — insert reasoning trace
+  - `getTrace(runId)` — get trace by run ID
+  - `persistEvalResult(data)` — insert eval result
+  - `getEvalResultByHash(inputHash, promptVersion)` — check determinism
+  - `getLatestEvalResults(promptVersion, limit)` — latest N results
+
+- [x] T1b4 Create `drizzle.config.ts`:
+  - Drizzle Kit config: schema `./src/db/schema.ts`, out `./src/db/migrations`, dialect postgresql, schemaFilter `["core"]`
+
+- [x] T1b5 Create `src/jobs/client.ts`:
+  - Inngest client init with `INNGEST_APP_NAME` and `INNGEST_EVENT_KEY` env vars
+
+- [x] T1b6 Create `src/jobs/eval-job.ts`:
+  - Inngest eval function: runs golden + no_bias datasets, computes metrics, persists to eval_results
+  - Accepts `triggerType: "gate" | "monitor"`
+
+**Checkpoint**: DB schema defined, queries work, eval job exists. Not wired into production path yet.
 
 ---
 
@@ -418,9 +455,10 @@
 |---|---|---|
 | 0 | T001, T002, T003 | All Zod schemas defined |
 | 1 | T101, T102, T103, T104, T105 | Metrics + persistence write paths exist |
+| 1b | T1b1, T1b2, T1b3, T1b4, T1b5, T1b6 | Core DB schema + queries + eval job defined |
 | 2 | T201, T202, T203, T204, T205, T206, T207 | Two-phase assessment with reasoning trace |
 | 3 | T301, T302, T303, T304, T305, T306, T307 | no_bias + eval script + CI gate + daily monitor |
 | 4 | T401, T402, T403, T404 | Unified API + Supabase persistence |
 | 5 | T501, T502, T503, T504, T505, T506, T507, T508, T509, T510, T511 | All tests green. READMEs updated. |
 
-**Total: 34 tasks across 6 phases (0–5)**
+**Total: 40 tasks across 7 phases (0–5 + 1b)**

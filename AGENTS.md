@@ -133,6 +133,7 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 
 ## Forbidden
 
+- Do not create documentation files that are not explicitly listed in plan.md or tasks.md. The spec/plan/tasks files are the source of truth.
 - Premature abstractions.
 - Global state unless justified.
 - Silent failures.
