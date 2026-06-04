@@ -91,6 +91,13 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 
 **Trigger examples** (docs update required): new `frontend/` or `backend/` package, API route added/renamed, env var moved server-side, phase completed, MVP scope narrowed or expanded.
 
+## Task Tracking
+
+- **Source of truth**: `specs/<feature>/tasks.md` — this is the only place task status is tracked.
+- **When you complete a task**: Open `tasks.md`, change `- [ ]` to `- [x]` for that task ID, and commit the change.
+- **Do not maintain a separate checklist** in your internal state or in tool parameters. The file is the record.
+- **If you notice a task is already done** (e.g., file exists, tests pass), mark it `[x]` in `tasks.md` — don't leave it stale.
+
 ## Workflow
 
 - Implement incrementally.
@@ -106,6 +113,7 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - If you think a heuristic or enhancement would be valuable, document it in `specs/<feature>/possible-enhancements.md` — do not implement it.
 - Mark tasks as `[x]` in `tasks.md` only when the implementation matches the task description exactly.
 - **Chronological ordering in tasks.md**: Add new sub-phases to the **end** of the current phase, not in the middle. Sub-phase letters (`4a`, `4b`, `4c`, `4d`) must reflect actual completion order, not planned order. If you add work after other sub-phases were already completed, give it the next letter in sequence.
+- **Do not modify spec.md, plan.md, or tasks.md after implementation has started** unless adding corrections or clarifications. If a task turns out to be unnecessary, mark it as `[SKIPPED]` with a reason — do not rewrite the task description.
 
 ## Autonomy
 

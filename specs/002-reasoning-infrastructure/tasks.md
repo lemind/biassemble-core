@@ -20,7 +20,7 @@
 
 **Purpose**: Define all new Zod schemas and DB entities before implementation begins. No dependencies between these tasks.
 
-- [ ] T001 [P] Create `src/contracts/reasoning.schemas.ts` — NEW Zod schemas (all in one pass):
+- [x] T001 [P] Create `src/contracts/reasoning.schemas.ts` — NEW Zod schemas (all in one pass):
   - `PromptVersionSchema` as `z.string().min(1).brand("PromptVersion")`
   - `StoryAnalysis` (themes: string[], emotional_tone: string, key_events: string[], prompt_version: PromptVersion)
   - `InterpretationSchema` (interpretation: string, plausibility: number 0.0–1.0, supporting_evidence: string[], rejected?: boolean)
@@ -37,7 +37,7 @@
   - NOTE: `stage` and `scope` are Zod enums. `stage` enum: `["initial_assessment", "post_questions_assessment"]`, `scope` enum: `["story_only", "story_plus_answers"]`
   - NOTE: `prompt_version` is required on every step schema and on `ReasoningTrace` itself. Missing prompt_version MUST throw at runtime.
 
-- [ ] T002 [P] Extend `src/contracts/reflection.schemas.ts`:
+- [x] T002 [P] Extend `src/contracts/reflection.schemas.ts`:
   - Import `EvidenceEntry` and `ReasoningTrace` from `reasoning.schemas.ts`
   - Add `evidence: EvidenceEntry[]` to `BiasItem`
   - Add `noBiasDetected: boolean` to `AssessmentOutput`
@@ -46,15 +46,10 @@
   - Add `modelName: string` to `AssessmentOutput`
   - Add `mode: "story_only" | "full"` to `GenerateAssessmentRequestSchema`
 
-- [ ] T003 [P] Create `src/contracts/run.schemas.ts`:
-  - NEW — Request schema for unified assessment endpoint:
-  - `AssessmentRequestSchema` with:
-    - `mode: "story_only" | "full"`
-    - `sessionId: string` (optional for story-only, required for full)
-    - `story: string` (min 50, max 3000)
-    - `questions?: string[]` (required when mode=full)
-    - `answers?: string[]` (required when mode=full)
-  - `CreateSessionRequestSchema` with `storyId: string`
+- [x] T003 [SKIPPED] No new schema needed:
+  - `GenerateAssessmentRequestSchema` already has all fields (`sessionId`, `story`, `questions`, `answers`, `mode`)
+  - `CreateSessionRequestSchema` is dead code — sessions are created server-side, not via a separate endpoint
+  - No new file or schema required
 
 **Checkpoint**: All Zod schemas defined and unit-testable. Entity relationships clear.
 
@@ -64,7 +59,7 @@
 
 **Purpose**: Build the evaluation metrics, system metrics, and persistence write path.
 
-- [ ] T101 [P] Create `src/evaluation/compute-evaluation-metrics.ts`:
+- [x] T101 [P] Create `src/evaluation/compute-evaluation-metrics.ts`:
   - `computeEvaluationMetrics(assessment, input)` — standalone pure function
   - Validates evidence excerpts against input text (verbatim substring matching)
   - Returns `{ evidence_grounded_rate: number | null, false_positive_rate: number | null }`
@@ -323,7 +318,7 @@
   - Hallucination rejection (excerpt not in input)
   - Empty edge cases (no biases, empty excerpts)
 
-- [ ] T503 [P] Create `tests/unit/evaluation/compute-evaluation-metrics.test.ts`:
+- [x] T503 [P] Create `tests/unit/evaluation/compute-evaluation-metrics.test.ts`:
   - `computeEvaluationMetrics` known cases: all grounded, partially grounded, none grounded
   - Empty bias list → evidence_grounded_rate is null
   - No no_bias assessments → false_positive_rate is null

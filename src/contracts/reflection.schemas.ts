@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EvidenceEntrySchema, ReasoningTraceSchema } from "./reasoning.schemas";
 
 // ─── Constants ────────────────────────────────────────────
 
@@ -6,7 +7,6 @@ const STORY_MIN_LENGTH = 50;
 const STORY_MAX_LENGTH = 3000;
 const QUESTIONS_MIN = 2;
 const QUESTIONS_MAX = 5;
-const BIASES_MIN_COUNT = 1;
 const BIAS_FIELD_MIN_LENGTH = 10;
 const REFLECTION_MIN_LENGTH = 10;
 
@@ -15,6 +15,11 @@ export const SCHEMA_VERSION = "1.0.0" as const;
 
 /** Prompt version carried in every response. Bump when prompts are updated. */
 export const PROMPT_VERSION = "1.0.0" as const;
+
+// ─── Enums ──────────────────────────────────────────────────
+
+export const InputContextEnum = z.enum(["story-only", "full"]);
+export const AssessmentModeEnum = z.enum(["story_only", "full"]);
 
 // ─── Request schemas ───────────────────────────────────────
 
@@ -28,6 +33,7 @@ export const GenerateAssessmentRequestSchema = z.object({
   story: z.string().min(1),
   questions: z.array(z.string().min(1)).min(1),
   answers: z.array(z.string().min(1)).min(1),
+  mode: AssessmentModeEnum,
 });
 
 // ─── Response schemas ──────────────────────────────────────
@@ -39,6 +45,7 @@ export const BiasItemSchema = z.object({
   explanation: z.string().min(BIAS_FIELD_MIN_LENGTH),
   storyConnection: z.string().min(BIAS_FIELD_MIN_LENGTH),
   alternativePerspective: z.string().min(BIAS_FIELD_MIN_LENGTH),
+  evidence: z.array(EvidenceEntrySchema).optional(),
 });
 
 export const QuestionOutputSchema = z.object({
@@ -49,10 +56,14 @@ export const QuestionOutputSchema = z.object({
 });
 
 export const AssessmentOutputSchema = z.object({
-  biases: z.array(BiasItemSchema).min(BIASES_MIN_COUNT),
+  biases: z.array(BiasItemSchema).min(1),
   reflectionPrompt: z.string().min(REFLECTION_MIN_LENGTH),
   prompt_version: z.string(),
   schema_version: z.literal(SCHEMA_VERSION),
+  noBiasDetected: z.boolean(),
+  reasoningTrace: ReasoningTraceSchema.optional(),
+  inputContext: InputContextEnum,
+  modelName: z.string().min(1),
 });
 
 // ─── Types ─────────────────────────────────────────────────
