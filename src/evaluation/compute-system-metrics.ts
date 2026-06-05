@@ -1,111 +1,89 @@
-import type {
-  ReasoningTrace,
-  BiasHypothesis,
-} from "../contracts/reasoning.schemas";
+/**
+ * Compute system-level health metrics for the reasoning pipeline.
+ *
+ * These metrics measure parser stability, schema stability, and model output
+ * stability — NOT reasoning quality or ontology usage.
+ *
+ * ── Metrics ────────────────────────────────────────────────────────────────
+ *
+ * - `schemaParseRate`: proportion of raw LLM responses that were successfully
+ *   parsed into the expected schema (first-pass, before repair).
+ * - `repairRate`: proportion of failed-first-pass responses that were
+ *   successfully repaired by the repair pipeline.
+ *
+ * Pure function — no side effects.
+ */
 
-// ─── System-level metrics ────────────────────────────────────
-// These metrics assess the overall health of the reasoning
-// pipeline, not the quality of individual assessments.
+// ─── Types ─────────────────────────────────────────────────────────────────
 
 export interface SystemMetrics {
-  /** Total number of traces processed */
-  totalTraces: number;
+  /** Total number of LLM responses processed */
+  totalResponses: number;
 
-  /** Number of traces that contain at least one bias hypothesis */
-  tracesWithBias: number;
+  /** Number of responses that passed first-pass schema parsing */
+  schemaParsePassCount: number;
 
-  /** Average number of bias hypotheses per trace */
-  avgHypothesesPerTrace: number;
+  /** Proportion of responses that passed first-pass schema parsing (0–1) */
+  schemaParseRate: number;
 
-  /** Average confidence across all bias hypotheses */
-  avgConfidence: number;
+  /** Number of failed-first-pass responses that were sent to repair */
+  repairAttemptCount: number;
 
-  /** Number of unique bias names detected across all traces */
-  uniqueBiasNames: number;
+  /** Number of repair attempts that succeeded */
+  repairSuccessCount: number;
 
-  /** Distribution of bias names across all traces (name → count) */
-  biasNameDistribution: Record<string, number>;
-
-  /** Average number of supporting excerpts per hypothesis */
-  avgExcerptsPerHypothesis: number;
-
-  /** Percentage of hypotheses that have at least one supporting excerpt */
-  excerptCoverageRate: number;
+  /** Proportion of repair attempts that succeeded (0–1). Null when no repairs were attempted. */
+  repairRate: number | null;
 }
 
-// ─── Compute ─────────────────────────────────────────────────
+export interface LLMResponse {
+  /** Whether the raw LLM output required repair (failed first-pass parse) */
+  requiredRepair: boolean;
+
+  /** Whether the repair was successful. Only meaningful when requiredRepair is true. */
+  repairSucceeded?: boolean;
+}
+
+// ─── Compute ───────────────────────────────────────────────────────────────
 
 export function computeSystemMetrics(
-  traces: ReasoningTrace[],
+  responses: LLMResponse[],
 ): SystemMetrics {
-  if (traces.length === 0) {
+  const totalResponses = responses.length;
+
+  if (totalResponses === 0) {
     return {
-      totalTraces: 0,
-      tracesWithBias: 0,
-      avgHypothesesPerTrace: 0,
-      avgConfidence: 0,
-      uniqueBiasNames: 0,
-      biasNameDistribution: {},
-      avgExcerptsPerHypothesis: 0,
-      excerptCoverageRate: 0,
+      totalResponses: 0,
+      schemaParsePassCount: 0,
+      schemaParseRate: 0,
+      repairAttemptCount: 0,
+      repairSuccessCount: 0,
+      repairRate: null,
     };
   }
 
-  const allHypotheses: BiasHypothesis[] = [];
-  const biasNameCounts: Record<string, number> = {};
-  let tracesWithBiasCount = 0;
+  const schemaParsePassCount = responses.filter(
+    (r) => !r.requiredRepair,
+  ).length;
 
-  for (const trace of traces) {
-    const hypotheses = trace.bias_hypotheses ?? [];
-    allHypotheses.push(...hypotheses);
+  const repairAttempts = responses.filter((r) => r.requiredRepair);
+  const repairAttemptCount = repairAttempts.length;
+  const repairSuccessCount = repairAttempts.filter(
+    (r) => r.repairSucceeded === true,
+  ).length;
 
-    if (hypotheses.length > 0) {
-      tracesWithBiasCount++;
-    }
-
-    for (const h of hypotheses) {
-      const name = h.bias_name;
-      biasNameCounts[name] = (biasNameCounts[name] ?? 0) + 1;
-    }
-  }
-
-  const totalHypotheses = allHypotheses.length;
-  const avgHypothesesPerTrace = totalHypotheses / traces.length;
-
-  const totalConfidence = allHypotheses.reduce(
-    (sum, h) => sum + h.confidence,
-    0,
-  );
-  const avgConfidence =
-    totalHypotheses > 0 ? totalConfidence / totalHypotheses : 0;
-
-  const uniqueBiasNames = Object.keys(biasNameCounts).length;
-
-  let totalExcerpts = 0;
-  let hypothesesWithExcerpts = 0;
-
-  for (const h of allHypotheses) {
-    const excerpts = h.supporting_excerpts ?? [];
-    totalExcerpts += excerpts.length;
-    if (excerpts.length > 0) {
-      hypothesesWithExcerpts++;
-    }
-  }
-
-  const avgExcerptsPerHypothesis =
-    totalHypotheses > 0 ? totalExcerpts / totalHypotheses : 0;
-
-  const excerptCoverageRate =
-    totalHypotheses > 0 ? hypothesesWithExcerpts / totalHypotheses : 0;
+  const schemaParseRate = schemaParsePassCount / totalResponses;
+  const repairRate =
+    repairAttemptCount > 0
+      ? repairSuccessCount / repairAttemptCount
+      : null;
 
   return {
-    totalTraces: traces.length,
-    tracesWithBias: tracesWithBiasCount,
-    avgHypothesesPerTrace,
-    avgConfidence,
-    uniqueBiasNames,
-    biasNameDistribution: biasNameCounts,
-    avgExcerptsPerHypothesis,
-    excerptCoverageRate,
+    totalResponses,
+    schemaParsePassCount,
+    schemaParseRate,
+    repairAttemptCount,
+    repairSuccessCount,
+    repairRate,
   };
 }

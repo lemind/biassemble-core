@@ -2,175 +2,95 @@ import { describe, it, expect } from "vitest";
 import {
   computeSystemMetrics,
   type SystemMetrics,
+  type LLMResponse,
 } from "../../../src/evaluation/compute-system-metrics";
-import type { ReasoningTrace } from "../../../src/contracts/reasoning.schemas";
 
-// ─── Helpers ─────────────────────────────────────────────────
-
-function makeTrace(overrides?: Partial<ReasoningTrace>): ReasoningTrace {
-  return {
-    story_analysis: {
-      themes: [],
-      emotional_tone: "neutral",
-      key_events: [],
-    },
-    interpretations: [],
-    bias_hypotheses: [],
-    evidence_mapping: [],
-    prompt_version: "test:abc:1.0.0" as ReasoningTrace["prompt_version"],
-    ...overrides,
-  };
-}
-
-function makeHypothesis(overrides?: {
-  bias_name?: string;
-  confidence?: number;
-  supporting_excerpts?: string[];
-  uncertainty_reasons?: string[];
-}) {
-  return {
-    bias_name: "Confirmation Bias",
-    confidence: 0.85,
-    supporting_excerpts: ["excerpt 1"],
-    uncertainty_reasons: [],
-    ...overrides,
-  };
-}
-
-// ─── Tests ───────────────────────────────────────────────────
+// ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe("computeSystemMetrics", () => {
-  it("returns zero metrics for empty traces array", () => {
+  it("returns zero metrics for empty responses array", () => {
     const result = computeSystemMetrics([]);
     expect(result).toEqual<SystemMetrics>({
-      totalTraces: 0,
-      tracesWithBias: 0,
-      avgHypothesesPerTrace: 0,
-      avgConfidence: 0,
-      uniqueBiasNames: 0,
-      biasNameDistribution: {},
-      avgExcerptsPerHypothesis: 0,
-      excerptCoverageRate: 0,
+      totalResponses: 0,
+      schemaParsePassCount: 0,
+      schemaParseRate: 0,
+      repairAttemptCount: 0,
+      repairSuccessCount: 0,
+      repairRate: null,
     });
   });
 
-  it("counts total traces and traces with bias", () => {
-    const traces = [
-      makeTrace({ bias_hypotheses: [makeHypothesis()] }),
-      makeTrace({ bias_hypotheses: [] }),
-      makeTrace({ bias_hypotheses: [makeHypothesis()] }),
+  it("computes schema parse rate from responses that did not require repair", () => {
+    const responses: LLMResponse[] = [
+      { requiredRepair: false },
+      { requiredRepair: true },
+      { requiredRepair: false },
+      { requiredRepair: false },
     ];
 
-    const result = computeSystemMetrics(traces);
-    expect(result.totalTraces).toBe(3);
-    expect(result.tracesWithBias).toBe(2);
+    const result = computeSystemMetrics(responses);
+    expect(result.totalResponses).toBe(4);
+    expect(result.schemaParsePassCount).toBe(3);
+    expect(result.schemaParseRate).toBe(0.75);
   });
 
-  it("computes average hypotheses per trace", () => {
-    const traces = [
-      makeTrace({
-        bias_hypotheses: [
-          makeHypothesis(),
-          makeHypothesis({ bias_name: "Anchoring" }),
-        ],
-      }),
-      makeTrace({
-        bias_hypotheses: [makeHypothesis()],
-      }),
+  it("computes repair rate from responses that required repair", () => {
+    const responses: LLMResponse[] = [
+      { requiredRepair: true, repairSucceeded: true },
+      { requiredRepair: true, repairSucceeded: false },
+      { requiredRepair: true, repairSucceeded: true },
+      { requiredRepair: false },
     ];
 
-    const result = computeSystemMetrics(traces);
-    expect(result.avgHypothesesPerTrace).toBe(1.5);
+    const result = computeSystemMetrics(responses);
+    expect(result.repairAttemptCount).toBe(3);
+    expect(result.repairSuccessCount).toBe(2);
+    expect(result.repairRate).toBeCloseTo(2 / 3);
   });
 
-  it("computes average confidence across all hypotheses", () => {
-    const traces = [
-      makeTrace({
-        bias_hypotheses: [
-          makeHypothesis({ confidence: 0.9 }),
-          makeHypothesis({ confidence: 0.7 }),
-        ],
-      }),
+  it("returns null repair rate when no repairs were attempted", () => {
+    const responses: LLMResponse[] = [
+      { requiredRepair: false },
+      { requiredRepair: false },
     ];
 
-    const result = computeSystemMetrics(traces);
-    expect(result.avgConfidence).toBe(0.8);
+    const result = computeSystemMetrics(responses);
+    expect(result.repairAttemptCount).toBe(0);
+    expect(result.repairSuccessCount).toBe(0);
+    expect(result.repairRate).toBeNull();
   });
 
-  it("counts unique bias names and builds distribution", () => {
-    const traces = [
-      makeTrace({
-        bias_hypotheses: [
-          makeHypothesis({ bias_name: "Confirmation Bias" }),
-          makeHypothesis({ bias_name: "Anchoring" }),
-        ],
-      }),
-      makeTrace({
-        bias_hypotheses: [
-          makeHypothesis({ bias_name: "Confirmation Bias" }),
-        ],
-      }),
+  it("handles all-failed responses", () => {
+    const responses: LLMResponse[] = [
+      { requiredRepair: true, repairSucceeded: false },
+      { requiredRepair: true, repairSucceeded: false },
     ];
 
-    const result = computeSystemMetrics(traces);
-    expect(result.uniqueBiasNames).toBe(2);
-    expect(result.biasNameDistribution).toEqual({
-      "Confirmation Bias": 2,
-      Anchoring: 1,
-    });
+    const result = computeSystemMetrics(responses);
+    expect(result.schemaParseRate).toBe(0);
+    expect(result.repairRate).toBe(0);
+    expect(result.schemaParsePassCount).toBe(0);
   });
 
-  it("computes average excerpts per hypothesis", () => {
-    const traces = [
-      makeTrace({
-        bias_hypotheses: [
-          makeHypothesis({ supporting_excerpts: ["a", "b"] }),
-          makeHypothesis({ supporting_excerpts: ["c"] }),
-        ],
-      }),
+  it("handles all-pass responses", () => {
+    const responses: LLMResponse[] = [
+      { requiredRepair: false },
+      { requiredRepair: false },
+      { requiredRepair: false },
     ];
 
-    const result = computeSystemMetrics(traces);
-    expect(result.avgExcerptsPerHypothesis).toBe(1.5);
+    const result = computeSystemMetrics(responses);
+    expect(result.schemaParseRate).toBe(1);
+    expect(result.repairRate).toBeNull();
+    expect(result.repairAttemptCount).toBe(0);
   });
 
-  it("computes excerpt coverage rate", () => {
-    const traces = [
-      makeTrace({
-        bias_hypotheses: [
-          makeHypothesis({ supporting_excerpts: ["a"] }),
-          makeHypothesis({ supporting_excerpts: [] }),
-          makeHypothesis({ supporting_excerpts: ["b", "c"] }),
-        ],
-      }),
-    ];
-
-    const result = computeSystemMetrics(traces);
-    expect(result.excerptCoverageRate).toBeCloseTo(2 / 3);
-  });
-
-  it("handles hypotheses with no supporting excerpts gracefully", () => {
-    const traces = [
-      makeTrace({
-        bias_hypotheses: [
-          makeHypothesis({ supporting_excerpts: [] }),
-        ],
-      }),
-    ];
-
-    const result = computeSystemMetrics(traces);
-    expect(result.avgExcerptsPerHypothesis).toBe(0);
-    expect(result.excerptCoverageRate).toBe(0);
-  });
-
-  it("handles traces with no bias_hypotheses field gracefully", () => {
-    const traces = [
-      makeTrace({ bias_hypotheses: undefined as unknown as [] }),
-    ];
-
-    const result = computeSystemMetrics(traces);
-    expect(result.totalTraces).toBe(1);
-    expect(result.tracesWithBias).toBe(0);
-    expect(result.avgHypothesesPerTrace).toBe(0);
+  it("handles single response", () => {
+    const result = computeSystemMetrics([
+      { requiredRepair: true, repairSucceeded: true },
+    ]);
+    expect(result.totalResponses).toBe(1);
+    expect(result.schemaParseRate).toBe(0);
+    expect(result.repairRate).toBe(1);
   });
 });

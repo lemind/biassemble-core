@@ -20,7 +20,10 @@ export const runs = core.table("runs", {
 // Immutable reasoning artifacts produced by each run.
 export const reasoningTraces = core.table("reasoning_traces", {
   id: uuid("id").defaultRandom().primaryKey(),
-  runId: uuid("run_id").notNull(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => runs.id, { onDelete: "cascade" }),
+  traceType: text("trace_type", { enum: ["story_only", "full"] }).notNull(),
   trace: jsonb("trace").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -29,7 +32,7 @@ export const reasoningTraces = core.table("reasoning_traces", {
 // Results from running golden/no_bias datasets against a prompt version.
 export const evalResults = core.table("eval_results", {
   id: uuid("id").defaultRandom().primaryKey(),
-  runId: uuid("run_id"),
+  runId: uuid("run_id").references(() => runs.id),
   provider: text("provider").notNull(),
   modelName: text("model_name").notNull(),
   promptVersion: text("prompt_version").notNull(),
