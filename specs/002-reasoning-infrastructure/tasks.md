@@ -182,7 +182,7 @@
   - Include instructions for `no_bias_detected` signal when no biases found
   - Ensure prompt instructs LLM to produce reasoning trace + assessment in a single JSON response
 
-- [ ] T202 [P] Update `src/prompts/reflection/assessment/schema.md`:
+- [x] T202 [P] Update `src/prompts/reflection/assessment/schema.md`:
   - Update output schema to include reasoning trace + evidence per bias
   - Document the `no_bias_detected` signal format
   - NOTE: `stage` and `scope` are NOT LLM output fields — they are stamped by the orchestrator on runs
