@@ -25,7 +25,6 @@ export interface RunRecord {
 export interface TraceRecord {
   id: string;
   runId: string;
-  traceType: "story_only" | "full";
   trace: ReasoningTrace;
   createdAt: string;
 }

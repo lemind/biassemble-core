@@ -4,9 +4,11 @@ export const core = pgSchema("core");
 
 // ── Runs ──
 // Each run represents one assessment pass (initial or post-questions).
+// sessionId is a plain UUID with no FK — sessions are managed by the backend,
+// not by core. Core never owns sessions. See backend/src/services/session.service.ts.
 export const runs = core.table("runs", {
   id: uuid("id").defaultRandom().primaryKey(),
-  sessionId: uuid("session_id").notNull(), // plain UUID, no FK — application-level integrity
+  sessionId: uuid("session_id").notNull(),
   provider: text("provider").notNull(),
   modelName: text("model_name").notNull(),
   stage: text("stage", { enum: ["initial_assessment", "post_questions_assessment"] }).notNull(),
@@ -18,12 +20,12 @@ export const runs = core.table("runs", {
 
 // ── Reasoning Traces ──
 // Immutable reasoning artifacts produced by each run.
+// Scope (story_only vs story_plus_answers) is on the run record — not duplicated here.
 export const reasoningTraces = core.table("reasoning_traces", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id")
     .notNull()
     .references(() => runs.id, { onDelete: "cascade" }),
-  traceType: text("trace_type", { enum: ["story_only", "full"] }).notNull(),
   trace: jsonb("trace").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

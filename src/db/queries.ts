@@ -51,11 +51,10 @@ export async function getRunsBySession(sessionId: string) {
 export async function persistTrace(
   runId: string,
   trace: unknown,
-  traceType: "story_only" | "full" = "full"
 ) {
   const [row] = await db()
     .insert(reasoningTraces)
-    .values({ runId, trace, traceType })
+    .values({ runId, trace })
     .returning();
   return row;
 }

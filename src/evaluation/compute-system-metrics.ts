@@ -23,8 +23,8 @@ export interface SystemMetrics {
   /** Number of responses that passed first-pass schema parsing */
   schemaParsePassCount: number;
 
-  /** Proportion of responses that passed first-pass schema parsing (0–1) */
-  schemaParseRate: number;
+  /** Proportion of responses that passed first-pass schema parsing (0–1). Null when no responses. */
+  schemaParseRate: number | null;
 
   /** Number of failed-first-pass responses that were sent to repair */
   repairAttemptCount: number;
@@ -55,7 +55,7 @@ export function computeSystemMetrics(
     return {
       totalResponses: 0,
       schemaParsePassCount: 0,
-      schemaParseRate: 0,
+      schemaParseRate: null,
       repairAttemptCount: 0,
       repairSuccessCount: 0,
       repairRate: null,

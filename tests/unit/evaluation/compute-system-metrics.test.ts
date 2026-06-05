@@ -8,12 +8,12 @@ import {
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe("computeSystemMetrics", () => {
-  it("returns zero metrics for empty responses array", () => {
+  it("returns null metrics for empty responses array", () => {
     const result = computeSystemMetrics([]);
     expect(result).toEqual<SystemMetrics>({
       totalResponses: 0,
       schemaParsePassCount: 0,
-      schemaParseRate: 0,
+      schemaParseRate: null,
       repairAttemptCount: 0,
       repairSuccessCount: 0,
       repairRate: null,

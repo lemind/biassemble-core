@@ -70,6 +70,9 @@ export function computeTraceAnalytics(
   let tracesWithBiasCount = 0;
 
   for (const trace of traces) {
+    // Defensive ?? [] — data comes from JSONB column, Zod parse may not have been applied upstream.
+    // ReasoningTrace.bias_hypotheses is non-nullable in the Zod schema, but at runtime
+    // the JSONB value could be null or missing if the caller passed raw DB rows.
     const hypotheses = trace.bias_hypotheses ?? [];
     allHypotheses.push(...hypotheses);
 
