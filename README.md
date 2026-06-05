@@ -1,63 +1,111 @@
+> A TypeScript reasoning engine that forces LLM outputs to be evidence-bound,
+> auditable, and testable. Built for #LLMOps, #AIObservability, and
+> evaluation-first workflows.
+
 # Biassemble AI Core
 
-Private AI orchestration service for the Biassemble public app. **Prompts, provider config, and API keys live here** — never in the public repository.
+LLM-powered reasoning engine for cognitive bias detection. Structured, evaluable, provider-agnostic.
+
+🔗 **Live**: [frontend-topaz-eight-10.vercel.app](https://frontend-topaz-eight-10.vercel.app/)
+📦 **Main repo**: [github.com/lemind/biassemble](https://github.com/lemind/biassemble)
+
+## What It Does
+
+Two endpoints. Structured output. Auditable reasoning.
+
+| Endpoint | Trigger | Output |
+|----------|---------|--------|
+| `POST /v1/reflection/question` | User submits story | 2–5 contextual follow-up questions |
+| `POST /v1/reflection/assessment` | User answers questions | Bias assessment + reflection prompt |
+
+Every response is validated through Zod → JSON, stamped with `prompt_version` + `schema_version`, and goes through a 3-stage repair pipeline (parse → validate → fallback model call).
+
+## Bias Detection
+
+~30 curated Tier-A cognitive biases — confirmation bias, anchoring, availability heuristic, sunk cost, and more. Names normalized against a taxonomy (`datasets/biases/taxonomy.v1.json`). Expand only when evaluations justify it.
+
+## Reliability
+
+- **Retry + repair pipeline** — malformed LLM output → structural extraction → repair → revalidate → fallback model call → 3× exponential backoff
+- **Structured JSON output** — all LLM responses constrained to typed Zod schemas
+- **Prompt versioning** — every output stamped with `prompt_version` for traceability
+- **x-request-id tracing** — every request logged with correlation ID
+- **Provider-agnostic** — adapter interface, swap models without touching orchestrators
+
+## Stage 002 — Reasoning Infrastructure (in progress)
+
+Upgrading the flat assessment pipeline into an auditable reasoning engine:
+
+- **Reasoning traces** — structured intermediate steps (story analysis → interpretations → bias hypotheses → evidence mapping) alongside every assessment
+- **Evidence binding** — each bias claim references verbatim excerpts from the user's story
+- **Two-phase assessment** — story-only assessment first, then a richer post-questions analysis showing how answers shifted the analysis
+- **Quality metrics** — `evidence_grounded_rate`, `false_positive_rate`, `schema_parse_rate`, `repair_rate`
+- **Adversarial testing** — `no_bias` dataset of neutral stories to catch false positives
+- **CI evaluation gate** — automated prompt quality checks on every change
+
+Schemas defined (30+ Zod types), metrics implemented, DB infrastructure ready (Drizzle + PostgreSQL for reasoning traces and eval results). Orchestrator refactor in progress.
+
+## Evaluation
+
+- **Golden set**: 5 curated stories in `evaluations/golden/reflection/` (work-conflict, relationship-decision, financial-regret, health-uncertainty, creative-block)
+- **Eval script**: `scripts/eval-reflection.ts` — runs stories through real orchestrators + mock provider, computes metrics
+- **Metrics**: `computeEvaluationMetrics()` + `computeSystemMetrics()` — evidence grounding, false positives, parse rates, repair rates
 
 ## Architecture
 
 ```
-Public App → Public API (Next.js) → AI Core (Fastify) → Gemini API
-                         ↑              ↑
-                   session state     stateless, prompts,
-                   Inngest jobs      provider keys
+Public App → Public API (Next.js) → AI Core (Fastify) → LLM Provider
+                     ↑              ↑
+               session state     prompts, provider keys,
+               Inngest jobs      reasoning traces (Postgres)
 ```
 
-## Repositories
-
-| Repo | Purpose |
-|------|---------|
-| `github.com/lemind/biassemble` | Public: UI (Vite) + orchestration (Next.js) |
-| `github.com/lemind/biassemble-core` | Private: AI service (this repo) |
-
-## MVP — Feature 001: Reflection Core
-
-MVP delivers 2 HTTP endpoints consumed by the public backend:
-
-| Endpoint | When | What |
-|----------|------|------|
-| `POST /v1/reflection/question` | User submits story (sync) | Returns 2–5 contextual follow-up questions |
-| `POST /v1/reflection/assessment` | User answers all questions (async) | Returns bias assessment + reflection prompt |
-
-### Key design decisions
-
-- **Stateless** — no DB; session owned by public app
-- **Fastify** standalone (not merged into Next.js)
-- **~30 curated Tier-A biases** (not 200); expand only when evaluations justify it
-- **Repair pipeline** — malformed JSON → repair → revalidate → fallback → fail
-- **Provider abstraction** — Gemini Flash for MVP, `CompletionOptions` interface
-- **x-request-id** tracing on every request + log line
-- **Prompt registry** with directory-based structure (`system.md`, `examples.md`, `schema.md`)
-- **No OpenAPI generation** in MVP — Zod contracts are sufficient
-
-## Tech stack
+## Tech Stack
 
 - **Runtime**: Node 22 LTS, TypeScript 5.x strict
 - **Framework**: Fastify 5
-- **AI**: `@google/generative-ai` (Gemini Flash)
+- **LLM**: Provider-agnostic adapter (currently Gemini Flash)
 - **Validation**: Zod 4
+- **DB**: Drizzle ORM + PostgreSQL (reasoning traces, eval results)
 - **Logging**: Pino
-- **Testing**: Vitest
+- **Testing**: Vitest (unit + integration)
+- **Deploy**: Vercel Functions
 
-## Quick start
+## Quick Start
 
 ```bash
 pnpm install
 cp .env.example .env
-# edit .env with your GEMINI_API_KEY
+# edit .env with your API keys
 pnpm dev
-```
 
-Then verify:
-
-```bash
+# verify
 curl http://localhost:3001/health
 # → {"status":"ok"}
+
+# run tests
+pnpm test
+# → 122 tests passing
+```
+
+## Project Structure
+
+```
+src/
+├── contracts/       # Zod schemas (reasoning + reflection)
+├── orchestrators/   # Question + assessment services
+├── prompts/         # Markdown-based prompt templates
+├── providers/       # LLM adapter interface
+├── parsers/         # JSON extraction + repair pipeline
+├── catalog/         # Bias taxonomy + normalization
+├── evaluation/      # Metrics functions
+├── db/              # Drizzle schema + queries
+├── jobs/            # Inngest eval job
+└── routes/          # Fastify HTTP routes
+
+evaluations/
+└── golden/reflection/   # 5 curated test stories
+
+tests/
+├── unit/            # Parsers, schemas, metrics, catalog
+└── integration/     # Full pipeline with mock provider
