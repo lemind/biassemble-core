@@ -21,8 +21,8 @@ describe("Repair pipeline — real QuestionService/AssessmentService with MockPr
     const prompts = new PromptRegistry();
     const catalog = new BiasCatalogService();
 
-    const questionService = new QuestionService(mockProvider, prompts);
-    const assessmentService = new AssessmentService(mockProvider, prompts, catalog);
+    const questionService = new QuestionService(mockProvider, prompts, "mock-model");
+    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model");
 
     server = Fastify();
     registerReflectionRoutes(server, {
@@ -80,6 +80,7 @@ describe("Repair pipeline — real QuestionService/AssessmentService with MockPr
         story: "a".repeat(100),
         questions: ["Q1?", "Q2?"],
         answers: ["A1 with enough detail for validation.", "A2 with enough detail as well."],
+        mode: "full",
       },
     });
 

@@ -246,13 +246,26 @@ describe("AssessmentOutputSchema", () => {
     expect(result.biases.length).toBe(1);
   });
 
-  it("should reject empty biases array", () => {
-    expect(() =>
-      AssessmentOutputSchema.parse({
-        ...validAssessment,
-        biases: [],
-      })
-    ).toThrow();
+  it("should accept empty biases array with noBiasDetected=true", () => {
+    const result = AssessmentOutputSchema.parse({
+      ...validAssessment,
+      biases: [],
+      noBiasDetected: true,
+    });
+    expect(result.biases.length).toBe(0);
+    expect(result.noBiasDetected).toBe(true);
+  });
+
+  it("should accept empty biases array with noBiasDetected=false (schema-level)", () => {
+    // Schema does not enforce the semantic constraint — that's business logic.
+    // Consumers check noBiasDetected flag to determine if biases may be empty.
+    const result = AssessmentOutputSchema.parse({
+      ...validAssessment,
+      biases: [],
+      noBiasDetected: false,
+    });
+    expect(result.biases.length).toBe(0);
+    expect(result.noBiasDetected).toBe(false);
   });
 
   it("should reject reflectionPrompt shorter than 10 characters", () => {

@@ -56,7 +56,7 @@ export const QuestionOutputSchema = z.object({
 });
 
 export const AssessmentOutputSchema = z.object({
-  biases: z.array(BiasItemSchema).min(1),
+  biases: z.array(BiasItemSchema),
   reflectionPrompt: z.string().min(REFLECTION_MIN_LENGTH),
   prompt_version: z.string(),
   schema_version: z.literal(SCHEMA_VERSION),

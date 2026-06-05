@@ -13,7 +13,8 @@ export class AssessmentService {
   constructor(
     private provider: Provider,
     private prompts: PromptRegistry,
-    private catalog: BiasCatalogService
+    private catalog: BiasCatalogService,
+    private modelName: string
   ) {}
 
   async generate(
@@ -74,12 +75,13 @@ export class AssessmentService {
         };
       });
 
-      // 5. Stamp version fields
+      // 5. Stamp version and model fields
       return {
         ...parsed,
         biases: normalizedBiases,
         prompt_version: this.prompts.getVersion(),
         schema_version: SCHEMA_VERSION,
+        modelName: this.modelName,
       };
     });
   }

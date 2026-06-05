@@ -10,7 +10,8 @@ const MODULE = "question-service";
 export class QuestionService {
   constructor(
     private provider: Provider,
-    private prompts: PromptRegistry
+    private prompts: PromptRegistry,
+    private modelName: string
   ) {}
 
   async generate(story: string, requestId: string): Promise<QuestionOutput> {
@@ -44,11 +45,12 @@ export class QuestionService {
         }
       );
 
-      // Stamp version fields
+      // Stamp version and model fields
       return {
         ...parsed,
         prompt_version: this.prompts.getVersion(),
         schema_version: SCHEMA_VERSION,
+        modelName: this.modelName,
       };
     });
   }

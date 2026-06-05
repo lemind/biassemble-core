@@ -15,7 +15,7 @@ describe("POST /v1/reflection/assessment — integration with MockProvider", () 
     const prompts = new PromptRegistry();
     const catalog = new BiasCatalogService();
 
-    const assessmentService = new AssessmentService(mockProvider, prompts, catalog);
+    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model");
     const questionService = {
       generate: async () => ({ questions: [], isComplete: true }),
     };
@@ -61,6 +61,7 @@ describe("POST /v1/reflection/assessment — integration with MockProvider", () 
         story: "a".repeat(100),
         questions: ["What makes you feel that way?", "How does this affect you?"],
         answers: ["I feel frustrated because of the situation.", "It affects my daily life significantly."],
+        mode: "full",
       },
     });
 
@@ -84,6 +85,7 @@ describe("POST /v1/reflection/assessment — integration with MockProvider", () 
         story: "a".repeat(100),
         questions: ["Q1?", "Q2?"],
         answers: ["Only one answer"],
+        mode: "full",
       },
     });
 
@@ -149,6 +151,7 @@ describe("POST /v1/reflection/assessment — integration with MockProvider", () 
         story: "a".repeat(100),
         questions: ["Q1?"],
         answers: ["A1 with enough detail to pass validation."],
+        mode: "full",
       },
     });
 

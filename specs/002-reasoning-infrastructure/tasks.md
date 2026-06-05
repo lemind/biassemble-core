@@ -142,6 +142,35 @@
 
 ---
 
+## Phase 1c: Pre-Phase 2 Preparation
+
+**Purpose**: Resolve schema and interface discrepancies discovered during Phase 2 readiness review. Must be complete before Phase 2 implementation begins.
+
+- [x] T200 [P] Resolve `noBiasDetected` schema conflict in `src/contracts/reflection.schemas.ts`:
+  - Remove `.min(1)` from `biases: z.array(BiasItemSchema).min(1)` → `biases: z.array(BiasItemSchema)`
+  - Allow empty `biases` array when `noBiasDetected: true` (Pattern A: simple)
+  - Keep `noBiasDetected: z.boolean()` as-is — consumers check this flag to determine if biases array may be empty
+  - Rationale: KISS-compliant, backward-compatible, avoids discriminated union complexity
+
+- [x] T200a [P] Add `modelName` to service constructors:
+  - `src/orchestrators/reflection/assessment.service.ts` — add `modelName: string` constructor param, stamp on output
+  - `src/orchestrators/reflection/question.service.ts` — add `modelName: string` constructor param, stamp on output
+  - Provider interface (`src/providers/types.ts`) remains unchanged
+  - Caller (server.ts or wherever services are instantiated) passes `env.GEMINI_MODEL` as `modelName`
+
+- [x] T200b [P] Update unit tests for schema change:
+  - `tests/unit/contracts/reflection.schemas.test.ts` — update "should reject empty biases array" test to instead verify `biases: []` with `noBiasDetected: true` passes validation
+  - Add test: `biases: []` with `noBiasDetected: false` still validates (no constraint on that combo at schema level)
+
+- [x] T200c [P] Correct Phase 2 task descriptions:
+  - T202: Remove "Document that stage and scope are output fields" — these are orchestrator stamps, not LLM output fields
+  - T203: Replace "Call persistReasoningTrace() from T104" with "Call `persistTrace()` from `src/db/queries.ts`"; add `requestId` to method signatures
+  - T207: Fix prompt path from `questions/system.md` to `question-batch/system.md`; add `requestId` to `generate()` signature
+
+**Checkpoint**: Schema allows empty biases with `noBiasDetected`. `modelName` available on services. All existing tests pass. Task descriptions corrected.
+
+---
+
 ## Phase 2: Reasoning Pipeline — Orchestrator Upgrade
 
 **Purpose**: Upgrade the assessment orchestrator to two-phase flow with intermediate reasoning + evidence binding.
@@ -151,12 +180,12 @@
     - story analysis → interpretations → bias hypotheses → evidence mapping → final assessment
   - Include instructions for evidence binding (each bias claim must reference specific story/answer excerpts)
   - Include instructions for `no_bias_detected` signal when no biases found
-  - Ensure prompt instructs LLM to assign `stage` and `scope` context in output
+  - Ensure prompt instructs LLM to produce reasoning trace + assessment in a single JSON response
 
 - [ ] T202 [P] Update `src/prompts/reflection/assessment/schema.md`:
   - Update output schema to include reasoning trace + evidence per bias
   - Document the `no_bias_detected` signal format
-  - Document that `stage` and `scope` are output fields
+  - NOTE: `stage` and `scope` are NOT LLM output fields — they are stamped by the orchestrator on runs
 
 - [ ] T203 Upgrade `src/orchestrators/reflection/assessment.service.ts`:
   - Refactor into two entry points:
@@ -167,9 +196,9 @@
     - Parse trace + evidence from response
     - Validate each step with Zod schemas from `reasoning.schemas.ts`
     - Validate `prompt_version` is present on every step — throw if missing
-    - Stamp `model_name` from provider config
+    - Stamp `modelName` from service constructor param
     - Stamp `stage`, `scope`, `prompt_version` on run and trace
-    - Call persistReasoningTrace() from T104 after trace is generated
+    - Call `persistTrace()` from `src/db/queries.ts` after trace is generated
     - Return structured result with trace + assessment
 
 - [ ] T204 Ensure `reasoning_trace` is always computed and persisted:
@@ -188,9 +217,9 @@
 
 - [ ] T207 Update `src/orchestrators/reflection/question.service.ts`:
   - Accept `story_analysis` and `interpretations` from Trace 1 as input context (FR-018)
-  - Signature changes from `generateQuestions(story: string)` to `generateQuestions(story: string, storyAnalysis: StoryAnalysis, interpretations: InterpretationSchema[])`
+  - Signature changes from `generate(story, requestId)` to `generate(story, storyAnalysis, interpretations, requestId)`
   - Questions should be reasoning-aware, not text-surface-level
-  - Also update `src/prompts/reflection/questions/system.md` to receive `story_analysis.themes`, `emotional_tone`, `key_events`, and the highest-plausibility interpretations as context. Questions should probe the user's interpretations, not just surface-level story details.
+  - Also update `src/prompts/reflection/question-batch/system.md` to receive `story_analysis.themes`, `emotional_tone`, `key_events`, and the highest-plausibility interpretations as context. Questions should probe the user's interpretations, not just surface-level story details.
 
 **Checkpoint**: Two-phase assessment works end-to-end. Questions are reasoning-context-aware. Both traces persisted. Evidence validation wired (or stubbed with documented TODO).
 
