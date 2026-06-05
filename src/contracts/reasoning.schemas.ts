@@ -12,12 +12,15 @@ export const StageEnum = z.enum([
   "initial_assessment",
   "post_questions_assessment",
 ]);
+export type RunStage = z.infer<typeof StageEnum>;
 
 export const ScopeEnum = z.enum(["story_only", "story_plus_answers"]);
+export type RunScope = z.infer<typeof ScopeEnum>;
 
 export const SourceEnum = z.enum(["story", "answer"]);
 
 export const DatasetEnum = z.enum(["golden", "no_bias", "all"]);
+export type Dataset = z.infer<typeof DatasetEnum>;
 
 export const SeverityEnum = z.enum(["low", "medium", "high"]);
 
@@ -106,11 +109,13 @@ export const EvaluationMetricsSchema = z.object({
   evidence_grounded_rate: z.number().min(0).max(1).nullable(),
   false_positive_rate: z.number().min(0).max(1).nullable(),
 });
+export type EvaluationMetrics = z.infer<typeof EvaluationMetricsSchema>;
 
 export const SystemMetricsSchema = z.object({
   schema_parse_rate: z.number().min(0).max(1).nullable(),
   repair_rate: z.number().min(0).max(1).nullable(),
 });
+export type SystemMetrics = z.infer<typeof SystemMetricsSchema>;
 
 /** SHA-256 of the canonical input string: story + answers joined with '\n\n' */
 export const EvalResultSchema = z.object({

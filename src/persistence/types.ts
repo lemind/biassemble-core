@@ -1,23 +1,22 @@
 // Persistence Record Types (camelCase store boundary)
 // These map to/from Zod schemas in reasoning.schemas.ts at the API boundary.
+// Enums are imported from reasoning.schemas.ts to avoid duplication.
 
-export type RunStage = "initial_assessment" | "post_questions_assessment";
-export type RunScope = "story_only" | "story_plus_answers";
-export type Dataset = "golden" | "no_bias" | "all";
+import type {
+  ReasoningTrace,
+  EvaluationMetrics,
+  SystemMetrics,
+} from "../contracts/reasoning.schemas";
 
-export interface SessionRecord {
-  id: string;
-  storyId: string;
-  createdAt: string;
-}
+export type { RunStage, RunScope, Dataset } from "../contracts/reasoning.schemas";
 
 export interface RunRecord {
   id: string;
   sessionId: string;
   provider: string;
   modelName: string;
-  stage: RunStage;
-  scope: RunScope;
+  stage: string;
+  scope: string;
   promptVersion: string;
   inputHash: string;
   createdAt: string;
@@ -26,7 +25,8 @@ export interface RunRecord {
 export interface TraceRecord {
   id: string;
   runId: string;
-  trace: unknown;
+  traceType: "story_only" | "full";
+  trace: ReasoningTrace;
   createdAt: string;
 }
 
@@ -36,9 +36,9 @@ export interface EvalResultRecord {
   provider: string;
   modelName: string;
   promptVersion: string;
-  dataset: Dataset;
-  evaluationMetrics: Record<string, unknown>;
-  systemMetrics: Record<string, unknown>;
+  dataset: string;
+  evaluationMetrics: EvaluationMetrics;
+  systemMetrics: SystemMetrics;
   inputHash: string;
   passed: boolean;
   runAt: string;
