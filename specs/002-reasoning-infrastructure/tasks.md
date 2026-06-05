@@ -175,7 +175,7 @@
 
 **Purpose**: Upgrade the assessment orchestrator to two-phase flow with intermediate reasoning + evidence binding.
 
-- [ ] T201 [P] Update `src/prompts/reflection/assessment/system.md`:
+- [x] T201 [P] Update `src/prompts/reflection/assessment/system.md`:
   - Update assessment prompt to emit structured reasoning steps:
     - story analysis → interpretations → bias hypotheses → evidence mapping → final assessment
   - Include instructions for evidence binding (each bias claim must reference specific story/answer excerpts)
