@@ -2,6 +2,7 @@
 
 ## Philosophy
 
+- **AI must re-read this file at the start of every session.**
 - Prefer KISS over DRY.
 - Duplication is acceptable if abstraction harms readability.
 - Avoid abstractions before the third real use case.
@@ -28,12 +29,55 @@
 - Match existing naming conventions; do not rename variables without scope.
 - **Naming**: Use descriptive names that make purpose obvious (`loadAssessment`, `pollSessionStatus`, `stopPolling`). Avoid generic names like `fetch`, `data`, `result`, `check`, `cleanup`, `doStuff`. Don't over-verbose — `updateAnswer` is good, `updateCurrentAnswerTextInState` is not.
 
+## Repository Structure
+
+This project contains **two separate git repositories** in sibling directories:
+
+```
+/home/dl/_prog/biassemble/          ← NOT a git repo (workspace container only)
+├── biassemble/                     ← App repo (BE + FE), has its own .git
+│   ├── backend/
+│   ├── frontend/
+│   └── AGENTS.md
+│
+└── biassemble-core/                ← Core repo (private), has its own .git  ← YOU ARE HERE
+    ├── src/
+    └── AGENTS.md
+```
+
+- The parent `/home/dl/_prog/biassemble/` is **not** a git repository — it's a workspace container.
+- `biassemble/biassemble/` is the **app repo** (backend + frontend). Run git commands from `/home/dl/_prog/biassemble/biassemble/`.
+- `biassemble/biassemble-core/` is the **core repo** (private AI logic). Run git commands from `/home/dl/_prog/biassemble/biassemble-core/`.
+- Each repo has its own branch, commits, and PRs. They are independent.
+
 ## Git & Version Control
 
 - Commit atomically: one logical change per commit.
 - Keep commit messages short and descriptive. Example: `feat: add retry logic` — not `feat: add retry logic to syncQueue with exponential backoff and timeout`. If you need details, put them in the body.
 - Never force-push or rewrite history without explicit approval.
 - **Git repo location**: The `.git` directory is at `biassemble-core/`. Run `git` commands from `/home/dl/_prog/biassemble/biassemble-core/`.
+
+### Commit Convention
+
+Format: `<tag>(<scope>): <short description>`
+
+Tags:
+- `feat:` — new feature
+- `fix:` — bug fix
+- `review:` — addressing PR/code review feedback
+- `chore:` — tooling, config, deps, CI
+- `docs:` — documentation only
+- `test:` — adding/fixing tests
+- `refactor:` — code change with zero behavior change
+- `perf:` — performance improvement
+
+Scope (optional): task ID if applicable, e.g. `T102`, `T1b3`
+
+Examples:
+- `feat(T102): add computeSystemMetrics function`
+- `fix: correct schemaParseRate null on empty input`
+- `review: drop traceType, add sessions comment`
+- `chore: add drizzle config for core schema`
 
 ## Architecture
 
@@ -133,6 +177,7 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 
 ## Forbidden
 
+- Do not create documentation files that are not explicitly listed in plan.md or tasks.md. The spec/plan/tasks files are the source of truth.
 - Premature abstractions.
 - Global state unless justified.
 - Silent failures.

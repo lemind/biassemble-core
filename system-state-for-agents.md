@@ -1,6 +1,6 @@
 # System State — biassemble-core
 
-**Last updated**: 2026-05-26
+**Last updated**: 2026-06-04
 
 ## Repo
 
@@ -71,6 +71,19 @@
 - [ ] Set `AI_CORE_BASE_URL` + `AI_CORE_API_KEY` in public backend env
 - [ ] Smoke E2E test: public → Core full reflection flow
 
+## Stage 002 — Reasoning Infrastructure (partial)
+
+- [x] `src/persistence/types.ts` — Record types for Session, Run, Trace, EvalResult (with `provider` field)
+- [x] `src/persistence/ports.ts` — Persistence interfaces (SessionStore, RunStore, TraceStore, EvalResultStore)
+- [x] `src/evaluation/compute-evaluation-metrics.ts` — `evidence_grounded_rate`, `false_positive_rate` (from 001-core)
+- [x] `src/evaluation/compute-system-metrics.ts` — `schema_parse_rate`, `repair_rate` (from 001-core)
+- [x] `backend/src/drizzle/schema.ts` — Drizzle tables: runs, reasoning_traces, eval_results (provider added, trace_type removed)
+- [x] `backend/src/lib/db/queries.ts` — Query functions: createRun, getRunsBySession, persistTrace, getTrace, persistEvalResult, getEvalResultByHash, getLatestEvalResults
+- [ ] Orchestrator upgrade (two-phase assessment with reasoning traces)
+- [ ] Evidence binding + validator
+- [ ] no_bias dataset
+- [ ] CI eval gate (Inngest + GitHub Actions)
+
 ## Next steps
 
 1. `vercel link` in `biassemble-core/` to create project
@@ -78,6 +91,7 @@
 3. `vercel deploy` to deploy Core
 4. Copy Core URL to public backend's `AI_CORE_BASE_URL`
 5. Test E2E: story → questions → answers → assessment
+6. Continue Stage 002: orchestrator upgrade, evidence binding, no_bias dataset, CI gate
 </｜｜DSML｜｜parameter>
 </｜｜DSML｜｜invoke>
 </｜｜DSML｜｜tool_calls>

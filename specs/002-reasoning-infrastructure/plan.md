@@ -182,12 +182,31 @@ Existing assessment endpoint remains the primary API. Evidence binding and reaso
 | Task | File(s) | Description |
 |---|---|---|
 | T101 | `src/evaluation/compute-evaluation-metrics.ts` | NEW — `computeEvaluationMetrics(assessment, input)` — standalone pure function. Validates evidence excerpts against input text (verbatim substring matching). Returns `{ evidence_grounded_rate: number \| null, false_positive_rate: number \| null }`. No side effects. |
-| T102 | `src/evaluation/compute-system-metrics.ts` | NEW — `computeSystemMetrics(responses)` — standalone pure function. Computes `schema_parse_rate` (proportion of responses that parsed without repair) and `repair_rate` (proportion that required repair). Takes an array of `{ requiredRepair: boolean }`. Returns `{ schema_parse_rate: number, repair_rate: number }`. |
+| T102 | `src/evaluation/compute-system-metrics.ts` | NEW — `computeSystemMetrics(responses)` — standalone pure function. Computes `schema_parse_rate` (proportion of responses that parsed without repair) and `repair_rate` (proportion that required repair). Takes an array of `{ requiredRepair: boolean }`. Returns `{ schema_parse_rate: number | null, repair_rate: number | null }`. Both are `null` when responses array is empty. |
 | T103 | `src/persistence/session-store.ts` | NEW — Persistence for sessions and runs. Create session, create run, link traces. Default: JSON files in `./data/sessions/` and `./data/runs/`. Feature-flagged Supabase upgrade. |
 | T104 | `src/persistence/trace-store.ts` | NEW — Persistence for reasoning traces. File path: `./data/reasoning-traces/{session_id}/{stage}/{run_id}.json`. Feature-flagged Supabase upgrade (T404). |
 | T105 | `src/persistence/eval-results-store.ts` | NEW — Persistence for evaluation results. Required (not optional). File path: `./data/eval-results/{input_hash}_{prompt_version}.json`. Feature-flagged Supabase upgrade (T404). |
 
 **Checkpoint**: All persistence write paths exist. Metrics functions return correct values. Traces generated from Phase 2 forward are stored.
+
+---
+
+### Phase 1b: DB Schema + Queries + Eval Job (extra, not in original plan)
+
+**Purpose**: Core-owned DB schema (`core` schema), query functions, and Inngest eval job. Schema defined but not wired into production path yet — ready for T404.
+
+**Overview**: Drizzle schema for `runs`, `reasoning_traces`, `eval_results` in `core` schema. Query functions for create/get/persist. Inngest eval job for CI-gate + nightly monitoring. Drizzle config with `schemaFilter: ["core"]`.
+
+| Task | File(s) | Description |
+|------|---------|-------------|
+| T1b1 | `src/db/schema.ts` | Drizzle schema: `runs` (id, session_id, provider, model_name, stage, scope, prompt_version, input_hash, created_at), `reasoning_traces` (id, run_id, trace jsonb, created_at), `eval_results` (id, run_id?, provider, model_name, prompt_version, dataset, evaluation_metrics jsonb, system_metrics jsonb, input_hash, passed, run_at). All in `core` schema via `pgSchema("core")`. |
+| T1b2 | `src/db/config.ts` | Drizzle connection config using `DATABASE_URL` env var. |
+| T1b3 | `src/db/queries.ts` | Query functions: `createRun`, `getRunsBySession`, `persistTrace`, `getTrace`, `persistEvalResult`, `getEvalResultByHash`, `getLatestEvalResults`. |
+| T1b4 | `drizzle.config.ts` | Drizzle Kit config: schema `./src/db/schema.ts`, out `./src/db/migrations`, dialect postgresql, schemaFilter `["core"]`. |
+| T1b5 | `src/jobs/client.ts` | Inngest client init with `INNGEST_APP_NAME` and `INNGEST_EVENT_KEY` env vars. |
+| T1b6 | `src/jobs/eval-job.ts` | Inngest eval function: runs golden + no_bias datasets, computes metrics, persists to eval_results. Accepts `triggerType: "gate" | "monitor"`. |
+
+**Checkpoint**: DB schema defined, queries work, eval job exists. Not wired into production path yet.
 
 ---
 
@@ -366,6 +385,18 @@ eval_results (standalone — linked to run optionally)
 
 ---
 
+### Actual Implementation (deviations from plan)
+
+**Persistence**: Rejected file-based persistence. Instead defined typed ports in `src/persistence/types.ts` + `src/persistence/ports.ts` (camelCase store boundary) and implemented Drizzle ORM tables in `biassemble/backend/src/drizzle/schema.ts` with query functions in `biassemble/backend/src/lib/db/queries.ts`. No feature flag, no file fallback, no Supabase migration step — Drizzle-first from day one.
+
+**Schema changes vs plan**:
+- `runs` includes `provider` column (not in original plan)
+- `reasoning_traces` has NO `trace_type` column (was planned but removed)
+- `eval_results` includes `provider` column
+- `stage`, `scope`, `dataset` use Drizzle enum constraints
+
+---
+
 ## Constitution Check
 
 *GATE: Pass*
@@ -380,3 +411,4 @@ eval_results (standalone — linked to run optionally)
 | VI Non-clinical | Existing `guardrails.md` applies to all new prompts |
 
 No complexity tracking violations.
+---

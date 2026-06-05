@@ -254,6 +254,17 @@ A developer updates the assessment prompt, pushes a PR, and the CI pipeline auto
 - **SC-010**: Two-phase assessment produces two immutable reasoning traces per session, queryable by `stage` and `scope`
 - **SC-011**: CI gate blocks PR when eval metrics fall below any threshold; monitoring alert fires but does not block
 
+### Actual Implementation (data model deviations)
+
+| Table | Field | Planned vs Actual |
+|---|---|---|
+| `runs` | `provider` | **Added** — not in original spec |
+| `reasoning_traces` | `trace_type` | **Removed** — column not created |
+| `eval_results` | `provider` | **Added** — not in original plan |
+| `stage`, `scope`, `dataset` | enum | **Drizzle pgEnum** — enforced at DB level, not just app-level |
+
+**Persistence strategy**: Drizzle ORM → Supabase Postgres. No file-based persistence, no `PERSIST_REASONING_TRACE` feature flag. All writes through `backend/src/lib/db/queries.ts`. Types defined in `biassemble-core/src/persistence/types.ts` + `ports.ts`.
+
 ---
 
 ## Assumptions
