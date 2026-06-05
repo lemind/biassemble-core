@@ -187,7 +187,7 @@
   - Document the `no_bias_detected` signal format
   - NOTE: `stage` and `scope` are NOT LLM output fields — they are stamped by the orchestrator on runs
 
-- [ ] T203 Upgrade `src/orchestrators/reflection/assessment.service.ts`:
+- [x] T203 Upgrade `src/orchestrators/reflection/assessment.service.ts`:
   - Refactor into two entry points:
     - `runStoryOnlyAssessment(session, story)` → creates run with stage=initial_assessment, scope=story_only
     - `runFullAssessment(session, story, questions, answers)` → creates run with stage=post_questions_assessment, scope=story_plus_answers
