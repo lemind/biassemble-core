@@ -201,9 +201,8 @@
     - Call `persistTrace()` from `src/db/queries.ts` after trace is generated
     - Return structured result with trace + assessment
 
-- [ ] T204 Ensure `reasoning_trace` is always computed and persisted:
-  - Trace is generated on every run (FR-003)
-  - `includeReasoningTrace` query param controls response body only, not computation or persistence
+- [x] T204 Ensure `reasoning_trace` is always computed and persisted:
+  - Already satisfied by T203 — trace generated & persisted on every run in `callProvider()`, `includeReasoningTrace` handled at route level (Phase 4)
   - Both story-only and full runs produce and persist traces
 
 - [ ] T205 Handle `no_bias_detected` signal in assessment service:
