@@ -202,17 +202,16 @@
     - Return structured result with trace + assessment
 
 - [x] T204 Ensure `reasoning_trace` is always computed and persisted:
-  - Already satisfied by T203 — trace generated & persisted on every run in `callProvider()`, `includeReasoningTrace` handled at route level (Phase 4)
-  - Both story-only and full runs produce and persist traces
+  - `persistTrace()` called unconditionally — if LLM returns no trace, a stub is persisted
+  - Both story-only and full runs always produce and persist a trace record
 
-- [ ] T205 Handle `no_bias_detected` signal in assessment service:
-  - When LLM returns no biases, return empty bias array with `noBiasDetected: true` status flag
+- [x] T205 Handle `no_bias_detected` signal in assessment service:
+  - Enforced: when `parsed.biases.length === 0 && !parsed.noBiasDetected`, service sets `noBiasDetected: true`
   - `computeEvaluationMetrics` returns `null` for empty bias lists (eval-only, not called here)
 
-- [ ] T206 Wire evidence validation into assessment service:
-  - Drop/flag bias items without valid evidence (FR-001)
-  - Uses `validateEvidence()` from T301 (import from `src/parsers/evidence-validator.ts`)
-  - If T301 is not yet implemented, leave a documented stub: `// TODO: wire evidence validation — blocked on T301 (evidence-validator.ts)`
+- [x] T206 Wire evidence validation into assessment service:
+  - Documented stub added: `// T206: TODO — wire evidence validation, blocked on T301 (evidence-validator.ts)`
+  - Full implementation deferred until T301
 
 - [ ] T207 Update `src/orchestrators/reflection/question.service.ts`:
   - Accept `story_analysis` and `interpretations` from Trace 1 as input context (FR-018)

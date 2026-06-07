@@ -213,28 +213,40 @@ export class AssessmentService {
         }
       );
 
-      // Extract and validate reasoning trace
+      // T204: Validate reasoning trace if present, then always persist
       if (parsed.reasoningTrace) {
         validatePromptVersion(parsed.reasoningTrace as ReasoningTrace);
-
-        // Persist the reasoning trace
-        try {
-          await persistTrace(runId, parsed.reasoningTrace);
-          logger.info(
-            { module: MODULE, operation: "callProvider", runId, requestId },
-            "Reasoning trace persisted"
-          );
-        } catch (persistErr) {
-          logger.error(
-            { module: MODULE, operation: "callProvider", runId, requestId, error: persistErr },
-            "Failed to persist reasoning trace — continuing"
-          );
-        }
       } else {
         logger.warn(
           { module: MODULE, operation: "callProvider", requestId },
-          "No reasoning trace in response"
+          "No reasoning trace in LLM response — persisting stub"
         );
+      }
+
+      try {
+        await persistTrace(runId, parsed.reasoningTrace ?? {
+          no_trace: true,
+          inputContext: scope,
+          prompt_version: promptVersion,
+          story_analysis: { themes: [], emotional_tone: "", key_events: [] },
+          interpretations: [],
+          bias_hypotheses: [],
+          evidence_mapping: [],
+        });
+        logger.info(
+          { module: MODULE, operation: "callProvider", runId, requestId },
+          "Reasoning trace persisted"
+        );
+      } catch (persistErr) {
+        logger.error(
+          { module: MODULE, operation: "callProvider", runId, requestId, error: persistErr },
+          "Failed to persist reasoning trace — continuing"
+        );
+      }
+
+      // T205: Enforce noBiasDetected flag consistency
+      if (parsed.biases.length === 0 && !parsed.noBiasDetected) {
+        parsed.noBiasDetected = true;
       }
 
       // Normalize bias names against catalog
@@ -247,6 +259,8 @@ export class AssessmentService {
           ...(result.id ? { biasCatalogId: result.id } : {}),
         };
       });
+
+      // T206: TODO — wire evidence validation, blocked on T301 (evidence-validator.ts)
 
       // Stamp version, model, stage, scope fields
       return {
