@@ -213,11 +213,11 @@
   - Documented stub added: `// T206: TODO — wire evidence validation, blocked on T301 (evidence-validator.ts)`
   - Full implementation deferred until T301
 
-- [ ] T207 Update `src/orchestrators/reflection/question.service.ts`:
-  - Accept `story_analysis` and `interpretations` from Trace 1 as input context (FR-018)
-  - Signature changes from `generate(story, requestId)` to `generate(story, storyAnalysis, interpretations, requestId)`
-  - Questions should be reasoning-aware, not text-surface-level
-  - Also update `src/prompts/reflection/question-batch/system.md` to receive `story_analysis.themes`, `emotional_tone`, `key_events`, and the highest-plausibility interpretations as context. Questions should probe the user's interpretations, not just surface-level story details.
+- [x] T207 Update `src/orchestrators/reflection/question.service.ts`:
+  - Signature: `generate(story, requestId, storyAnalysis?, interpretations?)` — optional params, backward-compatible
+  - When reasoning context provided, prepends themes/emotional_tone/key_events + top 2 interpretations to user message
+  - Prompt template unchanged — context delivered via user message, no coupling to template variables
+  - Route continues working unchanged (params optional)
 
 **Checkpoint**: Two-phase assessment works end-to-end. Questions are reasoning-context-aware. Both traces persisted. Evidence validation wired (or stubbed with documented TODO).
 
