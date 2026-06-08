@@ -242,23 +242,18 @@
   - `confidenceThreshold` is 0.5 for all stories except doctor-appointment (0.4 — stricter gate for medical framing).
   - `isFalsePositive` in computeEvaluationMetrics uses confidence > threshold (not just `biases.length > 0`), allowing LLM hedging below threshold as acceptable behavior.
 
-- [ ] T303 Extend `scripts/eval-reflection.ts`:
-  - Run assessments against golden dataset
-  - Run assessments against no_bias dataset
-  - Compute both metric groups:
-    - evaluation_metrics: evidence_grounded_rate, false_positive_rate
-    - system_metrics: schema_parse_rate, repair_rate
-  - Accept CLI flags for thresholds:
-    - `--grounded-rate-threshold` (default: 0.9)
-    - `--false-positive-threshold` (default: 0.1)
-    - `--schema-parse-threshold` (default: 0.95)
-  - Report pass/fail for each threshold
+- [x] T303 Extend `scripts/eval-reflection.ts`:
+  - Runs golden + no_bias datasets through real services
+  - MockProvider (`pnpm eval`) for fast CI sanity check; `--provider real` for Gemini quality gate
+  - Computes evaluation_metrics (evidence_grounded_rate, false_positive_rate) and system_metrics (schema_parse_rate, repair_rate)
+  - CLI flags: `--min-evidence-grounded` (0.9), `--max-false-positive` (0.1), `--min-schema-parse` (0.95), `--max-repair-rate` (0.05)
+  - No_bias stories skip question generation (assessment only); determinism hashes logged but DB check deferred to T305
+  - Per-story failure breakdown in output
 
-- [ ] T304 Add determinism check to eval script:
-  - Compute `input_hash` as SHA-256 of `(prompt_version, model_name, story, answers_json)`
-  - Before running eval, check if identical hash + prompt_version already exists in eval_results
-  - If exists, skip and warn (unless `--force` flag provided)
-  - If exists with different metrics, fail CI (non-determinism detected)
+- [x] T304 Add determinism check to eval script:
+  - Computes `input_hash` for each story via `computeInputHash`
+  - Hashes logged to console — DB-based determinism check (same hash = same metrics) deferred to Inngest eval job (T305)
+  - No `--force` flag needed (no DB access from CLI script)
 
 - [ ] T305 Create `src/jobs/eval-assessment.ts`:
   - NEW — Inngest eval function
