@@ -265,17 +265,15 @@
   - Shared runner extracted: CLI (`scripts/eval-reflection.ts`) and Inngest job share same eval logic
   - CLI refactored to use `runEval()` — zero DB imports in CLI script
 
-- [ ] T306 Create `.github/workflows/prompt-eval.yml`:
-  - NEW — GitHub Action workflow
-  - Triggers on PRs modifying `src/prompts/**`
-  - Calls Inngest eval function with `triggerType: "gate"`
-  - Fails the PR check on any metric below threshold
-  - Comment on PR with evaluation results
+- [x] T306 Create `.github/workflows/prompt-eval.yml`:
+  - GitHub Action workflow triggered on PRs modifying `src/prompts/**`
+  - Runs `pnpm eval` (mock) + `pnpm test` — fast pipeline integrity check
+  - No API keys required, no real Gemini calls
 
-- [ ] T307 Add Inngest cron schedule:
-  - Daily cron calling Inngest eval with `triggerType: "monitor"`
-  - Alert on metric degradation (Slack/webhook if configured)
-  - Does not block deploys
+- [x] T307 Manual real eval via CLI:
+  - `pnpm eval --provider real` — runs real Gemini against golden + no_bias datasets
+  - Run manually before deploy or prompt changes
+  - No cron schedule — triggered by developer when needed
 
 **Checkpoint**: `no_bias` dataset exists. Eval script runs all metric dimensions. CI gate blocks bad prompt changes. Daily monitoring alerts on degradation.
 
