@@ -25,8 +25,9 @@ export function buildApp() {
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
 
-  const questionService = new QuestionService(provider, prompts);
-  const assessmentService = new AssessmentService(provider, prompts, catalog);
+  const modelName = env.GEMINI_MODEL;
+  const questionService = new QuestionService(provider, prompts, modelName);
+  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName);
 
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);
