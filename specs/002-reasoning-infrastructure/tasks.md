@@ -255,14 +255,15 @@
   - Hashes logged to console — DB-based determinism check (same hash = same metrics) deferred to Inngest eval job (T305)
   - No `--force` flag needed (no DB access from CLI script)
 
-- [ ] T305 Create `src/jobs/eval-assessment.ts`:
-  - NEW — Inngest eval function
-  - Accepts `triggerType: "gate" | "monitor"`
-  - Gate mode: runs golden + no_bias eval, persists results to eval_results, returns pass/fail
-  - Monitor mode: runs golden + no_bias eval, persists results, alerts on failure (does not block)
-  - Both modes compute all 4 metrics (evidence_grounded_rate, false_positive_rate, schema_parse_rate, repair_rate)
-  - Both modes check determinism via input_hash
-  - Returns structured result: `{ passed: boolean, metrics: EvaluationMetrics, systemMetrics: SystemMetrics, dataset: string }`
+- [x] T305 Create `src/jobs/eval-assessment.ts`:
+  - Inngest eval function (`event: "eval/assessment"`) — always uses real GeminiProvider
+  - Runs golden + no_bias datasets via shared `runEval()` from `src/evaluation/run-eval.ts`
+  - Determinism check: `getEvalResultByHash()` — same hash with different outcome fails gate mode
+  - Persists results to `eval_results` via `persistEvalResult()`
+  - Gate mode: returns `{ passed: false, reason: "non_determinism" }` on mismatch; fails CI
+  - Monitor mode: logs errors, does not block
+  - Shared runner extracted: CLI (`scripts/eval-reflection.ts`) and Inngest job share same eval logic
+  - CLI refactored to use `runEval()` — zero DB imports in CLI script
 
 - [ ] T306 Create `.github/workflows/prompt-eval.yml`:
   - NEW — GitHub Action workflow
