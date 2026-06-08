@@ -51,16 +51,44 @@ function parseArgs(): { provider: string; thresholds: Record<string, number> } {
 function createProvider(mode: string): Provider {
   if (mode === "real") return new GeminiProvider();
   const mock = new MockProvider();
+
+  // Question response — matched by unique phrase from question-batch prompt (line 2)
+  // Assessment prompt has same first line, so use "your goal is to help a user reflect"
+  mock.setResponse("Your goal is to help a user reflect", {
+    questions: [
+      "What makes you feel this way?",
+      "How has this situation affected your daily life?",
+      "What evidence contradicts your current view?",
+    ],
+    isComplete: true,
+    prompt_version: "1.0.0",
+    schema_version: "1.0.0",
+  });
+
+  // Assessment response — default for all assessment calls (both golden and no_bias)
   mock.setDefault({
     biases: [
       {
         name: "confirmation bias",
-        explanation: "Mock explanation for eval.",
-        storyConnection: "Mock story connection.",
-        alternativePerspective: "Mock alternative perspective.",
+        explanation: "The tendency to search for, interpret, favor, and recall information that confirms preexisting beliefs.",
+        storyConnection: "You described filtering news to match your views, which aligns with this pattern.",
+        evidence: [
+          {
+            source: "story" as const,
+            excerpt: "Only read news that confirms my political views",
+            relevance: "Direct statement of selective exposure",
+          },
+        ],
+        confidence: 0.3,
+        alternativePerspective: "Consider seeking out sources that challenge your existing views.",
       },
     ],
-    reflectionPrompt: "Mock reflection prompt.",
+    reflectionPrompt: "Consider whether you might be dismissing contradictory evidence.",
+    prompt_version: "1.0.0",
+    schema_version: "1.0.0",
+    noBiasDetected: false,
+    inputContext: "full" as const,
+    modelName: "mock-eval",
   });
   return mock;
 }
