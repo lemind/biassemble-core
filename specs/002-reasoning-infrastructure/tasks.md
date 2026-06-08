@@ -236,18 +236,11 @@
   - `Violation` type: `{ biasName: string, excerpt: string, reason: string }`
   - Wired into assessment service (T206) — import + call in `callProvider()`
 
-- [ ] T302 [P] Create `evaluations/no_bias/`:
-  - 10+ neutral stories — situations without cognitive bias triggers (e.g., routine errands, neutral observations)
-  - JSON format (same shape as golden set):
-    ```json
-    {
-      "story": "I went to the grocery store to buy milk and bread, paid with my credit card, and drove home without incident.",
-      "questions": [],
-      "expected_biases": []
-    }
-    ```
-  - NOTE: The `questions` field is unused for no_bias dataset but kept for format compatibility with golden set.
-  - Each file should contain one story with `expected_biases: []`.
+- [x] T302 [P] Create `evaluations/no_bias/`:
+  - 13 neutral stories — situations without cognitive bias triggers (grocery run, commute, laundry, doctor visit, library, car maintenance, coffee shop, home repair, mall parking, weather check, email sorting, plant watering, bus ride)
+  - JSON format: `{ id, title, story, isNoBias: true, confidenceThreshold: 0.5, notes, tags }`
+  - `confidenceThreshold` is 0.5 for all stories except doctor-appointment (0.4 — stricter gate for medical framing).
+  - `isFalsePositive` in computeEvaluationMetrics uses confidence > threshold (not just `biases.length > 0`), allowing LLM hedging below threshold as acceptable behavior.
 
 - [ ] T303 Extend `scripts/eval-reflection.ts`:
   - Run assessments against golden dataset

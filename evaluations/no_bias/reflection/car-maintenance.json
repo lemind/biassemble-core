@@ -1,0 +1,13 @@
+{
+  "id": "car-maintenance",
+  "title": "Scheduled oil change",
+  "story": "I dropped my car off at the dealership for a routine oil change. The service advisor said it would take about an hour. I waited in the customer lounge and read a magazine. When the technician finished, he replaced the oil filter and filled the engine with synthetic oil. I paid the eighty-five-dollar invoice and drove home.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine maintenance, pure procedural sequence",
+  "tags": [
+    "routine",
+    "neutral",
+    "maintenance"
+  ]
+}

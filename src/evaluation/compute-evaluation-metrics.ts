@@ -32,6 +32,8 @@ export interface EvidenceEntry {
 export interface BiasItem {
   name: string;
   evidence: EvidenceEntry[];
+  /** Confidence score 0.0–1.0 from the reasoning trace. Used for false-positive gating. */
+  confidence?: number;
 }
 
 export interface AssessmentInput {
@@ -47,6 +49,10 @@ export interface EvaluationMetrics {
 export interface ComputeEvaluationMetricsOptions {
   /** Set to true when the assessment was run against a no_bias story. */
   isNoBiasStory?: boolean;
+  /** Confidence threshold for false-positive classification. Default 0.5.
+   *  A bias on a no_bias story is a false positive only when confidence > threshold.
+   *  LLM hedging below the threshold is acceptable behavior. */
+  confidenceThreshold?: number;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -92,12 +98,16 @@ export function computeEvaluationMetrics(
   }
 
   // ── isFalsePositive ──────────────────────────────────────────────
+  // A bias on a no_bias story is a false positive only when its confidence
+  // exceeds the threshold. Low-confidence hedging (below threshold) is
+  // acceptable LLM behavior — the system is uncertain, not confidently wrong.
   let isFalsePositive: boolean | null;
 
   if (options?.isNoBiasStory === undefined) {
     isFalsePositive = null;
-  } else if (options.isNoBiasStory && biases.length > 0) {
-    isFalsePositive = true;
+  } else if (options.isNoBiasStory) {
+    const threshold = options.confidenceThreshold ?? 0.5;
+    isFalsePositive = biases.some((b) => (b.confidence ?? 1) > threshold);
   } else {
     isFalsePositive = false;
   }

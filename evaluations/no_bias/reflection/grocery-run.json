@@ -1,0 +1,9 @@
+{
+  "id": "grocery-run",
+  "title": "Routine grocery shopping",
+  "story": "I went to the grocery store on Saturday morning to buy milk, bread, and eggs. The store was moderately busy and I found everything I needed within ten minutes. I paid with my debit card at self-checkout, loaded the bags into my car, and drove home. Nothing unusual happened during the trip.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine errand, no decisions under uncertainty",
+  "tags": ["routine", "neutral", "errand"]
+}

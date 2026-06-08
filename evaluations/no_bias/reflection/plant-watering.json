@@ -1,0 +1,13 @@
+{
+  "id": "plant-watering",
+  "title": "Watering houseplants",
+  "story": "Every Wednesday I water the plants on the balcony. I filled the watering can from the kitchen tap, checked the soil moisture on each pot by pressing my finger into the top inch, and watered three of the five pots that felt dry. The herbs were still moist so I skipped them. The whole routine takes about ten minutes.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine household chore, pure procedural sequence",
+  "tags": [
+    "routine",
+    "neutral",
+    "household"
+  ]
+}

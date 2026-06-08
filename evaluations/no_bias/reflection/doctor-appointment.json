@@ -1,0 +1,9 @@
+{
+  "id": "doctor-appointment",
+  "title": "Routine annual checkup",
+  "story": "I had my annual physical exam scheduled for Wednesday at 10 AM. The doctor measured my blood pressure at 120 over 78, checked my heart rate, and reviewed my recent blood work results. Everything came back within normal ranges. She recommended I continue the same vitamin regimen and scheduled my next appointment for next year.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.4,
+  "notes": "Routine health check, positive outcome, low risk of health anxiety framing",
+  "tags": ["routine", "neutral", "health"]
+}

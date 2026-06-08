@@ -1,0 +1,8 @@
+{
+  "id": "laundry-day",
+  "title": "Weekend laundry routine",
+  "story": "On Sunday I did two loads of laundry. I separated the darks and lights as usual, added detergent to each machine, and set them to the normal cycle. While the machines ran, I folded the clean clothes from last week. Both loads finished in about an hour and I hung everything to dry on the rack by the window.",
+  "expectedMinBiases": 0,
+  "expectedQuestionsCountRange": [0, 0],
+  "tags": ["routine", "neutral", "household"]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "parking",
+  "title": "Finding parking at the mall",
+  "story": "I drove to the shopping mall on Saturday to pick up a birthday gift. The parking lot was full near the entrance, so I parked in the third row from the back. I walked to the store, found a wrapping paper set on the third aisle, purchased it for fifteen dollars, and returned to the car. The entire trip took about forty minutes.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine errand, minor causal inference from parking choice",
+  "tags": [
+    "routine",
+    "neutral",
+    "errand"
+  ]
+}

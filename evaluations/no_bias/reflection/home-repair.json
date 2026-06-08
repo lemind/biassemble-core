@@ -1,0 +1,13 @@
+{
+  "id": "home-repair",
+  "title": "Fixing a loose cabinet handle",
+  "story": "One of the kitchen cabinet handles came loose last week. I found the matching screw in the junk drawer, used a Phillips screwdriver to tighten it, and tested it by opening and closing the cabinet door a few times. The handle held firmly in place. The whole repair took about five minutes.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine household repair, simple mechanical fix",
+  "tags": [
+    "routine",
+    "neutral",
+    "household"
+  ]
+}

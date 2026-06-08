@@ -1,0 +1,13 @@
+{
+  "id": "email-sorting",
+  "title": "Sorting work emails",
+  "story": "I spent thirty minutes sorting through my inbox at the start of the day. I responded to six messages from colleagues, archived fourteen promotional emails, and flagged two items that needed follow-up by end of week. Nothing required urgent action.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine work task, pure procedural sequence",
+  "tags": [
+    "routine",
+    "neutral",
+    "work"
+  ]
+}
