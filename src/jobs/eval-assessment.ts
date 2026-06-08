@@ -78,6 +78,7 @@ export const evalAssessmentJob = inngest.createFunction(
         falsePositiveCount: result.noBiasResults.filter(r => r.evaluationMetrics?.isFalsePositive === true).length,
       };
 
+      if (!result.overallPassed) {
         logger.error({ module: MODULE, ...output }, "Eval gate failed");
       } else {
         logger.info({ module: MODULE, ...output }, "Eval completed");
