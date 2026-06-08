@@ -108,7 +108,7 @@ describe("computeEvaluationMetrics", () => {
       expect(result.evidenceGroundedRate).toBe(0.0);
     });
 
-    it("matches case-insensitively", () => {
+    it("rejects case-mismatched excerpts (case-sensitive matching)", () => {
       const assessment = makeAssessment([
         {
           name: "Confirmation Bias",
@@ -118,7 +118,7 @@ describe("computeEvaluationMetrics", () => {
         },
       ]);
       const result = computeEvaluationMetrics(assessment, makeInput());
-      expect(result.evidenceGroundedRate).toBe(1.0);
+      expect(result.evidenceGroundedRate).toBe(0.0);
     });
 
     it("handles a bias with multiple evidence items (all must be grounded)", () => {

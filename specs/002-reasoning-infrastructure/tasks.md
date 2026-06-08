@@ -210,8 +210,11 @@
   - `computeEvaluationMetrics` returns `null` for empty bias lists (eval-only, not called here)
 
 - [x] T206 Wire evidence validation into assessment service:
-  - Documented stub added: `// T206: TODO — wire evidence validation, blocked on T301 (evidence-validator.ts)`
-  - Full implementation deferred until T301
+  - Imported `validateEvidence` from `src/parsers/evidence-validator.ts` (T301)
+  - Called `validateEvidence()` in `callProvider()` after bias name normalization
+  - Logs warnings for violations (bias items with missing/hallucinated evidence)
+  - Accepts story/answers via new params on `callProvider()`
+  - Full implementation complete (T301 dependency resolved)
 
 - [x] T207 Update `src/orchestrators/reflection/question.service.ts`:
   - Signature: `generate(story, requestId, storyAnalysis?, interpretations?)` — optional params, backward-compatible
@@ -227,10 +230,11 @@
 
 **Purpose**: Build the adversarial testing infrastructure, evidence validation, and CI gating.
 
-- [ ] T301 [P] Create `src/parsers/evidence-validator.ts`:
+- [x] T301 [P] Create `src/parsers/evidence-validator.ts`:
   - `validateEvidence(assessment, input)` — checks every excerpt exists verbatim in story or answers
   - Returns `{ valid: boolean, violations: Violation[] }`
   - `Violation` type: `{ biasName: string, excerpt: string, reason: string }`
+  - Wired into assessment service (T206) — import + call in `callProvider()`
 
 - [ ] T302 [P] Create `evaluations/no_bias/`:
   - 10+ neutral stories — situations without cognitive bias triggers (e.g., routine errands, neutral observations)

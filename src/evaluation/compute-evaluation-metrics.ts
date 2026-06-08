@@ -2,7 +2,7 @@
  * Compute evaluation metrics for bias assessment quality.
  *
  * - `evidenceGroundedRate`: proportion of bias items whose evidence excerpts
- *   appear (case-insensitive) in the input story or answers. Returns `null`
+ *   appear (case-sensitive, trimmed) in the input story or answers. Returns `null`
  *   when bias list is empty.
  * - `isFalsePositive`: returns `true` if `isNoBiasStory` is set and biases
  *   were returned, `false` otherwise. Returns `null` if `isNoBiasStory` is
@@ -12,9 +12,8 @@
  *
  * ── Design decisions ─────────────────────────────────────────────────────
  *
- * - Excerpt matching is case-insensitive. LLM output may normalize casing
- *   ("He was angry" vs "he was angry"), and case-insensitive matching
- *   prevents false negatives while preserving semantic verbatim checking.
+ * - Excerpt matching is case-sensitive, trimmed. Spec (FR-011) requires
+ *   verbatim matching — consistent with validateEvidence (evidence-validator.ts).
  * - Empty excerpts are rejected (hallucination signal).
  * - A bias item with an empty evidence array is treated as ungrounded
  *   (FR-001 requires non-empty evidence).
@@ -53,7 +52,7 @@ export interface ComputeEvaluationMetricsOptions {
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 /**
- * Check whether `excerpt` appears (case-insensitive, trimmed) in the story
+ * Check whether `excerpt` appears (case-sensitive, trimmed) in the story
  * or any answer. Empty excerpts are rejected.
  */
 function excerptExistsInInput(
@@ -61,10 +60,10 @@ function excerptExistsInInput(
   story: string,
   answers: string[],
 ): boolean {
-  const normalized = excerpt.toLowerCase().trim();
-  if (normalized.length === 0) return false;
-  if (story.toLowerCase().includes(normalized)) return true;
-  return answers.some((answer) => answer.toLowerCase().includes(normalized));
+  const trimmed = excerpt.trim();
+  if (trimmed.length === 0) return false;
+  if (story.includes(trimmed)) return true;
+  return answers.some((answer) => answer.includes(trimmed));
 }
 
 // ─── Main function ──────────────────────────────────────────────────────
