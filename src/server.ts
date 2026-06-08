@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import inngestFastify from "inngest/fastify";
 import { env } from "./lib/env.js";
 import { requestIdHook } from "./lib/request-id.js";
 import { logger } from "./observability/logger.js";
@@ -8,6 +9,8 @@ import { BiasCatalogService } from "./catalog/bias-catalog.js";
 import { QuestionService } from "./orchestrators/reflection/question.service.js";
 import { AssessmentService } from "./orchestrators/reflection/assessment.service.js";
 import { registerReflectionRoutes } from "./routes/reflection.js";
+import { inngest } from "./jobs/client.js";
+import { inngestFunctions } from "./jobs/inngest-functions.js";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -43,6 +46,12 @@ export function buildApp() {
   registerReflectionRoutes(server, {
     question: questionService,
     assessment: assessmentService,
+  });
+
+  // Inngest webhook
+  server.register(inngestFastify, {
+    client: inngest,
+    functions: inngestFunctions,
   });
 
   return server;

@@ -1,0 +1,13 @@
+{
+  "id": "weather-check",
+  "title": "Checking the weather forecast",
+  "story": "I checked the weather app on my phone before going for a walk. The forecast said it would be partly cloudy with a high of seventy-two degrees and a ten percent chance of rain. I put on a light jacket and walked the usual three-mile loop around the neighborhood. The temperature stayed comfortable throughout the walk.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine daily activity, pure procedural sequence",
+  "tags": [
+    "routine",
+    "neutral",
+    "daily"
+  ]
+}

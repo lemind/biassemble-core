@@ -1,0 +1,9 @@
+{
+  "id": "library-visit",
+  "title": "Visiting the public library",
+  "story": "I visited the downtown library on Thursday afternoon to return three overdue books. The librarian checked them in and I owed fifty cents in late fees. I paid the fee and browsed the new arrivals section. I picked out two novels and a cookbook, checked them out with my library card, and put them in my bag before heading home.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine errand, minor failure event from overdue books but no interpersonal dynamics or decisions under uncertainty",
+  "tags": ["routine", "neutral", "errand"]
+}

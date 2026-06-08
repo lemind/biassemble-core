@@ -108,7 +108,7 @@ describe("computeEvaluationMetrics", () => {
       expect(result.evidenceGroundedRate).toBe(0.0);
     });
 
-    it("matches case-insensitively", () => {
+    it("rejects case-mismatched excerpts (case-sensitive matching)", () => {
       const assessment = makeAssessment([
         {
           name: "Confirmation Bias",
@@ -118,7 +118,7 @@ describe("computeEvaluationMetrics", () => {
         },
       ]);
       const result = computeEvaluationMetrics(assessment, makeInput());
-      expect(result.evidenceGroundedRate).toBe(1.0);
+      expect(result.evidenceGroundedRate).toBe(0.0);
     });
 
     it("handles a bias with multiple evidence items (all must be grounded)", () => {
@@ -164,7 +164,56 @@ describe("computeEvaluationMetrics", () => {
       expect(result.isFalsePositive).toBeNull();
     });
 
-    it("returns true for no_bias story that returned biases", () => {
+    it("returns true for no_bias story when confidence exceeds default threshold (0.5)", () => {
+      const assessment = makeAssessment([
+        {
+          name: "Confirmation Bias",
+          evidence: [
+            { source: "story", excerpt: groundedExcerpt, relevance: "" },
+          ],
+          confidence: 0.7,
+        },
+      ]);
+      const result = computeEvaluationMetrics(assessment, makeInput(), {
+        isNoBiasStory: true,
+      });
+      expect(result.isFalsePositive).toBe(true);
+    });
+
+    it("returns false for no_bias story when confidence is below threshold", () => {
+      const assessment = makeAssessment([
+        {
+          name: "Confirmation Bias",
+          evidence: [
+            { source: "story", excerpt: groundedExcerpt, relevance: "" },
+          ],
+          confidence: 0.3,
+        },
+      ]);
+      const result = computeEvaluationMetrics(assessment, makeInput(), {
+        isNoBiasStory: true,
+      });
+      expect(result.isFalsePositive).toBe(false);
+    });
+
+    it("returns false for no_bias story when confidence exactly equals threshold", () => {
+      const assessment = makeAssessment([
+        {
+          name: "Anchoring",
+          evidence: [
+            { source: "story", excerpt: groundedExcerpt, relevance: "" },
+          ],
+          confidence: 0.4,
+        },
+      ]);
+      const result = computeEvaluationMetrics(assessment, makeInput(), {
+        isNoBiasStory: true,
+        confidenceThreshold: 0.4,
+      });
+      expect(result.isFalsePositive).toBe(false);
+    });
+
+    it("treats missing confidence as above threshold (defaults to 1.0)", () => {
       const assessment = makeAssessment([
         {
           name: "Confirmation Bias",

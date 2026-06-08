@@ -13,6 +13,7 @@ import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { BiasCatalogService } from "../../catalog/bias-catalog.js";
 import { normalizeBiasName } from "../../catalog/normalize.js";
+import { validateEvidence } from "../../parsers/evidence-validator.js";
 
 const MODULE = "assessment-service";
 
@@ -74,7 +75,7 @@ export class AssessmentService {
         promptVersion,
         inputHash,
       });
-      runId = run.id;
+      runId = run?.id ?? "";
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "runStoryOnlyAssessment", error: err, requestId },
@@ -100,7 +101,9 @@ export class AssessmentService {
       "story_only",
       inputHash,
       promptVersion,
-      providerId
+      providerId,
+      story,
+      [],
     );
 
     return result;
@@ -137,7 +140,7 @@ export class AssessmentService {
         promptVersion,
         inputHash,
       });
-      runId = run.id;
+      runId = run?.id ?? "";
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "runFullAssessment", error: err, requestId },
@@ -166,7 +169,9 @@ export class AssessmentService {
       "story_plus_answers",
       inputHash,
       promptVersion,
-      providerId
+      providerId,
+      story,
+      answers,
     );
 
     return result;
@@ -184,7 +189,11 @@ export class AssessmentService {
     scope: "story_only" | "story_plus_answers",
     inputHash: string,
     promptVersion: string,
-    providerId: string
+    providerId: string,
+    /** Raw story text for evidence validation */
+    story: string,
+    /** Raw answers for evidence validation (empty array for story_only) */
+    answers: string[],
   ): Promise<AssessmentOutput> {
     return await withRetry(async (attempt) => {
       logger.info(
@@ -260,7 +269,20 @@ export class AssessmentService {
         };
       });
 
-      // T206: TODO — wire evidence validation, blocked on T301 (evidence-validator.ts)
+      // T206: Wire evidence validation (T301)
+      const validation = validateEvidence(
+        { biases: normalizedBiases },
+        {
+          story,
+          answers: scope === "story_plus_answers" ? answers : [],
+        },
+      );
+      if (!validation.valid) {
+        logger.warn(
+          { module: MODULE, operation: "callProvider", requestId, violations: validation.violations },
+          `Evidence validation failed — ${validation.violations.length} violation(s)`,
+        );
+      }
 
       // Stamp version, model, stage, scope fields
       return {

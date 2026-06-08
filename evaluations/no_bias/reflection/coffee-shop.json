@@ -1,0 +1,13 @@
+{
+  "id": "coffee-shop",
+  "title": "Grabbing coffee",
+  "story": "I stopped at the corner coffee shop on my way to work. I ordered a medium drip coffee with no cream and paid with the contactless reader. The barista handed me the cup within three minutes. I sat at a table near the window, finished the coffee in about fifteen minutes, and left for the office.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine errand, pure procedural sequence",
+  "tags": [
+    "routine",
+    "neutral",
+    "errand"
+  ]
+}

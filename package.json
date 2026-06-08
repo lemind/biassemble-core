@@ -11,6 +11,7 @@
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
     "eval": "tsx scripts/eval-reflection.ts",
+    "eval:trigger": "tsx --env-file=.env scripts/trigger-eval.ts",
     "generate:contracts": "tsx scripts/generate-contracts.ts",
     "deploy": "vercel deploy --prod",
     "db:generate": "drizzle-kit generate",
@@ -20,6 +21,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
+    "inngest": "^3.27.0",
     "drizzle-orm": "^0.38.0",
     "fastify": "^5.2.1",
     "pino": "^9.6.0",

@@ -1,0 +1,13 @@
+{
+  "id": "bus-ride",
+  "title": "Riding the city bus",
+  "story": "I took the number 42 bus from Main Street to the university campus this morning. The bus arrived on time and the ride took about twenty minutes. I sat by the window and read a few pages of a book. I got off at the campus stop and walked to the library.",
+  "isNoBias": true,
+  "confidenceThreshold": 0.5,
+  "notes": "Routine commute, pure procedural sequence",
+  "tags": [
+    "routine",
+    "neutral",
+    "commute"
+  ]
+}
