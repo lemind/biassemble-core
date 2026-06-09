@@ -319,14 +319,14 @@
 
 **Purpose**: Unit + integration tests for all new functionality.
 
-- [ ] T501 [P] Create `tests/unit/contracts/reasoning.schemas.test.ts`:
+- [x] T501 [P] Create `tests/unit/contracts/reasoning.schemas.test.ts`:
   - Zod validation for all schemas: sessions, runs, traces, eval_results, evidence entries
   - Verify stage/scope enum values
   - Verify model_name, prompt_version branded type enforcement
   - Valid data passes, invalid data fails
   - Verify that multiple bias items MAY reference the same excerpt, but each must include a distinct relevance explanation
 
-- [ ] T502 [P] Create `tests/unit/parsers/evidence-validator.test.ts`:
+- [x] T502 [P] Create `tests/unit/parsers/evidence-validator.test.ts`:
   - Verbatim match success cases
   - Hallucination rejection (excerpt not in input)
   - Empty edge cases (no biases, empty excerpts)
@@ -354,11 +354,11 @@
   - Evidence validation with hallucination rejection
   - Verify dropped bias items when evidence invalid
 
-- [ ] T507 [P] Create `tests/unit/evaluations/no-bias.test.ts`:
+- [x] T507 [P] Create `tests/unit/evaluations/no-bias.test.ts`:
   - Verify no_bias dataset loads and has correct format
   - Each file has expected structure matching golden set
 
-- [ ] T508 [P] Create `tests/integration/two-phase-session.test.ts`:
+- [x] T508 [P] Create `tests/integration/two-phase-session.test.ts`:
   - Full two-phase session flow:
     1. Create session
     2. Run story-only assessment → Trace 1
@@ -369,12 +369,12 @@
     7. Verify Trace 2 has stage=post_questions_assessment, scope=story_plus_answers
     8. Verify both traces persisted and retrievable
 
-- [ ] T509 Add test case to `tests/integration/assessment.test.ts`:
+- [x] T509 Add test case to `tests/integration/assessment.test.ts`:
   - Verify pipeline throws (not warns, not defaults) when `prompt_version` is missing from any reasoning trace step
   - Mock provider returns valid assessment JSON but omits `prompt_version` from `StoryAnalysis`
   - Assert that the orchestrator throws with a descriptive error message (FR-014 enforcement)
 
-- [ ] T510 [P] Create `tests/integration/inngest-eval.test.ts`:
+- [x] T510 [P] Create `tests/integration/inngest-eval.test.ts`:
   - Verify Inngest eval function runs both datasets (golden + no_bias)
   - Computes all 4 metrics correctly
   - Persists results to eval_results
@@ -382,7 +382,7 @@
   - Determinism check: same hash skips, different hash runs
   - Determinism failure: same hash, different metrics → fails
 
-- [ ] T511 [P] Update READMEs with stage 002 completion status:
+- [ ] T511 [P] Update READMEs with stage 002 completion status — ⚠️ NOT DONE
   - `biassemble-core/README.md`: Add section listing stage 002 deliverables — reasoning traces, evidence binding, two-phase assessment, split metrics (evaluation_metrics + system_metrics), Inngest CI eval, no_bias dataset. Link to `specs/002-reasoning-infrastructure/`.
   - `biassemble/README.md`: Add one-liner noting reasoning infrastructure is complete (auditable traces, evidence-based assessment). Link to core README.
 

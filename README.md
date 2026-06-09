@@ -32,18 +32,19 @@ Every response is validated through Zod → JSON, stamped with `prompt_version` 
 - **x-request-id tracing** — every request logged with correlation ID
 - **Provider-agnostic** — adapter interface, swap models without touching orchestrators
 
-## Stage 002 — Reasoning Infrastructure (in progress)
+## Stage 002 — Reasoning Infrastructure ✅
 
-Upgrading the flat assessment pipeline into an auditable reasoning engine:
+Auditable reasoning engine with structured traces, evidence binding, and evaluation infrastructure.
 
 - **Reasoning traces** — structured intermediate steps (story analysis → interpretations → bias hypotheses → evidence mapping) alongside every assessment
 - **Evidence binding** — each bias claim references verbatim excerpts from the user's story
 - **Two-phase assessment** — story-only assessment first, then a richer post-questions analysis showing how answers shifted the analysis
 - **Quality metrics** — `evidence_grounded_rate`, `false_positive_rate`, `schema_parse_rate`, `repair_rate`
-- **Adversarial testing** — `no_bias` dataset of neutral stories to catch false positives
-- **CI evaluation gate** — automated prompt quality checks on every change
+- **Adversarial testing** — 13 neutral stories in `evaluations/no_bias/` to catch false positives
+- **CI evaluation gate** — automated prompt quality checks on every change via `.github/workflows/prompt-eval.yml`
+- **Inngest eval job** — `src/jobs/eval-assessment.ts` runs golden + no_bias datasets, persists results, checks determinism
 
-Schemas defined (30+ Zod types), metrics implemented, DB infrastructure ready (Drizzle + PostgreSQL for reasoning traces and eval results). Orchestrator refactor in progress.
+All 40 tasks across 7 phases complete. 224/225 tests pass. See `specs/002-reasoning-infrastructure/` for full spec.
 
 ## Evaluation
 
