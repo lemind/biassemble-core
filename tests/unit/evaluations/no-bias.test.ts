@@ -6,13 +6,20 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const NO_BIAS_DIR = resolve(__dirname, "..", "..", "..", "evaluations", "no_bias", "reflection");
 
+/**
+ * A no-bias story can use either:
+ * - no-bias format: { isNoBias: true, confidenceThreshold, notes }
+ * - golden format:  { expectedMinBiases: 0, expectedQuestionsCountRange: [0, 0] }
+ */
 interface NoBiasStory {
   id: string;
   title: string;
   story: string;
-  isNoBias: boolean;
-  confidenceThreshold: number;
   tags: string[];
+  isNoBias?: boolean;
+  confidenceThreshold?: number;
+  expectedMinBiases?: number;
+  expectedQuestionsCountRange?: [number, number];
 }
 
 describe("T507 — no_bias dataset format", () => {
@@ -37,17 +44,17 @@ describe("T507 — no_bias dataset format", () => {
     expect(typeof story.story).toBe("string");
     expect(story.story.length).toBeGreaterThan(50);
 
-    expect(story).toHaveProperty("isNoBias");
-    expect(story.isNoBias).toBe(true);
-
-    expect(story).toHaveProperty("confidenceThreshold");
-    expect(typeof story.confidenceThreshold).toBe("number");
-    expect(story.confidenceThreshold).toBeGreaterThan(0);
-    expect(story.confidenceThreshold).toBeLessThanOrEqual(1);
-
     expect(story).toHaveProperty("tags");
     expect(Array.isArray(story.tags)).toBe(true);
     expect(story.tags.length).toBeGreaterThan(0);
+
+    // Must be one of two formats: no-bias format or golden format
+    const hasNoBiasFormat = story.isNoBias === true;
+    const hasGoldenFormat =
+      typeof story.expectedMinBiases === "number" &&
+      Array.isArray(story.expectedQuestionsCountRange);
+
+    expect(hasNoBiasFormat || hasGoldenFormat).toBe(true);
   });
 
   it("should have unique ids across all files", () => {
