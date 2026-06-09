@@ -341,14 +341,14 @@
   - Edge case: empty responses array
   - Edge case: single response
 
-- [ ] T505 Extend `tests/integration/assessment.test.ts`:
+^- [x] T505 Extend `tests/integration/assessment.test.ts`:
   - Verify reasoning trace shape in response
   - Verify evidence binding on bias items
   - Verify `no_bias_detected` signal
   - Verify `stage` and `scope` on output
   - Verify `modelName` present on output
 
-- [ ] T506 [P] Create `tests/integration/evidence-pipeline.test.ts`:
+^- [x] T506 [P] Create `tests/integration/evidence-pipeline.test.ts`:
   - Full pipeline with mocked provider
   - Trace generation with evidence binding
   - Evidence validation with hallucination rejection
