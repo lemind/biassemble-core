@@ -382,7 +382,7 @@
   - Determinism check: same hash skips, different hash runs
   - Determinism failure: same hash, different metrics → fails
 
-- [ ] T511 [P] Update READMEs with stage 002 completion status — ⚠️ NOT DONE
+- [x] T511 [P] Update READMEs with stage 002 completion status
   - `biassemble-core/README.md`: Add section listing stage 002 deliverables — reasoning traces, evidence binding, two-phase assessment, split metrics (evaluation_metrics + system_metrics), Inngest CI eval, no_bias dataset. Link to `specs/002-reasoning-infrastructure/`.
   - `biassemble/README.md`: Add one-liner noting reasoning infrastructure is complete (auditable traces, evidence-based assessment). Link to core README.
 
