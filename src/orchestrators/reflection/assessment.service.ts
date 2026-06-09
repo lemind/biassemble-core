@@ -256,6 +256,8 @@ export class AssessmentService {
       // T205: Enforce noBiasDetected flag consistency
       if (parsed.biases.length === 0 && !parsed.noBiasDetected) {
         parsed.noBiasDetected = true;
+      } else if (parsed.biases.length > 0 && parsed.noBiasDetected === undefined) {
+        parsed.noBiasDetected = false;
       }
 
       // Normalize bias names against catalog

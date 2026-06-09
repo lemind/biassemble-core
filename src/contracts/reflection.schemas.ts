@@ -31,10 +31,21 @@ export const GenerateQuestionRequestSchema = z.object({
 export const GenerateAssessmentRequestSchema = z.object({
   sessionId: z.string().uuid(),
   story: z.string().min(1),
-  questions: z.array(z.string().min(1)).min(1),
-  answers: z.array(z.string().min(1)).min(1),
+  questions: z.array(z.string().min(1)).default([]),
+  answers: z.array(z.string().min(1)).default([]),
   mode: AssessmentModeEnum.default("full"),
-});
+}).refine(
+  (data) => {
+    // story_only mode allows empty questions/answers
+    if (data.mode === "story_only") return true;
+    // full mode requires at least 1 question and answer
+    return data.questions.length >= 1 && data.answers.length >= 1;
+  },
+  {
+    message: "Full assessment mode requires at least 1 question and answer",
+    path: ["questions"],
+  }
+);
 
 // ─── Response schemas ──────────────────────────────────────
 
