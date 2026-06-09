@@ -52,6 +52,9 @@ export function buildApp() {
   server.register(inngestFastify, {
     client: inngest,
     functions: inngestFunctions,
+    options: {
+      serveHost: env.INNGEST_SERVE_HOST,
+    },
   });
 
   return server;
