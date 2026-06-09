@@ -89,6 +89,26 @@ pnpm test
 # → 122 tests passing
 ```
 
+### Local Dev vs Vercel Deployment
+
+- **Local dev** (`pnpm dev`): runs `src/dev.ts` which starts a long-lived Fastify server on `localhost:3001` via `tsx --watch` (auto-restarts on file changes). Best for development.
+- **Vercel** (`pnpm deploy`): uses `api/index.ts` which exports the Fastify app as a serverless function. Each request is a cold-start Lambda with a 30s timeout. The `/v1/reflection/assessment` endpoint may hit this timeout on Vercel's free plan — consider upgrading to Pro (60s timeout) or running assessment as an async Inngest job for longer-running evaluations.
+
+### Vercel Logs
+
+```bash
+# Install Vercel CLI and link the project
+vercel link
+
+# Tail recent logs
+vercel logs biassemble-core.vercel.app
+
+# Follow live
+vercel logs biassemble-core.vercel.app --follow
+```
+
+Or view logs in the [Vercel Dashboard](https://vercel.com) → biassemble-core project → "Logs" tab.
+
 ## Project Structure
 
 ```

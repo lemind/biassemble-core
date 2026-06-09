@@ -10,6 +10,12 @@ import type {
 
 export type { RunStage, RunScope, Dataset } from "../contracts/reasoning.schemas";
 
+export interface SessionRecord {
+  id: string;
+  storyId: string;
+  createdAt: string;
+}
+
 export interface RunRecord {
   id: string;
   sessionId: string;
