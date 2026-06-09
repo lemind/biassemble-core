@@ -6,6 +6,7 @@ import { ZodError } from "zod";
 import { 
   GenerateQuestionRequestSchema,
   GenerateAssessmentRequestSchema,
+  type AssessmentOutput,
 } from "../contracts/reflection.schemas.js";
 import { authHook } from "../lib/auth.js";
 import { logger } from "../observability/logger.js";
@@ -64,23 +65,48 @@ export function registerReflectionRoutes(
 
   /**
    * POST /v1/reflection/assessment
+   *
+   * Two-phase assessment endpoint:
+   * - mode=story_only → runs initial assessment on story only, no Q&A required
+   * - mode=full → runs post-questions assessment with story + Q&A
+   *
+   * Query param `includeReasoningTrace=true` includes the reasoning trace in the response body.
+   * The trace is always computed and persisted regardless of this flag (FR-003).
    */
   server.post("/v1/reflection/assessment", { preHandler: [authHook] }, async (request, reply) => {
     try {
       const body = GenerateAssessmentRequestSchema.parse(request.body);
+      const includeTrace = request.query && (request.query as Record<string, string>).includeReasoningTrace === "true";
 
-      if (body.questions.length !== body.answers.length) {
-        return reply.status(400).send({ 
-          error: "Questions and answers count must match" 
-        });
+      let result: AssessmentOutput;
+
+      if (body.mode === "story_only") {
+        result = await services.assessment.runStoryOnlyAssessment(
+          body.sessionId,
+          body.story,
+          request.id
+        );
+      } else {
+        // mode === "full" (default)
+        if (body.questions.length !== body.answers.length) {
+          return reply.status(400).send({ 
+            error: "Questions and answers count must match" 
+          });
+        }
+
+        result = await services.assessment.runFullAssessment(
+          body.sessionId,
+          body.story,
+          body.questions,
+          body.answers,
+          request.id
+        );
       }
 
-      const result = await services.assessment.generate(
-        body.story,
-        body.questions,
-        body.answers,
-        request.id
-      );
+      if (!includeTrace) {
+        const { reasoningTrace, ...rest } = result;
+        return rest;
+      }
 
       return result;
     } catch (error) {

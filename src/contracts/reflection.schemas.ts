@@ -33,7 +33,7 @@ export const GenerateAssessmentRequestSchema = z.object({
   story: z.string().min(1),
   questions: z.array(z.string().min(1)).min(1),
   answers: z.array(z.string().min(1)).min(1),
-  mode: AssessmentModeEnum,
+  mode: AssessmentModeEnum.default("full"),
 });
 
 // ─── Response schemas ──────────────────────────────────────
