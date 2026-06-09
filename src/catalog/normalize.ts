@@ -1,149 +1,133 @@
-/**
- * Fuzzy bias name → catalog ID normalization.
- *
- * Takes a raw bias name from LLM output (e.g. "confirmation bias",
- * "Confirmation Bias", "confirmation-bias") and attempts to match it
- * against the canonical catalog entries.
- *
- * Uses a simple token-overlap + Levenshtein heuristic — no external deps.
- */
+import { BiasEntry } from "./bias-catalog.js";
 
-import type { BiasEntry } from "./bias-catalog.js";
-
-export interface NormalizationResult {
-  /** Canonical catalog ID if a match was found, otherwise null. */
-  id: string | null;
-  /** Canonical display name from the catalog (or the original name if no match). */
-  name: string;
-  /** Confidence score 0–1. 1 = exact match, lower = fuzzy. */
-  confidence: number;
-}
+// ─── Normalization helpers ──────────────────────────────────
 
 /**
- * Normalize a raw bias name against the catalog.
- *
- * Matching strategy (in order of precedence):
- * 1. Exact match against catalog `id` (kebab-case)
- * 2. Exact match against catalog `name` (case-insensitive)
- * 3. Token-overlap match: if ≥ 50% of significant tokens overlap
- * 4. Levenshtein distance ≤ 3 on lowercased, stripped name
+ * Normalize a bias label by lowercasing, stripping punctuation,
+ * and collapsing whitespace.
  */
-export function normalizeBiasName(
-  rawName: string,
-  catalog: BiasEntry[]
-): NormalizationResult {
-  const cleaned = rawName.trim();
-
-  // 1. Exact match against catalog id
-  const byId = catalog.find((b) => b.id === cleaned);
-  if (byId) {
-    return { id: byId.id, name: byId.name, confidence: 1.0 };
-  }
-
-  // 2. Case-insensitive exact match against catalog name
-  const lower = cleaned.toLowerCase();
-  const byName = catalog.find((b) => b.name.toLowerCase() === lower);
-  if (byName) {
-    return { id: byName.id, name: byName.name, confidence: 1.0 };
-  }
-
-  // 3. Token-overlap match
-  // ≥50% overlap means at least half the significant tokens match.
-  // Catches "confirmation bias" vs "confirmation" (2/2=1.0) and
-  // "anchoring effect" vs "anchoring bias" (1/2=0.5) while rejecting
-  // "optimism bias" vs "confirmation bias" (0/2=0.0).
-  const TOKEN_OVERLAP_THRESHOLD = 0.5;
-  const inputTokens = tokenize(cleaned);
-  let bestTokenOverlap: { entry: BiasEntry; overlap: number } | null = null;
-
-  for (const bias of catalog) {
-    const catalogTokens = tokenize(bias.name);
-    const overlap = countOverlap(inputTokens, catalogTokens);
-    const maxLen = Math.max(inputTokens.length, catalogTokens.length);
-    const ratio = maxLen > 0 ? overlap / maxLen : 0;
-
-    if (ratio >= TOKEN_OVERLAP_THRESHOLD && (!bestTokenOverlap || overlap > bestTokenOverlap.overlap)) {
-      bestTokenOverlap = { entry: bias, overlap };
-    }
-  }
-
-  if (bestTokenOverlap !== null) {
-    // Token overlap is a strong signal but not exact — cap at 0.8
-    // to leave room for exact matches (1.0) above.
-    const TOKEN_MATCH_CONFIDENCE = 0.8;
-    return {
-      id: bestTokenOverlap.entry.id,
-      name: bestTokenOverlap.entry.name,
-      confidence: TOKEN_MATCH_CONFIDENCE,
-    };
-  }
-
-  // 4. Levenshtein distance on lowercased, stripped name
-  // ≤3 edits catches typos ("confrimation bias" → "confirmation bias")
-  // and minor variations ("anchoring-bias" → "anchoring bias") without
-  // over-matching unrelated terms.
-  const MAX_LEVENSHTEIN_DIST = 3;
-  const stripped = lower.replace(/[^a-z0-9\s]/g, "").trim();
-  let bestLevenshtein: { entry: BiasEntry; dist: number } | null = null;
-
-  for (const bias of catalog) {
-    const target = bias.name.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
-    const dist = levenshtein(stripped, target);
-    if (dist <= MAX_LEVENSHTEIN_DIST && (bestLevenshtein === null || dist < bestLevenshtein.dist)) {
-      bestLevenshtein = { entry: bias, dist };
-    }
-  }
-
-  if (bestLevenshtein !== null) {
-    // Each edit distance point reduces confidence by 0.15, so:
-    // dist=1 → 0.85, dist=2 → 0.70, dist=3 → 0.55
-    // This keeps fuzzy matches below token-overlap (0.8) and exact (1.0).
-    const LEVENSHTEIN_CONFIDENCE_DECAY = 0.15;
-    const confidence = Math.max(0, 1 - bestLevenshtein.dist * LEVENSHTEIN_CONFIDENCE_DECAY);
-    return {
-      id: bestLevenshtein.entry.id,
-      name: bestLevenshtein.entry.name,
-      confidence,
-    };
-  }
-
-  // No match found
-  return { id: null, name: cleaned, confidence: 0 };
-}
-
-// ─── Helpers ───────────────────────────────────────────────
-
-function tokenize(s: string): string[] {
-  return s
+export function normalizeLabel(label: string): string {
+  return label
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .split(/[\s-]+/)
-    .filter((t) => t.length > 2); // skip very short tokens
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function countOverlap(a: string[], b: string[]): number {
+/**
+ * Compute token overlap ratio between two strings.
+ * Useful for fuzzy matching of bias labels.
+ */
+export function tokenOverlap(a: string, b: string): number {
+  const tokensA = new Set(a.toLowerCase().split(/\s+/));
+  const tokensB = b.toLowerCase().split(/\s+/);
+  const intersection = tokensB.filter((t) => tokensA.has(t));
+  const union = new Set([...tokensA, ...tokensB]);
+  return intersection.length / union.size;
+}
+
+/**
+ * Compute Jaccard similarity between two sets of strings.
+ */
+export function jaccardSimilarity(a: string[], b: string[]): number {
+  const setA = new Set(a);
   const setB = new Set(b);
-  return a.filter((t) => setB.has(t)).length;
+  const intersection = a.filter((t) => setB.has(t)).length;
+  const union = new Set([...setA, ...setB]).size;
+  return intersection / union;
 }
 
+/**
+ * Compute Levenshtein (edit) distance between two strings.
+ */
 function levenshtein(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
   const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
 
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 0; i <= m; i++) {
+    dp[i]![0] = i;
+  }
+  for (let j = 0; j <= n; j++) {
+    dp[0]![j] = j;
+  }
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost
+      dp[i]![j] = Math.min(
+        dp[i - 1]![j]! + 1,
+        dp[i]![j - 1]! + 1,
+        dp[i - 1]![j - 1]! + cost,
       );
     }
   }
 
-  return dp[m][n];
+  return dp[m]![n]!;
+}
+
+/**
+ * Normalized edit distance (0 = identical, 1 = completely different).
+ */
+export function normalizedEditDistance(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 0;
+  return levenshtein(a, b) / maxLen;
+}
+
+/**
+ * Find the best matching bias entry for a given label using
+ * a combination of token overlap and normalized edit distance.
+ * Returns the best match and its confidence score (0-1).
+ */
+export function findBestMatch(
+  label: string,
+  entries: BiasEntry[],
+): { entry: BiasEntry; confidence: number } | null {
+  const normalized = normalizeLabel(label);
+  if (!normalized) return null;
+
+  let best: { entry: BiasEntry; confidence: number } | null = null;
+
+  for (const entry of entries) {
+    const entryNorm = normalizeLabel(entry.name);
+    const overlap = tokenOverlap(normalized, entryNorm);
+    const editDist = normalizedEditDistance(normalized, entryNorm);
+    const confidence = overlap * 0.6 + (1 - editDist) * 0.4;
+
+    if (!best || confidence > best.confidence) {
+      best = { entry, confidence };
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Normalize a bias name against the catalog.
+ * Uses fuzzy matching to find the closest catalog entry.
+ * Returns the matched catalog name and id if found, otherwise the original name.
+ */
+export function normalizeBiasName(
+  name: string,
+  catalog: BiasEntry[],
+): { name: string; id?: string } {
+  const match = findBestMatch(name, catalog);
+  if (match && match.confidence > 0.5) {
+    return { name: match.entry.name, id: match.entry.id };
+  }
+  return { name };
+}
+
+/**
+ * Group bias entries by their category.
+ */
+export function groupByCategory(entries: BiasEntry[]): Map<string, BiasEntry[]> {
+  const groups = new Map<string, BiasEntry[]>();
+  for (const entry of entries) {
+    const existing = groups.get(entry.category) ?? [];
+    existing.push(entry);
+    groups.set(entry.category, existing);
+  }
+  return groups;
 }
