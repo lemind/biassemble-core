@@ -11,6 +11,5 @@
   },
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index.js" }
-  ],
-  "skipTypeCheck": true
+  ]
 }
