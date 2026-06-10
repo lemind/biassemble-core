@@ -1843,7 +1843,7 @@ if (!isVercel2) {
   start();
 }
 
-// api/index.ts
+// api/handler.ts
 var cachedApp = null;
 async function getApp() {
   if (!cachedApp) {
