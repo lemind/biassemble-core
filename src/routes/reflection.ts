@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { 
@@ -15,10 +12,8 @@ import type { AssessmentService } from "../orchestrators/reflection/assessment.s
 
 const MODULE = "routes";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const CONTRACTS_JSON = JSON.parse(
-  readFileSync(resolve(__dirname, "..", "..", "contracts", "reflection.schemas.json"), "utf-8")
-);
+import contractsJson from "../../contracts/reflection.schemas.json" with { type: "json" };
+const CONTRACTS_JSON = contractsJson;
 
 export function registerReflectionRoutes(
   server: FastifyInstance,
