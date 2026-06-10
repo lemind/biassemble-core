@@ -15,7 +15,7 @@
     "eval:trigger:golden": "tsx --env-file=.env scripts/trigger-eval-golden.ts",
     "eval:trigger:no-bias": "tsx --env-file=.env scripts/trigger-eval-no-bias.ts",
     "generate:contracts": "tsx scripts/generate-contracts.ts",
-    "deploy": "vercel deploy --prod && pnpm run inngest:sync",
+    "deploy": "vercel deploy --prod",
     "inngest:sync": "curl -s -o /dev/null -w '%{http_code}' https://biassemble-core.vercel.app/api/inngest",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "@types/node": "22.19.19",
-    "drizzle-kit": "0.30.6",
+    "drizzle-kit": "0.31.10",
     "esbuild": "0.28.0",
     "rimraf": "6.1.3",
     "tsx": "4.22.3",

@@ -69,12 +69,12 @@ export const QuestionOutputSchema = z.object({
 export const AssessmentOutputSchema = z.object({
   biases: z.array(BiasItemSchema),
   reflectionPrompt: z.string().min(REFLECTION_MIN_LENGTH),
-  prompt_version: z.string(),
-  schema_version: z.literal(SCHEMA_VERSION),
+  prompt_version: z.string().optional(),
+  schema_version: z.literal(SCHEMA_VERSION).optional(),
   noBiasDetected: z.boolean(),
   reasoningTrace: ReasoningTraceSchema.optional(),
-  inputContext: InputContextEnum,
-  modelName: z.string().min(1),
+  inputContext: InputContextEnum.optional(),
+  modelName: z.string().min(1).optional(),
 });
 
 // ─── Types ─────────────────────────────────────────────────
