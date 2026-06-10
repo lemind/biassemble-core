@@ -105,12 +105,36 @@ export const evalGoldenStoryJob = inngest.createFunction(
   async () => {
     const provider = new GeminiProvider();
     const modelName = "gemini-2.0-flash";
+    const prompts = new PromptRegistry();
 
     logger.info({ module: MODULE }, "Starting single golden story eval");
 
     try {
       const result = await runEval(provider, modelName, undefined, "golden");
       const story = result.goldenResults[0];
+
+      // ── Persist to DB ───────────────────────────────────────
+      try {
+        await persistEvalResult({
+          provider: "gemini",
+          modelName,
+          promptVersion: prompts.getVersion(),
+          dataset: "golden",
+          evaluationMetrics: {
+            evidenceGroundedRate: story?.evaluationMetrics?.evidenceGroundedRate ?? null,
+            isFalsePositive: story?.evaluationMetrics?.isFalsePositive ?? null,
+          },
+          systemMetrics: {
+            schemaParseRate: result.sysMetrics.schemaParseRate,
+            repairRate: result.sysMetrics.repairRate,
+            totalResponses: result.sysMetrics.totalResponses,
+          },
+          inputHash: story?.inputHash ?? "",
+          passed: result.overallPassed,
+        });
+      } catch (dbError) {
+        logger.error({ module: MODULE, error: dbError }, "Failed to persist golden eval result — continuing");
+      }
 
       const output = {
         passed: result.overallPassed,
@@ -144,12 +168,35 @@ export const evalNoBiasStoryJob = inngest.createFunction(
   async () => {
     const provider = new GeminiProvider();
     const modelName = "gemini-2.0-flash";
+    const prompts = new PromptRegistry();
 
     logger.info({ module: MODULE }, "Starting single no_bias story eval");
 
     try {
       const result = await runEval(provider, modelName, undefined, "no_bias");
       const story = result.noBiasResults[0];
+
+      // ── Persist to DB ───────────────────────────────────────
+      try {
+        await persistEvalResult({
+          provider: "gemini",
+          modelName,
+          promptVersion: prompts.getVersion(),
+          dataset: "no_bias",
+          evaluationMetrics: {
+            isFalsePositive: story?.evaluationMetrics?.isFalsePositive ?? null,
+          },
+          systemMetrics: {
+            schemaParseRate: result.sysMetrics.schemaParseRate,
+            repairRate: result.sysMetrics.repairRate,
+            totalResponses: result.sysMetrics.totalResponses,
+          },
+          inputHash: story?.inputHash ?? "",
+          passed: result.overallPassed,
+        });
+      } catch (dbError) {
+        logger.error({ module: MODULE, error: dbError }, "Failed to persist no-bias eval result — continuing");
+      }
 
       const output = {
         passed: result.overallPassed,
