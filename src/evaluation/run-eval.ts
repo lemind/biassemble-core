@@ -205,34 +205,65 @@ async function evaluateNoBiasStory(
 export async function runEval(
   provider: Provider,
   modelName: string,
+  storyText?: string,
+  mode?: "golden" | "no_bias",
 ): Promise<EvalRunResult> {
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
   const questionService = new QuestionService(provider, prompts, modelName);
   const assessmentService = new AssessmentService(provider, prompts, catalog, modelName);
 
-  const GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "golden", "reflection");
-  const NO_BIAS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "no_bias", "reflection");
-
-  const goldenStories = loadStories<GoldenStory>(GOLDEN_DIR);
-  const noBiasStories = loadStories<NoBiasStory>(NO_BIAS_DIR);
-
   const goldenResults: StoryResult[] = [];
   const noBiasResults: StoryResult[] = [];
   const allLLMResponses: LLMResponse[] = [];
 
-  // Evaluate golden stories
-  for (const story of goldenStories) {
-    const { llmResponse, ...res } = await evaluateGoldenStory(story, questionService, assessmentService, prompts);
-    allLLMResponses.push(llmResponse);
-    goldenResults.push(res);
-  }
-
-  // Evaluate no_bias stories
-  for (const story of noBiasStories) {
+  if (storyText && mode === "no_bias") {
+    // Single no_bias story — assessment only, no questions
+    const story: NoBiasStory = {
+      id: "custom",
+      title: "Custom Story",
+      story: storyText,
+      tags: [],
+      isNoBias: true,
+      confidenceThreshold: 0.5,
+      notes: "",
+    };
     const { llmResponse, ...res } = await evaluateNoBiasStory(story, assessmentService, prompts);
     allLLMResponses.push(llmResponse);
     noBiasResults.push(res);
+  } else if (storyText) {
+    // Single golden story — questions + assessment
+    const story: GoldenStory = {
+      id: "custom",
+      title: "Custom Story",
+      story: storyText,
+      tags: [],
+      expectedMinBiases: 0,
+      expectedQuestionsCountRange: [0, 10],
+    };
+    const { llmResponse, ...res } = await evaluateGoldenStory(story, questionService, assessmentService, prompts);
+    allLLMResponses.push(llmResponse);
+    goldenResults.push(res);
+  } else {
+    const GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "golden", "reflection");
+    const NO_BIAS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "no_bias", "reflection");
+
+    const goldenStories = loadStories<GoldenStory>(GOLDEN_DIR);
+    const noBiasStories = loadStories<NoBiasStory>(NO_BIAS_DIR);
+
+    // Evaluate golden stories
+    for (const story of goldenStories) {
+      const { llmResponse, ...res } = await evaluateGoldenStory(story, questionService, assessmentService, prompts);
+      allLLMResponses.push(llmResponse);
+      goldenResults.push(res);
+    }
+
+    // Evaluate no_bias stories
+    for (const story of noBiasStories) {
+      const { llmResponse, ...res } = await evaluateNoBiasStory(story, assessmentService, prompts);
+      allLLMResponses.push(llmResponse);
+      noBiasResults.push(res);
+    }
   }
 
   const sysMetrics = computeSystemMetrics(allLLMResponses);

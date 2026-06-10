@@ -95,6 +95,83 @@ export const evalAssessmentJob = inngest.createFunction(
   },
 );
 
+/**
+ * Inngest job — runs a single random golden story (questions + assessment).
+ * Triggered by event: eval/golden-story
+ */
+export const evalGoldenStoryJob = inngest.createFunction(
+  { id: "eval-golden-story", name: "Eval — Single Golden Story" },
+  { event: "eval/golden-story" },
+  async () => {
+    const provider = new GeminiProvider();
+    const modelName = "gemini-2.0-flash";
+
+    logger.info({ module: MODULE }, "Starting single golden story eval");
+
+    try {
+      const result = await runEval(provider, modelName, undefined, "golden");
+      const story = result.goldenResults[0];
+
+      const output = {
+        passed: result.overallPassed,
+        storyId: story?.id ?? "unknown",
+        questionCount: story?.questionCount ?? 0,
+        biasCount: story?.biasCount ?? 0,
+        evidenceGroundedRate: story?.evaluationMetrics?.evidenceGroundedRate ?? null,
+      };
+
+      if (!result.overallPassed) {
+        logger.error({ module: MODULE, ...output, errors: story?.errors }, "Golden story eval failed");
+      } else {
+        logger.info({ module: MODULE, ...output }, "Golden story eval completed");
+      }
+
+      return output;
+    } catch (error) {
+      logger.error({ module: MODULE, error }, "Golden story eval failed with exception");
+      return { passed: false, reason: "eval_error", error: String(error) };
+    }
+  },
+);
+
+/**
+ * Inngest job — runs a single random no_bias story (assessment only).
+ * Triggered by event: eval/no-bias-story
+ */
+export const evalNoBiasStoryJob = inngest.createFunction(
+  { id: "eval-no-bias-story", name: "Eval — Single No-Bias Story" },
+  { event: "eval/no-bias-story" },
+  async () => {
+    const provider = new GeminiProvider();
+    const modelName = "gemini-2.0-flash";
+
+    logger.info({ module: MODULE }, "Starting single no_bias story eval");
+
+    try {
+      const result = await runEval(provider, modelName, undefined, "no_bias");
+      const story = result.noBiasResults[0];
+
+      const output = {
+        passed: result.overallPassed,
+        storyId: story?.id ?? "unknown",
+        biasCount: story?.biasCount ?? 0,
+        isFalsePositive: story?.evaluationMetrics?.isFalsePositive ?? null,
+      };
+
+      if (!result.overallPassed) {
+        logger.error({ module: MODULE, ...output, errors: story?.errors }, "No-bias story eval failed");
+      } else {
+        logger.info({ module: MODULE, ...output }, "No-bias story eval completed");
+      }
+
+      return output;
+    } catch (error) {
+      logger.error({ module: MODULE, error }, "No-bias story eval failed with exception");
+      return { passed: false, reason: "eval_error", error: String(error) };
+    }
+  },
+);
+
 function computeAggregateGroundedRate(result: Awaited<ReturnType<typeof runEval>>): number | null {
   const all = [...result.goldenResults, ...result.noBiasResults]
     .filter(r => r.errors.length === 0)

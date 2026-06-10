@@ -2,7 +2,9 @@
  * Evaluation script for reflection orchestrators.
  *
  * ── Modes ──────────────────────────────────────────────────────────────
- *   pnpm eval                     MockProvider — fast CI sanity check
+ *   pnpm eval                     Full suite — all golden + no_bias
+ *   pnpm eval --story             Single random golden story (questions + assessment)
+ *   pnpm eval --no-bias           Single random no_bias story (assessment only)
  *   pnpm eval --provider real     Real Gemini — actual quality gate
  *
  * ── Eval Policy ────────────────────────────────────────────────────────
@@ -20,14 +22,25 @@
  * Usage: pnpm eval [--provider real] [--min-evidence-grounded 0.85] ...
  */
 
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MockProvider } from "../tests/mocks/mock-provider.js";
 import { GeminiProvider } from "../src/providers/gemini.js";
 import { runEval } from "../src/evaluation/run-eval.js";
 import type { Provider } from "../src/providers/types.js";
 
-function parseArgs(): { provider: string; thresholds: Record<string, number> } {
+interface ParsedArgs {
+  provider: string;
+  thresholds: Record<string, number>;
+  /** undefined = full suite, "golden" = --story, "no_bias" = --no-bias */
+  mode?: "golden" | "no_bias";
+}
+
+function parseArgs(): ParsedArgs {
   const args = process.argv.slice(2);
   let provider = "mock";
+  let mode: "golden" | "no_bias" | undefined;
   const thresholds: Record<string, number> = {
     minEvidenceGrounded: 0.9,
     maxFalsePositive: 0.1,
@@ -39,13 +52,35 @@ function parseArgs(): { provider: string; thresholds: Record<string, number> } {
     const arg = args[i];
     const next = args[i + 1];
     if (arg === "--provider" && next) { provider = next; i++; }
+    else if (arg === "--story") { mode = "golden"; }
+    else if (arg === "--no-bias") { mode = "no_bias"; }
     else if (arg === "--min-evidence-grounded" && next) { thresholds.minEvidenceGrounded = parseFloat(next); i++; }
     else if (arg === "--max-false-positive" && next) { thresholds.maxFalsePositive = parseFloat(next); i++; }
     else if (arg === "--min-schema-parse" && next) { thresholds.minSchemaParse = parseFloat(next); i++; }
     else if (arg === "--max-repair-rate" && next) { thresholds.maxRepairRate = parseFloat(next); i++; }
   }
 
-  return { provider, thresholds };
+  return { provider, thresholds, mode };
+}
+
+/**
+ * Pick a random story from a specific dataset.
+ */
+function pickRandomStory(dataset: "golden" | "no_bias"): { story: string; id: string } {
+  const dir = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "evaluations",
+    dataset === "golden" ? "golden" : "no_bias",
+    "reflection",
+  );
+  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  const all: { id: string; story: string }[] = files.map((file) => {
+    const raw = readFileSync(join(dir, file), "utf-8");
+    const data = JSON.parse(raw);
+    return { id: data.id ?? file, story: data.story };
+  });
+  return all[Math.floor(Math.random() * all.length)];
 }
 
 function createProvider(mode: string): Provider {
@@ -164,11 +199,29 @@ function printResults(
 }
 
 async function main(): Promise<void> {
-  const { provider: providerMode, thresholds } = parseArgs();
+  const { provider: providerMode, thresholds, mode } = parseArgs();
   const isMock = providerMode !== "real";
+
+  let storyText: string | undefined;
+  let evalMode: "golden" | "no_bias" | undefined;
+
+  if (mode === "golden") {
+    const picked = pickRandomStory("golden");
+    storyText = picked.story;
+    evalMode = "golden";
+    console.log(`\n📖 GOLDEN STORY — picked "${picked.id}" (questions + assessment)`);
+  } else if (mode === "no_bias") {
+    const picked = pickRandomStory("no_bias");
+    storyText = picked.story;
+    evalMode = "no_bias";
+    console.log(`\n📖 NO_BIAS STORY — picked "${picked.id}" (assessment only, no questions)`);
+  }
 
   console.log(`\n🔬 BIASSEMBLE EVALUATION`);
   console.log(`Provider: ${providerMode}${isMock ? " (repair tracking n/a — mock returns clean JSON)" : ""}`);
+  if (storyText) {
+    console.log(`Story:    "${storyText.slice(0, 80)}${storyText.length > 80 ? "..." : ""}"`);
+  }
   console.log(`Thresholds:`);
   console.log(`  min-evidence-grounded: ${thresholds.minEvidenceGrounded}`);
   console.log(`  max-false-positive:    ${thresholds.maxFalsePositive}`);
@@ -177,7 +230,7 @@ async function main(): Promise<void> {
 
   const provider = createProvider(providerMode);
   const modelName = isMock ? "mock-eval" : "gemini-2.0-flash";
-  const result = await runEval(provider, modelName);
+  const result = await runEval(provider, modelName, storyText, evalMode);
 
   printResults(result, thresholds, isMock);
   process.exit(result.exitCode);

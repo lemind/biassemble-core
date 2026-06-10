@@ -43,7 +43,6 @@ export class GeminiProvider implements Provider {
         generationConfig: {
           temperature: request.options?.temperature ?? DEFAULT_TEMPERATURE,
           maxOutputTokens: request.options?.maxTokens,
-          responseMimeType: "application/json",
         },
       },
       { timeout: timeoutMs }
