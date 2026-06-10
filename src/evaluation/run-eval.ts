@@ -11,8 +11,8 @@
  *   but DB persistence / hash checking belongs to the caller.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PromptRegistry } from "../prompts/registry";
 import { QuestionService } from "../orchestrators/reflection/question.service";
@@ -245,8 +245,16 @@ export async function runEval(
     allLLMResponses.push(llmResponse);
     goldenResults.push(res);
   } else {
-    const GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "golden", "reflection");
-    const NO_BIAS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "no_bias", "reflection");
+    // Resolve evaluations directory — works both locally and in Vercel serverless
+    const currentDir = dirname(fileURLToPath(import.meta.url));
+    // In Vercel: api/index.js → api/evaluations/
+    // Locally: src/evaluation/run-eval.ts → evaluations/
+    const vercelEvalDir = join(currentDir, "evaluations");
+    const localEvalDir = join(currentDir, "..", "..", "evaluations");
+    const evalRoot = existsSync(vercelEvalDir) ? vercelEvalDir : localEvalDir;
+
+    const GOLDEN_DIR = join(evalRoot, "golden", "reflection");
+    const NO_BIAS_DIR = join(evalRoot, "no_bias", "reflection");
 
     const goldenStories = loadStories<GoldenStory>(GOLDEN_DIR);
     const noBiasStories = loadStories<NoBiasStory>(NO_BIAS_DIR);

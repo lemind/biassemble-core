@@ -37,3 +37,4 @@ pnpm-workspace.yaml
 .vercel
 system-state-for-agents.md
 api/index.js
+api/evaluations/
