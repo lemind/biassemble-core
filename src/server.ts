@@ -49,11 +49,19 @@ export function buildApp() {
   });
 
   // Inngest webhook
+  // If VERCEL_BYPASS_TOKEN is set, append it to the serve host so Inngest
+  // can bypass Vercel deployment protection when calling back.
+  const serveHost = env.INNGEST_SERVE_HOST
+    ? env.VERCEL_BYPASS_TOKEN
+      ? `${env.INNGEST_SERVE_HOST}?x-vercel-protection-bypass=${env.VERCEL_BYPASS_TOKEN}`
+      : env.INNGEST_SERVE_HOST
+    : undefined;
+
   server.register(inngestFastify, {
     client: inngest,
     functions: inngestFunctions,
     options: {
-      serveHost: env.INNGEST_SERVE_HOST,
+      serveHost,
     },
   });
 
