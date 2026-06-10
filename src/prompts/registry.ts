@@ -1,6 +1,6 @@
-import guardrailsMd from "./guardrails.md";
-import questionBatchSystem from "./reflection/question-batch/system.md";
-import assessmentSystem from "./reflection/assessment/system.md";
+import guardrailsData from "./guardrails.json" with { type: "json" };
+import questionBatchData from "./reflection/question-batch/system.json" with { type: "json" };
+import assessmentData from "./reflection/assessment/system.json" with { type: "json" };
 
 export type PromptTemplate = "question-batch" | "assessment";
 
@@ -9,7 +9,7 @@ export class PromptRegistry {
   private version: string;
 
   constructor(version = "1.0.0") {
-    this.guardrails = guardrailsMd;
+    this.guardrails = guardrailsData.content;
     this.version = version;
   }
 
@@ -23,10 +23,10 @@ export class PromptRegistry {
 
     switch (template) {
       case "question-batch":
-        raw = questionBatchSystem;
+        raw = questionBatchData.content;
         break;
       case "assessment":
-        raw = assessmentSystem;
+        raw = assessmentData.content;
         break;
       default:
         throw new Error(`Unknown template: ${template}`);
