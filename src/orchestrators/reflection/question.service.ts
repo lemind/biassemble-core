@@ -1,10 +1,10 @@
-import { logger } from "../../observability/logger.js";
-import { QuestionOutputSchema, type QuestionOutput, SCHEMA_VERSION } from "../../contracts/reflection.schemas.js";
-import type { StoryAnalysis, Interpretation } from "../../contracts/reasoning.schemas.js";
-import { repairWithFallback } from "../../parsers/repair.js";
-import { withRetry } from "../retry.js";
-import type { Provider } from "../../providers/types.js";
-import type { PromptRegistry } from "../../prompts/registry.js";
+import { logger } from "../../observability/logger";
+import { QuestionOutputSchema, type QuestionOutput, SCHEMA_VERSION } from "../../contracts/reflection.schemas";
+import type { StoryAnalysis, Interpretation } from "../../contracts/reasoning.schemas";
+import { repairWithFallback } from "../../parsers/repair";
+import { withRetry } from "../retry";
+import type { Provider } from "../../providers/types";
+import type { PromptRegistry } from "../../prompts/registry";
 
 const MODULE = "question-service";
 

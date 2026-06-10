@@ -7,11 +7,11 @@ import {
   GenerateQuestionRequestSchema,
   GenerateAssessmentRequestSchema,
   type AssessmentOutput,
-} from "../contracts/reflection.schemas.js";
-import { authHook } from "../lib/auth.js";
-import { logger } from "../observability/logger.js";
-import type { QuestionService } from "../orchestrators/reflection/question.service.js";
-import type { AssessmentService } from "../orchestrators/reflection/assessment.service.js";
+} from "../contracts/reflection.schemas";
+import { authHook } from "../lib/auth";
+import { logger } from "../observability/logger";
+import type { QuestionService } from "../orchestrators/reflection/question.service";
+import type { AssessmentService } from "../orchestrators/reflection/assessment.service";
 
 const MODULE = "routes";
 

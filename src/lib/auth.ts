@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
-import { env } from "./env.js";
+import { env } from "./env";
 
 const BEARER_PREFIX = "Bearer ";
 

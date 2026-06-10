@@ -14,21 +14,21 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PromptRegistry } from "../prompts/registry.js";
-import { QuestionService } from "../orchestrators/reflection/question.service.js";
-import { AssessmentService } from "../orchestrators/reflection/assessment.service.js";
-import { BiasCatalogService } from "../catalog/bias-catalog.js";
+import { PromptRegistry } from "../prompts/registry";
+import { QuestionService } from "../orchestrators/reflection/question.service";
+import { AssessmentService } from "../orchestrators/reflection/assessment.service";
+import { BiasCatalogService } from "../catalog/bias-catalog";
 import {
   computeEvaluationMetrics,
   type EvaluationMetrics,
-} from "./compute-evaluation-metrics.js";
+} from "./compute-evaluation-metrics";
 import {
   computeSystemMetrics,
   type LLMResponse,
   type SystemMetrics,
-} from "./compute-system-metrics.js";
-import { computeInputHash } from "../lib/hash.js";
-import type { Provider } from "../providers/types.js";
+} from "./compute-system-metrics";
+import { computeInputHash } from "../lib/hash";
+import type { Provider } from "../providers/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 

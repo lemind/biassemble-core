@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file=.env --watch --import tsx src/server.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/fix-imports.mjs",
     "start": "node --env-file=.env dist/server.js",
     "test": "vitest",
     "test:run": "vitest run",

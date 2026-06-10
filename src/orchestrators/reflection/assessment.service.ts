@@ -1,19 +1,19 @@
-import { logger } from "../../observability/logger.js";
+import { logger } from "../../observability/logger";
 import {
   AssessmentOutputSchema,
   type AssessmentOutput,
   SCHEMA_VERSION,
-} from "../../contracts/reflection.schemas.js";
-import type { ReasoningTrace } from "../../contracts/reasoning.schemas.js";
-import { repairWithFallback } from "../../parsers/repair.js";
-import { withRetry } from "../retry.js";
-import { computeInputHash } from "../../lib/hash.js";
-import { createRun, persistTrace } from "../../db/queries.js";
-import type { Provider } from "../../providers/types.js";
-import type { PromptRegistry } from "../../prompts/registry.js";
-import type { BiasCatalogService } from "../../catalog/bias-catalog.js";
-import { normalizeBiasName } from "../../catalog/normalize.js";
-import { validateEvidence } from "../../parsers/evidence-validator.js";
+} from "../../contracts/reflection.schemas";
+import type { ReasoningTrace } from "../../contracts/reasoning.schemas";
+import { repairWithFallback } from "../../parsers/repair";
+import { withRetry } from "../retry";
+import { computeInputHash } from "../../lib/hash";
+import { createRun, persistTrace } from "../../db/queries";
+import type { Provider } from "../../providers/types";
+import type { PromptRegistry } from "../../prompts/registry";
+import type { BiasCatalogService } from "../../catalog/bias-catalog";
+import { normalizeBiasName } from "../../catalog/normalize";
+import { validateEvidence } from "../../parsers/evidence-validator";
 
 const MODULE = "assessment-service";
 

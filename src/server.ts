@@ -1,16 +1,16 @@
 import Fastify from "fastify";
 import inngestFastify from "inngest/fastify";
-import { env } from "./lib/env.js";
-import { requestIdHook } from "./lib/request-id.js";
-import { logger } from "./observability/logger.js";
-import { GeminiProvider } from "./providers/gemini.js";
-import { PromptRegistry } from "./prompts/registry.js";
-import { BiasCatalogService } from "./catalog/bias-catalog.js";
-import { QuestionService } from "./orchestrators/reflection/question.service.js";
-import { AssessmentService } from "./orchestrators/reflection/assessment.service.js";
-import { registerReflectionRoutes } from "./routes/reflection.js";
-import { inngest } from "./jobs/client.js";
-import { inngestFunctions } from "./jobs/inngest-functions.js";
+import { env } from "./lib/env";
+import { requestIdHook } from "./lib/request-id";
+import { logger } from "./observability/logger";
+import { GeminiProvider } from "./providers/gemini";
+import { PromptRegistry } from "./prompts/registry";
+import { BiasCatalogService } from "./catalog/bias-catalog";
+import { QuestionService } from "./orchestrators/reflection/question.service";
+import { AssessmentService } from "./orchestrators/reflection/assessment.service";
+import { registerReflectionRoutes } from "./routes/reflection";
+import { inngest } from "./jobs/client";
+import { inngestFunctions } from "./jobs/inngest-functions";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.

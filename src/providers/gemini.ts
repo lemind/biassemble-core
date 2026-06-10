@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { env } from "../lib/env.js";
-import { logger } from "../observability/logger.js";
-import type { Provider, CompletionRequest } from "./types.js";
+import { env } from "../lib/env";
+import { logger } from "../observability/logger";
+import type { Provider, CompletionRequest } from "./types";
 
 /** Default temperature for AI provider calls */
 const DEFAULT_TEMPERATURE = 0.7;

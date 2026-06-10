@@ -1,4 +1,4 @@
-import { BiasEntry } from "./bias-catalog.js";
+import { BiasEntry } from "./bias-catalog";
 
 // ─── Normalization helpers ──────────────────────────────────
 

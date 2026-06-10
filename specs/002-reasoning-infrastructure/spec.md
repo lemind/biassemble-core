@@ -267,6 +267,21 @@ A developer updates the assessment prompt, pushes a PR, and the CI pipeline auto
 
 ---
 
+### Phase 6: Build pipeline — replace `tsc + fix-imports` with `esbuild --bundle` (TECH-001)
+
+**Purpose**: Replace the fragile `tsc` + `scripts/fix-imports.mjs` pipeline with `esbuild --bundle`. Requires inlining 3 static assets currently loaded via `readFileSync` at runtime, which break under bundling.
+
+**Assets to inline**:
+- `datasets/biases/taxonomy.v1.json` → static import in `bias-catalog.ts`
+- `contracts/reflection.schemas.json` → static import in `routes/reflection.ts`
+- `guardrails.md`, `reflection/**/system.md` → esbuild `--loader:.md=text` in `prompts/registry.ts`
+
+**Excluded from bundling**: `evaluations/` datasets (eval-only, not production).
+
+**Build command**: `rimraf dist && tsc --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js --loader:.md=text`
+
+---
+
 ## Assumptions
 
 - The existing `001-reflection-core` assessment endpoint remains the primary API; reasoning trace and evidence binding are additive (backward-compatible)

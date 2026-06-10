@@ -11,12 +11,12 @@
  *   Same hash → same metrics expected. If different, non-determinism
  *   detected and CI fails.
  */
-import { inngest } from "./client.js";
-import { GeminiProvider } from "../providers/gemini.js";
-import { runEval } from "../evaluation/run-eval.js";
-import { persistEvalResult, getEvalResultByHash } from "../db/queries.js";
-import { PromptRegistry } from "../prompts/registry.js";
-import { logger } from "../observability/logger.js";
+import { inngest } from "./client";
+import { GeminiProvider } from "../providers/gemini";
+import { runEval } from "../evaluation/run-eval";
+import { persistEvalResult, getEvalResultByHash } from "../db/queries";
+import { PromptRegistry } from "../prompts/registry";
+import { logger } from "../observability/logger";
 
 const MODULE = "eval-assessment";
 

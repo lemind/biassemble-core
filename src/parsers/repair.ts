@@ -1,6 +1,6 @@
 import type { ZodSchema } from "zod";
-import { logger } from "../observability/logger.js";
-import { extractJson } from "./json-from-llm.js";
+import { logger } from "../observability/logger";
+import { extractJson } from "./json-from-llm";
 
 const MODULE = "repair";
 

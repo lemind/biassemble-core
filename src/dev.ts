@@ -3,9 +3,9 @@
  * Starts the Fastify server on the configured port.
  * Not used in Vercel serverless — that uses api/index.ts → buildApp().
  */
-import { buildApp } from "./server.js";
-import { env } from "./lib/env.js";
-import { logger } from "./observability/logger.js";
+import { buildApp } from "./server";
+import { env } from "./lib/env";
+import { logger } from "./observability/logger";
 
 const server = buildApp();
 

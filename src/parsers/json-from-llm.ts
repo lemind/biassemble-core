@@ -1,4 +1,4 @@
-import { logger } from "../observability/logger.js";
+import { logger } from "../observability/logger";
 
 const MODULE = "json-from-llm";
 
