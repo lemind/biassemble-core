@@ -6,7 +6,7 @@ var __export = (target, all) => {
 
 // src/server.ts
 import Fastify from "fastify";
-import inngestFastify from "inngest/fastify";
+import { fastifyPlugin as inngestFastify } from "inngest/fastify";
 
 // src/lib/env.ts
 import { z } from "zod";

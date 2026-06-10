@@ -1,5 +1,5 @@
 import Fastify from "fastify";
-import inngestFastify from "inngest/fastify";
+import { fastifyPlugin as inngestFastify } from "inngest/fastify";
 import { env } from "./lib/env";
 import { requestIdHook } from "./lib/request-id";
 import { logger } from "./observability/logger";
