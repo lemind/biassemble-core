@@ -16,7 +16,7 @@
     "eval:trigger:no-bias": "tsx --env-file=.env scripts/trigger-eval-no-bias.ts",
     "generate:contracts": "tsx scripts/generate-contracts.ts",
     "deploy": "vercel deploy --prod && pnpm run inngest:sync",
-    "inngest:sync": "inngest-cli sync https://biassemble-core.vercel.app/api/inngest",
+    "inngest:sync": "curl -s -o /dev/null -w '%{http_code}' https://biassemble-core.vercel.app/api/inngest",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
