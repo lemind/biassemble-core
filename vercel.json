@@ -1,6 +1,7 @@
 {
   "version": 2,
   "buildCommand": "pnpm build",
+  "outputDirectory": ".",
   "installCommand": "pnpm install",
   "functions": {
     "api/index.js": {
