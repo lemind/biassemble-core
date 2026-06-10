@@ -4,12 +4,12 @@
   "outputDirectory": "dist",
   "installCommand": "pnpm install",
   "functions": {
-    "api/index.ts": {
+    "api/index.js": {
       "memory": 512,
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index.ts" }
+    { "source": "/(.*)", "destination": "/api/index.js" }
   ]
 }

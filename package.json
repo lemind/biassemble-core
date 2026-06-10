@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file=.env --watch --import tsx src/server.ts",
-    "build": "rimraf dist && tsc --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js --loader:.md=text",
+    "build": "rimraf dist && tsc --noEmit && esbuild api/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/api/index.js --loader:.md=text",
     "start": "node --env-file=.env dist/server.js",
     "test": "vitest",
     "test:run": "vitest run",
