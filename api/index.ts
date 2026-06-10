@@ -2,7 +2,7 @@
 // Uses the official Vercel Fastify pattern:
 //   await app.ready()
 //   app.server.emit("request", req, reply)
-import { buildApp } from "../dist/server";
+import { buildApp } from "../dist/server.js";
 
 // Build the app once and cache it
 let cachedApp: ReturnType<typeof buildApp> | null = null;
