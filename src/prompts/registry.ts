@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import guardrailsData from "./guardrails.json" with { type: "json" };
+import questionBatchData from "./reflection/question-batch/system.json" with { type: "json" };
+import assessmentData from "./reflection/assessment/system.json" with { type: "json" };
 
 export type PromptTemplate = "question-batch" | "assessment";
 
@@ -11,10 +9,7 @@ export class PromptRegistry {
   private version: string;
 
   constructor(version = "1.0.0") {
-    this.guardrails = readFileSync(
-      join(__dirname, "guardrails.md"),
-      "utf-8"
-    );
+    this.guardrails = guardrailsData.content;
     this.version = version;
   }
 
@@ -24,8 +19,18 @@ export class PromptRegistry {
   }
 
   render(template: PromptTemplate, variables: Record<string, string>): string {
-    const path = this.getTemplatePath(template);
-    const raw = readFileSync(path, "utf-8");
+    let raw: string;
+
+    switch (template) {
+      case "question-batch":
+        raw = questionBatchData.content;
+        break;
+      case "assessment":
+        raw = assessmentData.content;
+        break;
+      default:
+        throw new Error(`Unknown template: ${template}`);
+    }
 
     let rendered = raw.replace("{{guardrails}}", this.guardrails);
 
@@ -34,16 +39,5 @@ export class PromptRegistry {
     }
 
     return rendered;
-  }
-
-  private getTemplatePath(template: PromptTemplate): string {
-    switch (template) {
-      case "question-batch":
-        return join(__dirname, "reflection", "question-batch", "system.md");
-      case "assessment":
-        return join(__dirname, "reflection", "assessment", "system.md");
-      default:
-        throw new Error(`Unknown template: ${template}`);
-    }
   }
 }

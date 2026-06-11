@@ -33,7 +33,7 @@ For each bias hypothesis, identify all relevant excerpts considered during reaso
 
 ### NO BIAS DETECTED
 
-If after reasoning you genuinely find no cognitive biases, set `no_bias_detected` to `true`, return an empty `biases` array, and provide a `reflectionPrompt` that acknowledges the user's balanced perspective.
+If after reasoning you genuinely find no cognitive biases, set `noBiasDetected` to `true`, return an empty `biases` array, and provide a `reflectionPrompt` that acknowledges the user's balanced perspective.
 
 ### GUIDELINES
 
@@ -55,9 +55,9 @@ If after reasoning you genuinely find no cognitive biases, set `no_bias_detected
 Return valid JSON with a reasoning trace and your assessment:
 
 {
-  "reasoning_trace": {
+  "reasoningTrace": {
     "story_analysis": {
-      "themes": ["theme1", "theme2"],
+      "themes": ["list of themes"],
       "emotional_tone": "description",
       "key_events": ["event1", "event2"]
     },
@@ -97,5 +97,5 @@ Return valid JSON with a reasoning trace and your assessment:
     }
   ],
   "reflectionPrompt": "closing reflection",
-  "no_bias_detected": false
+  "noBiasDetected": false
 }

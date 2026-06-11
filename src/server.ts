@@ -1,16 +1,16 @@
 import Fastify from "fastify";
-import inngestFastify from "inngest/fastify";
-import { env } from "./lib/env.js";
-import { requestIdHook } from "./lib/request-id.js";
-import { logger } from "./observability/logger.js";
-import { GeminiProvider } from "./providers/gemini.js";
-import { PromptRegistry } from "./prompts/registry.js";
-import { BiasCatalogService } from "./catalog/bias-catalog.js";
-import { QuestionService } from "./orchestrators/reflection/question.service.js";
-import { AssessmentService } from "./orchestrators/reflection/assessment.service.js";
-import { registerReflectionRoutes } from "./routes/reflection.js";
-import { inngest } from "./jobs/client.js";
-import { inngestFunctions } from "./jobs/inngest-functions.js";
+import { fastifyPlugin as inngestFastify } from "inngest/fastify";
+import { env } from "./lib/env";
+import { requestIdHook } from "./lib/request-id";
+import { logger } from "./observability/logger";
+import { GeminiProvider } from "./providers/gemini";
+import { PromptRegistry } from "./prompts/registry";
+import { BiasCatalogService } from "./catalog/bias-catalog";
+import { QuestionService } from "./orchestrators/reflection/question.service";
+import { AssessmentService } from "./orchestrators/reflection/assessment.service";
+import { registerReflectionRoutes } from "./routes/reflection";
+import { inngest } from "./jobs/client";
+import { inngestFunctions } from "./jobs/inngest-functions";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -49,9 +49,20 @@ export function buildApp() {
   });
 
   // Inngest webhook
+  // If VERCEL_BYPASS_TOKEN is set, append it to the serve host so Inngest
+  // can bypass Vercel deployment protection when calling back.
+  const serveHost = env.INNGEST_SERVE_HOST
+    ? env.VERCEL_BYPASS_TOKEN
+      ? `${env.INNGEST_SERVE_HOST}?x-vercel-protection-bypass=${env.VERCEL_BYPASS_TOKEN}`
+      : env.INNGEST_SERVE_HOST
+    : undefined;
+
   server.register(inngestFastify, {
     client: inngest,
     functions: inngestFunctions,
+    options: {
+      serveHost,
+    },
   });
 
   return server;

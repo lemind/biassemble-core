@@ -1,7 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { env } from "../lib/env.js";
-import { logger } from "../observability/logger.js";
-import type { Provider, CompletionRequest } from "./types.js";
+import { env } from "../lib/env";
+import { logger } from "../observability/logger";
+import { extractJson } from "../parsers/json-from-llm";
+import type { Provider, CompletionRequest } from "./types";
 
 /** Default temperature for AI provider calls */
 const DEFAULT_TEMPERATURE = 0.7;
@@ -43,7 +44,6 @@ export class GeminiProvider implements Provider {
         generationConfig: {
           temperature: request.options?.temperature ?? DEFAULT_TEMPERATURE,
           maxOutputTokens: request.options?.maxTokens,
-          responseMimeType: "application/json",
         },
       },
       { timeout: timeoutMs }
@@ -64,11 +64,17 @@ export class GeminiProvider implements Provider {
       try {
         return JSON.parse(text) as T;
       } catch (parseError) {
-        logger.error(
-          { module: MODULE, operation: "completeJson", text, parseError },
-          "Failed to parse Gemini JSON output"
-        );
-        throw new Error("Malformed JSON from AI provider");
+        // Try extracting JSON from markdown code blocks before giving up
+        const extracted = extractJson(text);
+        try {
+          return JSON.parse(extracted) as T;
+        } catch (secondError) {
+          logger.error(
+            { module: MODULE, operation: "completeJson", text, parseError, secondError },
+            "Failed to parse Gemini JSON output"
+          );
+          throw new Error("Malformed JSON from AI provider");
+        }
       }
     } catch (error: unknown) {
       // Detect rate-limit / quota errors — these should NOT be retried

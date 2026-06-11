@@ -1,34 +1,21 @@
-import { logger } from "../../observability/logger.js";
+import { logger } from "../../observability/logger";
 import {
   AssessmentOutputSchema,
   type AssessmentOutput,
   SCHEMA_VERSION,
-} from "../../contracts/reflection.schemas.js";
-import type { ReasoningTrace } from "../../contracts/reasoning.schemas.js";
-import { repairWithFallback } from "../../parsers/repair.js";
-import { withRetry } from "../retry.js";
-import { computeInputHash } from "../../lib/hash.js";
-import { createRun, persistTrace } from "../../db/queries.js";
-import type { Provider } from "../../providers/types.js";
-import type { PromptRegistry } from "../../prompts/registry.js";
-import type { BiasCatalogService } from "../../catalog/bias-catalog.js";
-import { normalizeBiasName } from "../../catalog/normalize.js";
-import { validateEvidence } from "../../parsers/evidence-validator.js";
+} from "../../contracts/reflection.schemas";
+import type { ReasoningTrace } from "../../contracts/reasoning.schemas";
+import { repairWithFallback } from "../../parsers/repair";
+import { withRetry } from "../retry";
+import { computeInputHash } from "../../lib/hash";
+import { createRun, persistTrace } from "../../db/queries";
+import type { Provider } from "../../providers/types";
+import type { PromptRegistry } from "../../prompts/registry";
+import type { BiasCatalogService } from "../../catalog/bias-catalog";
+import { normalizeBiasName } from "../../catalog/normalize";
+import { validateEvidence } from "../../parsers/evidence-validator";
 
 const MODULE = "assessment-service";
-
-/**
- * Validates that the reasoning trace has a prompt_version set.
- * Throws with a descriptive message if missing (FR-014).
- * Per-step prompt_version validation deferred until schemas are updated.
- */
-function validatePromptVersion(trace: ReasoningTrace): void {
-  if (!trace.prompt_version) {
-    throw new Error(
-      "Validation failed: reasoning_trace is missing prompt_version"
-    );
-  }
-}
 
 export class AssessmentService {
   constructor(
@@ -222,9 +209,9 @@ export class AssessmentService {
         }
       );
 
-      // T204: Validate reasoning trace if present, then always persist
+      // T204: Stamp promptVersion on trace (LLM doesn't generate it)
       if (parsed.reasoningTrace) {
-        validatePromptVersion(parsed.reasoningTrace as ReasoningTrace);
+        (parsed.reasoningTrace as any).prompt_version = promptVersion;
       } else {
         logger.warn(
           { module: MODULE, operation: "callProvider", requestId },
@@ -256,6 +243,8 @@ export class AssessmentService {
       // T205: Enforce noBiasDetected flag consistency
       if (parsed.biases.length === 0 && !parsed.noBiasDetected) {
         parsed.noBiasDetected = true;
+      } else if (parsed.biases.length > 0 && parsed.noBiasDetected === undefined) {
+        parsed.noBiasDetected = false;
       }
 
       // Normalize bias names against catalog

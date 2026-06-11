@@ -1,8 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import catalogData from "../../datasets/biases/taxonomy.v1.json" with { type: "json" };
 
 interface BiasEntry {
   id: string;
@@ -17,19 +13,10 @@ interface CatalogFile {
   biases: BiasEntry[];
 }
 
+const parsed = catalogData as CatalogFile;
+
 export class BiasCatalogService {
-  private biases: BiasEntry[] = [];
-
-  constructor() {
-    this.load();
-  }
-
-  private load(): void {
-    const path = join(__dirname, "..", "..", "datasets", "biases", "taxonomy.v1.json");
-    const raw = readFileSync(path, "utf-8");
-    const parsed: CatalogFile = JSON.parse(raw);
-    this.biases = parsed.biases;
-  }
+  private biases: BiasEntry[] = parsed.biases;
 
   getShortlist(): string[] {
     return this.biases.map((b) => b.name);

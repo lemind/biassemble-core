@@ -1,5 +1,5 @@
 import pino from "pino";
-import { env } from "../lib/env.js";
+import { env } from "../lib/env";
 
 const isVercel = process.env.VERCEL === "1";
 

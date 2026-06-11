@@ -7,6 +7,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   AI_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
   AI_MAX_RETRIES: z.coerce.number().int().positive().default(3),
+  INNGEST_SERVE_HOST: z.string().optional(),
+  VERCEL_BYPASS_TOKEN: z.string().optional(),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
 });
 

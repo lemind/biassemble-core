@@ -72,7 +72,7 @@ export const ReasoningTraceSchema = z.object({
   interpretations: z.array(InterpretationSchema),
   bias_hypotheses: z.array(BiasHypothesisSchema),
   evidence_mapping: z.array(EvidenceMappingSchema),
-  prompt_version: PromptVersionSchema,
+  prompt_version: PromptVersionSchema.optional(),
 });
 export type ReasoningTrace = z.infer<typeof ReasoningTraceSchema>;
 

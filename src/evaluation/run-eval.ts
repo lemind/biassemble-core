@@ -11,24 +11,24 @@
  *   but DB persistence / hash checking belongs to the caller.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PromptRegistry } from "../prompts/registry.js";
-import { QuestionService } from "../orchestrators/reflection/question.service.js";
-import { AssessmentService } from "../orchestrators/reflection/assessment.service.js";
-import { BiasCatalogService } from "../catalog/bias-catalog.js";
+import { PromptRegistry } from "../prompts/registry";
+import { QuestionService } from "../orchestrators/reflection/question.service";
+import { AssessmentService } from "../orchestrators/reflection/assessment.service";
+import { BiasCatalogService } from "../catalog/bias-catalog";
 import {
   computeEvaluationMetrics,
   type EvaluationMetrics,
-} from "./compute-evaluation-metrics.js";
+} from "./compute-evaluation-metrics";
 import {
   computeSystemMetrics,
   type LLMResponse,
   type SystemMetrics,
-} from "./compute-system-metrics.js";
-import { computeInputHash } from "../lib/hash.js";
-import type { Provider } from "../providers/types.js";
+} from "./compute-system-metrics";
+import { computeInputHash } from "../lib/hash";
+import type { Provider } from "../providers/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -205,45 +205,91 @@ async function evaluateNoBiasStory(
 export async function runEval(
   provider: Provider,
   modelName: string,
+  storyText?: string,
+  mode?: "golden" | "no_bias",
+  overrides?: Partial<{
+    minEvidenceGrounded: number;
+    maxFalsePositive: number;
+    minSchemaParse: number;
+    maxRepairRate: number;
+  }>,
 ): Promise<EvalRunResult> {
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
   const questionService = new QuestionService(provider, prompts, modelName);
   const assessmentService = new AssessmentService(provider, prompts, catalog, modelName);
 
-  const GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "golden", "reflection");
-  const NO_BIAS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluations", "no_bias", "reflection");
-
-  const goldenStories = loadStories<GoldenStory>(GOLDEN_DIR);
-  const noBiasStories = loadStories<NoBiasStory>(NO_BIAS_DIR);
-
   const goldenResults: StoryResult[] = [];
   const noBiasResults: StoryResult[] = [];
   const allLLMResponses: LLMResponse[] = [];
 
-  // Evaluate golden stories
-  for (const story of goldenStories) {
-    const { llmResponse, ...res } = await evaluateGoldenStory(story, questionService, assessmentService, prompts);
-    allLLMResponses.push(llmResponse);
-    goldenResults.push(res);
-  }
-
-  // Evaluate no_bias stories
-  for (const story of noBiasStories) {
+  if (storyText && mode === "no_bias") {
+    // Single no_bias story — assessment only, no questions
+    const story: NoBiasStory = {
+      id: "custom",
+      title: "Custom Story",
+      story: storyText,
+      tags: [],
+      isNoBias: true,
+      confidenceThreshold: 0.5,
+      notes: "",
+    };
     const { llmResponse, ...res } = await evaluateNoBiasStory(story, assessmentService, prompts);
     allLLMResponses.push(llmResponse);
     noBiasResults.push(res);
+  } else if (storyText) {
+    // Single golden story — questions + assessment
+    const story: GoldenStory = {
+      id: "custom",
+      title: "Custom Story",
+      story: storyText,
+      tags: [],
+      expectedMinBiases: 0,
+      expectedQuestionsCountRange: [0, 10],
+    };
+    const { llmResponse, ...res } = await evaluateGoldenStory(story, questionService, assessmentService, prompts);
+    allLLMResponses.push(llmResponse);
+    goldenResults.push(res);
+  } else {
+    // Resolve evaluations directory — works both locally and in Vercel serverless
+    const currentDir = dirname(fileURLToPath(import.meta.url));
+    // In Vercel: api/index.js → api/evaluations/
+    // Locally: src/evaluation/run-eval.ts → evaluations/
+    const vercelEvalDir = join(currentDir, "evaluations");
+    const localEvalDir = join(currentDir, "..", "..", "evaluations");
+    const evalRoot = existsSync(vercelEvalDir) ? vercelEvalDir : localEvalDir;
+
+    const GOLDEN_DIR = join(evalRoot, "golden", "reflection");
+    const NO_BIAS_DIR = join(evalRoot, "no_bias", "reflection");
+
+    const goldenStories = loadStories<GoldenStory>(GOLDEN_DIR);
+    const noBiasStories = loadStories<NoBiasStory>(NO_BIAS_DIR);
+
+    // Evaluate golden stories
+    for (const story of goldenStories) {
+      const { llmResponse, ...res } = await evaluateGoldenStory(story, questionService, assessmentService, prompts);
+      allLLMResponses.push(llmResponse);
+      goldenResults.push(res);
+    }
+
+    // Evaluate no_bias stories
+    for (const story of noBiasStories) {
+      const { llmResponse, ...res } = await evaluateNoBiasStory(story, assessmentService, prompts);
+      allLLMResponses.push(llmResponse);
+      noBiasResults.push(res);
+    }
   }
 
   const sysMetrics = computeSystemMetrics(allLLMResponses);
 
   // Pass/fail uses default thresholds — caller can override
-  const thresholds = {
+  const defaults = {
     minEvidenceGrounded: 0.9,
     maxFalsePositive: 0.1,
     minSchemaParse: 0.95,
     maxRepairRate: 0.05,
   };
+  const thresholds = overrides ? { ...defaults, ...overrides } : defaults;
 
   let overallPassed = true;
   const groundedRates = [...goldenResults, ...noBiasResults]

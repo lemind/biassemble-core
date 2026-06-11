@@ -1,6 +1,6 @@
-import { logger } from "../observability/logger.js";
-import { env } from "../lib/env.js";
-import { RateLimitError } from "../providers/gemini.js";
+import { logger } from "../observability/logger";
+import { env } from "../lib/env";
+import { RateLimitError } from "../providers/gemini";
 
 /** Default base delay for retry exponential backoff (ms) */
 const DEFAULT_RETRY_BASE_DELAY_MS = 2000;

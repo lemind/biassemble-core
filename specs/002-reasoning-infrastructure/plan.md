@@ -382,6 +382,7 @@ eval_results (standalone — linked to run optionally)
 | 3 | Evidence validation. no_bias dataset. Eval script runs all dimensions. Inngest eval job. CI gate + daily monitor. |
 | 4 | Unified API endpoint. Supabase persistence upgrade. |
 | 5 | All tests green. |
+| 6 | Build pipeline: replace `tsc + fix-imports` with `esbuild --bundle`. Inline static assets (JSON, markdown) via imports + esbuild loader. Delete `fix-imports.mjs`. |
 
 ---
 
