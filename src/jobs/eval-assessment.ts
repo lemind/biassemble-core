@@ -11,10 +11,11 @@
  *   Same hash → same metrics expected. If different, non-determinism
  *   detected and CI fails.
  */
+import { randomUUID } from "node:crypto";
 import { inngest } from "./client";
 import { GeminiProvider } from "../providers/gemini";
 import { runEval } from "../evaluation/run-eval";
-import { persistEvalResult, getEvalResultByHash } from "../db/queries";
+import { createRun, persistEvalResult, getEvalResultByHash } from "../db/queries";
 import { PromptRegistry } from "../prompts/registry";
 import { logger } from "../observability/logger";
 
@@ -34,6 +35,22 @@ export const evalAssessmentJob = inngest.createFunction(
     try {
       const result = await runEval(provider, modelName);
 
+      // ── Create run record ──────────────────────────────────
+      let runId: string | undefined;
+      try {
+        const run = await createRun(randomUUID(), {
+          provider: "gemini",
+          modelName,
+          stage: "initial_assessment",
+          scope: "story_plus_answers",
+          promptVersion: prompts.getVersion(),
+          inputHash: result.goldenResults[0]?.inputHash ?? "",
+        });
+        runId = run?.id;
+      } catch (err) {
+        logger.warn({ module: MODULE, error: err }, "Failed to create run for eval — continuing without runId");
+      }
+
       // ── Determinism check ───────────────────────────────────
       for (const storyResult of [...result.goldenResults, ...result.noBiasResults]) {
         const existing = await getEvalResultByHash(storyResult.inputHash, prompts.getVersion());
@@ -51,6 +68,7 @@ export const evalAssessmentJob = inngest.createFunction(
       // ── Persist to DB ───────────────────────────────────────
       try {
         await persistEvalResult({
+          runId,
           provider: "gemini",
           modelName,
           promptVersion: prompts.getVersion(),
@@ -113,9 +131,26 @@ export const evalGoldenStoryJob = inngest.createFunction(
       const result = await runEval(provider, modelName, undefined, "golden");
       const story = result.goldenResults[0];
 
+      // ── Create run record ──────────────────────────────────
+      let runId: string | undefined;
+      try {
+        const run = await createRun(randomUUID(), {
+          provider: "gemini",
+          modelName,
+          stage: "initial_assessment",
+          scope: "story_plus_answers",
+          promptVersion: prompts.getVersion(),
+          inputHash: story?.inputHash ?? "",
+        });
+        runId = run?.id;
+      } catch (err) {
+        logger.warn({ module: MODULE, error: err }, "Failed to create run for golden eval — continuing without runId");
+      }
+
       // ── Persist to DB ───────────────────────────────────────
       try {
         await persistEvalResult({
+          runId,
           provider: "gemini",
           modelName,
           promptVersion: prompts.getVersion(),
@@ -176,9 +211,26 @@ export const evalNoBiasStoryJob = inngest.createFunction(
       const result = await runEval(provider, modelName, undefined, "no_bias");
       const story = result.noBiasResults[0];
 
+      // ── Create run record ──────────────────────────────────
+      let runId: string | undefined;
+      try {
+        const run = await createRun(randomUUID(), {
+          provider: "gemini",
+          modelName,
+          stage: "initial_assessment",
+          scope: "story_only",
+          promptVersion: prompts.getVersion(),
+          inputHash: story?.inputHash ?? "",
+        });
+        runId = run?.id;
+      } catch (err) {
+        logger.warn({ module: MODULE, error: err }, "Failed to create run for no-bias eval — continuing without runId");
+      }
+
       // ── Persist to DB ───────────────────────────────────────
       try {
         await persistEvalResult({
+          runId,
           provider: "gemini",
           modelName,
           promptVersion: prompts.getVersion(),
