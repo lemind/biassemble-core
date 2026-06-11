@@ -62,8 +62,8 @@ export const BiasItemSchema = z.object({
 export const QuestionOutputSchema = z.object({
   questions: z.array(z.string().min(1)).min(QUESTIONS_MIN).max(QUESTIONS_MAX),
   isComplete: z.boolean(),
-  prompt_version: z.string(),
-  schema_version: z.literal(SCHEMA_VERSION),
+  prompt_version: z.string().optional(),
+  schema_version: z.literal(SCHEMA_VERSION).optional(),
 });
 
 export const AssessmentOutputSchema = z.object({
