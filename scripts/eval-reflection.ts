@@ -230,7 +230,7 @@ async function main(): Promise<void> {
 
   const provider = createProvider(providerMode);
   const modelName = isMock ? "mock-eval" : "gemini-2.0-flash";
-  const result = await runEval(provider, modelName, storyText, evalMode);
+  const result = await runEval(provider, modelName, storyText, evalMode, thresholds);
 
   printResults(result, thresholds, isMock);
   process.exit(result.exitCode);

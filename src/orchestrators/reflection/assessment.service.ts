@@ -17,19 +17,6 @@ import { validateEvidence } from "../../parsers/evidence-validator";
 
 const MODULE = "assessment-service";
 
-/**
- * Validates that the reasoning trace has a prompt_version set.
- * Throws with a descriptive message if missing (FR-014).
- * Per-step prompt_version validation deferred until schemas are updated.
- */
-function validatePromptVersion(trace: ReasoningTrace): void {
-  if (!trace.prompt_version) {
-    throw new Error(
-      "Validation failed: reasoning_trace is missing prompt_version"
-    );
-  }
-}
-
 export class AssessmentService {
   constructor(
     private provider: Provider,
@@ -222,9 +209,9 @@ export class AssessmentService {
         }
       );
 
-      // T204: Validate reasoning trace if present, then always persist
+      // T204: Stamp promptVersion on trace (LLM doesn't generate it)
       if (parsed.reasoningTrace) {
-        validatePromptVersion(parsed.reasoningTrace as ReasoningTrace);
+        (parsed.reasoningTrace as any).prompt_version = promptVersion;
       } else {
         logger.warn(
           { module: MODULE, operation: "callProvider", requestId },

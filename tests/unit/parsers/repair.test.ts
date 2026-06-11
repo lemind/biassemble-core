@@ -47,17 +47,21 @@ describe("tryRepairJson", () => {
 
   it("should throw on invalid JSON with no structure", () => {
     const input = "not json at all";
-    expect(() => tryRepairJson(input, TestSchema)).toThrow("Failed to parse or validate LLM output");
+    expect(() => tryRepairJson(input, TestSchema)).toThrow();
   });
 
-  it("should throw on schema validation failure", () => {
+  it("should recover valid fields on schema validation failure", () => {
     const input = '{"name": "test", "value": "not-a-number"}';
-    expect(() => tryRepairJson(input, TestSchema)).toThrow("Failed to parse or validate LLM output");
+    const result = tryRepairJson(input, TestSchema);
+    expect(result.name).toBe("test");
+    expect(result.value).toBeNull();
   });
 
-  it("should throw on missing required fields", () => {
+  it("should set null for missing fields", () => {
     const input = '{"name": "test"}';
-    expect(() => tryRepairJson(input, TestSchema)).toThrow("Failed to parse or validate LLM output");
+    const result = tryRepairJson(input, TestSchema);
+    expect(result.name).toBe("test");
+    expect(result.value).toBeNull();
   });
 
   it("should handle extra fields gracefully", () => {
@@ -74,6 +78,25 @@ describe("tryRepairJson", () => {
 
   it("should handle empty string", () => {
     expect(() => tryRepairJson("", TestSchema)).toThrow();
+  });
+});
+
+describe("partialParseObject — field-by-field recovery", () => {
+  it("should normalize snake_case fields before parsing", () => {
+    const SnakeSchema = z.object({
+      reasoningTrace: z.string(),
+      noBiasDetected: z.boolean(),
+    });
+    const input = '{"reasoning_trace": "some data", "no_bias_detected": true}';
+    const result = tryRepairJson(input, SnakeSchema);
+    expect(result.reasoningTrace).toBe("some data");
+    expect(result.noBiasDetected).toBe(true);
+  });
+
+  it("should return full result when no fields fail", () => {
+    const input = '{"name": "ok", "value": 7}';
+    const result = tryRepairJson(input, TestSchema);
+    expect(result).toEqual({ name: "ok", value: 7 });
   });
 });
 

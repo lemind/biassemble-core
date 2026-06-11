@@ -1,7 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "reasoning_trace": {
+    "reasoningTrace": {
       "type": "object",
       "description": "Structured reasoning steps leading to the assessment",
       "properties": {
@@ -126,10 +126,10 @@
       "type": "string",
       "description": "A closing reflection prompt to help the user think deeper"
     },
-    "no_bias_detected": {
+    "noBiasDetected": {
       "type": "boolean",
       "description": "When true, no cognitive biases were found and biases array may be empty"
     }
   },
-  "required": ["reasoning_trace", "biases", "reflectionPrompt", "no_bias_detected"]
+  "required": ["reasoningTrace", "biases", "reflectionPrompt", "noBiasDetected"]
 }

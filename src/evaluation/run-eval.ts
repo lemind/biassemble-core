@@ -207,6 +207,12 @@ export async function runEval(
   modelName: string,
   storyText?: string,
   mode?: "golden" | "no_bias",
+  overrides?: Partial<{
+    minEvidenceGrounded: number;
+    maxFalsePositive: number;
+    minSchemaParse: number;
+    maxRepairRate: number;
+  }>,
 ): Promise<EvalRunResult> {
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
@@ -277,12 +283,13 @@ export async function runEval(
   const sysMetrics = computeSystemMetrics(allLLMResponses);
 
   // Pass/fail uses default thresholds — caller can override
-  const thresholds = {
+  const defaults = {
     minEvidenceGrounded: 0.9,
     maxFalsePositive: 0.1,
     minSchemaParse: 0.95,
     maxRepairRate: 0.05,
   };
+  const thresholds = overrides ? { ...defaults, ...overrides } : defaults;
 
   let overallPassed = true;
   const groundedRates = [...goldenResults, ...noBiasResults]

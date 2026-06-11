@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { ZodObject } from "zod";
 import type { ZodSchema } from "zod";
 import { logger } from "../observability/logger";
 import { extractJson } from "./json-from-llm";
@@ -6,8 +6,24 @@ import { extractJson } from "./json-from-llm";
 const MODULE = "repair";
 
 /**
- * Attempts a field-by-field safe parse of a Zod object.
- * Fields that fail validation are set to null.
+ * Maps known snake_case field names from LLM output to camelCase expected by Zod schemas.
+ * The prompt system.json tells the LLM to output camelCase, but if the LLM
+ * falls back to snake_case, this normalizes before Zod validation.
+ */
+function normalizeFields(raw: Record<string, unknown>): void {
+  if (raw.reasoning_trace !== undefined && raw.reasoningTrace === undefined) {
+    raw.reasoningTrace = raw.reasoning_trace;
+    delete raw.reasoning_trace;
+  }
+  if (raw.no_bias_detected !== undefined && raw.noBiasDetected === undefined) {
+    raw.noBiasDetected = raw.no_bias_detected;
+    delete raw.no_bias_detected;
+  }
+}
+
+/**
+ * Attempts a field-by-field safe parse of a ZodObject.
+ * Fields that fail validation are set to null instead of crashing the whole result.
  * This prevents a single malformed field (e.g. reasoningTrace) from
  * causing loss of the entire assessment.
  */
@@ -15,30 +31,22 @@ function partialParseObject<T>(
   raw: unknown,
   schema: ZodSchema<T>,
 ): T {
-  // Get the shape definition (ZodObject internal)
-  const def = (schema as any)._def;
-  const shapeFn: (() => Record<string, z.ZodTypeAny>) | undefined = def?.shape;
-  const shape = typeof shapeFn === "function" ? shapeFn() : null;
-
-  if (!shape || typeof raw !== "object" || raw === null) {
+  // Zod v4 public API: ZodObject has .shape
+  if (!(schema instanceof ZodObject) || typeof raw !== "object" || raw === null) {
     return schema.parse(raw);
   }
 
-  const result: Record<string, unknown> = {};
+  const shape = schema.shape as Record<string, ZodSchema>;
   const input = raw as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
   const errors: Array<{ field: string; message: string }> = [];
 
   for (const [field, fieldSchema] of Object.entries(shape)) {
     const value = input[field];
 
     if (value === undefined) {
-      // Required field missing — partial cannot produce a valid result, fall through to full parse attempt
-      try {
-        return schema.parse(raw);
-      } catch {
-        result[field] = null;
-        continue;
-      }
+      result[field] = null;
+      continue;
     }
 
     const fieldResult = fieldSchema.safeParse(value);
@@ -49,7 +57,7 @@ function partialParseObject<T>(
         field,
         message: fieldResult.error.message,
       });
-      // Required fields that fail: set to null as fallback
+      result[field] = null;
     }
   }
 
@@ -64,44 +72,29 @@ function partialParseObject<T>(
 }
 
 /**
- * Maps snake_case field names from LLM output to camelCase expected by Zod schemas.
- * Currently handles: reasoning_trace → reasoningTrace
- * The prompt schema.md uses reasoning_trace (snake_case) but Zod schema expects reasoningTrace (camelCase).
- */
-function mapReasoningTrace(raw: unknown): void {
-  if (typeof raw !== 'object' || raw === null || raw instanceof Array) return;
-  const obj = raw as Record<string, unknown>;
-  if (obj.reasoning_trace !== undefined && obj.reasoningTrace === undefined) {
-    obj.reasoningTrace = obj.reasoning_trace;
-    delete obj.reasoning_trace;
-  }
-}
-
-/**
  * Attempts to repair malformed LLM JSON output.
  * Uses extractJson for structural extraction, then parses and validates.
- * Returns the parsed and validated result, or throws if repair fails.
+ * Falls back to field-by-field partial parse to recover valid fields.
  */
 export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
-  // Step 1: Extract JSON structure (handles markdown, prose wrapping, trailing text)
   const extracted = extractJson(text);
+  const parsed = JSON.parse(extracted) as Record<string, unknown>;
 
-  // Step 2: Try parse
+  // Normalize known snake_case → camelCase fields
+  normalizeFields(parsed);
+
+  // Step 1: Try full parse
   try {
-    const parsed = JSON.parse(extracted);
-    mapReasoningTrace(parsed);
     return schema.parse(parsed);
   } catch (error) {
     logger.warn(
-      { module: MODULE, operation: "tryRepairJson", text, extracted, error },
-      "Full JSON parse/validate failed, trying partial field-level recovery",
+      { module: MODULE, operation: "tryRepairJson", extracted, error },
+      "Full JSON parse failed, trying partial field-level recovery",
     );
   }
 
-  // Step 3: Partial parse — try each field individually
+  // Step 2: Partial field-by-field parse
   try {
-    const parsed = JSON.parse(extracted);
-    mapReasoningTrace(parsed);
     return partialParseObject(parsed, schema);
   } catch (partialError) {
     logger.warn(
