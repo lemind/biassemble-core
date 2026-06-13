@@ -189,10 +189,15 @@ export class AssessmentService {
         "Calling AI provider for assessment"
       );
 
+      const t0 = Date.now();
       const raw = await this.provider.completeJson<any>({
         system,
         user,
       });
+      logger.info(
+        { module: MODULE, operation: "callProvider", requestId, attempt, stage, scope, durationMs: Date.now() - t0 },
+        "AI provider returned assessment response"
+      );
 
       // Use the full repair pipeline
       const parsed = await repairWithFallback(
