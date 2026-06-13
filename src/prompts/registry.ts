@@ -4,14 +4,20 @@ import assessmentData from "./reflection/assessment/system.json" with { type: "j
 
 export type PromptTemplate = "question-batch" | "assessment";
 
+interface PromptFile {
+  content: string;
+  version: string;
+}
+
 /** Loads guardrails + system prompts from JSON files, renders templates with variables. */
 export class PromptRegistry {
   private guardrails: string;
   private version: string;
 
-  constructor(version = "1.0.0") {
+  constructor() {
     this.guardrails = guardrailsData.content;
-    this.version = version;
+    // Version comes from the assessment prompt JSON — single source of truth.
+    this.version = (assessmentData as PromptFile).version;
   }
 
   /** Returns the current prompt version string. */
