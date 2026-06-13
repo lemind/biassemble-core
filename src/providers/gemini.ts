@@ -27,6 +27,7 @@ export class RateLimitError extends Error {
   }
 }
 
+/** Calls Gemini API via Google Generative AI SDK; handles rate limits, markdown-wrapped JSON, and timeout. */
 export class GeminiProvider implements Provider {
   readonly mode = "gemini";
   private client: GoogleGenerativeAI;

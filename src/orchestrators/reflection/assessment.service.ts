@@ -17,6 +17,7 @@ import { validateEvidence } from "../../parsers/evidence-validator";
 
 const MODULE = "assessment-service";
 
+/** Orchestrates assessment generation: renders prompts, calls provider, parses + validates output, persists traces. */
 export class AssessmentService {
   constructor(
     private provider: Provider,

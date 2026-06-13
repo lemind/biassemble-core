@@ -8,6 +8,7 @@ import type { PromptRegistry } from "../../prompts/registry";
 
 const MODULE = "question-service";
 
+/** Generates contextual follow-up questions from a story using the AI provider, with repair+fallback. */
 export class QuestionService {
   constructor(
     private provider: Provider,

@@ -4,6 +4,7 @@ import assessmentData from "./reflection/assessment/system.json" with { type: "j
 
 export type PromptTemplate = "question-batch" | "assessment";
 
+/** Loads guardrails + system prompts from JSON files, renders templates with variables. */
 export class PromptRegistry {
   private guardrails: string;
   private version: string;
