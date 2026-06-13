@@ -15,6 +15,7 @@ interface CatalogFile {
 
 const parsed = catalogData as CatalogFile;
 
+/** Loads bias taxonomy from JSON, provides lookup by name/shortlist for prompts. */
 export class BiasCatalogService {
   private biases: BiasEntry[] = parsed.biases;
 

@@ -27,6 +27,7 @@ export class RateLimitError extends Error {
   }
 }
 
+/** Calls Gemini API via Google Generative AI SDK; handles rate limits, markdown-wrapped JSON, and timeout. */
 export class GeminiProvider implements Provider {
   readonly mode = "gemini";
   private client: GoogleGenerativeAI;
@@ -57,7 +58,12 @@ export class GeminiProvider implements Provider {
     ];
 
     try {
+      const t0 = Date.now();
       const result = await model.generateContent({ contents });
+      logger.info(
+        { module: MODULE, operation: "completeJson", latencyMs: Date.now() - t0, model: env.GEMINI_MODEL },
+        "Gemini API call completed"
+      );
       const response = await result.response;
       const text = response.text();
 
