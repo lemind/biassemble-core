@@ -14,7 +14,7 @@ const REFLECTION_MIN_LENGTH = 10;
 export const SCHEMA_VERSION = "1.0.0" as const;
 
 /** Prompt version carried in every response. Bump when prompts are updated. */
-export const PROMPT_VERSION = "1.0.0" as const;
+export const PROMPT_VERSION = "1.1.0" as const;
 
 // ─── Enums ──────────────────────────────────────────────────
 
