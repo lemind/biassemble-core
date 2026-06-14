@@ -279,9 +279,9 @@ describe("T501 — reasoning.schemas", () => {
       expect(() => ReasoningTraceSchema.parse(validTrace)).not.toThrow();
     });
 
-    it("should reject missing prompt_version", () => {
+    it("should accept missing prompt_version (optional)", () => {
       const { prompt_version: _, ...rest } = validTrace;
-      expect(() => ReasoningTraceSchema.parse(rest)).toThrow();
+      expect(() => ReasoningTraceSchema.parse(rest)).not.toThrow();
     });
   });
 
