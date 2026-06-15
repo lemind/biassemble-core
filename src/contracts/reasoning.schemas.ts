@@ -69,9 +69,9 @@ export type EvidenceMapping = z.infer<typeof EvidenceMappingSchema>;
 
 export const ReasoningTraceSchema = z.object({
   story_analysis: StoryAnalysisSchema,
-  interpretations: z.array(InterpretationSchema),
-  bias_hypotheses: z.array(BiasHypothesisSchema),
-  evidence_mapping: z.array(EvidenceMappingSchema),
+  interpretations: z.array(InterpretationSchema).optional().default([]),
+  bias_hypotheses: z.array(BiasHypothesisSchema).optional().default([]),
+  evidence_mapping: z.array(EvidenceMappingSchema).optional().default([]),
   prompt_version: PromptVersionSchema.optional(),
 });
 export type ReasoningTrace = z.infer<typeof ReasoningTraceSchema>;

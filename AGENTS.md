@@ -28,6 +28,7 @@
 - Do not disable linters or skip formatting to "fix" a bug.
 - Match existing naming conventions; do not rename variables without scope.
 - **Naming**: Use descriptive names that make purpose obvious (`loadAssessment`, `pollSessionStatus`, `stopPolling`). Avoid generic names like `fetch`, `data`, `result`, `check`, `cleanup`, `doStuff`. Don't over-verbose — `updateAnswer` is good, `updateCurrentAnswerTextInState` is not.
+- **JSDoc**: Every `export class` must have a 1-line JSDoc describing its purpose. Example: `/** Loads bias taxonomy from JSON, provides lookup by name/shortlist for prompts. */`
 
 ## Repository Structure
 
