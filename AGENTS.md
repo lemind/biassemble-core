@@ -161,6 +161,17 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - **Do not modify spec.md, plan.md, or tasks.md after implementation has started** unless adding corrections or clarifications. If a task turns out to be unnecessary, mark it as `[SKIPPED]` with a reason — do not rewrite the task description.
 - **Interdependent tasks that cannot be shipped separately MUST be merged.** If tasks A and B break each other when deployed independently, they are one task, not two. Gating rules in `tasks.md` are not a substitute for merging.
 
+## Scope Discipline
+
+**Do only what was explicitly asked. Everything else is out of scope.**
+
+- If the user asks to update spec files, do not touch source code.
+- If the user asks to fix a bug, do not refactor surrounding code.
+- If the user asks to implement Phase 1, do not start Phase 2.
+- When in doubt whether an action is in scope: **don't do it, ask first.**
+
+This applies even if the extra work seems obviously correct, helpful, or "the right thing to do." The user may have a reason for the narrow scope (reviewing incrementally, testing assumptions, coordinating with other work). Unsolicited work wastes review time and can conflict with the user's plan.
+
 ## Autonomy
 
 ### Act without asking:
@@ -176,6 +187,7 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - Altering public APIs, DB schemas, or auth flows
 - Committing code — show summary of changes first, ask user to review before running `git commit`
 - Adding any code, heuristic, or file not explicitly listed in `tasks.md`
+- **Any work beyond the explicitly stated task — even if it seems related or necessary**
 
 ## Forbidden
 
