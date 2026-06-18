@@ -104,8 +104,10 @@ export class GeminiProvider implements Provider {
         );
       }
 
+      const errorMessage = (error as Error).message ?? String(error);
+      const errorStack = (error as Error).stack;
       logger.error(
-        { module: MODULE, operation: "completeJson", error },
+        { module: MODULE, operation: "completeJson", errorMessage, errorStack, error },
         "Gemini API call failed"
       );
       throw error;
