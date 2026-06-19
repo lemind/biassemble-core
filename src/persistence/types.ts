@@ -47,4 +47,31 @@ export interface EvalResultRecord {
   inputHash: string;
   passed: boolean;
   runAt: string;
+  // Stage 003 extensions
+  evalRunId: string;
+  scenarioId: string;
+  rawOutput: string | null;
+}
+
+// ── LLM Call Record (Stage 003) ──
+export interface LlmCallRecord {
+  id: string;
+  sessionId: string | null;
+  stage: "assessment" | "question";
+  callType: "primary" | "fallback";
+  provider: string;
+  model: string;
+  promptVersion: string;
+  rawResponse: string | null;
+  parsedOutput: Record<string, unknown> | null;
+  status: "success" | "timeout" | "error";
+  failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  errorMessage: string | null;
+  createdAt: string;
 }

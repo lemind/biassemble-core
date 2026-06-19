@@ -22,38 +22,38 @@
 
 ### Tests for Phase 1
 
-- [ ] T101 [P] Write type-level tests for new persistence types — verify `LlmCallRecord` shape correctness, enum constraints, nullable fields; verify extended `EvalResultRecord` has new fields
+- [x] T101 [P] Write type-level tests for new persistence types — verify `LlmCallRecord` shape correctness, enum constraints, nullable fields; verify extended `EvalResultRecord` has new fields
   - File: `biassemble-core/tests/unit/persistence/observability-types.test.ts`
 
-- [ ] T102 [P] Write port contract tests — verify `LlmCallStore` interface matches the types, all required methods exist with correct signatures; verify extended `EvalResultStore` has new query methods
+- [x] T102 [P] Write port contract tests — verify `LlmCallStore` interface matches the types, all required methods exist with correct signatures; verify extended `EvalResultStore` has new query methods
   - File: `biassemble-core/tests/unit/persistence/observability-ports.test.ts`
 
 ### Implementation for Phase 1
 
-- [ ] T103 [P] Add `llm_calls` table definition to `src/db/schema.ts`
+- [x] T103 [P] Add `llm_calls` table definition to `src/db/schema.ts`
   - Columns: id (uuid PK), session_id (uuid, nullable), stage (enum: `assessment`, `question`), call_type (enum: `primary`, `fallback`), provider, model, prompt_version, raw_response (text, nullable), parsed_output (jsonb, nullable), status (enum: `success`, `timeout`, `error`), failure_type (enum: `schema_validation`, `parse_error`, `provider_error`, `timeout`, `other`, nullable), input_tokens (integer, nullable), output_tokens (integer, nullable), total_tokens (integer, nullable), started_at, ended_at, duration_ms (integer), error_message (text, nullable), created_at
   - Indexes: provider, model, stage, created_at, session_id
   - One row per actual provider call (including retries and fallback calls) — no retry_count column
   - File: `biassemble-core/src/db/schema.ts`
 
-- [ ] T104 [P] Extend `eval_results` table in `src/db/schema.ts`
+- [x] T104 [P] Extend `eval_results` table in `src/db/schema.ts`
   - Add columns: `eval_run_id` (uuid, not null), `scenario_id` (text, not null), `raw_output` (text, nullable)
   - `eval_run_id` groups all scenarios from the same `runDataset()` execution
   - `scenario_id` identifies the story/scenario within the dataset
   - `raw_output` stores the raw LLM text for debugging
   - File: `biassemble-core/src/db/schema.ts`
 
-- [ ] T105 Add TypeScript types to `src/persistence/types.ts`
+- [x] T105 Add TypeScript types to `src/persistence/types.ts`
   - Add `LlmCallRecord` type: stage is `assessment` | `question`, has `callType` field (`primary` | `fallback`), has `failureType` field, has `promptVersion` field, has `inputTokens`/`outputTokens`/`totalTokens` fields (nullable), status is `success` | `timeout` | `error` (no `retry`), no `retryCount` field
   - Extend `EvalResultRecord` with: `evalRunId: string`, `scenarioId: string`, `rawOutput: string | null`
   - File: `biassemble-core/src/persistence/types.ts`
 
-- [ ] T106 Add persistence port interfaces to `src/persistence/ports.ts`
+- [x] T106 Add persistence port interfaces to `src/persistence/ports.ts`
   - Add `LlmCallStore`: `recordCall()`, `getCallsBySession()`, `getCallsByStage()`, `getCallsByProvider()`, `getCallsBySessionAndStage()`
   - Extend `EvalResultStore` with: `getResultsByEvalRunId(evalRunId)`, `getEvalRunAggregates()` (for GROUP BY queries)
   - File: `biassemble-core/src/persistence/ports.ts`
 
-- [ ] T107 Implement query functions in `src/db/queries.ts`
+- [x] T107 Implement query functions in `src/db/queries.ts`
   - `recordLlmCall(data)`: insert into llm_calls
   - `getCallsBySession(sessionId)`: retrieve all calls for a session (for debugging)
   - `getCallsByStage(stage)`: retrieve calls filtered by stage
@@ -63,7 +63,7 @@
   - Add `getEvalResultsByRunId(evalRunId)`: retrieve all results for an eval run
   - File: `biassemble-core/src/db/queries.ts`
 
-- [ ] T108 Create Drizzle migration for schema changes
+- [x] T108 Create Drizzle migration for schema changes
   - File: `biassemble-core/src/db/migrations/0003_observability_reliability.sql`
   - Also update `meta/_journal.json`
 

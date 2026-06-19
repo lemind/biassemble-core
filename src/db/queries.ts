@@ -1,9 +1,10 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "./config";
 import {
   runs,
   reasoningTraces,
   evalResults,
+  llmCalls,
 } from "./schema";
 
 function db() {
@@ -80,6 +81,9 @@ export async function persistEvalResult(
     systemMetrics: Record<string, unknown>;
     inputHash: string;
     passed: boolean;
+    evalRunId: string;
+    scenarioId: string;
+    rawOutput?: string;
   }
 ) {
   const [row] = await db()
@@ -115,4 +119,100 @@ export async function getLatestEvalResults(
     .where(eq(evalResults.promptVersion, promptVersion))
     .orderBy(desc(evalResults.runAt))
     .limit(limit);
+}
+
+// ── LLM Calls (Stage 003) ──
+
+export async function recordLlmCall(
+  data: {
+    sessionId: string | null;
+    stage: "assessment" | "question";
+    callType: "primary" | "fallback";
+    provider: string;
+    model: string;
+    promptVersion: string;
+    rawResponse: string | null;
+    parsedOutput: Record<string, unknown> | null;
+    status: "success" | "timeout" | "error";
+    failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+    startedAt: string;
+    endedAt: string;
+    durationMs: number;
+    errorMessage: string | null;
+  }
+) {
+  const [row] = await db()
+    .insert(llmCalls)
+    .values({
+      ...data,
+      startedAt: new Date(data.startedAt),
+      endedAt: new Date(data.endedAt),
+    })
+    .returning();
+  return row;
+}
+
+export async function getCallsBySession(sessionId: string) {
+  return await db()
+    .select()
+    .from(llmCalls)
+    .where(eq(llmCalls.sessionId, sessionId))
+    .orderBy(llmCalls.createdAt);
+}
+
+export async function getCallsByStage(stage: "assessment" | "question") {
+  return await db()
+    .select()
+    .from(llmCalls)
+    .where(eq(llmCalls.stage, stage))
+    .orderBy(llmCalls.createdAt);
+}
+
+export async function getCallsByProvider(provider: string) {
+  return await db()
+    .select()
+    .from(llmCalls)
+    .where(eq(llmCalls.provider, provider))
+    .orderBy(llmCalls.createdAt);
+}
+
+export async function getCallsBySessionAndStage(
+  sessionId: string,
+  stage: "assessment" | "question"
+) {
+  return await db()
+    .select()
+    .from(llmCalls)
+    .where(
+      and(
+        eq(llmCalls.sessionId, sessionId),
+        eq(llmCalls.stage, stage)
+      )
+    )
+    .orderBy(llmCalls.createdAt);
+}
+
+// ── Eval Results Extensions (Stage 003) ──
+
+export async function getEvalResultsByRunId(evalRunId: string) {
+  return await db()
+    .select()
+    .from(evalResults)
+    .where(eq(evalResults.evalRunId, evalRunId))
+    .orderBy(evalResults.runAt);
+}
+
+export async function getEvalRunAggregates() {
+  const results = await db()
+    .select({
+      evalRunId: evalResults.evalRunId,
+      totalScenarios: sql<number>`count(*)::int`,
+    })
+    .from(evalResults)
+    .groupBy(evalResults.evalRunId)
+    .orderBy(desc(evalResults.runAt));
+  return results;
 }

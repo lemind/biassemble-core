@@ -92,6 +92,14 @@ Examples:
 - **Environment**: Always verify `.env` loading works before committing. Use `node --env-file=.env` (built into Node 22+) instead of relying on runtime libraries like `dotenv`. The `dev` and `start` scripts must include `--env-file=.env`.
 - Database migrations must be reversible and reviewed before applying (no `:latest` in production without testing rollback).
 - Do not add product-specific architecture, paths, or constraints here — those belong in `specs/<feature>/plan.md` and `architecture.md`.
+- **Spec/code alignment**: When implementing queries/aggregations, verify they don't reference fields or logic explicitly excluded from the current stage spec. Each stage has its own scope — don't carry over assumptions from previous stages.
+- **Schema completeness**: When spec mentions indexes, verify they exist in schema.ts before marking task complete. Indexes are easy to forget but critical for query performance.
+- **Type consistency across layers**: Ensure type consistency between persistence layer (types.ts), query layer (queries.ts), and schema layer (schema.ts). Dates should be handled consistently — use string (ISO format) in types, convert to Date only at DB boundary.
+- **Optionality semantics**: Use `field: Type | null` for nullable database columns, not `field?: Type | null`. The `?` operator implies the field can be omitted entirely, which is different from NULL in the database. Aligns TypeScript semantics with database semantics.
+- **Migration verification**: After generating migrations, manually verify they match the schema changes (columns, indexes, constraints) before marking task complete. Catches Drizzle generation issues.
+- **Boundary computation**: When multiple related fields exist (startedAt, endedAt, durationMs), prefer computing derived values in one place rather than trusting caller input. Prevents data inconsistency.
+- **Check existing migrations**: Always verify existing migrations before generating new ones. Check `src/db/migrations/` for existing files. If tables already exist, create incremental migrations (ALTER TABLE) not full CREATE TABLE statements.
+- **Migration safety with existing data**: When adding a NOT NULL column to an existing table, always: (1) add the column as nullable first, (2) backfill existing rows with a placeholder/mock value, (3) then ALTER COLUMN SET NOT NULL. Never ADD COLUMN ... NOT NULL directly — it will fail on tables with existing rows.
 
 ## AI Rules
 
@@ -112,6 +120,21 @@ Examples:
 - Match test type to change: unit for logic, integration for APIs/DB, e2e for user flows.
 - Run relevant tests iteratively; run full suite before finalizing.
 - Mock external services; never skip tests due to flakiness without documenting why.
+
+### Test Criteria (Persistence & Eval Ports)
+
+Tests must verify behavior, not just interface presence. A store that returns `null` from every method must fail.
+
+1. **Round-trip persistence** — Every `recordCall` / `persistResult` write must be readable back via the corresponding read method, with `id` and `createdAt` present.
+2. **Filtering correctness** — Queries by session, stage, or provider must return only matching records and exclude others.
+3. **Ordering determinism** — Query results must be sorted by `createdAt` (ascending or descending, as documented) — consumers depend on stable ordering.
+4. **Schema & field validation** — Persisted records must include all required fields (`id`, `createdAt`, provider, etc.). Invalid or malformed input must be rejected with a clear error.
+5. **Evidence validation contract** — Evidence entries must carry `validation_status`. Only validated evidence counts toward `evidenceGroundedRate` in aggregates.
+6. **Aggregate computation** — `getEvalRunAggregates` must return correct counts, averages, and pass/fail rates for a given eval run. Test with seeded data.
+7. **Edge-case resilience** — Empty results, null fields, missing session IDs, duplicate submissions, and concurrent writes must not corrupt state or throw unhandled errors.
+8. **Error handling** — DB failures, invalid inputs, and missing records must surface meaningful typed errors — never silent `null` swallows or untyped throws.
+9. **Backward compatibility** — Schema changes must not break reads of previously persisted records. Migrations must preserve historical data.
+10. **Integration with real DB** — At least one test per store must exercise actual Drizzle queries against a test Postgres instance (or equivalent), verifying SQL correctness.
 
 ## Spec-kit & `specs/` (keep in sync)
 
