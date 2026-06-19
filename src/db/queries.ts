@@ -6,6 +6,7 @@ import {
   evalResults,
   llmCalls,
 } from "./schema";
+import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType } from "../persistence/types";
 
 function db() {
   return getDb();
@@ -126,15 +127,15 @@ export async function getLatestEvalResults(
 export async function recordLlmCall(
   data: {
     sessionId: string | null;
-    stage: "assessment" | "question";
-    callType: "primary" | "fallback";
+    stage: LlmCallStage;
+    callType: LlmCallType;
     provider: string;
     model: string;
     promptVersion: string;
     rawResponse: string | null;
     parsedOutput: Record<string, unknown> | null;
-    status: "success" | "timeout" | "error";
-    failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
+    status: LlmCallStatus;
+    failureType: LlmCallFailureType | null;
     inputTokens: number | null;
     outputTokens: number | null;
     totalTokens: number | null;
@@ -163,7 +164,7 @@ export async function getCallsBySession(sessionId: string) {
     .orderBy(llmCalls.createdAt);
 }
 
-export async function getCallsByStage(stage: "assessment" | "question") {
+export async function getCallsByStage(stage: LlmCallStage) {
   return await db()
     .select()
     .from(llmCalls)
@@ -181,7 +182,7 @@ export async function getCallsByProvider(provider: string) {
 
 export async function getCallsBySessionAndStage(
   sessionId: string,
-  stage: "assessment" | "question"
+  stage: LlmCallStage
 ) {
   return await db()
     .select()

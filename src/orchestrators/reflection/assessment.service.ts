@@ -9,6 +9,7 @@ import { repairWithFallback } from "../../parsers/repair";
 import { withRetry } from "../retry";
 import { computeInputHash } from "../../lib/hash";
 import { createRun, persistTrace } from "../../db/queries";
+import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
 import type { BiasCatalogService } from "../../catalog/bias-catalog";
@@ -81,6 +82,7 @@ export class AssessmentService {
     const user = `STORY: ${story}`;
 
     const result = await this.callProvider(
+      sessionId,
       system,
       user,
       requestId,
@@ -149,6 +151,7 @@ export class AssessmentService {
     const user = `STORY: ${story}\n\nCONVERSATION:\n${qaPairs}`;
 
     const result = await this.callProvider(
+      sessionId,
       system,
       user,
       requestId,
@@ -169,6 +172,7 @@ export class AssessmentService {
    * Shared provider call + parsing + validation + persistence logic.
    */
   private async callProvider(
+    sessionId: string,
     system: string,
     user: string,
     requestId: string,
@@ -189,11 +193,21 @@ export class AssessmentService {
         "Calling AI provider for assessment"
       );
 
+      const llmStage = "assessment";
       const t0 = Date.now();
-      const raw = await this.provider.completeJson<any>({
-        system,
-        user,
-      });
+
+      const raw = await executeAndRecordLlmCall(
+        () => this.provider.completeJson<unknown>({ system, user }),
+        {
+          sessionId,
+          stage: llmStage,
+          callType: "primary",
+          provider: providerId,
+          model: this.modelName,
+          promptVersion,
+        }
+      );
+
       logger.info(
         { module: MODULE, operation: "callProvider", requestId, attempt, stage, scope, durationMs: Date.now() - t0 },
         "AI provider returned assessment response"
@@ -208,10 +222,17 @@ export class AssessmentService {
             { module: MODULE, operation: "callProvider", requestId },
             "Attempting fallback model call for assessment generation"
           );
-          return await this.provider.completeJson<AssessmentOutput>({
-            system,
-            user,
-          });
+          return await executeAndRecordLlmCall(
+            () => this.provider.completeJson<AssessmentOutput>({ system, user }),
+            {
+              sessionId,
+              stage: llmStage,
+              callType: "fallback",
+              provider: providerId,
+              model: this.modelName,
+              promptVersion,
+            }
+          );
         }
       );
 

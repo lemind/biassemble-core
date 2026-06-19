@@ -54,18 +54,23 @@ export interface EvalResultRecord {
 }
 
 // ── LLM Call Record (Stage 003) ──
+export type LlmCallStatus = "success" | "timeout" | "error";
+export type LlmCallFailureType = "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other";
+export type LlmCallStage = "assessment" | "question";
+export type LlmCallType = "primary" | "fallback";
+
 export interface LlmCallRecord {
   id: string;
   sessionId: string | null;
-  stage: "assessment" | "question";
-  callType: "primary" | "fallback";
+  stage: LlmCallStage;
+  callType: LlmCallType;
   provider: string;
   model: string;
   promptVersion: string;
   rawResponse: string | null;
   parsedOutput: Record<string, unknown> | null;
-  status: "success" | "timeout" | "error";
-  failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
+  status: LlmCallStatus;
+  failureType: LlmCallFailureType | null;
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;

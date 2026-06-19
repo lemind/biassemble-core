@@ -38,6 +38,7 @@ export function registerReflectionRoutes(
       const body = GenerateQuestionRequestSchema.parse(request.body);
       
       const result = await services.question.generate(
+        body.sessionId,
         body.story,
         request.id
       );

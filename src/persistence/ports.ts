@@ -7,6 +7,7 @@ import type {
   TraceRecord,
   EvalResultRecord,
   LlmCallRecord,
+  LlmCallStage,
 } from "./types";
 
 export interface SessionStore {
@@ -42,7 +43,7 @@ export interface EvalResultStore {
 export interface LlmCallStore {
   recordCall(data: Omit<LlmCallRecord, "id" | "createdAt">): Promise<LlmCallRecord>;
   getCallsBySession(sessionId: string): Promise<LlmCallRecord[]>;
-  getCallsByStage(stage: "assessment" | "question"): Promise<LlmCallRecord[]>;
+  getCallsByStage(stage: LlmCallStage): Promise<LlmCallRecord[]>;
   getCallsByProvider(provider: string): Promise<LlmCallRecord[]>;
-  getCallsBySessionAndStage(sessionId: string, stage: "assessment" | "question"): Promise<LlmCallRecord[]>;
+  getCallsBySessionAndStage(sessionId: string, stage: LlmCallStage): Promise<LlmCallRecord[]>;
 }

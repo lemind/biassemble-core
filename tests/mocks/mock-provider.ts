@@ -1,4 +1,4 @@
-import type { Provider, CompletionRequest } from "../../src/providers/types.js";
+import type { Provider, CompletionRequest, ProviderResponse } from "../../src/providers/types.js";
 import { logger } from "../../src/observability/logger.js";
 
 const MODULE = "mock-provider";
@@ -53,7 +53,7 @@ export class MockProvider implements Provider {
     return this.callCount;
   }
 
-  async completeJson<T>(request: CompletionRequest): Promise<T> {
+  async completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>> {
     this.callCount++;
 
     // Simulate failure for retry tests
@@ -76,12 +76,12 @@ export class MockProvider implements Provider {
     // Find a matching response by system prefix
     for (const [prefix, response] of this.responseMap) {
       if (request.system.includes(prefix)) {
-        return response as T;
+        return { result: response as T };
       }
     }
 
     if (this.defaultResponse !== null) {
-      return this.defaultResponse as T;
+      return { result: this.defaultResponse as T };
     }
 
     throw new Error("Mock provider has no response configured");

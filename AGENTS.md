@@ -101,6 +101,21 @@ Examples:
 - **Check existing migrations**: Always verify existing migrations before generating new ones. Check `src/db/migrations/` for existing files. If tables already exist, create incremental migrations (ALTER TABLE) not full CREATE TABLE statements.
 - **Migration safety with existing data**: When adding a NOT NULL column to an existing table, always: (1) add the column as nullable first, (2) backfill existing rows with a placeholder/mock value, (3) then ALTER COLUMN SET NOT NULL. Never ADD COLUMN ... NOT NULL directly — it will fail on tables with existing rows.
 
+## New Feature Integration Planning
+
+**When planning any new feature, function, or persistence layer:**
+
+1. **Usage-first thinking** — Before implementing, explicitly plan WHERE the new code will be called from existing codebase. Don't just design the feature in isolation — map its integration points.
+
+2. **Call site identification** — During planning phase, grep for where the new function should be invoked. Identify:
+   - Which existing services/functions need to call it?
+   - What parameters need to be threaded through?
+   - Are there architectural constraints on ownership (e.g., "only X should call Y")?
+
+3. **Integration is part of the feature** — A feature isn't complete until it's wired into the existing code flow. "Created the function" ≠ "implemented the feature". The implementation includes all call sites.
+
+**Example:** If planning "record LLM calls", don't stop at "create `recordLlmCall()` in queries.ts". Plan: "Call it from `repairWithFallback()` after primary call, and after fallback call. Thread `sessionId` through `callProvider()`. Update routes to pass `sessionId`."
+
 ## AI Rules
 
 - Use structured JSON outputs only.
