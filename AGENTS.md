@@ -16,12 +16,9 @@ pnpm db:studio        # Open Drizzle Studio
 ```
 
 ## Current State
-
-- **Active stage**: 003-observability-reliability
-- **Active phase**: Phase 1 (DB schema + LLM call recording)
-- **Deployed**: Assessment flow, question flow, reasoning schemas, eval metrics, Drizzle schema
-- **Known issues**: gemini-2.0-flash deprecates June 1, 2026 → migrate to gemini-2.5-flash
-- **Test status**: 261 passing (check `pnpm test:run` for current count)
+- Active stage: check specs/ for current stage and phase
+- Known issues: gemini-2.0-flash deprecated — use gemini-2.5-flash
+- Real eval runs: none yet, MockProvider only
 
 ## Repository Structure
 

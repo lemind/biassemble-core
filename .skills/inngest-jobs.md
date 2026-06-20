@@ -14,10 +14,6 @@ Load this when working with background jobs, async tasks, or eval triggers.
 - **Eval job runs real provider** — never mock inside Inngest jobs
 - **Error handling**: Jobs should retry on transient failures, fail fast on permanent errors
 
-## Current Jobs
-
-- `eval-assessment.ts` — Runs evaluation scenarios (stub, not yet active)
-
 ## Adding a New Job
 
 1. Create job file in `src/jobs/`

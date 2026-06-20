@@ -40,14 +40,6 @@ Every provider call MUST call `recordLlmCall()`:
 - **Fallback provider**: Only called if repair fails
 - **Fallback is a separate LLM call** — gets its own `recordLlmCall()` row with `call_type="fallback"`
 
-## Current Call Sites
-
-See `docs/integration-map.md` for the full mapping.
-
-**Summary:**
-- `assessment.service.ts` — 2 calls (primary + fallback)
-- `question.service.ts` — 2 calls (primary + fallback)
-
 ## Error Handling
 
 - **TimeoutError**: Mapped to `status="timeout"`, `failureType="timeout"`
