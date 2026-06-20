@@ -6,6 +6,8 @@ import type {
   SessionRecord,
   TraceRecord,
   EvalResultRecord,
+  LlmCallRecord,
+  LlmCallStage,
 } from "./types";
 
 export interface SessionStore {
@@ -32,4 +34,16 @@ export interface EvalResultStore {
   ): Promise<EvalResultRecord>;
   getByHash(inputHash: string, promptVersion: string): Promise<EvalResultRecord | null>;
   getLatest(promptVersion: string, limit: number): Promise<EvalResultRecord[]>;
+  // Stage 003 extensions
+  getResultsByEvalRunId(evalRunId: string): Promise<EvalResultRecord[]>;
+  getEvalRunAggregates(): Promise<Array<{ evalRunId: string; totalScenarios: number }>>;
+}
+
+// ── LLM Call Store (Stage 003) ──
+export interface LlmCallStore {
+  recordCall(data: Omit<LlmCallRecord, "id" | "createdAt">): Promise<LlmCallRecord>;
+  getCallsBySession(sessionId: string): Promise<LlmCallRecord[]>;
+  getCallsByStage(stage: LlmCallStage): Promise<LlmCallRecord[]>;
+  getCallsByProvider(provider: string): Promise<LlmCallRecord[]>;
+  getCallsBySessionAndStage(sessionId: string, stage: LlmCallStage): Promise<LlmCallRecord[]>;
 }

@@ -13,7 +13,25 @@ export interface CompletionRequest {
   options?: CompletionOptions;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface ProviderResponse<T> {
+  result: T;
+  usage?: TokenUsage;
+}
+
+export class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
 export interface Provider {
   readonly mode: string;
-  completeJson<T>(request: CompletionRequest): Promise<T>;
+  completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>>;
 }

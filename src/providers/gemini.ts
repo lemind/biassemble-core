@@ -2,7 +2,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../lib/env";
 import { logger } from "../observability/logger";
 import { extractJson } from "../parsers/json-from-llm";
-import type { Provider, CompletionRequest } from "./types";
+import type { Provider, CompletionRequest, ProviderResponse, TokenUsage } from "./types";
+import { TimeoutError } from "./types";
 
 /** Default temperature for AI provider calls */
 const DEFAULT_TEMPERATURE = 0.7;
@@ -36,7 +37,7 @@ export class GeminiProvider implements Provider {
     this.client = new GoogleGenerativeAI(env.GEMINI_API_KEY);
   }
 
-  async completeJson<T>(request: CompletionRequest): Promise<T> {
+  async completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>> {
     const timeoutMs = request.options?.timeoutMs ?? env.AI_TIMEOUT_MS;
 
     const model = this.client.getGenerativeModel(
@@ -67,13 +68,21 @@ export class GeminiProvider implements Provider {
       const response = await result.response;
       const text = response.text();
 
+      // Capture token usage from Gemini response
+      const usageMetadata = response.usageMetadata;
+      const usage: TokenUsage | undefined = usageMetadata ? {
+        inputTokens: usageMetadata.promptTokenCount,
+        outputTokens: usageMetadata.candidatesTokenCount,
+        totalTokens: usageMetadata.totalTokenCount,
+      } : undefined;
+
       try {
-        return JSON.parse(text) as T;
+        return { result: JSON.parse(text) as T, usage };
       } catch (parseError) {
         // Try extracting JSON from markdown code blocks before giving up
         const extracted = extractJson(text);
         try {
-          return JSON.parse(extracted) as T;
+          return { result: JSON.parse(extracted) as T, usage };
         } catch (secondError) {
           logger.error(
             { module: MODULE, operation: "completeJson", text, parseError, secondError },
@@ -102,6 +111,19 @@ export class GeminiProvider implements Provider {
           isDaily ? "daily" : "per-minute",
           resetsAt
         );
+      }
+
+      // Detect timeout errors
+      if (
+        message.toLowerCase().includes("timeout") ||
+        message.toLowerCase().includes("timed out") ||
+        message.toLowerCase().includes("deadline exceeded")
+      ) {
+        logger.warn(
+          { module: MODULE, operation: "completeJson", message },
+          "Gemini API call timed out"
+        );
+        throw new TimeoutError(message);
       }
 
       const errorMessage = (error as Error).message ?? String(error);

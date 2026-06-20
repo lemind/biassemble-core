@@ -15,7 +15,8 @@ describe("POST /v1/reflection/question — integration", () => {
       generate: async (story: string, requestId: string) => {
         const system = prompts.render("question-batch", {});
         const user = `STORY: ${story}`;
-        return await mockProvider.completeJson<any>({ system, user });
+        const response = await mockProvider.completeJson<any>({ system, user });
+        return response.result;
       },
     };
     const assessmentService = {

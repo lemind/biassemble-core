@@ -92,6 +92,29 @@ Examples:
 - **Environment**: Always verify `.env` loading works before committing. Use `node --env-file=.env` (built into Node 22+) instead of relying on runtime libraries like `dotenv`. The `dev` and `start` scripts must include `--env-file=.env`.
 - Database migrations must be reversible and reviewed before applying (no `:latest` in production without testing rollback).
 - Do not add product-specific architecture, paths, or constraints here — those belong in `specs/<feature>/plan.md` and `architecture.md`.
+- **Spec/code alignment**: When implementing queries/aggregations, verify they don't reference fields or logic explicitly excluded from the current stage spec. Each stage has its own scope — don't carry over assumptions from previous stages.
+- **Schema completeness**: When spec mentions indexes, verify they exist in schema.ts before marking task complete. Indexes are easy to forget but critical for query performance.
+- **Type consistency across layers**: Ensure type consistency between persistence layer (types.ts), query layer (queries.ts), and schema layer (schema.ts). Dates should be handled consistently — use string (ISO format) in types, convert to Date only at DB boundary.
+- **Optionality semantics**: Use `field: Type | null` for nullable database columns, not `field?: Type | null`. The `?` operator implies the field can be omitted entirely, which is different from NULL in the database. Aligns TypeScript semantics with database semantics.
+- **Migration verification**: After generating migrations, manually verify they match the schema changes (columns, indexes, constraints) before marking task complete. Catches Drizzle generation issues.
+- **Boundary computation**: When multiple related fields exist (startedAt, endedAt, durationMs), prefer computing derived values in one place rather than trusting caller input. Prevents data inconsistency.
+- **Check existing migrations**: Always verify existing migrations before generating new ones. Check `src/db/migrations/` for existing files. If tables already exist, create incremental migrations (ALTER TABLE) not full CREATE TABLE statements.
+- **Migration safety with existing data**: When adding a NOT NULL column to an existing table, always: (1) add the column as nullable first, (2) backfill existing rows with a placeholder/mock value, (3) then ALTER COLUMN SET NOT NULL. Never ADD COLUMN ... NOT NULL directly — it will fail on tables with existing rows.
+
+## New Feature Integration Planning
+
+**When planning any new feature, function, or persistence layer:**
+
+1. **Usage-first thinking** — Before implementing, explicitly plan WHERE the new code will be called from existing codebase. Don't just design the feature in isolation — map its integration points.
+
+2. **Call site identification** — During planning phase, grep for where the new function should be invoked. Identify:
+   - Which existing services/functions need to call it?
+   - What parameters need to be threaded through?
+   - Are there architectural constraints on ownership (e.g., "only X should call Y")?
+
+3. **Integration is part of the feature** — A feature isn't complete until it's wired into the existing code flow. "Created the function" ≠ "implemented the feature". The implementation includes all call sites.
+
+**Example:** If planning "record LLM calls", don't stop at "create `recordLlmCall()` in queries.ts". Plan: "Call it from `repairWithFallback()` after primary call, and after fallback call. Thread `sessionId` through `callProvider()`. Update routes to pass `sessionId`."
 
 ## AI Rules
 
@@ -112,6 +135,90 @@ Examples:
 - Match test type to change: unit for logic, integration for APIs/DB, e2e for user flows.
 - Run relevant tests iteratively; run full suite before finalizing.
 - Mock external services; never skip tests due to flakiness without documenting why.
+
+### Behavioral Testing Principles
+
+**Test behavior, not schema.** A test that only verifies "field X exists and can be stored" is a type check, not a behavioral test. The real question is: "Does the system do the right thing when X happens?"
+
+**Test the mapping logic, not just the storage.** When you implement error classification (e.g., `TimeoutError → status="timeout"`), test that the mapping actually happens. Don't just test that `status="timeout"` can be stored — test that throwing `TimeoutError` results in `status="timeout"` being recorded.
+
+**Test the workflow, not just the components.** If your architecture says "primary call creates one row, fallback creates another row", test that the full workflow (primary fails → fallback succeeds → two rows exist) actually works. Component tests prove each piece works; integration tests prove they work together.
+
+**Test edge cases that matter.** Null `rawResponse` when provider throws before returning. Different providers for primary vs fallback. Token usage present vs absent. These aren't just "nullable field" tests — they're tests of real failure modes.
+
+**Example of weak test:**
+```typescript
+it("persists timeout status", async () => {
+  const recorded = await store.recordCall({ status: "timeout", ... });
+  expect(recorded.status).toBe("timeout");
+});
+```
+This only proves the store can hold `status="timeout"`. It doesn't prove anything about error classification.
+
+**Example of strong test:**
+```typescript
+it("maps TimeoutError to status=timeout", async () => {
+  const provider = () => { throw new TimeoutError("timeout"); };
+  await expect(executeAndRecordLlmCall(provider, ...)).rejects.toThrow();
+  expect(recordedCalls[0].status).toBe("timeout");
+  expect(recordedCalls[0].failureType).toBe("timeout");
+});
+```
+This proves the critical mapping logic works end-to-end.
+
+### Critical Guarantee Testing
+
+**Test reliability guarantees explicitly.** When your system makes promises (fire-and-forget, graceful degradation, serialization correctness), test those promises directly.
+
+**Fire-and-forget guarantee:** If recording failures must not break the main flow, test that explicitly:
+```typescript
+it("does not fail provider call when recordLlmCall throws", async () => {
+  vi.spyOn(queries, "recordLlmCall").mockRejectedValueOnce(new Error("DB failed"));
+  const { result } = await executeAndRecordLlmCall(mockProvider, ...);
+  expect(result).toEqual({ data: "success" }); // Main flow succeeded despite recording failure
+});
+```
+
+**Serialization correctness:** If you serialize data (JSON.stringify, etc.), test the actual output format:
+```typescript
+it("serializes raw response as JSON string, not [object Object]", async () => {
+  // ... provider returns { foo: "bar" }
+  expect(recordedCalls[0].rawResponse).toBe('{"foo":"bar"}');
+  expect(recordedCalls[0].rawResponse).not.toContain("[object Object]");
+});
+```
+
+**Timing calculations:** If you compute durations, test the calculation:
+```typescript
+it("calculates durationMs from provider call timing", async () => {
+  // ... provider takes 50ms
+  expect(recordedCalls[0].durationMs).toBeGreaterThanOrEqual(40);
+  expect(recordedCalls[0].durationMs).toBeLessThan(200);
+});
+```
+
+### Weak Test Patterns to Avoid
+
+**"Store can hold data" tests:** Tests that only prove a store can persist data with certain field values are low-value. They test the store implementation, not your business logic.
+
+**Manual workflow tests:** If you manually call `execute(primary)` then `execute(fallback)` and check that two rows exist, you're not testing the fallback workflow — you're testing that the function can be called twice. Real workflow tests should trigger the actual decision logic.
+
+**Redundant field tests:** If you already tested that a field can be stored (via round-trip test), you don't need separate tests for each possible value unless there's specific logic that produces that value.
+
+### Test Criteria (Persistence & Eval Ports)
+
+Tests must verify behavior, not just interface presence. A store that returns `null` from every method must fail.
+
+1. **Round-trip persistence** — Every `recordCall` / `persistResult` write must be readable back via the corresponding read method, with `id` and `createdAt` present.
+2. **Filtering correctness** — Queries by session, stage, or provider must return only matching records and exclude others.
+3. **Ordering determinism** — Query results must be sorted by `createdAt` (ascending or descending, as documented) — consumers depend on stable ordering.
+4. **Schema & field validation** — Persisted records must include all required fields (`id`, `createdAt`, provider, etc.). Invalid or malformed input must be rejected with a clear error.
+5. **Evidence validation contract** — Evidence entries must carry `validation_status`. Only validated evidence counts toward `evidenceGroundedRate` in aggregates.
+6. **Aggregate computation** — `getEvalRunAggregates` must return correct counts, averages, and pass/fail rates for a given eval run. Test with seeded data.
+7. **Edge-case resilience** — Empty results, null fields, missing session IDs, duplicate submissions, and concurrent writes must not corrupt state or throw unhandled errors.
+8. **Error handling** — DB failures, invalid inputs, and missing records must surface meaningful typed errors — never silent `null` swallows or untyped throws.
+9. **Backward compatibility** — Schema changes must not break reads of previously persisted records. Migrations must preserve historical data.
+10. **Integration with real DB** — At least one test per store must exercise actual Drizzle queries against a test Postgres instance (or equivalent), verifying SQL correctness.
 
 ## Spec-kit & `specs/` (keep in sync)
 
@@ -161,6 +268,17 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - **Do not modify spec.md, plan.md, or tasks.md after implementation has started** unless adding corrections or clarifications. If a task turns out to be unnecessary, mark it as `[SKIPPED]` with a reason — do not rewrite the task description.
 - **Interdependent tasks that cannot be shipped separately MUST be merged.** If tasks A and B break each other when deployed independently, they are one task, not two. Gating rules in `tasks.md` are not a substitute for merging.
 
+## Scope Discipline
+
+**Do only what was explicitly asked. Everything else is out of scope.**
+
+- If the user asks to update spec files, do not touch source code.
+- If the user asks to fix a bug, do not refactor surrounding code.
+- If the user asks to implement Phase 1, do not start Phase 2.
+- When in doubt whether an action is in scope: **don't do it, ask first.**
+
+This applies even if the extra work seems obviously correct, helpful, or "the right thing to do." The user may have a reason for the narrow scope (reviewing incrementally, testing assumptions, coordinating with other work). Unsolicited work wastes review time and can conflict with the user's plan.
+
 ## Autonomy
 
 ### Act without asking:
@@ -176,6 +294,7 @@ After **any** change that affects behavior, scope, architecture, stack, file lay
 - Altering public APIs, DB schemas, or auth flows
 - Committing code — show summary of changes first, ask user to review before running `git commit`
 - Adding any code, heuristic, or file not explicitly listed in `tasks.md`
+- **Any work beyond the explicitly stated task — even if it seems related or necessary**
 
 ## Forbidden
 

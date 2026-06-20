@@ -8,7 +8,8 @@ import type { ReasoningTrace } from "../../contracts/reasoning.schemas";
 import { repairWithFallback } from "../../parsers/repair";
 import { withRetry } from "../retry";
 import { computeInputHash } from "../../lib/hash";
-import { createRun, persistTrace } from "../../db/queries";
+import { createRun, persistTrace, updateLlmCallParsedOutput } from "../../db/queries";
+import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
 import type { BiasCatalogService } from "../../catalog/bias-catalog";
@@ -81,6 +82,7 @@ export class AssessmentService {
     const user = `STORY: ${story}`;
 
     const result = await this.callProvider(
+      sessionId,
       system,
       user,
       requestId,
@@ -149,6 +151,7 @@ export class AssessmentService {
     const user = `STORY: ${story}\n\nCONVERSATION:\n${qaPairs}`;
 
     const result = await this.callProvider(
+      sessionId,
       system,
       user,
       requestId,
@@ -169,6 +172,7 @@ export class AssessmentService {
    * Shared provider call + parsing + validation + persistence logic.
    */
   private async callProvider(
+    sessionId: string,
     system: string,
     user: string,
     requestId: string,
@@ -189,11 +193,21 @@ export class AssessmentService {
         "Calling AI provider for assessment"
       );
 
+      const llmStage = "assessment";
       const t0 = Date.now();
-      const raw = await this.provider.completeJson<any>({
-        system,
-        user,
-      });
+
+      const { result: raw, llmCallId: primaryLlmCallId } = await executeAndRecordLlmCall(
+        () => this.provider.completeJson<unknown>({ system, user }),
+        {
+          sessionId,
+          stage: llmStage,
+          callType: "primary",
+          provider: providerId,
+          model: this.modelName,
+          promptVersion,
+        }
+      );
+
       logger.info(
         { module: MODULE, operation: "callProvider", requestId, attempt, stage, scope, durationMs: Date.now() - t0 },
         "AI provider returned assessment response"
@@ -208,12 +222,39 @@ export class AssessmentService {
             { module: MODULE, operation: "callProvider", requestId },
             "Attempting fallback model call for assessment generation"
           );
-          return await this.provider.completeJson<AssessmentOutput>({
-            system,
-            user,
-          });
+          const { result, llmCallId } = await executeAndRecordLlmCall(
+            () => this.provider.completeJson<AssessmentOutput>({ system, user }),
+            {
+              sessionId,
+              stage: llmStage,
+              callType: "fallback",
+              provider: providerId,
+              model: this.modelName,
+              promptVersion,
+            }
+          );
+          // Update fallback call with parsed output
+          if (llmCallId) {
+            await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
+              logger.warn(
+                { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
+                "Failed to update fallback LLM call parsed output"
+              );
+            });
+          }
+          return result;
         }
       );
+
+      // Update primary call with parsed output (after successful repair/parsing)
+      if (primaryLlmCallId) {
+        await updateLlmCallParsedOutput(primaryLlmCallId, parsed as unknown as Record<string, unknown>).catch((err) => {
+          logger.warn(
+            { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
+            "Failed to update primary LLM call parsed output"
+          );
+        });
+      }
 
       // T204: Stamp promptVersion on trace (LLM doesn't generate it)
       if (parsed.reasoningTrace) {

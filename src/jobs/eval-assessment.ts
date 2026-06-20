@@ -84,6 +84,8 @@ export const evalAssessmentJob = inngest.createFunction(
           },
           inputHash: result.goldenResults[0]?.inputHash ?? "",
           passed: result.overallPassed,
+          evalRunId: runId!,
+          scenarioId: "aggregate",
         });
       } catch (dbError) {
         logger.error({ module: MODULE, error: dbError }, "Failed to persist eval result — continuing");
@@ -166,6 +168,8 @@ export const evalGoldenStoryJob = inngest.createFunction(
           },
           inputHash: story?.inputHash ?? "",
           passed: result.overallPassed,
+          evalRunId: runId!,
+          scenarioId: story?.id ?? "unknown",
         });
       } catch (dbError) {
         logger.error({ module: MODULE, error: dbError }, "Failed to persist golden eval result — continuing");
@@ -245,6 +249,8 @@ export const evalNoBiasStoryJob = inngest.createFunction(
           },
           inputHash: story?.inputHash ?? "",
           passed: result.overallPassed,
+          evalRunId: runId!,
+          scenarioId: story?.id ?? "unknown",
         });
       } catch (dbError) {
         logger.error({ module: MODULE, error: dbError }, "Failed to persist no-bias eval result — continuing");

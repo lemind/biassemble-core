@@ -107,7 +107,7 @@ async function evaluateGoldenStory(
   const llmResponse: LLMResponse = { requiredRepair: false };
 
   try {
-    const questionsOutput = await questionService.generate(story.story, `eval-${story.id}`);
+    const questionsOutput = await questionService.generate("", story.story, `eval-${story.id}`);
     result.questionCount = questionsOutput.questions.length;
 
     const answers = questionsOutput.questions.map((_, i) => `Answer ${i + 1} to "${questionsOutput.questions[i]}"`);
