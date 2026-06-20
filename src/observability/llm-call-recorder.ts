@@ -1,6 +1,7 @@
 import { recordLlmCall } from "../db/queries";
-import type { LlmCallStage, LlmCallType, LlmCallStatus } from "../persistence/types";
+import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType } from "../persistence/types";
 import type { ProviderResponse } from "../providers/types";
+import { TimeoutError } from "../providers/types";
 import { logger } from "./logger";
 
 const MODULE = "llm-call-recorder";
@@ -20,20 +21,23 @@ export interface LlmCallMetadata {
 /**
  * Executes a provider call and records it to llm_calls table.
  * Handles timing, error capture, and token usage extraction.
+ * Returns both the result and the LLM call ID for later parsed_output updates.
  */
 export async function executeAndRecordLlmCall<T>(
   call: () => Promise<ProviderResponse<T>>,
   metadata: LlmCallMetadata
-): Promise<T> {
+): Promise<{ result: T; llmCallId: string }> {
   const startedAt = new Date();
   const t0 = Date.now();
 
   let raw: T | undefined;
   let status: LlmCallStatus = "success";
+  let failureType: LlmCallFailureType | null = null;
   let errorMessage: string | null = null;
   let inputTokens: number | null = null;
   let outputTokens: number | null = null;
   let totalTokens: number | null = null;
+  let llmCallId: string | null = null;
 
   try {
     const response = await call();
@@ -42,13 +46,19 @@ export async function executeAndRecordLlmCall<T>(
     outputTokens = response.usage?.outputTokens ?? null;
     totalTokens = response.usage?.totalTokens ?? null;
   } catch (err) {
-    status = "error";
+    if (err instanceof TimeoutError) {
+      status = "timeout";
+      failureType = "timeout";
+    } else {
+      status = "error";
+      failureType = "provider_error";
+    }
     errorMessage = (err as Error).message ?? String(err);
     throw err;
   } finally {
     const endedAt = new Date();
     const durationMs = Date.now() - t0;
-    await recordLlmCall({
+    const record = await recordLlmCall({
       sessionId: metadata.sessionId,
       stage: metadata.stage,
       callType: metadata.callType,
@@ -58,7 +68,7 @@ export async function executeAndRecordLlmCall<T>(
       rawResponse: raw !== undefined ? JSON.stringify(raw) : null,
       parsedOutput: null,
       status,
-      failureType: status === "error" ? "provider_error" : null,
+      failureType,
       inputTokens,
       outputTokens,
       totalTokens,
@@ -71,8 +81,10 @@ export async function executeAndRecordLlmCall<T>(
         { module: MODULE, operation: "recordLlmCall", error: err },
         "Failed to record LLM call"
       );
+      return null;
     });
+    llmCallId = record?.id ?? null;
   }
 
-  return raw as T;
+  return { result: raw as T, llmCallId: llmCallId! };
 }

@@ -6,6 +6,7 @@ import { withRetry } from "../retry";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
+import { updateLlmCallParsedOutput } from "../../db/queries";
 
 const MODULE = "question-service";
 
@@ -62,7 +63,7 @@ export class QuestionService {
       const providerId = this.provider.mode;
       const t0 = Date.now();
 
-      const raw = await executeAndRecordLlmCall(
+      const { result: raw, llmCallId: primaryLlmCallId } = await executeAndRecordLlmCall(
         () => this.provider.completeJson<unknown>({ system, user }),
         {
           sessionId,
@@ -83,7 +84,7 @@ export class QuestionService {
             { module: MODULE, operation: "generate", requestId },
             "Attempting fallback model call for question generation"
           );
-          return await executeAndRecordLlmCall(
+          const { result, llmCallId } = await executeAndRecordLlmCall(
             () => this.provider.completeJson<QuestionOutput>({ system, user }),
             {
               sessionId,
@@ -94,8 +95,28 @@ export class QuestionService {
               promptVersion,
             }
           );
+          // Update fallback call with parsed output
+          if (llmCallId) {
+            await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
+              logger.warn(
+                { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
+                "Failed to update fallback LLM call parsed output"
+              );
+            });
+          }
+          return result;
         }
       );
+
+      // Update primary call with parsed output (after successful repair/parsing)
+      if (primaryLlmCallId) {
+        await updateLlmCallParsedOutput(primaryLlmCallId, parsed as unknown as Record<string, unknown>).catch((err) => {
+          logger.warn(
+            { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
+            "Failed to update primary LLM call parsed output"
+          );
+        });
+      }
 
       // Stamp version and model fields
       return {

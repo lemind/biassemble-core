@@ -124,6 +124,11 @@ export async function getLatestEvalResults(
 
 // ── LLM Calls (Stage 003) ──
 
+/**
+ * Records an LLM call to the llm_calls table.
+ * Note: durationMs is computed by the caller (typically executeAndRecordLlmCall),
+ * not by this function.
+ */
 export async function recordLlmCall(
   data: {
     sessionId: string | null;
@@ -154,6 +159,20 @@ export async function recordLlmCall(
     })
     .returning();
   return row;
+}
+
+/**
+ * Updates the parsed_output field for an LLM call record.
+ * Called after successful parsing/repair to store the structured output.
+ */
+export async function updateLlmCallParsedOutput(
+  id: string,
+  parsedOutput: Record<string, unknown>
+): Promise<void> {
+  await db()
+    .update(llmCalls)
+    .set({ parsedOutput })
+    .where(eq(llmCalls.id, id));
 }
 
 export async function getCallsBySession(sessionId: string) {

@@ -46,7 +46,7 @@ export const evalResults = core.table("eval_results", {
   passed: boolean("passed").notNull(),
   runAt: timestamp("run_at").defaultNow().notNull(),
   // Stage 003 extensions
-  evalRunId: uuid("eval_run_id").notNull(),
+  evalRunId: uuid("eval_run_id"),
   scenarioId: text("scenario_id").notNull(),
   rawOutput: text("raw_output"),
 });

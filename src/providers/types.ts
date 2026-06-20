@@ -24,6 +24,13 @@ export interface ProviderResponse<T> {
   usage?: TokenUsage;
 }
 
+export class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
 export interface Provider {
   readonly mode: string;
   completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>>;

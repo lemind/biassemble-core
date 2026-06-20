@@ -48,7 +48,7 @@ export interface EvalResultRecord {
   passed: boolean;
   runAt: string;
   // Stage 003 extensions
-  evalRunId: string;
+  evalRunId: string | null;
   scenarioId: string;
   rawOutput: string | null;
 }

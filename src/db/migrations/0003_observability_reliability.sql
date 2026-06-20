@@ -35,8 +35,11 @@ CREATE INDEX "llm_calls_session_id_idx" ON "core"."llm_calls" ("session_id");
 ALTER TABLE "core"."eval_results" ADD COLUMN "eval_run_id" uuid;
 ALTER TABLE "core"."eval_results" ADD COLUMN "scenario_id" text;
 ALTER TABLE "core"."eval_results" ADD COLUMN "raw_output" text;
--- Backfill existing rows with placeholders before applying NOT NULL
-UPDATE "core"."eval_results" SET "eval_run_id" = '00000000-0000-0000-0000-000000000000' WHERE "eval_run_id" IS NULL;
+
+-- Backfill scenario_id for legacy rows (descriptive field, safe to backfill)
 UPDATE "core"."eval_results" SET "scenario_id" = 'legacy' WHERE "scenario_id" IS NULL;
-ALTER TABLE "core"."eval_results" ALTER COLUMN "eval_run_id" SET NOT NULL;
 ALTER TABLE "core"."eval_results" ALTER COLUMN "scenario_id" SET NOT NULL;
+
+-- Note: eval_run_id is intentionally left nullable.
+-- Legacy rows (pre-Stage 003) do not belong to any eval run, so NULL is the correct value.
+-- Do NOT backfill with fake UUIDs — that would create phantom runs in analytics.

@@ -8,7 +8,7 @@ import type { ReasoningTrace } from "../../contracts/reasoning.schemas";
 import { repairWithFallback } from "../../parsers/repair";
 import { withRetry } from "../retry";
 import { computeInputHash } from "../../lib/hash";
-import { createRun, persistTrace } from "../../db/queries";
+import { createRun, persistTrace, updateLlmCallParsedOutput } from "../../db/queries";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
@@ -196,7 +196,7 @@ export class AssessmentService {
       const llmStage = "assessment";
       const t0 = Date.now();
 
-      const raw = await executeAndRecordLlmCall(
+      const { result: raw, llmCallId: primaryLlmCallId } = await executeAndRecordLlmCall(
         () => this.provider.completeJson<unknown>({ system, user }),
         {
           sessionId,
@@ -222,7 +222,7 @@ export class AssessmentService {
             { module: MODULE, operation: "callProvider", requestId },
             "Attempting fallback model call for assessment generation"
           );
-          return await executeAndRecordLlmCall(
+          const { result, llmCallId } = await executeAndRecordLlmCall(
             () => this.provider.completeJson<AssessmentOutput>({ system, user }),
             {
               sessionId,
@@ -233,8 +233,28 @@ export class AssessmentService {
               promptVersion,
             }
           );
+          // Update fallback call with parsed output
+          if (llmCallId) {
+            await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
+              logger.warn(
+                { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
+                "Failed to update fallback LLM call parsed output"
+              );
+            });
+          }
+          return result;
         }
       );
+
+      // Update primary call with parsed output (after successful repair/parsing)
+      if (primaryLlmCallId) {
+        await updateLlmCallParsedOutput(primaryLlmCallId, parsed as unknown as Record<string, unknown>).catch((err) => {
+          logger.warn(
+            { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
+            "Failed to update primary LLM call parsed output"
+          );
+        });
+      }
 
       // T204: Stamp promptVersion on trace (LLM doesn't generate it)
       if (parsed.reasoningTrace) {

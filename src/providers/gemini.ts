@@ -3,6 +3,7 @@ import { env } from "../lib/env";
 import { logger } from "../observability/logger";
 import { extractJson } from "../parsers/json-from-llm";
 import type { Provider, CompletionRequest, ProviderResponse, TokenUsage } from "./types";
+import { TimeoutError } from "./types";
 
 /** Default temperature for AI provider calls */
 const DEFAULT_TEMPERATURE = 0.7;
@@ -110,6 +111,19 @@ export class GeminiProvider implements Provider {
           isDaily ? "daily" : "per-minute",
           resetsAt
         );
+      }
+
+      // Detect timeout errors
+      if (
+        message.toLowerCase().includes("timeout") ||
+        message.toLowerCase().includes("timed out") ||
+        message.toLowerCase().includes("deadline exceeded")
+      ) {
+        logger.warn(
+          { module: MODULE, operation: "completeJson", message },
+          "Gemini API call timed out"
+        );
+        throw new TimeoutError(message);
       }
 
       const errorMessage = (error as Error).message ?? String(error);

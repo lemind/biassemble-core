@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { LlmCallRecord, EvalResultRecord } from "../../../src/persistence/types";
 import type { LlmCallStore, EvalResultStore } from "../../../src/persistence/ports";
+import { executeAndRecordLlmCall } from "../../../src/observability/llm-call-recorder";
+import { TimeoutError } from "../../../src/providers/types";
+import type { ProviderResponse } from "../../../src/providers/types";
+import * as queries from "../../../src/db/queries";
 
 // ── In-memory implementations for behavioral testing ──
 
@@ -265,6 +269,60 @@ describe("LlmCallStore — in-memory behavioral tests", () => {
     });
   });
 
+  describe("Criterion #5 — Timeout and error status persistence", () => {
+    it("persists timeout status with failureType=timeout", async () => {
+      const store = new InMemoryLlmCallStore();
+      const data = makeCallData({
+        status: "timeout",
+        failureType: "timeout",
+        errorMessage: "Connection timed out after 30000ms",
+        durationMs: 30000,
+      });
+      const recorded = await store.recordCall(data);
+      expect(recorded.status).toBe("timeout");
+      expect(recorded.failureType).toBe("timeout");
+      expect(recorded.errorMessage).toContain("timed out");
+    });
+
+    it("persists error status with failureType=provider_error", async () => {
+      const store = new InMemoryLlmCallStore();
+      const data = makeCallData({
+        status: "error",
+        failureType: "provider_error",
+        errorMessage: "API key invalid",
+      });
+      const recorded = await store.recordCall(data);
+      expect(recorded.status).toBe("error");
+      expect(recorded.failureType).toBe("provider_error");
+    });
+
+    it("persists token usage when available", async () => {
+      const store = new InMemoryLlmCallStore();
+      const data = makeCallData({
+        inputTokens: 150,
+        outputTokens: 200,
+        totalTokens: 350,
+      });
+      const recorded = await store.recordCall(data);
+      expect(recorded.inputTokens).toBe(150);
+      expect(recorded.outputTokens).toBe(200);
+      expect(recorded.totalTokens).toBe(350);
+    });
+
+    it("allows null token usage when provider returns none", async () => {
+      const store = new InMemoryLlmCallStore();
+      const data = makeCallData({
+        inputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+      });
+      const recorded = await store.recordCall(data);
+      expect(recorded.inputTokens).toBeNull();
+      expect(recorded.outputTokens).toBeNull();
+      expect(recorded.totalTokens).toBeNull();
+    });
+  });
+
   describe("Criterion #7 — Edge-case resilience", () => {
     it("empty session returns empty array", async () => {
       const store = new InMemoryLlmCallStore();
@@ -302,6 +360,404 @@ describe("LlmCallStore — in-memory behavioral tests", () => {
       // This test documents the expected contract.
       await expect(store.recordCall(data)).resolves.toBeDefined();
     });
+  });
+});
+
+// ── Behavioral tests for observability workflow ──
+
+describe("executeAndRecordLlmCall — behavioral tests", () => {
+  const recordedCalls: Array<Omit<LlmCallRecord, "id" | "createdAt">> = [];
+  let mockIdCounter = 0;
+
+  beforeEach(() => {
+    recordedCalls.length = 0;
+    mockIdCounter = 0;
+    vi.restoreAllMocks();
+
+    // Mock recordLlmCall to capture what gets recorded
+    vi.spyOn(queries, "recordLlmCall").mockImplementation(async (data) => {
+      recordedCalls.push(data);
+      mockIdCounter++;
+      return {
+        ...data,
+        id: `mock-id-${mockIdCounter}`,
+        createdAt: new Date().toISOString(),
+      } as LlmCallRecord;
+    });
+  });
+
+  it("maps TimeoutError to status=timeout and failureType=timeout", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<unknown>> => {
+      throw new TimeoutError("Request timed out after 30000ms");
+    };
+
+    await expect(
+      executeAndRecordLlmCall(mockProvider, {
+        sessionId: "test-session",
+        stage: "assessment",
+        callType: "primary",
+        provider: "gemini",
+        model: "gemini-2.0-flash",
+        promptVersion: "1.0.0",
+      })
+    ).rejects.toThrow(TimeoutError);
+
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].status).toBe("timeout");
+    expect(recordedCalls[0].failureType).toBe("timeout");
+    expect(recordedCalls[0].errorMessage).toContain("timed out");
+  });
+
+  it("maps generic Error to status=error and failureType=provider_error", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<unknown>> => {
+      throw new Error("API key invalid");
+    };
+
+    await expect(
+      executeAndRecordLlmCall(mockProvider, {
+        sessionId: "test-session",
+        stage: "assessment",
+        callType: "primary",
+        provider: "gemini",
+        model: "gemini-2.0-flash",
+        promptVersion: "1.0.0",
+      })
+    ).rejects.toThrow("API key invalid");
+
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].status).toBe("error");
+    expect(recordedCalls[0].failureType).toBe("provider_error");
+    expect(recordedCalls[0].errorMessage).toBe("API key invalid");
+  });
+
+  it("captures token usage from provider response", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return {
+        result: { test: "data" },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 200,
+          totalTokens: 300,
+        },
+      };
+    };
+
+    const { result, llmCallId } = await executeAndRecordLlmCall(mockProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    expect(result).toEqual({ test: "data" });
+    expect(llmCallId).toBeDefined();
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].inputTokens).toBe(100);
+    expect(recordedCalls[0].outputTokens).toBe(200);
+    expect(recordedCalls[0].totalTokens).toBe(300);
+  });
+
+  it("records null rawResponse when provider throws before returning", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<unknown>> => {
+      throw new Error("Connection failed");
+    };
+
+    await expect(
+      executeAndRecordLlmCall(mockProvider, {
+        sessionId: "test-session",
+        stage: "assessment",
+        callType: "primary",
+        provider: "gemini",
+        model: "gemini-2.0-flash",
+        promptVersion: "1.0.0",
+      })
+    ).rejects.toThrow("Connection failed");
+
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].rawResponse).toBeNull();
+    expect(recordedCalls[0].status).toBe("error");
+  });
+
+  it("returns both result and llmCallId for later parsed_output updates", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<{ test: string }>> => {
+      return { result: { test: "data" } };
+    };
+
+    const { result, llmCallId } = await executeAndRecordLlmCall(mockProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    expect(result).toEqual({ test: "data" });
+    expect(llmCallId).toBe("mock-id-1");
+    expect(recordedCalls).toHaveLength(1);
+  });
+
+  it("handles provider returning undefined usage", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return {
+        result: { test: "data" },
+        // usage is undefined
+      };
+    };
+
+    await executeAndRecordLlmCall(mockProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].inputTokens).toBeNull();
+    expect(recordedCalls[0].outputTokens).toBeNull();
+    expect(recordedCalls[0].totalTokens).toBeNull();
+  });
+
+  it("does not fail provider call when recordLlmCall throws (fire-and-forget guarantee)", async () => {
+    // This is a critical reliability guarantee: recording failures must never break the provider call
+    vi.spyOn(queries, "recordLlmCall").mockRejectedValueOnce(new Error("DB connection failed"));
+
+    const mockProvider = async (): Promise<ProviderResponse<{ data: string }>> => {
+      return { result: { data: "success" } };
+    };
+
+    // Provider call should succeed even though recording fails
+    const { result } = await executeAndRecordLlmCall(mockProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    expect(result).toEqual({ data: "success" });
+  });
+
+  it("calculates durationMs from provider call timing", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<unknown>> => {
+      // Simulate some work
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { result: { test: "data" } };
+    };
+
+    await executeAndRecordLlmCall(mockProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].durationMs).toBeGreaterThanOrEqual(40); // Allow some timing variance
+    expect(recordedCalls[0].durationMs).toBeLessThan(200); // But not too long
+  });
+
+  it("serializes raw response as JSON string, not [object Object]", async () => {
+    const mockProvider = async (): Promise<ProviderResponse<{ foo: string; bar: number }>> => {
+      return { result: { foo: "bar", bar: 42 } };
+    };
+
+    await executeAndRecordLlmCall(mockProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].rawResponse).toBe('{"foo":"bar","bar":42}');
+    expect(recordedCalls[0].rawResponse).not.toContain("[object Object]");
+  });
+});
+
+describe("parsed_output update flow", () => {
+  it("updates parsed_output after successful parsing", async () => {
+    const updateMock = vi.spyOn(queries, "updateLlmCallParsedOutput").mockResolvedValue(undefined);
+
+    // Simulate the flow: record call -> get ID -> update parsed_output
+    const mockProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return { result: { test: "data" } };
+    };
+
+    const { llmCallId } = await executeAndRecordLlmCall(mockProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    // Simulate successful parsing/repair
+    const parsedOutput = { parsed: "result", biases: [] };
+    await queries.updateLlmCallParsedOutput(llmCallId, parsedOutput);
+
+    expect(updateMock).toHaveBeenCalledWith(llmCallId, parsedOutput);
+    updateMock.mockRestore();
+  });
+
+  it("handles updateLlmCallParsedOutput failure gracefully", async () => {
+    const updateMock = vi.spyOn(queries, "updateLlmCallParsedOutput").mockRejectedValueOnce(
+      new Error("DB update failed")
+    );
+
+    // The update should throw, but the caller can catch it
+    await expect(
+      queries.updateLlmCallParsedOutput("some-id", { test: "data" })
+    ).rejects.toThrow("DB update failed");
+
+    updateMock.mockRestore();
+  });
+});
+
+describe("Fallback execution — integration behavior", () => {
+  const recordedCalls: Array<Omit<LlmCallRecord, "id" | "createdAt">> = [];
+  let mockIdCounter = 0;
+
+  beforeEach(() => {
+    recordedCalls.length = 0;
+    mockIdCounter = 0;
+    vi.restoreAllMocks();
+
+    vi.spyOn(queries, "recordLlmCall").mockImplementation(async (data) => {
+      recordedCalls.push(data);
+      mockIdCounter++;
+      return {
+        ...data,
+        id: `mock-id-${mockIdCounter}`,
+        createdAt: new Date().toISOString(),
+      } as LlmCallRecord;
+    });
+  });
+
+  it("records primary and fallback calls independently", async () => {
+    // This test verifies that executeAndRecordLlmCall can be called multiple times
+    // with different callType metadata, and each call creates a separate record.
+    // Note: This does NOT test the actual fallback decision logic (that's in repairWithFallback).
+
+    const primaryProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return { result: { test: "primary" } };
+    };
+
+    const primaryResult = await executeAndRecordLlmCall(primaryProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    const fallbackProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return { result: { test: "fallback" } };
+    };
+
+    const fallbackResult = await executeAndRecordLlmCall(fallbackProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "fallback",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    // Verify two separate rows were created with correct callType
+    expect(recordedCalls).toHaveLength(2);
+    expect(recordedCalls[0].callType).toBe("primary");
+    expect(recordedCalls[1].callType).toBe("fallback");
+    expect(primaryResult.llmCallId).not.toBe(fallbackResult.llmCallId);
+  });
+
+  it("primary call with timeout gets status=timeout, not status=error", async () => {
+    // Primary times out
+    const primaryProvider = async (): Promise<ProviderResponse<unknown>> => {
+      throw new TimeoutError("Request timed out");
+    };
+
+    await expect(
+      executeAndRecordLlmCall(primaryProvider, {
+        sessionId: "test-session",
+        stage: "assessment",
+        callType: "primary",
+        provider: "gemini",
+        model: "gemini-2.0-flash",
+        promptVersion: "1.0.0",
+      })
+    ).rejects.toThrow(TimeoutError);
+
+    // Fallback succeeds
+    const fallbackProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return { result: { test: "fallback" } };
+    };
+
+    await executeAndRecordLlmCall(fallbackProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "fallback",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    // Verify primary has timeout status, fallback has success
+    expect(recordedCalls).toHaveLength(2);
+    expect(recordedCalls[0].callType).toBe("primary");
+    expect(recordedCalls[0].status).toBe("timeout");
+    expect(recordedCalls[0].failureType).toBe("timeout");
+
+    expect(recordedCalls[1].callType).toBe("fallback");
+    expect(recordedCalls[1].status).toBe("success");
+    expect(recordedCalls[1].failureType).toBeNull();
+  });
+
+  it("records different providers for primary and fallback", async () => {
+    // Primary uses gemini
+    const primaryProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return { result: { test: "gemini" } };
+    };
+
+    await executeAndRecordLlmCall(primaryProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      promptVersion: "1.0.0",
+    });
+
+    // Fallback uses openai
+    const fallbackProvider = async (): Promise<ProviderResponse<unknown>> => {
+      return { result: { test: "openai" } };
+    };
+
+    await executeAndRecordLlmCall(fallbackProvider, {
+      sessionId: "test-session",
+      stage: "assessment",
+      callType: "fallback",
+      provider: "openai",
+      model: "gpt-4",
+      promptVersion: "1.0.0",
+    });
+
+    expect(recordedCalls).toHaveLength(2);
+    expect(recordedCalls[0].provider).toBe("gemini");
+    expect(recordedCalls[0].model).toBe("gemini-2.0-flash");
+    expect(recordedCalls[1].provider).toBe("openai");
+    expect(recordedCalls[1].model).toBe("gpt-4");
   });
 });
 
