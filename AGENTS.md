@@ -109,6 +109,13 @@ Load these skill files when working on related tasks:
 - `.skills/inngest-jobs.md` — Job definitions, async patterns, real provider usage
 - `.skills/zod-contracts.md` — Validation rules, branded types, nullable semantics
 
+## Docs
+
+- `docs/decisions/` — ADRs: architectural decisions with rationale (read before changing architecture)
+- `docs/integration-map.md` — Ownership rules for cross-cutting functions
+- `docs/testing-philosophy.md` — Full behavioral testing principles
+- `docs/system-state.md` — Known issues, eval status, active stage
+
 ## Forbidden
 
 - Premature abstractions
