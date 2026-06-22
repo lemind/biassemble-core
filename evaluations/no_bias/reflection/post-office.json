@@ -1,7 +1,7 @@
 {
   "id": "post-office",
   "title": "Sending a package at the post office",
-  "story": "I went to the post office to mail a package to my sister. I weighed the box at the self-service station, selected the standard shipping option, and paid the twelve-dollar fee. The clerk printed a label with tracking number 0000000000000000000000 and placed it on the counter for pickup. I left the building and walked back to my car.",
+  "story": "I went to the post office to mail a package to my sister. I weighed the box at the self-service station, selected the standard shipping option, and paid the twelve-dollar fee. The clerk printed a label and placed it on the counter for pickup. I left the building and walked back to my car.",
   "isNoBias": true,
   "confidenceThreshold": 0.5,
   "notes": "Routine errand, procedural sequence",

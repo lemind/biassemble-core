@@ -11,6 +11,7 @@
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
     "eval": "tsx --env-file=.env scripts/eval-reflection.ts",
+    "eval:sanitize": "tsx scripts/sanitize-evals.ts",
     "eval:trigger": "tsx --env-file=.env scripts/trigger-eval.ts",
     "eval:trigger:golden": "tsx --env-file=.env scripts/trigger-eval-golden.ts",
     "eval:trigger:no-bias": "tsx --env-file=.env scripts/trigger-eval-no-bias.ts",

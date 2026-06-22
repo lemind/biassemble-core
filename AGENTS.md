@@ -1,34 +1,24 @@
-# AGENTS.md — Biassemble Core (private)
+# AGENTS.md — Biassemble Core
 
-## Philosophy
+## Commands
 
-- **AI must re-read this file at the start of every session.**
-- Prefer KISS over DRY.
-- Duplication is acceptable if abstraction harms readability.
-- Avoid abstractions before the third real use case.
-- Prefer boring, maintainable solutions.
-- Explicit code over clever code.
-- Measure before optimizing. Prefer profiling and instrumentation over assumptions.
+```bash
+pnpm dev              # Start dev server with hot reload
+pnpm build            # Build for production
+pnpm test             # Run tests (watch mode)
+pnpm test:run         # Run tests once
+pnpm typecheck        # TypeScript type checking
+pnpm eval             # Run mock evaluation (no API cost)
+pnpm eval --provider real  # Run real evaluation (uses Gemini)
+pnpm db:generate      # Generate Drizzle migrations
+pnpm db:migrate       # Apply migrations
+pnpm db:studio        # Open Drizzle Studio
+```
 
-## Communication
-
-- Ask clarifying questions before acting on ambiguous requirements.
-- State assumptions explicitly when information is missing.
-- Propose concrete next steps, not general suggestions.
-
-## Security & Privacy
-
-- Never commit secrets, tokens, or `.env` contents.
-- Mask credentials in logs; use parameterized queries only.
-- Flag hardcoded paths, IPs, or emails before committing.
-
-## Code Style & Consistency
-
-- Follow project linter/formatter rules (ESLint, Prettier, etc.).
-- Do not disable linters or skip formatting to "fix" a bug.
-- Match existing naming conventions; do not rename variables without scope.
-- **Naming**: Use descriptive names that make purpose obvious (`loadAssessment`, `pollSessionStatus`, `stopPolling`). Avoid generic names like `fetch`, `data`, `result`, `check`, `cleanup`, `doStuff`. Don't over-verbose — `updateAnswer` is good, `updateCurrentAnswerTextInState` is not.
-- **JSDoc**: Every `export class` must have a 1-line JSDoc describing its purpose. Example: `/** Loads bias taxonomy from JSON, provides lookup by name/shortlist for prompts. */`
+## Current State
+- Active stage: check specs/ for current stage and phase
+- Known issues: gemini-2.0-flash deprecated — use gemini-2.5-flash
+- Real eval runs: none yet, MockProvider only
 
 ## Repository Structure
 
@@ -51,235 +41,45 @@ This project contains **two separate git repositories** in sibling directories:
 - `biassemble/biassemble-core/` is the **core repo** (private AI logic). Run git commands from `/home/dl/_prog/biassemble/biassemble-core/`.
 - Each repo has its own branch, commits, and PRs. They are independent.
 
-## Git & Version Control
+## Critical Rules
 
-- Commit atomically: one logical change per commit.
-- **Single-line commit messages only.** No multi-line bodies. Example: `feat: add retry logic` — not `feat: add retry logic to syncQueue with exponential backoff and timeout`.
-- Never force-push or rewrite history without explicit approval.
-- **Git repo location**: The `.git` directory is at `biassemble-core/`. Run `git` commands from `/home/dl/_prog/biassemble/biassemble-core/`.
+1. **Integration is mandatory** — When creating a function, plan WHERE it gets called. "Created the function" ≠ "implemented the feature".
+2. **Use proper types** — Never use `any` or inline union literals when named types exist in `persistence/types.ts` or `contracts/`.
+3. **Fire-and-forget for observability** — `recordLlmCall()` failures must never break the main flow. Wrap in try/catch.
+4. **Test behavior, not schema** — Test that `TimeoutError` maps to `status="timeout"`, not just that the field can be stored.
+5. **Validate at boundaries** — API, DB, external services. Never trust input.
+6. **Single-line commits** — `feat: add retry logic`, not multi-line bodies.
+7. **Check existing migrations** — Before generating new ones, verify `src/db/migrations/` doesn't already have the table.
+8. **Spec alignment** — Don't carry assumptions from previous stages. Each stage has its own scope.
+9. **Nullable semantics** — Use `field: Type | null` for nullable DB columns, not `field?: Type | null`.
+10. **Scope discipline** — Do only what was explicitly asked. Everything else is out of scope.
 
-### Commit Convention
+## Integration Requirement
+
+When implementing a new cross-cutting function (persistence, observability, validation):
+
+- [ ] Identify all call sites (grep for where it should be invoked)
+- [ ] Thread required parameters through the call chain
+- [ ] Document architectural ownership constraints (e.g., "only X should call Y")
+- [ ] Add tests verifying the integration works end-to-end
+- [ ] Update `docs/integration-map.md` with the new function and its call sites
+
+See `docs/integration-map.md` for the current mapping of cross-cutting functions to their call sites.
+
+## Git Convention
 
 Format: `<tag>(<scope>): <short description>`
 
-Tags:
-- `feat:` — new feature
-- `fix:` — bug fix
-- `review:` — addressing PR/code review feedback
-- `chore:` — tooling, config, deps, CI
-- `docs:` — documentation only
-- `test:` — adding/fixing tests
-- `refactor:` — code change with zero behavior change
-- `perf:` — performance improvement
-
-Scope (optional): task ID if applicable, e.g. `T102`, `T1b3`
+Tags: `feat:`, `fix:`, `review:`, `chore:`, `docs:`, `test:`, `refactor:`, `perf:`
 
 Examples:
 - `feat(T102): add computeSystemMetrics function`
 - `fix: correct schemaParseRate null on empty input`
-- `review: drop traceType, add sessions comment`
 - `chore: add drizzle config for core schema`
 
-## Architecture
+**Single-line commit messages only.** No multi-line bodies.
 
-- API routes must stay thin.
-- Business logic belongs in `services/`.
-- Never place prompts inside route handlers.
-- Avoid framework lock-in where practical.
-- Prefer existing platform/framework capabilities before adding libraries.
-- **Constants**: Keep configuration constants in the file where they're used. Do not create a shared `constants.ts` prematurely. Extract only when a constant is used across 3+ modules.
-- **README**: Keep README as project-level information only (what, why, architecture, tech stack, quick start). Do not put process tracking, phase status, or task progress in README — that belongs in `specs/<feature>/tasks.md` and `specs/<feature>/plan.md`.
-- **Environment**: Always verify `.env` loading works before committing. Use `node --env-file=.env` (built into Node 22+) instead of relying on runtime libraries like `dotenv`. The `dev` and `start` scripts must include `--env-file=.env`.
-- Database migrations must be reversible and reviewed before applying (no `:latest` in production without testing rollback).
-- Do not add product-specific architecture, paths, or constraints here — those belong in `specs/<feature>/plan.md` and `architecture.md`.
-- **Spec/code alignment**: When implementing queries/aggregations, verify they don't reference fields or logic explicitly excluded from the current stage spec. Each stage has its own scope — don't carry over assumptions from previous stages.
-- **Schema completeness**: When spec mentions indexes, verify they exist in schema.ts before marking task complete. Indexes are easy to forget but critical for query performance.
-- **Type consistency across layers**: Ensure type consistency between persistence layer (types.ts), query layer (queries.ts), and schema layer (schema.ts). Dates should be handled consistently — use string (ISO format) in types, convert to Date only at DB boundary.
-- **Optionality semantics**: Use `field: Type | null` for nullable database columns, not `field?: Type | null`. The `?` operator implies the field can be omitted entirely, which is different from NULL in the database. Aligns TypeScript semantics with database semantics.
-- **Migration verification**: After generating migrations, manually verify they match the schema changes (columns, indexes, constraints) before marking task complete. Catches Drizzle generation issues.
-- **Boundary computation**: When multiple related fields exist (startedAt, endedAt, durationMs), prefer computing derived values in one place rather than trusting caller input. Prevents data inconsistency.
-- **Check existing migrations**: Always verify existing migrations before generating new ones. Check `src/db/migrations/` for existing files. If tables already exist, create incremental migrations (ALTER TABLE) not full CREATE TABLE statements.
-- **Migration safety with existing data**: When adding a NOT NULL column to an existing table, always: (1) add the column as nullable first, (2) backfill existing rows with a placeholder/mock value, (3) then ALTER COLUMN SET NOT NULL. Never ADD COLUMN ... NOT NULL directly — it will fail on tables with existing rows.
-
-## New Feature Integration Planning
-
-**When planning any new feature, function, or persistence layer:**
-
-1. **Usage-first thinking** — Before implementing, explicitly plan WHERE the new code will be called from existing codebase. Don't just design the feature in isolation — map its integration points.
-
-2. **Call site identification** — During planning phase, grep for where the new function should be invoked. Identify:
-   - Which existing services/functions need to call it?
-   - What parameters need to be threaded through?
-   - Are there architectural constraints on ownership (e.g., "only X should call Y")?
-
-3. **Integration is part of the feature** — A feature isn't complete until it's wired into the existing code flow. "Created the function" ≠ "implemented the feature". The implementation includes all call sites.
-
-**Example:** If planning "record LLM calls", don't stop at "create `recordLlmCall()` in queries.ts". Plan: "Call it from `repairWithFallback()` after primary call, and after fallback call. Thread `sessionId` through `callProvider()`. Update routes to pass `sessionId`."
-
-## AI Rules
-
-- Use structured JSON outputs only.
-- Validate all AI outputs through Zod.
-- Prefer cheaper models first.
-- Keep prompts centralized and versionable.
-
-## Error Handling & Validation
-
-- Validate at boundaries (API, DB, external services).
-- Wrap third-party calls in try/catch with structured error tags.
-- Never `catch` and ignore; always log context or rethrow.
-- Use TypeScript contracts internally for type safety.
-
-## Testing
-
-- Match test type to change: unit for logic, integration for APIs/DB, e2e for user flows.
-- Run relevant tests iteratively; run full suite before finalizing.
-- Mock external services; never skip tests due to flakiness without documenting why.
-
-### Behavioral Testing Principles
-
-**Test behavior, not schema.** A test that only verifies "field X exists and can be stored" is a type check, not a behavioral test. The real question is: "Does the system do the right thing when X happens?"
-
-**Test the mapping logic, not just the storage.** When you implement error classification (e.g., `TimeoutError → status="timeout"`), test that the mapping actually happens. Don't just test that `status="timeout"` can be stored — test that throwing `TimeoutError` results in `status="timeout"` being recorded.
-
-**Test the workflow, not just the components.** If your architecture says "primary call creates one row, fallback creates another row", test that the full workflow (primary fails → fallback succeeds → two rows exist) actually works. Component tests prove each piece works; integration tests prove they work together.
-
-**Test edge cases that matter.** Null `rawResponse` when provider throws before returning. Different providers for primary vs fallback. Token usage present vs absent. These aren't just "nullable field" tests — they're tests of real failure modes.
-
-**Example of weak test:**
-```typescript
-it("persists timeout status", async () => {
-  const recorded = await store.recordCall({ status: "timeout", ... });
-  expect(recorded.status).toBe("timeout");
-});
-```
-This only proves the store can hold `status="timeout"`. It doesn't prove anything about error classification.
-
-**Example of strong test:**
-```typescript
-it("maps TimeoutError to status=timeout", async () => {
-  const provider = () => { throw new TimeoutError("timeout"); };
-  await expect(executeAndRecordLlmCall(provider, ...)).rejects.toThrow();
-  expect(recordedCalls[0].status).toBe("timeout");
-  expect(recordedCalls[0].failureType).toBe("timeout");
-});
-```
-This proves the critical mapping logic works end-to-end.
-
-### Critical Guarantee Testing
-
-**Test reliability guarantees explicitly.** When your system makes promises (fire-and-forget, graceful degradation, serialization correctness), test those promises directly.
-
-**Fire-and-forget guarantee:** If recording failures must not break the main flow, test that explicitly:
-```typescript
-it("does not fail provider call when recordLlmCall throws", async () => {
-  vi.spyOn(queries, "recordLlmCall").mockRejectedValueOnce(new Error("DB failed"));
-  const { result } = await executeAndRecordLlmCall(mockProvider, ...);
-  expect(result).toEqual({ data: "success" }); // Main flow succeeded despite recording failure
-});
-```
-
-**Serialization correctness:** If you serialize data (JSON.stringify, etc.), test the actual output format:
-```typescript
-it("serializes raw response as JSON string, not [object Object]", async () => {
-  // ... provider returns { foo: "bar" }
-  expect(recordedCalls[0].rawResponse).toBe('{"foo":"bar"}');
-  expect(recordedCalls[0].rawResponse).not.toContain("[object Object]");
-});
-```
-
-**Timing calculations:** If you compute durations, test the calculation:
-```typescript
-it("calculates durationMs from provider call timing", async () => {
-  // ... provider takes 50ms
-  expect(recordedCalls[0].durationMs).toBeGreaterThanOrEqual(40);
-  expect(recordedCalls[0].durationMs).toBeLessThan(200);
-});
-```
-
-### Weak Test Patterns to Avoid
-
-**"Store can hold data" tests:** Tests that only prove a store can persist data with certain field values are low-value. They test the store implementation, not your business logic.
-
-**Manual workflow tests:** If you manually call `execute(primary)` then `execute(fallback)` and check that two rows exist, you're not testing the fallback workflow — you're testing that the function can be called twice. Real workflow tests should trigger the actual decision logic.
-
-**Redundant field tests:** If you already tested that a field can be stored (via round-trip test), you don't need separate tests for each possible value unless there's specific logic that produces that value.
-
-### Test Criteria (Persistence & Eval Ports)
-
-Tests must verify behavior, not just interface presence. A store that returns `null` from every method must fail.
-
-1. **Round-trip persistence** — Every `recordCall` / `persistResult` write must be readable back via the corresponding read method, with `id` and `createdAt` present.
-2. **Filtering correctness** — Queries by session, stage, or provider must return only matching records and exclude others.
-3. **Ordering determinism** — Query results must be sorted by `createdAt` (ascending or descending, as documented) — consumers depend on stable ordering.
-4. **Schema & field validation** — Persisted records must include all required fields (`id`, `createdAt`, provider, etc.). Invalid or malformed input must be rejected with a clear error.
-5. **Evidence validation contract** — Evidence entries must carry `validation_status`. Only validated evidence counts toward `evidenceGroundedRate` in aggregates.
-6. **Aggregate computation** — `getEvalRunAggregates` must return correct counts, averages, and pass/fail rates for a given eval run. Test with seeded data.
-7. **Edge-case resilience** — Empty results, null fields, missing session IDs, duplicate submissions, and concurrent writes must not corrupt state or throw unhandled errors.
-8. **Error handling** — DB failures, invalid inputs, and missing records must surface meaningful typed errors — never silent `null` swallows or untyped throws.
-9. **Backward compatibility** — Schema changes must not break reads of previously persisted records. Migrations must preserve historical data.
-10. **Integration with real DB** — At least one test per store must exercise actual Drizzle queries against a test Postgres instance (or equivalent), verifying SQL correctness.
-
-## Spec-kit & `specs/` (keep in sync)
-
-After **any** change that affects behavior, scope, architecture, stack, file layout, env vars, or delivery status, update the matching artifacts under `specs/` for the active feature (see `.specify/feature.json` → `feature_directory`, e.g. `specs/001-reflection-flow/`).
-
-| Change type | Update |
-|-------------|--------|
-| Product scope, user flows, acceptance criteria | `spec.md` |
-| Tech stack, folder structure, phases, constraints | `plan.md`, `architecture.md` |
-| Task status, new work items, path corrections | `tasks.md` |
-| Spec quality / readiness gates | `checklists/*.md` |
-
-**Rules**
-
-- Do not leave code and specs diverged: if you change the implementation, update the spec docs in the same PR/commit series (or explicitly note why deferral is safe).
-- When `plan.md` structure or paths change, propagate to `tasks.md` (exact file paths, phase names, checkpoints).
-- When `spec.md` requirements change, check whether `plan.md` phases and `tasks.md` still cover them; add or adjust tasks if not.
-- Mark completed work in `tasks.md` (`[x]`) and reflect current status in root `README.md` when deployability or phase milestones shift.
-- `spec.md` stays technology-agnostic where possible; stack and paths belong in `plan.md` / `tasks.md`, not in functional requirements.
-- **This is the private repo** — prompts, model IDs, provider keys live here. Never commit `.env` files. Use `src/lib/env.ts` for env validation.
-- Keep `.env.example` updated but never include real keys.
-
-**Trigger examples** (docs update required): new `frontend/` or `backend/` package, API route added/renamed, env var moved server-side, phase completed, MVP scope narrowed or expanded.
-
-## Task Tracking
-
-- **Source of truth**: `specs/<feature>/tasks.md` — this is the only place task status is tracked.
-- **When you complete a task**: Open `tasks.md`, change `- [ ]` to `- [x]` for that task ID, and commit the change.
-- **Do not maintain a separate checklist** in your internal state or in tool parameters. The file is the record.
-- **If you notice a task is already done** (e.g., file exists, tests pass), mark it `[x]` in `tasks.md` — don't leave it stale.
-
-## Workflow
-
-- Implement incrementally.
-- Verify after every meaningful change (smoke test + relevant tests).
-- Do not rewrite unrelated files.
-- Preserve existing architecture unless explicitly requested.
-- Treat spec/plan/tasks updates as part of the change, not a follow-up chore.
-
-## Plan Compliance
-
-- **Follow the plan strictly.** Do not add features, heuristics, code, files, or logic that are not specified in `specs/<feature>/tasks.md` and `specs/<feature>/plan.md`.
-- If something seems missing from the plan, ask before adding it.
-- If you think a heuristic or enhancement would be valuable, document it in `specs/<feature>/possible-enhancements.md` — do not implement it.
-- Mark tasks as `[x]` in `tasks.md` only when the implementation matches the task description exactly.
-- **Chronological ordering in tasks.md**: Add new sub-phases to the **end** of the current phase, not in the middle. Sub-phase letters (`4a`, `4b`, `4c`, `4d`) must reflect actual completion order, not planned order. If you add work after other sub-phases were already completed, give it the next letter in sequence.
-- **Do not modify spec.md, plan.md, or tasks.md after implementation has started** unless adding corrections or clarifications. If a task turns out to be unnecessary, mark it as `[SKIPPED]` with a reason — do not rewrite the task description.
-- **Interdependent tasks that cannot be shipped separately MUST be merged.** If tasks A and B break each other when deployed independently, they are one task, not two. Gating rules in `tasks.md` are not a substitute for merging.
-
-## Scope Discipline
-
-**Do only what was explicitly asked. Everything else is out of scope.**
-
-- If the user asks to update spec files, do not touch source code.
-- If the user asks to fix a bug, do not refactor surrounding code.
-- If the user asks to implement Phase 1, do not start Phase 2.
-- When in doubt whether an action is in scope: **don't do it, ask first.**
-
-This applies even if the extra work seems obviously correct, helpful, or "the right thing to do." The user may have a reason for the narrow scope (reviewing incrementally, testing assumptions, coordinating with other work). Unsolicited work wastes review time and can conflict with the user's plan.
-
-## Autonomy
+## When To Ask
 
 ### Act without asking:
 - Fix typos, lint errors, or obvious bugs
@@ -292,19 +92,38 @@ This applies even if the extra work seems obviously correct, helpful, or "the ri
 - Modifying configs, CI/CD, or deployment scripts
 - Adding/removing dependencies or changing versions
 - Altering public APIs, DB schemas, or auth flows
-- Committing code — show summary of changes first, ask user to review before running `git commit`
-- Adding any code, heuristic, or file not explicitly listed in `tasks.md`
-- **Any work beyond the explicitly stated task — even if it seems related or necessary**
+- Committing code — show summary first
+- **Any work beyond the explicitly stated task**
+
+## Testing
+
+Match test type to change: unit for logic, integration for APIs/DB, e2e for user flows. Mock external services. See `docs/testing-philosophy.md` for full testing principles and criteria.
+
+## Skills
+
+Load these skill files when working on related tasks:
+
+- `.skills/drizzle-migrations.md` — Migration safety rules, NOT NULL column handling
+- `.skills/llm-pipeline.md` — Provider interface, recordLlmCall usage, repair pipeline
+- `.skills/eval-pipeline.md` — Golden/no_bias datasets, eval commands, thresholds
+- `.skills/inngest-jobs.md` — Job definitions, async patterns, real provider usage
+- `.skills/zod-contracts.md` — Validation rules, branded types, nullable semantics
+
+## Docs
+
+- `docs/decisions/` — ADRs: architectural decisions with rationale (read before changing architecture)
+- `docs/integration-map.md` — Ownership rules for cross-cutting functions
+- `docs/testing-philosophy.md` — Full behavioral testing principles
+- `docs/system-state.md` — Known issues, eval status, active stage
 
 ## Forbidden
 
-- Do not create documentation files that are not explicitly listed in plan.md or tasks.md. The spec/plan/tasks files are the source of truth.
-- Premature abstractions.
-- Global state unless justified.
-- Silent failures.
-- Hidden magic behavior.
-- Microservices.
-- Premature RAG/vector DB.
-- Force-pushing or history rewriting.
-- Committing secrets or `.env` files.
-- Adding new dependencies (npm/pip/uv) without explicit approval and justification in PR.
+- Premature abstractions
+- Global state unless justified
+- Silent failures
+- Hidden magic behavior
+- Microservices
+- Force-pushing or history rewriting
+- Committing secrets or `.env` files
+- Adding new dependencies without explicit approval
+- Creating documentation files not listed in plan.md or tasks.md
