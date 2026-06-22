@@ -175,6 +175,25 @@ export async function updateLlmCallParsedOutput(
     .where(eq(llmCalls.id, id));
 }
 
+/**
+ * Updates status and failure_type for an LLM call record.
+ * Called when parsing/repair fails after the provider call succeeded.
+ */
+export async function updateLlmCallFailure(
+  id: string,
+  failureType: LlmCallFailureType,
+  errorMessage: string | null
+): Promise<void> {
+  await db()
+    .update(llmCalls)
+    .set({ 
+      status: "error",
+      failureType,
+      errorMessage 
+    })
+    .where(eq(llmCalls.id, id));
+}
+
 export async function getCallsBySession(sessionId: string) {
   return await db()
     .select()

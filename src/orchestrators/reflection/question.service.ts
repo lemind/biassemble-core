@@ -6,7 +6,7 @@ import { withRetry } from "../retry";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
-import { updateLlmCallParsedOutput } from "../../db/queries";
+import { updateLlmCallParsedOutput, updateLlmCallFailure } from "../../db/queries";
 
 const MODULE = "question-service";
 
@@ -76,37 +76,57 @@ export class QuestionService {
       );
 
       // Use the full repair pipeline: try repair, then fallback model call
-      const parsed = await repairWithFallback(
-        JSON.stringify(raw),
-        QuestionOutputSchema,
-        async () => {
-          logger.warn(
-            { module: MODULE, operation: "generate", requestId },
-            "Attempting fallback model call for question generation"
-          );
-          const { result, llmCallId } = await executeAndRecordLlmCall(
-            () => this.provider.completeJson<QuestionOutput>({ system, user }),
-            {
-              sessionId,
-              stage: "question",
-              callType: "fallback",
-              provider: providerId,
-              model: this.modelName,
-              promptVersion,
+      let parsed: QuestionOutput;
+      try {
+        parsed = await repairWithFallback(
+          JSON.stringify(raw),
+          QuestionOutputSchema,
+          async () => {
+            logger.warn(
+              { module: MODULE, operation: "generate", requestId },
+              "Attempting fallback model call for question generation"
+            );
+            const { result, llmCallId } = await executeAndRecordLlmCall(
+              () => this.provider.completeJson<QuestionOutput>({ system, user }),
+              {
+                sessionId,
+                stage: "question",
+                callType: "fallback",
+                provider: providerId,
+                model: this.modelName,
+                promptVersion,
+              }
+            );
+            // Update fallback call with parsed output
+            if (llmCallId) {
+              await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
+                logger.warn(
+                  { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
+                  "Failed to update fallback LLM call parsed output"
+                );
+              });
             }
-          );
-          // Update fallback call with parsed output
-          if (llmCallId) {
-            await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
-              logger.warn(
-                { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
-                "Failed to update fallback LLM call parsed output"
-              );
-            });
+            return result;
           }
-          return result;
+        );
+      } catch (repairError) {
+        // Determine failure type based on error message
+        const errorMsg = (repairError as Error).message ?? String(repairError);
+        const failureType = errorMsg.toLowerCase().includes("parse") || errorMsg.toLowerCase().includes("json")
+          ? "parse_error"
+          : "schema_validation";
+        
+        // Update primary call record with failure
+        if (primaryLlmCallId) {
+          await updateLlmCallFailure(primaryLlmCallId, failureType, errorMsg).catch((err) => {
+            logger.warn(
+              { module: MODULE, operation: "updateLlmCallFailure", llmCallId: primaryLlmCallId, error: err },
+              "Failed to update primary LLM call failure"
+            );
+          });
         }
-      );
+        throw repairError;
+      }
 
       // Update primary call with parsed output (after successful repair/parsing)
       if (primaryLlmCallId) {

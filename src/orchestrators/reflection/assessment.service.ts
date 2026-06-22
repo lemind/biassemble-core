@@ -8,7 +8,7 @@ import type { ReasoningTrace } from "../../contracts/reasoning.schemas";
 import { repairWithFallback } from "../../parsers/repair";
 import { withRetry } from "../retry";
 import { computeInputHash } from "../../lib/hash";
-import { createRun, persistTrace, updateLlmCallParsedOutput } from "../../db/queries";
+import { createRun, persistTrace, updateLlmCallParsedOutput, updateLlmCallFailure } from "../../db/queries";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
@@ -214,37 +214,57 @@ export class AssessmentService {
       );
 
       // Use the full repair pipeline
-      const parsed = await repairWithFallback(
-        JSON.stringify(raw),
-        AssessmentOutputSchema,
-        async () => {
-          logger.warn(
-            { module: MODULE, operation: "callProvider", requestId },
-            "Attempting fallback model call for assessment generation"
-          );
-          const { result, llmCallId } = await executeAndRecordLlmCall(
-            () => this.provider.completeJson<AssessmentOutput>({ system, user }),
-            {
-              sessionId,
-              stage: llmStage,
-              callType: "fallback",
-              provider: providerId,
-              model: this.modelName,
-              promptVersion,
+      let parsed: AssessmentOutput;
+      try {
+        parsed = await repairWithFallback(
+          JSON.stringify(raw),
+          AssessmentOutputSchema,
+          async () => {
+            logger.warn(
+              { module: MODULE, operation: "callProvider", requestId },
+              "Attempting fallback model call for assessment generation"
+            );
+            const { result, llmCallId } = await executeAndRecordLlmCall(
+              () => this.provider.completeJson<AssessmentOutput>({ system, user }),
+              {
+                sessionId,
+                stage: llmStage,
+                callType: "fallback",
+                provider: providerId,
+                model: this.modelName,
+                promptVersion,
+              }
+            );
+            // Update fallback call with parsed output
+            if (llmCallId) {
+              await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
+                logger.warn(
+                  { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
+                  "Failed to update fallback LLM call parsed output"
+                );
+              });
             }
-          );
-          // Update fallback call with parsed output
-          if (llmCallId) {
-            await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
-              logger.warn(
-                { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
-                "Failed to update fallback LLM call parsed output"
-              );
-            });
+            return result;
           }
-          return result;
+        );
+      } catch (repairError) {
+        // Determine failure type based on error message
+        const errorMsg = (repairError as Error).message ?? String(repairError);
+        const failureType = errorMsg.toLowerCase().includes("parse") || errorMsg.toLowerCase().includes("json")
+          ? "parse_error"
+          : "schema_validation";
+        
+        // Update primary call record with failure
+        if (primaryLlmCallId) {
+          await updateLlmCallFailure(primaryLlmCallId, failureType, errorMsg).catch((err) => {
+            logger.warn(
+              { module: MODULE, operation: "updateLlmCallFailure", llmCallId: primaryLlmCallId, error: err },
+              "Failed to update primary LLM call failure"
+            );
+          });
         }
-      );
+        throw repairError;
+      }
 
       // Update primary call with parsed output (after successful repair/parsing)
       if (primaryLlmCallId) {
