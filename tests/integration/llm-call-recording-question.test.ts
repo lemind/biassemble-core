@@ -1,10 +1,28 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
 import Fastify from "fastify";
-import { registerReflectionRoutes } from "../../src/routes/reflection.js";
+import { registerReflectionRoutes, type AssessmentServiceLike } from "../../src/routes/reflection.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { QuestionService } from "../../src/orchestrators/reflection/question.service.js";
 import * as queries from "../../src/db/queries.js";
+import { repairWithFallback } from "../../src/parsers/repair.js";
+
+vi.mock("../../src/orchestrators/retry.js", () => ({
+  withRetry: vi.fn().mockImplementation(async (fn: () => Promise<any>) => fn()),
+}));
+
+let repairBehavior: ((...args: any[]) => Promise<any>) | null = null;
+vi.mock("../../src/parsers/repair.js", async () => {
+  const actual = await vi.importActual("../../src/parsers/repair.js");
+  const realRepair = (actual as any).repairWithFallback;
+  return {
+    ...actual,
+    repairWithFallback: vi.fn().mockImplementation((...args: any[]) => {
+      if (repairBehavior) return repairBehavior(...args);
+      return realRepair(...args);
+    }),
+  };
+});
 
 vi.mock("../../src/db/queries.js", async () => {
   const actual = await vi.importActual("../../src/db/queries.js");
@@ -12,6 +30,7 @@ vi.mock("../../src/db/queries.js", async () => {
     ...actual,
     recordLlmCall: vi.fn().mockResolvedValue({ id: "test-llm-call-id" }),
     updateLlmCallParsedOutput: vi.fn().mockResolvedValue(undefined),
+    updateLlmCallFailure: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -24,8 +43,9 @@ describe("T203 — LLM call recording in question flow", () => {
     const prompts = new PromptRegistry();
 
     const questionService = new QuestionService(mockProvider, prompts, "mock-model");
-    const assessmentService = {
-      generate: async () => ({ biases: [], reflectionPrompt: "" }),
+    const assessmentService: AssessmentServiceLike = {
+      runStoryOnlyAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
+      runFullAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
     };
 
     server = Fastify();
@@ -34,8 +54,8 @@ describe("T203 — LLM call recording in question flow", () => {
       reply.header("x-request-id", "test-request-id");
     });
     registerReflectionRoutes(server, {
-      question: questionService as any,
-      assessment: assessmentService as any,
+      question: questionService,
+      assessment: assessmentService,
     });
     await server.ready();
   });
@@ -147,5 +167,48 @@ describe("T203 — LLM call recording in question flow", () => {
     const fallbackCall = vi.mocked(queries.recordLlmCall).mock.calls[1][0];
     expect(fallbackCall.callType).toBe("fallback");
     expect(fallbackCall.stage).toBe("question");
+  });
+
+  it("should call updateLlmCallFailure when both primary and fallback fail", async () => {
+    repairBehavior = () => Promise.reject(new Error("Failed to produce valid output after repair and fallback"));
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/reflection/question",
+      headers: { authorization: "Bearer dev-secret-change-me" },
+      payload: {
+        sessionId: "00000000-0000-4000-8000-000000000004",
+        story: "d".repeat(100),
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(queries.updateLlmCallFailure).toHaveBeenCalled();
+
+    repairBehavior = null;
+  });
+
+  it("should succeed even when updateLlmCallParsedOutput fails", async () => {
+    vi.mocked(queries.updateLlmCallParsedOutput).mockRejectedValueOnce(new Error("DB down"));
+    repairBehavior = () => Promise.resolve({
+      questions: ["Q1?", "Q2?"],
+      isComplete: true,
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/reflection/question",
+      headers: { authorization: "Bearer dev-secret-change-me" },
+      payload: {
+        sessionId: "00000000-0000-4000-8000-000000000005",
+        story: "e".repeat(100),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.questions).toBeDefined();
+
+    repairBehavior = null;
   });
 });

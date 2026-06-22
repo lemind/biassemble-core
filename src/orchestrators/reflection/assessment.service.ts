@@ -4,7 +4,7 @@ import {
   type AssessmentOutput,
   SCHEMA_VERSION,
 } from "../../contracts/reflection.schemas";
-import type { ReasoningTrace } from "../../contracts/reasoning.schemas";
+import type { ReasoningTrace, PromptVersion } from "../../contracts/reasoning.schemas";
 import { repairWithFallback } from "../../parsers/repair";
 import { withRetry } from "../retry";
 import { computeInputHash } from "../../lib/hash";
@@ -237,7 +237,7 @@ export class AssessmentService {
             );
             // Update fallback call with parsed output
             if (llmCallId) {
-              await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
+              await updateLlmCallParsedOutput(llmCallId, result).catch((err) => {
                 logger.warn(
                   { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
                   "Failed to update fallback LLM call parsed output"
@@ -268,7 +268,7 @@ export class AssessmentService {
 
       // Update primary call with parsed output (after successful repair/parsing)
       if (primaryLlmCallId) {
-        await updateLlmCallParsedOutput(primaryLlmCallId, parsed as unknown as Record<string, unknown>).catch((err) => {
+        await updateLlmCallParsedOutput(primaryLlmCallId, parsed).catch((err) => {
           logger.warn(
             { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
             "Failed to update primary LLM call parsed output"
@@ -278,7 +278,7 @@ export class AssessmentService {
 
       // T204: Stamp promptVersion on trace (LLM doesn't generate it)
       if (parsed.reasoningTrace) {
-        (parsed.reasoningTrace as any).prompt_version = promptVersion;
+        parsed.reasoningTrace.prompt_version = promptVersion as PromptVersion;
       } else {
         logger.warn(
           { module: MODULE, operation: "callProvider", requestId },

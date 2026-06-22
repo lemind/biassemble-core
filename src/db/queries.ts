@@ -167,7 +167,7 @@ export async function recordLlmCall(
  */
 export async function updateLlmCallParsedOutput(
   id: string,
-  parsedOutput: Record<string, unknown>
+  parsedOutput: object
 ): Promise<void> {
   await db()
     .update(llmCalls)

@@ -99,7 +99,7 @@ export class QuestionService {
             );
             // Update fallback call with parsed output
             if (llmCallId) {
-              await updateLlmCallParsedOutput(llmCallId, result as unknown as Record<string, unknown>).catch((err) => {
+              await updateLlmCallParsedOutput(llmCallId, result).catch((err) => {
                 logger.warn(
                   { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
                   "Failed to update fallback LLM call parsed output"
@@ -130,7 +130,7 @@ export class QuestionService {
 
       // Update primary call with parsed output (after successful repair/parsing)
       if (primaryLlmCallId) {
-        await updateLlmCallParsedOutput(primaryLlmCallId, parsed as unknown as Record<string, unknown>).catch((err) => {
+        await updateLlmCallParsedOutput(primaryLlmCallId, parsed).catch((err) => {
           logger.warn(
             { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
             "Failed to update primary LLM call parsed output"

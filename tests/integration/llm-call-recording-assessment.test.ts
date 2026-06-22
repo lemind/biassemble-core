@@ -1,11 +1,29 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
 import Fastify from "fastify";
-import { registerReflectionRoutes } from "../../src/routes/reflection.js";
+import { registerReflectionRoutes, type QuestionServiceLike } from "../../src/routes/reflection.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { AssessmentService } from "../../src/orchestrators/reflection/assessment.service.js";
 import { BiasCatalogService } from "../../src/catalog/bias-catalog.js";
 import * as queries from "../../src/db/queries.js";
+import { repairWithFallback } from "../../src/parsers/repair.js";
+
+vi.mock("../../src/orchestrators/retry.js", () => ({
+  withRetry: vi.fn().mockImplementation(async (fn: () => Promise<any>) => fn()),
+}));
+
+let repairBehavior: ((...args: any[]) => Promise<any>) | null = null;
+vi.mock("../../src/parsers/repair.js", async () => {
+  const actual = await vi.importActual("../../src/parsers/repair.js");
+  const realRepair = (actual as any).repairWithFallback;
+  return {
+    ...actual,
+    repairWithFallback: vi.fn().mockImplementation((...args: any[]) => {
+      if (repairBehavior) return repairBehavior(...args);
+      return realRepair(...args);
+    }),
+  };
+});
 
 vi.mock("../../src/db/queries.js", async () => {
   const actual = await vi.importActual("../../src/db/queries.js");
@@ -13,6 +31,7 @@ vi.mock("../../src/db/queries.js", async () => {
     ...actual,
     recordLlmCall: vi.fn().mockResolvedValue({ id: "test-llm-call-id" }),
     updateLlmCallParsedOutput: vi.fn().mockResolvedValue(undefined),
+    updateLlmCallFailure: vi.fn().mockResolvedValue(undefined),
     createRun: vi.fn().mockResolvedValue({ id: "test-run-id" }),
     persistTrace: vi.fn().mockResolvedValue(undefined),
   };
@@ -28,8 +47,8 @@ describe("T202 — LLM call recording in assessment flow", () => {
     const catalog = new BiasCatalogService();
 
     const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model");
-    const questionService = {
-      generate: async () => ({ questions: [], isComplete: true }),
+    const questionService: QuestionServiceLike = {
+      generate: async () => ({ questions: [] as string[], isComplete: true }),
     };
 
     server = Fastify();
@@ -38,8 +57,8 @@ describe("T202 — LLM call recording in assessment flow", () => {
       reply.header("x-request-id", "test-request-id");
     });
     registerReflectionRoutes(server, {
-      question: questionService as any,
-      assessment: assessmentService as any,
+      question: questionService,
+      assessment: assessmentService,
     });
     await server.ready();
   });
@@ -180,5 +199,55 @@ describe("T202 — LLM call recording in assessment flow", () => {
     const fallbackCall = vi.mocked(queries.recordLlmCall).mock.calls[1][0];
     expect(fallbackCall.callType).toBe("fallback");
     expect(fallbackCall.stage).toBe("assessment");
+  });
+
+  it("should call updateLlmCallFailure when both primary and fallback fail", async () => {
+    repairBehavior = () => Promise.reject(new Error("Failed to produce valid output after repair and fallback"));
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/reflection/assessment",
+      headers: { authorization: "Bearer dev-secret-change-me" },
+      payload: {
+        sessionId: "00000000-0000-4000-8000-000000000004",
+        story: "d".repeat(100),
+        questions: ["Q1?"],
+        answers: ["A1 with enough detail to pass validation."],
+        mode: "full",
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(queries.updateLlmCallFailure).toHaveBeenCalled();
+
+    repairBehavior = null;
+  });
+
+  it("should succeed even when updateLlmCallParsedOutput fails", async () => {
+    vi.mocked(queries.updateLlmCallParsedOutput).mockRejectedValueOnce(new Error("DB down"));
+    repairBehavior = () => Promise.resolve({
+      biases: [],
+      reflectionPrompt: "a".repeat(50),
+      noBiasDetected: true,
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/v1/reflection/assessment",
+      headers: { authorization: "Bearer dev-secret-change-me" },
+      payload: {
+        sessionId: "00000000-0000-4000-8000-000000000005",
+        story: "e".repeat(100),
+        questions: ["Q1?"],
+        answers: ["A1 with enough detail to pass validation."],
+        mode: "full",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.noBiasDetected).toBe(true);
+
+    repairBehavior = null;
   });
 });
