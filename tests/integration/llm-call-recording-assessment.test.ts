@@ -7,7 +7,7 @@ import { AssessmentService } from "../../src/orchestrators/reflection/assessment
 import { BiasCatalogService } from "../../src/catalog/bias-catalog.js";
 import * as queries from "../../src/db/queries.js";
 import { repairWithFallback } from "../../src/parsers/repair.js";
-import type { LlmCallStore } from "../../src/persistence/ports.js";
+import type { LlmCallStore, RunStore, TraceStore } from "../../src/persistence/ports.js";
 
 vi.mock("../../src/orchestrators/retry.js", () => ({
   withRetry: vi.fn().mockImplementation(async (fn: () => Promise<any>) => fn()),
@@ -50,6 +50,16 @@ const mockLlmCallStore: LlmCallStore = {
   getCallsForMetrics: vi.fn().mockResolvedValue([]),
 };
 
+const mockRunStore: RunStore = {
+  createRun: vi.fn().mockResolvedValue({ id: "test-run-id" }),
+  getRunsBySession: vi.fn().mockResolvedValue([]),
+};
+
+const mockTraceStore: TraceStore = {
+  persistTrace: vi.fn().mockResolvedValue(undefined),
+  getTrace: vi.fn().mockResolvedValue(null),
+};
+
 describe("T202 — LLM call recording in assessment flow", () => {
   let server: any;
   let mockProvider: MockProvider;
@@ -59,7 +69,7 @@ describe("T202 — LLM call recording in assessment flow", () => {
     const prompts = new PromptRegistry();
     const catalog = new BiasCatalogService();
 
-    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model", mockLlmCallStore);
+    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model", mockLlmCallStore, mockRunStore, mockTraceStore);
     const questionService: QuestionServiceLike = {
       generate: async () => ({ questions: [] as string[], isComplete: true }),
     };

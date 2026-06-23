@@ -8,14 +8,13 @@ import type { ReasoningTrace, PromptVersion } from "../../contracts/reasoning.sc
 import { repairWithFallback } from "../../parsers/repair";
 import { withRetry } from "../retry";
 import { computeInputHash } from "../../lib/hash";
-import { createRun, persistTrace } from "../../db/queries";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
 import type { BiasCatalogService } from "../../catalog/bias-catalog";
 import { normalizeBiasName } from "../../catalog/normalize";
 import { validateEvidence } from "../../parsers/evidence-validator";
-import type { LlmCallStore } from "../../persistence/ports";
+import type { LlmCallStore, RunStore, TraceStore } from "../../persistence/ports";
 
 const MODULE = "assessment-service";
 
@@ -26,7 +25,9 @@ export class AssessmentService {
     private prompts: PromptRegistry,
     private catalog: BiasCatalogService,
     private modelName: string,
-    private llmCallStore: LlmCallStore
+    private llmCallStore: LlmCallStore,
+    private runStore: RunStore,
+    private traceStore: TraceStore
   ) {}
 
   /**
@@ -58,7 +59,7 @@ export class AssessmentService {
     // Create run record — best-effort, non-blocking
     let runId = "";
     try {
-      const run = await createRun(sessionId, {
+      const run = await this.runStore.createRun(sessionId, {
         provider: providerId,
         modelName: this.modelName,
         stage: "initial_assessment",
@@ -124,7 +125,7 @@ export class AssessmentService {
     // Create run record — best-effort, non-blocking
     let runId = "";
     try {
-      const run = await createRun(sessionId, {
+      const run = await this.runStore.createRun(sessionId, {
         provider: providerId,
         modelName: this.modelName,
         stage: "post_questions_assessment",
@@ -301,7 +302,7 @@ export class AssessmentService {
       }
 
       try {
-        await persistTrace(runId, parsed.reasoningTrace ?? {
+        await this.traceStore.persistTrace(runId, parsed.reasoningTrace ?? {
           no_trace: true,
           inputContext: scope,
           prompt_version: promptVersion,

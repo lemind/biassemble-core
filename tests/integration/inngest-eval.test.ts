@@ -10,7 +10,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import type { LlmCallStore } from "../../src/persistence/ports.js";
+import type { LlmCallStore, RunStore, TraceStore } from "../../src/persistence/ports.js";
 
 const mockLlmCallStore: LlmCallStore = {
   recordCall: vi.fn().mockResolvedValue({ id: "test-llm-call-id" }),
@@ -21,6 +21,16 @@ const mockLlmCallStore: LlmCallStore = {
   updateParsedOutput: vi.fn().mockResolvedValue(undefined),
   updateFailure: vi.fn().mockResolvedValue(undefined),
   getCallsForMetrics: vi.fn().mockResolvedValue([]),
+};
+
+const mockRunStore: RunStore = {
+  createRun: vi.fn().mockResolvedValue({ id: "test-run-id" }),
+  getRunsBySession: vi.fn().mockResolvedValue([]),
+};
+
+const mockTraceStore: TraceStore = {
+  persistTrace: vi.fn().mockResolvedValue(undefined),
+  getTrace: vi.fn().mockResolvedValue(null),
 };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -124,7 +134,7 @@ describe("T510 — Inngest eval integration", () => {
   const modelName = "mock-model";
 
   const questionService = new QuestionService(mockProvider, prompts, modelName, mockLlmCallStore);
-  const assessmentService = new AssessmentService(mockProvider, prompts, catalog, modelName, mockLlmCallStore);
+  const assessmentService = new AssessmentService(mockProvider, prompts, catalog, modelName, mockLlmCallStore, mockRunStore, mockTraceStore);
 
   const GOLDEN_DIR = join(__dirname, "..", "..", "evaluations", "golden", "reflection");
   const NO_BIAS_DIR = join(__dirname, "..", "..", "evaluations", "no_bias", "reflection");

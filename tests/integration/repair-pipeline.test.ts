@@ -6,7 +6,7 @@ import { PromptRegistry } from "../../src/prompts/registry.js";
 import { QuestionService } from "../../src/orchestrators/reflection/question.service.js";
 import { AssessmentService } from "../../src/orchestrators/reflection/assessment.service.js";
 import { BiasCatalogService } from "../../src/catalog/bias-catalog.js";
-import type { LlmCallStore } from "../../src/persistence/ports.js";
+import type { LlmCallStore, RunStore, TraceStore } from "../../src/persistence/ports.js";
 
 const mockLlmCallStore: LlmCallStore = {
   recordCall: vi.fn().mockResolvedValue({ id: "test-llm-call-id" }),
@@ -17,6 +17,16 @@ const mockLlmCallStore: LlmCallStore = {
   updateParsedOutput: vi.fn().mockResolvedValue(undefined),
   updateFailure: vi.fn().mockResolvedValue(undefined),
   getCallsForMetrics: vi.fn().mockResolvedValue([]),
+};
+
+const mockRunStore: RunStore = {
+  createRun: vi.fn().mockResolvedValue({ id: "test-run-id" }),
+  getRunsBySession: vi.fn().mockResolvedValue([]),
+};
+
+const mockTraceStore: TraceStore = {
+  persistTrace: vi.fn().mockResolvedValue(undefined),
+  getTrace: vi.fn().mockResolvedValue(null),
 };
 
 /**
@@ -34,7 +44,7 @@ describe("Repair pipeline — real QuestionService/AssessmentService with MockPr
     const catalog = new BiasCatalogService();
 
     const questionService = new QuestionService(mockProvider, prompts, "mock-model", mockLlmCallStore);
-    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model", mockLlmCallStore);
+    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model", mockLlmCallStore, mockRunStore, mockTraceStore);
 
     server = Fastify();
     registerReflectionRoutes(server, {

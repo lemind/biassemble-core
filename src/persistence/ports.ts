@@ -3,18 +3,12 @@
 
 import type {
   RunRecord,
-  SessionRecord,
   TraceRecord,
   EvalResultRecord,
   LlmCallRecord,
   LlmCallStage,
   LlmCallFailureType,
 } from "./types";
-
-export interface SessionStore {
-  createSession(storyId: string): Promise<SessionRecord>;
-  getSession(id: string): Promise<SessionRecord | null>;
-}
 
 export interface RunStore {
   createRun(

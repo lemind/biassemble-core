@@ -15,9 +15,10 @@ import { randomUUID } from "node:crypto";
 import { inngest } from "./client";
 import { GeminiProvider } from "../providers/gemini";
 import { runEval } from "../evaluation/run-eval";
-import { createRun, persistEvalResult, getEvalResultByHash } from "../db/queries";
+import { DrizzleEvalResultStore } from "../persistence/eval-result-store";
 import { PromptRegistry } from "../prompts/registry";
 import { logger } from "../observability/logger";
+import { DrizzleRunStore } from "../persistence/run-store";
 
 const MODULE = "eval-assessment";
 
@@ -28,6 +29,8 @@ export const evalAssessmentJob = inngest.createFunction(
     const triggerType: "gate" | "monitor" = event.data?.triggerType ?? "monitor";
     const provider = new GeminiProvider();
     const prompts = new PromptRegistry();
+    const runStore = new DrizzleRunStore();
+    const evalResultStore = new DrizzleEvalResultStore();
     const modelName = "gemini-2.0-flash";
 
     logger.info({ module: MODULE, triggerType }, "Starting eval assessment");
@@ -38,7 +41,7 @@ export const evalAssessmentJob = inngest.createFunction(
       // ── Create run record ──────────────────────────────────
       let runId: string | undefined;
       try {
-        const run = await createRun(randomUUID(), {
+        const run = await runStore.createRun(randomUUID(), {
           provider: "gemini",
           modelName,
           stage: "initial_assessment",
@@ -53,7 +56,7 @@ export const evalAssessmentJob = inngest.createFunction(
 
       // ── Determinism check ───────────────────────────────────
       for (const storyResult of [...result.goldenResults, ...result.noBiasResults]) {
-        const existing = await getEvalResultByHash(storyResult.inputHash, prompts.getVersion());
+        const existing = await evalResultStore.getByHash(storyResult.inputHash, prompts.getVersion());
         if (existing && existing.passed !== result.overallPassed) {
           logger.error(
             { module: MODULE, hash: storyResult.inputHash, previousPassed: existing.passed, currentPassed: result.overallPassed },
@@ -67,7 +70,7 @@ export const evalAssessmentJob = inngest.createFunction(
 
       // ── Persist to DB ───────────────────────────────────────
       try {
-        await persistEvalResult({
+        await evalResultStore.persistResult({
           runId,
           provider: "gemini",
           modelName,
@@ -126,6 +129,8 @@ export const evalGoldenStoryJob = inngest.createFunction(
     const provider = new GeminiProvider();
     const modelName = "gemini-2.0-flash";
     const prompts = new PromptRegistry();
+    const runStore = new DrizzleRunStore();
+    const evalResultStore = new DrizzleEvalResultStore();
 
     logger.info({ module: MODULE }, "Starting single golden story eval");
 
@@ -136,7 +141,7 @@ export const evalGoldenStoryJob = inngest.createFunction(
       // ── Create run record ──────────────────────────────────
       let runId: string | undefined;
       try {
-        const run = await createRun(randomUUID(), {
+        const run = await runStore.createRun(randomUUID(), {
           provider: "gemini",
           modelName,
           stage: "initial_assessment",
@@ -151,7 +156,7 @@ export const evalGoldenStoryJob = inngest.createFunction(
 
       // ── Persist to DB ───────────────────────────────────────
       try {
-        await persistEvalResult({
+        await evalResultStore.persistResult({
           runId,
           provider: "gemini",
           modelName,
@@ -208,6 +213,8 @@ export const evalNoBiasStoryJob = inngest.createFunction(
     const provider = new GeminiProvider();
     const modelName = "gemini-2.0-flash";
     const prompts = new PromptRegistry();
+    const runStore = new DrizzleRunStore();
+    const evalResultStore = new DrizzleEvalResultStore();
 
     logger.info({ module: MODULE }, "Starting single no_bias story eval");
 
@@ -218,7 +225,7 @@ export const evalNoBiasStoryJob = inngest.createFunction(
       // ── Create run record ──────────────────────────────────
       let runId: string | undefined;
       try {
-        const run = await createRun(randomUUID(), {
+        const run = await runStore.createRun(randomUUID(), {
           provider: "gemini",
           modelName,
           stage: "initial_assessment",
@@ -233,7 +240,7 @@ export const evalNoBiasStoryJob = inngest.createFunction(
 
       // ── Persist to DB ───────────────────────────────────────
       try {
-        await persistEvalResult({
+        await evalResultStore.persistResult({
           runId,
           provider: "gemini",
           modelName,

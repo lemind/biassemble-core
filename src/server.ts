@@ -12,6 +12,8 @@ import { registerReflectionRoutes } from "./routes/reflection";
 import { inngest } from "./jobs/client";
 import { inngestFunctions } from "./jobs/inngest-functions";
 import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
+import { DrizzleRunStore } from "./persistence/run-store";
+import { DrizzleTraceStore } from "./persistence/trace-store";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -29,10 +31,12 @@ export function buildApp() {
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
   const llmCallStore = new DrizzleLlmCallStore();
+  const runStore = new DrizzleRunStore();
+  const traceStore = new DrizzleTraceStore();
 
   const modelName = env.GEMINI_MODEL;
   const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
-  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore);
+  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore);
 
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);
