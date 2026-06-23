@@ -6,6 +6,7 @@ import { PromptRegistry } from "../../src/prompts/registry.js";
 import { QuestionService } from "../../src/orchestrators/reflection/question.service.js";
 import * as queries from "../../src/db/queries.js";
 import { repairWithFallback } from "../../src/parsers/repair.js";
+import type { LlmCallStore } from "../../src/persistence/ports.js";
 
 vi.mock("../../src/orchestrators/retry.js", () => ({
   withRetry: vi.fn().mockImplementation(async (fn: () => Promise<any>) => fn()),
@@ -34,6 +35,18 @@ vi.mock("../../src/db/queries.js", async () => {
   };
 });
 
+// Create a mock LlmCallStore that delegates to the mocked queries
+const mockLlmCallStore: LlmCallStore = {
+  recordCall: vi.fn().mockResolvedValue({ id: "test-llm-call-id" }),
+  getCallsBySession: vi.fn().mockResolvedValue([]),
+  getCallsByStage: vi.fn().mockResolvedValue([]),
+  getCallsByProvider: vi.fn().mockResolvedValue([]),
+  getCallsBySessionAndStage: vi.fn().mockResolvedValue([]),
+  updateParsedOutput: vi.fn().mockResolvedValue(undefined),
+  updateFailure: vi.fn().mockResolvedValue(undefined),
+  getCallsForMetrics: vi.fn().mockResolvedValue([]),
+};
+
 describe("T203 — LLM call recording in question flow", () => {
   let server: any;
   let mockProvider: MockProvider;
@@ -42,7 +55,7 @@ describe("T203 — LLM call recording in question flow", () => {
     mockProvider = new MockProvider();
     const prompts = new PromptRegistry();
 
-    const questionService = new QuestionService(mockProvider, prompts, "mock-model");
+    const questionService = new QuestionService(mockProvider, prompts, "mock-model", mockLlmCallStore);
     const assessmentService: AssessmentServiceLike = {
       runStoryOnlyAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
       runFullAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
@@ -90,8 +103,8 @@ describe("T203 — LLM call recording in question flow", () => {
     expect(response.statusCode).toBe(200);
 
     // Verify recordLlmCall was called for primary call
-    expect(queries.recordLlmCall).toHaveBeenCalled();
-    const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+    expect(mockLlmCallStore.recordCall).toHaveBeenCalled();
+    const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
     
     expect(recordedData.rawResponse).toBeDefined();
     expect(recordedData.rawResponse).not.toBeNull();
@@ -123,8 +136,8 @@ describe("T203 — LLM call recording in question flow", () => {
     });
 
     // Verify updateLlmCallParsedOutput was called
-    expect(queries.updateLlmCallParsedOutput).toHaveBeenCalled();
-    const [callId, parsedOutput] = vi.mocked(queries.updateLlmCallParsedOutput).mock.calls[0];
+    expect(mockLlmCallStore.updateParsedOutput).toHaveBeenCalled();
+    const [callId, parsedOutput] = vi.mocked(mockLlmCallStore.updateParsedOutput).mock.calls[0];
     expect(callId).toBe("test-llm-call-id");
     expect(parsedOutput).toBeDefined();
     expect(parsedOutput).toHaveProperty("questions");
@@ -158,13 +171,13 @@ describe("T203 — LLM call recording in question flow", () => {
     });
 
     // Verify both primary and fallback calls were recorded
-    expect(queries.recordLlmCall).toHaveBeenCalledTimes(2);
-    
-    const primaryCall = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+    expect(mockLlmCallStore.recordCall).toHaveBeenCalledTimes(2);
+
+    const primaryCall = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
     expect(primaryCall.callType).toBe("primary");
     expect(primaryCall.stage).toBe("question");
-    
-    const fallbackCall = vi.mocked(queries.recordLlmCall).mock.calls[1][0];
+
+    const fallbackCall = vi.mocked(mockLlmCallStore.recordCall).mock.calls[1][0];
     expect(fallbackCall.callType).toBe("fallback");
     expect(fallbackCall.stage).toBe("question");
   });
@@ -183,13 +196,13 @@ describe("T203 — LLM call recording in question flow", () => {
     });
 
     expect(response.statusCode).toBe(502);
-    expect(queries.updateLlmCallFailure).toHaveBeenCalled();
+    expect(mockLlmCallStore.updateFailure).toHaveBeenCalled();
 
     repairBehavior = null;
   });
 
   it("should succeed even when updateLlmCallParsedOutput fails", async () => {
-    vi.mocked(queries.updateLlmCallParsedOutput).mockRejectedValueOnce(new Error("DB down"));
+    vi.mocked(mockLlmCallStore.updateParsedOutput).mockRejectedValueOnce(new Error("DB down"));
     repairBehavior = () => Promise.resolve({
       result: {
         questions: ["Q1?", "Q2?"],

@@ -11,6 +11,7 @@ import { AssessmentService } from "./orchestrators/reflection/assessment.service
 import { registerReflectionRoutes } from "./routes/reflection";
 import { inngest } from "./jobs/client";
 import { inngestFunctions } from "./jobs/inngest-functions";
+import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -27,10 +28,11 @@ export function buildApp() {
   const provider = new GeminiProvider();
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
+  const llmCallStore = new DrizzleLlmCallStore();
 
   const modelName = env.GEMINI_MODEL;
-  const questionService = new QuestionService(provider, prompts, modelName);
-  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName);
+  const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
+  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore);
 
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);

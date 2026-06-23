@@ -1,10 +1,22 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import Fastify from "fastify";
 import { registerReflectionRoutes, type QuestionServiceLike } from "../../src/routes/reflection.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { AssessmentService } from "../../src/orchestrators/reflection/assessment.service.js";
 import { BiasCatalogService } from "../../src/catalog/bias-catalog.js";
+import type { LlmCallStore } from "../../src/persistence/ports.js";
+
+const mockLlmCallStore: LlmCallStore = {
+  recordCall: vi.fn().mockResolvedValue({ id: "test-llm-call-id" }),
+  getCallsBySession: vi.fn().mockResolvedValue([]),
+  getCallsByStage: vi.fn().mockResolvedValue([]),
+  getCallsByProvider: vi.fn().mockResolvedValue([]),
+  getCallsBySessionAndStage: vi.fn().mockResolvedValue([]),
+  updateParsedOutput: vi.fn().mockResolvedValue(undefined),
+  updateFailure: vi.fn().mockResolvedValue(undefined),
+  getCallsForMetrics: vi.fn().mockResolvedValue([]),
+};
 
 describe("POST /v1/reflection/assessment — integration with MockProvider", () => {
   let server: any;
@@ -15,7 +27,7 @@ describe("POST /v1/reflection/assessment — integration with MockProvider", () 
     const prompts = new PromptRegistry();
     const catalog = new BiasCatalogService();
 
-    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model");
+    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model", mockLlmCallStore);
     const questionService: QuestionServiceLike = {
       generate: async () => ({ questions: [] as string[], isComplete: true }),
     };

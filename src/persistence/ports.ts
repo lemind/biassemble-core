@@ -8,6 +8,7 @@ import type {
   EvalResultRecord,
   LlmCallRecord,
   LlmCallStage,
+  LlmCallFailureType,
 } from "./types";
 
 export interface SessionStore {
@@ -46,4 +47,7 @@ export interface LlmCallStore {
   getCallsByStage(stage: LlmCallStage): Promise<LlmCallRecord[]>;
   getCallsByProvider(provider: string): Promise<LlmCallRecord[]>;
   getCallsBySessionAndStage(sessionId: string, stage: LlmCallStage): Promise<LlmCallRecord[]>;
+  updateParsedOutput(id: string, parsedOutput: object): Promise<void>;
+  updateFailure(id: string, failureType: LlmCallFailureType, errorMessage: string | null): Promise<void>;
+  getCallsForMetrics(): Promise<LlmCallRecord[]>;
 }

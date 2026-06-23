@@ -28,6 +28,7 @@ import {
   type SystemMetrics,
 } from "./compute-system-metrics";
 import { computeInputHash } from "../lib/hash";
+import { DrizzleLlmCallStore } from "../persistence/llm-call-store";
 import type { Provider } from "../providers/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -216,8 +217,9 @@ export async function runEval(
 ): Promise<EvalRunResult> {
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
-  const questionService = new QuestionService(provider, prompts, modelName);
-  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName);
+  const llmCallStore = new DrizzleLlmCallStore();
+  const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
+  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore);
 
   const goldenResults: StoryResult[] = [];
   const noBiasResults: StoryResult[] = [];

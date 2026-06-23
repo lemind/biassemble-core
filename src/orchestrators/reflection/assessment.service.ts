@@ -8,13 +8,14 @@ import type { ReasoningTrace, PromptVersion } from "../../contracts/reasoning.sc
 import { repairWithFallback } from "../../parsers/repair";
 import { withRetry } from "../retry";
 import { computeInputHash } from "../../lib/hash";
-import { createRun, persistTrace, updateLlmCallParsedOutput, updateLlmCallFailure } from "../../db/queries";
+import { createRun, persistTrace } from "../../db/queries";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
 import type { BiasCatalogService } from "../../catalog/bias-catalog";
 import { normalizeBiasName } from "../../catalog/normalize";
 import { validateEvidence } from "../../parsers/evidence-validator";
+import type { LlmCallStore } from "../../persistence/ports";
 
 const MODULE = "assessment-service";
 
@@ -24,7 +25,8 @@ export class AssessmentService {
     private provider: Provider,
     private prompts: PromptRegistry,
     private catalog: BiasCatalogService,
-    private modelName: string
+    private modelName: string,
+    private llmCallStore: LlmCallStore
   ) {}
 
   /**
@@ -205,7 +207,8 @@ export class AssessmentService {
           provider: providerId,
           model: this.modelName,
           promptVersion,
-        }
+        },
+        this.llmCallStore
       );
 
       logger.info(
@@ -217,7 +220,7 @@ export class AssessmentService {
       let parsed: AssessmentOutput;
       let fallbackLlmCallId: string | null = null;
       try {
-        const { result, metadata } = await repairWithFallback<string | null>(
+        const { result, metadata } = await repairWithFallback<AssessmentOutput, string | null>(
           JSON.stringify(raw),
           AssessmentOutputSchema,
           async () => {
@@ -234,7 +237,8 @@ export class AssessmentService {
                 provider: providerId,
                 model: this.modelName,
                 promptVersion,
-              }
+              },
+              this.llmCallStore
             );
             return { result, metadata: llmCallId };
           }
@@ -251,7 +255,7 @@ export class AssessmentService {
         // Update primary call record with failure
         if (primaryLlmCallId) {
           try {
-            await updateLlmCallFailure(primaryLlmCallId, failureType, errorMsg);
+            await this.llmCallStore.updateFailure(primaryLlmCallId, failureType, errorMsg);
           } catch (err) {
             logger.warn(
               { module: MODULE, operation: "updateLlmCallFailure", llmCallId: primaryLlmCallId, error: err },
@@ -265,7 +269,7 @@ export class AssessmentService {
       // Update primary call with parsed output (after successful repair/parsing)
       if (primaryLlmCallId) {
         try {
-          await updateLlmCallParsedOutput(primaryLlmCallId, parsed);
+          await this.llmCallStore.updateParsedOutput(primaryLlmCallId, parsed);
         } catch (err) {
           logger.warn(
             { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
@@ -277,7 +281,7 @@ export class AssessmentService {
       // Update fallback call with parsed output (if fallback was used)
       if (fallbackLlmCallId) {
         try {
-          await updateLlmCallParsedOutput(fallbackLlmCallId, parsed);
+          await this.llmCallStore.updateParsedOutput(fallbackLlmCallId, parsed);
         } catch (err) {
           logger.warn(
             { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: fallbackLlmCallId, error: err },

@@ -1,4 +1,4 @@
-import { recordLlmCall } from "../db/queries";
+import type { LlmCallStore } from "../persistence/ports";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType } from "../persistence/types";
 import type { ProviderResponse } from "../providers/types";
 import { TimeoutError } from "../providers/types";
@@ -25,7 +25,8 @@ export interface LlmCallMetadata {
  */
 export async function executeAndRecordLlmCall<T>(
   call: () => Promise<ProviderResponse<T>>,
-  metadata: LlmCallMetadata
+  metadata: LlmCallMetadata,
+  store: LlmCallStore
 ): Promise<{ result: T; llmCallId: string }> {
   const startedAt = new Date();
   const t0 = Date.now();
@@ -58,7 +59,7 @@ export async function executeAndRecordLlmCall<T>(
   } finally {
     const endedAt = new Date();
     const durationMs = Date.now() - t0;
-    const record = await recordLlmCall({
+    const record = await store.recordCall({
       sessionId: metadata.sessionId,
       stage: metadata.stage,
       callType: metadata.callType,

@@ -3,11 +3,18 @@ import { executeAndRecordLlmCall } from "../../../src/observability/llm-call-rec
 import { TimeoutError } from "../../../src/providers/types.js";
 import type { ProviderResponse } from "../../../src/providers/types.js";
 import type { LlmCallMetadata } from "../../../src/observability/llm-call-recorder.js";
-import * as queries from "../../../src/db/queries.js";
+import type { LlmCallStore } from "../../../src/persistence/ports.js";
 
-vi.mock("../../../src/db/queries.js", () => ({
-  recordLlmCall: vi.fn(),
-}));
+const mockLlmCallStore: LlmCallStore = {
+  recordCall: vi.fn(),
+  getCallsBySession: vi.fn().mockResolvedValue([]),
+  getCallsByStage: vi.fn().mockResolvedValue([]),
+  getCallsByProvider: vi.fn().mockResolvedValue([]),
+  getCallsBySessionAndStage: vi.fn().mockResolvedValue([]),
+  updateParsedOutput: vi.fn().mockResolvedValue(undefined),
+  updateFailure: vi.fn().mockResolvedValue(undefined),
+  getCallsForMetrics: vi.fn().mockResolvedValue([]),
+};
 
 const mockMetadata: LlmCallMetadata = {
   sessionId: "session-123",
@@ -31,16 +38,16 @@ describe("executeAndRecordLlmCall", () => {
         usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       };
       const providerCall = vi.fn().mockResolvedValue(mockResponse);
-      vi.mocked(queries.recordLlmCall).mockResolvedValue({ id: "call-id-1" } as any);
+      vi.mocked(mockLlmCallStore.recordCall).mockResolvedValue({ id: "call-id-1" } as any);
 
-      const { result, llmCallId } = await executeAndRecordLlmCall(providerCall, mockMetadata);
+      const { result, llmCallId } = await executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore);
 
       expect(result).toEqual(mockResult);
       expect(llmCallId).toBe("call-id-1");
       expect(providerCall).toHaveBeenCalledOnce();
-      expect(queries.recordLlmCall).toHaveBeenCalledOnce();
+      expect(mockLlmCallStore.recordCall).toHaveBeenCalledOnce();
 
-      const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+      const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
       expect(recordedData.status).toBe("success");
       expect(recordedData.failureType).toBeNull();
       expect(recordedData.rawResponse).toBe(JSON.stringify(mockResult));
@@ -58,11 +65,11 @@ describe("executeAndRecordLlmCall", () => {
         usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
       };
       const providerCall = vi.fn().mockResolvedValue(mockResponse);
-      vi.mocked(queries.recordLlmCall).mockResolvedValue({ id: "call-id-2" } as any);
+      vi.mocked(mockLlmCallStore.recordCall).mockResolvedValue({ id: "call-id-2" } as any);
 
-      await executeAndRecordLlmCall(providerCall, mockMetadata);
+      await executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore);
 
-      const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+      const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
       expect(recordedData.inputTokens).toBe(200);
       expect(recordedData.outputTokens).toBe(100);
       expect(recordedData.totalTokens).toBe(300);
@@ -73,11 +80,11 @@ describe("executeAndRecordLlmCall", () => {
         result: { data: "test" },
       };
       const providerCall = vi.fn().mockResolvedValue(mockResponse);
-      vi.mocked(queries.recordLlmCall).mockResolvedValue({ id: "call-id-3" } as any);
+      vi.mocked(mockLlmCallStore.recordCall).mockResolvedValue({ id: "call-id-3" } as any);
 
-      await executeAndRecordLlmCall(providerCall, mockMetadata);
+      await executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore);
 
-      const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+      const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
       expect(recordedData.inputTokens).toBeNull();
       expect(recordedData.outputTokens).toBeNull();
       expect(recordedData.totalTokens).toBeNull();
@@ -92,11 +99,11 @@ describe("executeAndRecordLlmCall", () => {
       const providerCall = vi.fn().mockImplementation(
         () => new Promise((resolve) => setTimeout(() => resolve(mockResponse), 50))
       );
-      vi.mocked(queries.recordLlmCall).mockResolvedValue({ id: "call-id-4" } as any);
+      vi.mocked(mockLlmCallStore.recordCall).mockResolvedValue({ id: "call-id-4" } as any);
 
-      await executeAndRecordLlmCall(providerCall, mockMetadata);
+      await executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore);
 
-      const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+      const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
       expect(recordedData.durationMs).toBeGreaterThanOrEqual(40);
       expect(recordedData.durationMs).toBeLessThan(200);
       expect(recordedData.startedAt).toBeDefined();
@@ -107,11 +114,11 @@ describe("executeAndRecordLlmCall", () => {
   describe("error handling", () => {
     it("should map TimeoutError to status=timeout, failureType=timeout", async () => {
       const providerCall = vi.fn().mockRejectedValue(new TimeoutError("Request timed out"));
-      vi.mocked(queries.recordLlmCall).mockResolvedValue({ id: "call-id-5" } as any);
+      vi.mocked(mockLlmCallStore.recordCall).mockResolvedValue({ id: "call-id-5" } as any);
 
-      await expect(executeAndRecordLlmCall(providerCall, mockMetadata)).rejects.toThrow("Request timed out");
+      await expect(executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore)).rejects.toThrow("Request timed out");
 
-      const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+      const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
       expect(recordedData.status).toBe("timeout");
       expect(recordedData.failureType).toBe("timeout");
       expect(recordedData.errorMessage).toBe("Request timed out");
@@ -120,11 +127,11 @@ describe("executeAndRecordLlmCall", () => {
 
     it("should map generic errors to status=error, failureType=provider_error", async () => {
       const providerCall = vi.fn().mockRejectedValue(new Error("Network failure"));
-      vi.mocked(queries.recordLlmCall).mockResolvedValue({ id: "call-id-6" } as any);
+      vi.mocked(mockLlmCallStore.recordCall).mockResolvedValue({ id: "call-id-6" } as any);
 
-      await expect(executeAndRecordLlmCall(providerCall, mockMetadata)).rejects.toThrow("Network failure");
+      await expect(executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore)).rejects.toThrow("Network failure");
 
-      const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+      const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
       expect(recordedData.status).toBe("error");
       expect(recordedData.failureType).toBe("provider_error");
       expect(recordedData.errorMessage).toBe("Network failure");
@@ -137,9 +144,9 @@ describe("executeAndRecordLlmCall", () => {
         result: { data: "test" },
       };
       const providerCall = vi.fn().mockResolvedValue(mockResponse);
-      vi.mocked(queries.recordLlmCall).mockRejectedValue(new Error("DB connection failed"));
+      vi.mocked(mockLlmCallStore.recordCall).mockRejectedValue(new Error("DB connection failed"));
 
-      const { result, llmCallId } = await executeAndRecordLlmCall(providerCall, mockMetadata);
+      const { result, llmCallId } = await executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore);
 
       expect(result).toEqual({ data: "test" });
       expect(llmCallId).toBeNull();
@@ -148,12 +155,12 @@ describe("executeAndRecordLlmCall", () => {
 
     it("should still record on provider error (fire-and-forget)", async () => {
       const providerCall = vi.fn().mockRejectedValue(new Error("Provider down"));
-      vi.mocked(queries.recordLlmCall).mockResolvedValue({ id: "call-id-7" } as any);
+      vi.mocked(mockLlmCallStore.recordCall).mockResolvedValue({ id: "call-id-7" } as any);
 
-      await expect(executeAndRecordLlmCall(providerCall, mockMetadata)).rejects.toThrow("Provider down");
+      await expect(executeAndRecordLlmCall(providerCall, mockMetadata, mockLlmCallStore)).rejects.toThrow("Provider down");
 
-      expect(queries.recordLlmCall).toHaveBeenCalledOnce();
-      const recordedData = vi.mocked(queries.recordLlmCall).mock.calls[0][0];
+      expect(mockLlmCallStore.recordCall).toHaveBeenCalledOnce();
+      const recordedData = vi.mocked(mockLlmCallStore.recordCall).mock.calls[0][0];
       expect(recordedData.status).toBe("error");
     });
   });
