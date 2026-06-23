@@ -106,20 +106,22 @@ describe("repairWithFallback", () => {
       throw new Error("should not be called");
     };
     const input = '{"name": "success", "value": 1}';
-    const result = await repairWithFallback(input, TestSchema, fallbackProvider);
+    const { result, metadata } = await repairWithFallback(input, TestSchema, fallbackProvider);
     expect(result).toEqual({ name: "success", value: 1 });
+    expect(metadata).toBeNull();
   });
 
   it("should call fallback when repair fails on invalid JSON", async () => {
     let fallbackCalled = false;
     const fallbackProvider = async () => {
       fallbackCalled = true;
-      return { name: "fallback", value: 99 };
+      return { result: { name: "fallback", value: 99 }, metadata: "fallback-meta" };
     };
     const input = "not valid json at all";
-    const result = await repairWithFallback(input, TestSchema, fallbackProvider);
+    const { result, metadata } = await repairWithFallback(input, TestSchema, fallbackProvider);
     expect(fallbackCalled).toBe(true);
     expect(result).toEqual({ name: "fallback", value: 99 });
+    expect(metadata).toBe("fallback-meta");
   });
 
   it("should throw when both repair and fallback fail", async () => {
@@ -144,8 +146,9 @@ describe("repairWithFallback", () => {
       throw new Error("should not be called since repair works");
     };
     const input = 'Analysis: {"name": "prose", "value": 7} End.';
-    const result = await repairWithFallback(input, TestSchema, fallbackProvider);
+    const { result, metadata } = await repairWithFallback(input, TestSchema, fallbackProvider);
     expect(result).toEqual({ name: "prose", value: 7 });
+    expect(metadata).toBeNull();
   });
 
   it("should succeed with markdown wrapped JSON and fallback available", async () => {
@@ -153,7 +156,8 @@ describe("repairWithFallback", () => {
       throw new Error("should not be called since repair works");
     };
     const input = "```json\n{\"name\": \"md\", \"value\": 3}\n```";
-    const result = await repairWithFallback(input, TestSchema, fallbackProvider);
+    const { result, metadata } = await repairWithFallback(input, TestSchema, fallbackProvider);
     expect(result).toEqual({ name: "md", value: 3 });
+    expect(metadata).toBeNull();
   });
 });

@@ -77,8 +77,9 @@ export class QuestionService {
 
       // Use the full repair pipeline: try repair, then fallback model call
       let parsed: QuestionOutput;
+      let fallbackLlmCallId: string | null = null;
       try {
-        parsed = await repairWithFallback(
+        const { result, metadata } = await repairWithFallback<string | null>(
           JSON.stringify(raw),
           QuestionOutputSchema,
           async () => {
@@ -97,45 +98,54 @@ export class QuestionService {
                 promptVersion,
               }
             );
-            // Update fallback call with parsed output
-            if (llmCallId) {
-              await updateLlmCallParsedOutput(llmCallId, result).catch((err) => {
-                logger.warn(
-                  { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId, error: err },
-                  "Failed to update fallback LLM call parsed output"
-                );
-              });
-            }
-            return result;
+            return { result, metadata: llmCallId };
           }
         );
+        parsed = result;
+        fallbackLlmCallId = metadata;
       } catch (repairError) {
         // Determine failure type based on error message
         const errorMsg = (repairError as Error).message ?? String(repairError);
         const failureType = errorMsg.toLowerCase().includes("parse") || errorMsg.toLowerCase().includes("json")
           ? "parse_error"
           : "schema_validation";
-        
+
         // Update primary call record with failure
         if (primaryLlmCallId) {
-          await updateLlmCallFailure(primaryLlmCallId, failureType, errorMsg).catch((err) => {
+          try {
+            await updateLlmCallFailure(primaryLlmCallId, failureType, errorMsg);
+          } catch (err) {
             logger.warn(
               { module: MODULE, operation: "updateLlmCallFailure", llmCallId: primaryLlmCallId, error: err },
               "Failed to update primary LLM call failure"
             );
-          });
+          }
         }
         throw repairError;
       }
 
       // Update primary call with parsed output (after successful repair/parsing)
       if (primaryLlmCallId) {
-        await updateLlmCallParsedOutput(primaryLlmCallId, parsed).catch((err) => {
+        try {
+          await updateLlmCallParsedOutput(primaryLlmCallId, parsed);
+        } catch (err) {
           logger.warn(
             { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
             "Failed to update primary LLM call parsed output"
           );
-        });
+        }
+      }
+
+      // Update fallback call with parsed output (if fallback was used)
+      if (fallbackLlmCallId) {
+        try {
+          await updateLlmCallParsedOutput(fallbackLlmCallId, parsed);
+        } catch (err) {
+          logger.warn(
+            { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: fallbackLlmCallId, error: err },
+            "Failed to update fallback LLM call parsed output"
+          );
+        }
       }
 
       // Stamp version and model fields

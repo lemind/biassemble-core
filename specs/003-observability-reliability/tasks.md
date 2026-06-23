@@ -108,6 +108,13 @@
   - Services call `executeAndRecordLlmCall()` directly, not through `repairWithFallback()`
   - Files: `biassemble-core/src/orchestrators/reflection/assessment.service.ts`, `biassemble-core/src/orchestrators/reflection/question.service.ts`
 
+- [ ] T304 Fix layer violation — move DB updates outside fallback callback
+  - **Problem**: Services call `updateLlmCallParsedOutput()` directly inside fallback callback, mixing observability concerns with parser logic
+  - **Solution**: Fallback callback returns `{ result, llmCallId }`, outer service scope handles all DB updates
+  - Validate fallback output through schema before returning
+  - Update both primary and fallback call records after `repairWithFallback()` succeeds
+  - Files: `biassemble-core/src/parsers/repair.ts`, `biassemble-core/src/orchestrators/reflection/assessment.service.ts`, `biassemble-core/src/orchestrators/reflection/question.service.ts`
+
 **Checkpoint**: Run assessment flow manually, verify `llm_calls` rows are created in DB with raw response, prompt_version, and correct failure_type. Verify both primary and fallback calls are recorded when fallback is triggered. Run `pnpm test` — all unit and integration tests pass.
 
 ### Port Wiring Fix

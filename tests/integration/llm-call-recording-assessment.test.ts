@@ -226,9 +226,12 @@ describe("T202 — LLM call recording in assessment flow", () => {
   it("should succeed even when updateLlmCallParsedOutput fails", async () => {
     vi.mocked(queries.updateLlmCallParsedOutput).mockRejectedValueOnce(new Error("DB down"));
     repairBehavior = () => Promise.resolve({
-      biases: [],
-      reflectionPrompt: "a".repeat(50),
-      noBiasDetected: true,
+      result: {
+        biases: [],
+        reflectionPrompt: "a".repeat(50),
+        noBiasDetected: true,
+      },
+      metadata: null,
     });
 
     const response = await server.inject({

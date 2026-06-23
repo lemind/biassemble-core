@@ -53,6 +53,7 @@ This project contains **two separate git repositories** in sibling directories:
 8. **Spec alignment** — Don't carry assumptions from previous stages. Each stage has its own scope.
 9. **Nullable semantics** — Use `field: Type | null` for nullable DB columns, not `field?: Type | null`.
 10. **Scope discipline** — Do only what was explicitly asked. Everything else is out of scope.
+11. **Error handling style** — Use `try/catch` blocks, not `await ... .catch()`. Prefer explicit control flow over chained error handlers.
 
 ## Integration Requirement
 

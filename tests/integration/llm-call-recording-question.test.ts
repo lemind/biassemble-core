@@ -191,8 +191,11 @@ describe("T203 — LLM call recording in question flow", () => {
   it("should succeed even when updateLlmCallParsedOutput fails", async () => {
     vi.mocked(queries.updateLlmCallParsedOutput).mockRejectedValueOnce(new Error("DB down"));
     repairBehavior = () => Promise.resolve({
-      questions: ["Q1?", "Q2?"],
-      isComplete: true,
+      result: {
+        questions: ["Q1?", "Q2?"],
+        isComplete: true,
+      },
+      metadata: null,
     });
 
     const response = await server.inject({
