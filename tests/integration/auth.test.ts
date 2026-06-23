@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Fastify from "fastify";
-import { registerReflectionRoutes } from "../../src/routes/reflection.js";
+import { registerReflectionRoutes, type QuestionServiceLike, type AssessmentServiceLike } from "../../src/routes/reflection.js";
 import { authHook } from "../../src/lib/auth.js";
 
-// Mock services
-const mockQuestionService = { generate: async () => ({ questions: [], isComplete: false }) } as any;
-const mockAssessmentService = { generate: async () => ({ biases: [], reflectionPrompt: "" }) } as any;
+const mockQuestionService: QuestionServiceLike = { generate: async () => ({ questions: [] as string[], isComplete: false }) };
+const mockAssessmentService: AssessmentServiceLike = {
+  runStoryOnlyAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
+  runFullAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
+};
 
 describe("Auth Middleware Integration", () => {
   let server: any;

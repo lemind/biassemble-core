@@ -1,25 +1,34 @@
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
-import { 
+import {
   GenerateQuestionRequestSchema,
   GenerateAssessmentRequestSchema,
   type AssessmentOutput,
+  type QuestionOutput,
 } from "../contracts/reflection.schemas";
+import type { StoryAnalysis, Interpretation } from "../contracts/reasoning.schemas";
 import { authHook } from "../lib/auth";
 import { logger } from "../observability/logger";
-import type { QuestionService } from "../orchestrators/reflection/question.service";
-import type { AssessmentService } from "../orchestrators/reflection/assessment.service";
 
 const MODULE = "routes";
 
 import contractsJson from "../../contracts/reflection.schemas.json" with { type: "json" };
 const CONTRACTS_JSON = contractsJson;
 
+export interface QuestionServiceLike {
+  generate(sessionId: string, story: string, requestId: string, storyAnalysis?: StoryAnalysis, interpretations?: Interpretation[]): Promise<QuestionOutput>;
+}
+
+export interface AssessmentServiceLike {
+  runStoryOnlyAssessment(sessionId: string, story: string, requestId: string): Promise<AssessmentOutput>;
+  runFullAssessment(sessionId: string, story: string, questions: string[], answers: string[], requestId: string): Promise<AssessmentOutput>;
+}
+
 export function registerReflectionRoutes(
   server: FastifyInstance,
   services: {
-    question: QuestionService;
-    assessment: AssessmentService;
+    question: QuestionServiceLike;
+    assessment: AssessmentServiceLike;
   }
 ) {
   /**

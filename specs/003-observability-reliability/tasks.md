@@ -77,22 +77,22 @@
 
 ### Tests for Phase 2
 
-- [ ] T201 Write unit tests for `recordLlmCall()` — test successful recording with all fields, duration calculation from timestamps, error handling when DB insert fails (fire-and-forget), failure_type categorization, nullable raw_response handling, prompt_version storage, token usage fields (input_tokens, output_tokens, total_tokens), call_type field (primary/fallback)
+- [x] T201 Write unit tests for `recordLlmCall()` — test successful recording with all fields, duration calculation from timestamps, error handling when DB insert fails (fire-and-forget), failure_type categorization, nullable raw_response handling, prompt_version storage, token usage fields (input_tokens, output_tokens, total_tokens), call_type field (primary/fallback)
   - File: `biassemble-core/tests/unit/observability/llm-call-recorder.test.ts`
 
-- [ ] T202 Write integration test for LLM call recording in assessment flow — verify full assessment flow creates `llm_calls` record with raw response, prompt_version, correct stage, provider, model
+- [x] T202 Write integration test for LLM call recording in assessment flow — verify full assessment flow creates `llm_calls` record with raw response, prompt_version, correct stage, provider, model
   - File: `biassemble-core/tests/integration/llm-call-recording-assessment.test.ts`
 
-- [ ] T203 Write integration test for LLM call recording in question flow — same pattern as T202 but for question service
+- [x] T203 Write integration test for LLM call recording in question flow — same pattern as T202 but for question service
   - File: `biassemble-core/tests/integration/llm-call-recording-question.test.ts`
 
 ### Implementation for Phase 2
 
-- [ ] T204 Create `src/observability/llm-call-recorder.ts`
+- [x] T204 Create `src/observability/llm-call-recorder.ts`
   - Export `recordLlmCall()` function and `LlmCallInput` interface
   - File: `biassemble-core/src/observability/llm-call-recorder.ts`
 
-- [ ] T205 Implement `recordLlmCall()` function
+- [x] T205 Implement `recordLlmCall()` function
   - Accept: provider, model, stage, callType (primary/fallback), promptVersion, rawResponse, parsedOutput, status, failureType, inputTokens, outputTokens, startTime, endTime, errorMessage
   - Compute duration_ms from timestamps
   - Compute total_tokens = input_tokens + output_tokens (if both present)
@@ -100,14 +100,26 @@
   - Wrap in try/catch — log errors but never throw (fire-and-forget)
   - File: `biassemble-core/src/observability/llm-call-recorder.ts`
 
-- [ ] T205a Integrate `recordLlmCall()` into `repairWithFallback()` in `src/parsers/repair.ts`
+- [x] T205a Integrate `recordLlmCall()` into service layer
+  - **Note**: Integrated into `assessment.service.ts` and `question.service.ts` instead of `repairWithFallback()` to maintain separation of concerns (parser layer stays pure)
   - Record primary call before attempting repair (call_type=primary)
   - If repair fails and fallback provider is called, record fallback call (call_type=fallback)
-  - Both calls should have the same stage (assessment or question) but different call_type values
-  - `repairWithFallback()` is the sole owner of LLM call recording — services do not call `recordLlmCall()` directly
-  - File: `biassemble-core/src/parsers/repair.ts`
+  - Both calls have the same stage (assessment or question) but different call_type values
+  - Services call `executeAndRecordLlmCall()` directly, not through `repairWithFallback()`
+  - Files: `biassemble-core/src/orchestrators/reflection/assessment.service.ts`, `biassemble-core/src/orchestrators/reflection/question.service.ts`
+
+- [ ] T304 Fix layer violation — move DB updates outside fallback callback
+  - **Problem**: Services call `updateLlmCallParsedOutput()` directly inside fallback callback, mixing observability concerns with parser logic
+  - **Solution**: Fallback callback returns `{ result, llmCallId }`, outer service scope handles all DB updates
+  - Validate fallback output through schema before returning
+  - Update both primary and fallback call records after `repairWithFallback()` succeeds
+  - Files: `biassemble-core/src/parsers/repair.ts`, `biassemble-core/src/orchestrators/reflection/assessment.service.ts`, `biassemble-core/src/orchestrators/reflection/question.service.ts`
 
 **Checkpoint**: Run assessment flow manually, verify `llm_calls` rows are created in DB with raw response, prompt_version, and correct failure_type. Verify both primary and fallback calls are recorded when fallback is triggered. Run `pnpm test` — all unit and integration tests pass.
+
+### Port Wiring Fix
+
+- [ ] T300 Wire `llm-call-recorder.ts` via `LlmCallStore` port instead of calling `queries.ts` directly — accept `LlmCallStore` as a constructor dependency, mock the port in tests
 
 ---
 

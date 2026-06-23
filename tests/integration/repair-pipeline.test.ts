@@ -26,8 +26,8 @@ describe("Repair pipeline — real QuestionService/AssessmentService with MockPr
 
     server = Fastify();
     registerReflectionRoutes(server, {
-      question: questionService as any,
-      assessment: assessmentService as any,
+      question: questionService,
+      assessment: assessmentService,
     });
     await server.ready();
   });

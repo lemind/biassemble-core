@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Fastify from "fastify";
-import { registerReflectionRoutes } from "../../src/routes/reflection.js";
+import { registerReflectionRoutes, type QuestionServiceLike } from "../../src/routes/reflection.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { AssessmentService } from "../../src/orchestrators/reflection/assessment.service.js";
@@ -25,8 +25,8 @@ describe("T508 — Two-phase session integration", () => {
     const catalog = new BiasCatalogService();
 
     const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model");
-    const questionService = {
-      generate: async () => ({ questions: [], isComplete: true }),
+    const questionService: QuestionServiceLike = {
+      generate: async () => ({ questions: [] as string[], isComplete: true }),
     };
 
     server = Fastify();
@@ -35,8 +35,8 @@ describe("T508 — Two-phase session integration", () => {
       reply.header("x-request-id", "test-request-id");
     });
     registerReflectionRoutes(server, {
-      question: questionService as any,
-      assessment: assessmentService as any,
+      question: questionService,
+      assessment: assessmentService,
     });
     await server.ready();
   });

@@ -107,20 +107,24 @@ export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
 
 /**
  * Full repair pipeline: attempt repair, then fallback model call, then fail.
- * 
+ *
  * Pipeline:
  *   invalid JSON → repair attempt (extractJson + parse + Zod validate)
  *   → if fails → fallback model call
  *   → if fallback fails → full failure → 502
+ *
+ * Returns both the parsed result and optional metadata from the fallback callback
+ * (e.g., llmCallId for observability tracking).
  */
-export async function repairWithFallback<T>(
+export async function repairWithFallback<T, M = void>(
   text: string,
   schema: ZodSchema<T>,
-  fallbackProvider: (() => Promise<T>) | null
-): Promise<T> {
+  fallbackProvider: (() => Promise<{ result: T; metadata: M }>) | null
+): Promise<{ result: T; metadata: M | null }> {
   // Step 1: Try repair (extractJson + parse + validate)
   try {
-    return tryRepairJson(text, schema);
+    const result = tryRepairJson(text, schema);
+    return { result, metadata: null };
   } catch (repairError) {
     logger.warn(
       { module: MODULE, operation: "repairWithFallback", repairError },
@@ -131,12 +135,10 @@ export async function repairWithFallback<T>(
   // Step 2: Fallback model call
   if (fallbackProvider) {
     try {
-      const result = await fallbackProvider();
-      logger.info(
-        { module: MODULE, operation: "repairWithFallback" },
-        "Fallback model call succeeded"
-      );
-      return result;
+      const { result, metadata } = await fallbackProvider();
+      // Validate fallback output through schema (provider returns unvalidated data)
+      const validated = schema.parse(result);
+      return { result: validated, metadata };
     } catch (fallbackError) {
       logger.error(
         { module: MODULE, operation: "repairWithFallback", fallbackError },

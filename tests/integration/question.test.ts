@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Fastify from "fastify";
-import { registerReflectionRoutes } from "../../src/routes/reflection.js";
+import { registerReflectionRoutes, type QuestionServiceLike, type AssessmentServiceLike } from "../../src/routes/reflection.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 
@@ -11,16 +11,17 @@ describe("POST /v1/reflection/question — integration", () => {
   beforeAll(async () => {
     mockProvider = new MockProvider();
     const prompts = new PromptRegistry();
-    const questionService = {
-      generate: async (story: string, requestId: string) => {
+    const questionService: QuestionServiceLike = {
+      generate: async (_sessionId: string, story: string, requestId: string) => {
         const system = prompts.render("question-batch", {});
         const user = `STORY: ${story}`;
         const response = await mockProvider.completeJson<any>({ system, user });
         return response.result;
       },
     };
-    const assessmentService = {
-      generate: async () => ({ biases: [], reflectionPrompt: "" }),
+    const assessmentService: AssessmentServiceLike = {
+      runStoryOnlyAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
+      runFullAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
     };
 
     server = Fastify();
@@ -30,8 +31,8 @@ describe("POST /v1/reflection/question — integration", () => {
       reply.header("x-request-id", "test-request-id");
     });
     registerReflectionRoutes(server, {
-      question: questionService as any,
-      assessment: assessmentService as any,
+      question: questionService,
+      assessment: assessmentService,
     });
     await server.ready();
   });
