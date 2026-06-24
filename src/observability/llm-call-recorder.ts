@@ -27,7 +27,7 @@ export async function executeAndRecordLlmCall<T>(
   call: () => Promise<ProviderResponse<T>>,
   metadata: LlmCallMetadata,
   store: LlmCallStore
-): Promise<{ result: T; llmCallId: string }> {
+): Promise<{ result: T; llmCallId: string | null }> {
   const startedAt = new Date();
   const t0 = Date.now();
 
@@ -87,5 +87,5 @@ export async function executeAndRecordLlmCall<T>(
     llmCallId = record?.id ?? null;
   }
 
-  return { result: raw as T, llmCallId: llmCallId! };
+  return { result: raw as T, llmCallId };
 }

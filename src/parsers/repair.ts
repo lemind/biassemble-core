@@ -68,7 +68,7 @@ function partialParseObject<T>(
     );
   }
 
-  return result as unknown as T;
+  return result as T;
 }
 
 /**

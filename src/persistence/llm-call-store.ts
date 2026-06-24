@@ -8,6 +8,7 @@ import {
   getCallsByStage,
   getCallsByProvider,
   getCallsBySessionAndStage,
+  getCallsForMetrics as dbGetCallsForMetrics,
 } from "../db/queries";
 
 /**
@@ -80,8 +81,7 @@ export class DrizzleLlmCallStore implements LlmCallStore {
   }
 
   async getCallsForMetrics(): Promise<LlmCallRecord[]> {
-    // TODO: Implement efficient query for metrics aggregation
-    // For now, return all calls (can be optimized later with proper filtering)
-    return [];
+    const rows = await dbGetCallsForMetrics();
+    return rows.map(toLlmCallRecord);
   }
 }

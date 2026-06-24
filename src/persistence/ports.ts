@@ -9,17 +9,18 @@ import type {
   LlmCallStage,
   LlmCallFailureType,
 } from "./types";
+import type { ReasoningTrace } from "../contracts/reasoning.schemas";
 
 export interface RunStore {
   createRun(
     sessionId: string,
-    data: Omit<RunRecord, "id" | "createdAt">,
+    data: Omit<RunRecord, "id" | "createdAt" | "sessionId">,
   ): Promise<RunRecord>;
   getRunsBySession(sessionId: string): Promise<RunRecord[]>;
 }
 
 export interface TraceStore {
-  persistTrace(runId: string, trace: unknown): Promise<TraceRecord>;
+  persistTrace(runId: string, trace: ReasoningTrace): Promise<TraceRecord>;
   getTrace(runId: string): Promise<TraceRecord | null>;
 }
 

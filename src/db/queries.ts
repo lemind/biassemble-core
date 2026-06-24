@@ -82,9 +82,9 @@ export async function persistEvalResult(
     systemMetrics: Record<string, unknown>;
     inputHash: string;
     passed: boolean;
-    evalRunId: string;
+    evalRunId: string | null;
     scenarioId: string;
-    rawOutput?: string;
+    rawOutput?: string | null;
   }
 ) {
   const [row] = await db()
@@ -231,6 +231,13 @@ export async function getCallsBySessionAndStage(
         eq(llmCalls.stage, stage)
       )
     )
+    .orderBy(llmCalls.createdAt);
+}
+
+export async function getCallsForMetrics() {
+  return await db()
+    .select()
+    .from(llmCalls)
     .orderBy(llmCalls.createdAt);
 }
 

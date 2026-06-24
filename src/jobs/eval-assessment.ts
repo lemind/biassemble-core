@@ -83,12 +83,12 @@ export const evalAssessmentJob = inngest.createFunction(
           systemMetrics: {
             schemaParseRate: result.sysMetrics.schemaParseRate,
             repairRate: result.sysMetrics.repairRate,
-            totalResponses: result.sysMetrics.totalResponses,
           },
           inputHash: result.goldenResults[0]?.inputHash ?? "",
           passed: result.overallPassed,
           evalRunId: runId!,
           scenarioId: "aggregate",
+          rawOutput: null,
         });
       } catch (dbError) {
         logger.error({ module: MODULE, error: dbError }, "Failed to persist eval result — continuing");
@@ -164,17 +164,17 @@ export const evalGoldenStoryJob = inngest.createFunction(
           dataset: "golden",
           evaluationMetrics: {
             evidenceGroundedRate: story?.evaluationMetrics?.evidenceGroundedRate ?? null,
-            isFalsePositive: story?.evaluationMetrics?.isFalsePositive ?? null,
+            falsePositiveRate: story?.evaluationMetrics?.isFalsePositive ? 1 : 0,
           },
           systemMetrics: {
             schemaParseRate: result.sysMetrics.schemaParseRate,
             repairRate: result.sysMetrics.repairRate,
-            totalResponses: result.sysMetrics.totalResponses,
           },
           inputHash: story?.inputHash ?? "",
           passed: result.overallPassed,
           evalRunId: runId!,
           scenarioId: story?.id ?? "unknown",
+          rawOutput: null,
         });
       } catch (dbError) {
         logger.error({ module: MODULE, error: dbError }, "Failed to persist golden eval result — continuing");
@@ -247,17 +247,18 @@ export const evalNoBiasStoryJob = inngest.createFunction(
           promptVersion: prompts.getVersion(),
           dataset: "no_bias",
           evaluationMetrics: {
-            isFalsePositive: story?.evaluationMetrics?.isFalsePositive ?? null,
+            evidenceGroundedRate: null,
+            falsePositiveRate: story?.evaluationMetrics?.isFalsePositive ? 1 : 0,
           },
           systemMetrics: {
             schemaParseRate: result.sysMetrics.schemaParseRate,
             repairRate: result.sysMetrics.repairRate,
-            totalResponses: result.sysMetrics.totalResponses,
           },
           inputHash: story?.inputHash ?? "",
           passed: result.overallPassed,
           evalRunId: runId!,
           scenarioId: story?.id ?? "unknown",
+          rawOutput: null,
         });
       } catch (dbError) {
         logger.error({ module: MODULE, error: dbError }, "Failed to persist no-bias eval result — continuing");

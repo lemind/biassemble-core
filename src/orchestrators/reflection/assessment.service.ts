@@ -303,13 +303,11 @@ export class AssessmentService {
 
       try {
         await this.traceStore.persistTrace(runId, parsed.reasoningTrace ?? {
-          no_trace: true,
-          inputContext: scope,
-          prompt_version: promptVersion,
           story_analysis: { themes: [], emotional_tone: "", key_events: [] },
           interpretations: [],
           bias_hypotheses: [],
           evidence_mapping: [],
+          prompt_version: promptVersion as PromptVersion,
         });
         logger.info(
           { module: MODULE, operation: "callProvider", runId, requestId },
