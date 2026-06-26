@@ -180,7 +180,7 @@
   - No pass/fail changes — just store what the pipeline produced
   - File: `biassemble-core/src/evaluation/eval-runner.ts`
 
-- [ ] T406 Create `src/jobs/eval-run.ts` job definition
+- [x] T406 Create `src/jobs/eval-run.ts` job definition
   - Define Inngest job for async eval runs
   - File: `biassemble-core/src/jobs/eval-run.ts`
 
