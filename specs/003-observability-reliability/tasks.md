@@ -157,7 +157,7 @@
 
 ### Tests for Phase 4
 
-- [ ] T401 Write unit tests for `runDataset()` — test with mock pipeline: successful run creates `eval_results` rows with shared `eval_run_id`, `scenario_id`, `raw_output`, provider/model correct
+- [x] T401 Write unit tests for `runDataset()` — test with mock pipeline: successful run creates `eval_results` rows with shared `eval_run_id`, `scenario_id`, `raw_output`, provider/model correct
   - File: `biassemble-core/tests/unit/evaluation/eval-runner.test.ts`
 
 - [ ] T402 Write integration test for eval run flow — run eval on small dataset, verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output` populated, provider/model correct
