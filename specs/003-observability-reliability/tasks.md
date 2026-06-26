@@ -212,7 +212,7 @@
 
 ### Implementation for Phase 5
 
-- [ ] T501 Deploy database migration to production
+- [x] T501 Deploy database migration to production
   - Run `pnpm db:migrate` to apply schema changes (new `llm_calls` table, extended `eval_results` columns)
   - Verify migration completes successfully
   - Verify new tables/columns exist in production database
