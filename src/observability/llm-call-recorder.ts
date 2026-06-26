@@ -59,32 +59,33 @@ export async function executeAndRecordLlmCall<T>(
   } finally {
     const endedAt = new Date();
     const durationMs = Date.now() - t0;
-    const record = await store.recordCall({
-      sessionId: metadata.sessionId,
-      stage: metadata.stage,
-      callType: metadata.callType,
-      provider: metadata.provider,
-      model: metadata.model,
-      promptVersion: metadata.promptVersion,
-      rawResponse: raw !== undefined ? JSON.stringify(raw) : null,
-      parsedOutput: null,
-      status,
-      failureType,
-      inputTokens,
-      outputTokens,
-      totalTokens,
-      startedAt: startedAt.toISOString(),
-      endedAt: endedAt.toISOString(),
-      durationMs,
-      errorMessage,
-    }).catch((err) => {
+    try {
+      const record = await store.recordCall({
+        sessionId: metadata.sessionId,
+        stage: metadata.stage,
+        callType: metadata.callType,
+        provider: metadata.provider,
+        model: metadata.model,
+        promptVersion: metadata.promptVersion,
+        rawResponse: raw !== undefined ? JSON.stringify(raw) : null,
+        parsedOutput: null,
+        status,
+        failureType,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        startedAt: startedAt.toISOString(),
+        endedAt: endedAt.toISOString(),
+        durationMs,
+        errorMessage,
+      });
+      llmCallId = record?.id ?? null;
+    } catch (err) {
       logger.warn(
         { module: MODULE, operation: "recordLlmCall", error: err },
         "Failed to record LLM call"
       );
-      return null;
-    });
-    llmCallId = record?.id ?? null;
+    }
   }
 
   return { result: raw as T, llmCallId };

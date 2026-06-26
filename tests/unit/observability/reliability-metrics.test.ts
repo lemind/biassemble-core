@@ -152,6 +152,20 @@ describe('computeReliabilityMetrics', () => {
     expect(metrics.avgLatencyMs).toBe(200);
   });
 
+  it('should filter by model', async () => {
+    const calls: LlmCallRecord[] = [
+      { ...createCall('1', 'success', null, 'primary', 100), model: 'gemini-2.5-flash' },
+      { ...createCall('2', 'success', null, 'primary', 200), model: 'gemini-2.0-flash' },
+      { ...createCall('3', 'success', null, 'primary', 300), model: 'gemini-2.5-flash' },
+    ];
+    const store = createMockStore(calls);
+
+    const metrics = await computeReliabilityMetrics({ model: 'gemini-2.5-flash' }, store);
+
+    expect(metrics.totalCallCount).toBe(2);
+    expect(metrics.avgLatencyMs).toBe(200);
+  });
+
   it('should filter by stage', async () => {
     const calls: LlmCallRecord[] = [
       createCall('1', 'success', null, 'primary', 100, 'gemini', 'assessment'),

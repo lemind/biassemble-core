@@ -79,8 +79,8 @@ biassemble-core/src/
 ### Phase 2: LLM Call Recording & Tests
 - Create `src/observability/llm-call-recorder.ts`
 - Implement `recordLlmCall()` helper function (with failure_type support, token usage, call_type, stores prompt_version, one row per call)
-- Integrate into `repairWithFallback()` to record both primary and fallback calls with correct `call_type`
-- `repairWithFallback()` is the sole owner of LLM call recording — services do not call `recordLlmCall()` directly
+- Integrate into orchestrator services (`assessment.service.ts`, `question.service.ts`) to record both primary and fallback calls with correct `call_type`
+- Services are the sole owners of LLM call recording via `executeAndRecordLlmCall()` — `repairWithFallback()` stays pure (parser layer), services own all observability side-effects
 - Write unit tests for call recorder (TDD: tests first)
 - Write integration tests for recording flow
 

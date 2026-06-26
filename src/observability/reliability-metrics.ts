@@ -2,6 +2,7 @@ import type { LlmCallRecord, LlmCallStage } from '../persistence/types';
 import type { LlmCallStore } from '../persistence/ports';
 
 export interface ReliabilityMetricsFilter {
+  // Defaults to last 30 days in the DB implementation when omitted
   timeRange?: { start: Date; end: Date };
   provider?: string;
   model?: string;
