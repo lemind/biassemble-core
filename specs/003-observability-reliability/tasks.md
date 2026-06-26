@@ -160,10 +160,10 @@
 - [x] T401 Write unit tests for `runDataset()` — test with mock pipeline: successful run creates `eval_results` rows with shared `eval_run_id`, `scenario_id`, `raw_output`, provider/model correct
   - File: `biassemble-core/tests/unit/evaluation/eval-runner.test.ts`
 
-- [ ] T402 Write integration test for eval run flow — run eval on small dataset, verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output` populated, provider/model correct
+- [x] T402 Write integration test for eval run flow — run eval on small dataset, verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output` populated, provider/model correct
   - File: `biassemble-core/tests/integration/eval-run.test.ts`
 
-- [ ] T403 Write backwards compatibility tests — verify existing sessions without `llm_calls` records still work, existing eval scripts still work, no regressions in existing test suite
+- [x] T403 Write backwards compatibility tests — verify existing sessions without `llm_calls` records still work, existing eval scripts still work, no regressions in existing test suite
   - File: `biassemble-core/tests/integration/backwards-compatibility.test.ts`
 
 ### Implementation for Phase 4
