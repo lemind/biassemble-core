@@ -368,22 +368,28 @@ describe("LlmCallStore — in-memory behavioral tests", () => {
 describe("executeAndRecordLlmCall — behavioral tests", () => {
   const recordedCalls: Array<Omit<LlmCallRecord, "id" | "createdAt">> = [];
   let mockIdCounter = 0;
+  let mockStore: LlmCallStore;
 
   beforeEach(() => {
     recordedCalls.length = 0;
     mockIdCounter = 0;
     vi.restoreAllMocks();
 
-    // Mock recordLlmCall to capture what gets recorded
-    vi.spyOn(queries, "recordLlmCall").mockImplementation(async (data) => {
-      recordedCalls.push(data);
-      mockIdCounter++;
-      return {
-        ...data,
-        id: `mock-id-${mockIdCounter}`,
-        createdAt: new Date().toISOString(),
-      } as LlmCallRecord;
-    });
+    // Create mock store that captures calls
+    mockStore = {
+      recordCall: vi.fn().mockImplementation(async (data) => {
+        recordedCalls.push(data);
+        mockIdCounter++;
+        return {
+          ...data,
+          id: `mock-id-${mockIdCounter}`,
+          createdAt: new Date().toISOString(),
+        } as LlmCallRecord;
+      }),
+      updateParsedOutput: vi.fn().mockResolvedValue(undefined),
+      updateFailure: vi.fn().mockResolvedValue(undefined),
+      getCallsForMetrics: vi.fn().mockResolvedValue([]),
+    } as unknown as LlmCallStore;
   });
 
   it("maps TimeoutError to status=timeout and failureType=timeout", async () => {
@@ -399,7 +405,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
         provider: "gemini",
         model: "gemini-2.0-flash",
         promptVersion: "1.0.0",
-      })
+      }, mockStore)
     ).rejects.toThrow(TimeoutError);
 
     expect(recordedCalls).toHaveLength(1);
@@ -421,7 +427,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
         provider: "gemini",
         model: "gemini-2.0-flash",
         promptVersion: "1.0.0",
-      })
+      }, mockStore)
     ).rejects.toThrow("API key invalid");
 
     expect(recordedCalls).toHaveLength(1);
@@ -449,7 +455,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     expect(result).toEqual({ test: "data" });
     expect(llmCallId).toBeDefined();
@@ -472,7 +478,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
         provider: "gemini",
         model: "gemini-2.0-flash",
         promptVersion: "1.0.0",
-      })
+      }, mockStore)
     ).rejects.toThrow("Connection failed");
 
     expect(recordedCalls).toHaveLength(1);
@@ -492,7 +498,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     expect(result).toEqual({ test: "data" });
     expect(llmCallId).toBe("mock-id-1");
@@ -514,7 +520,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     expect(recordedCalls).toHaveLength(1);
     expect(recordedCalls[0].inputTokens).toBeNull();
@@ -538,7 +544,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     expect(result).toEqual({ data: "success" });
   });
@@ -557,7 +563,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     expect(recordedCalls).toHaveLength(1);
     expect(recordedCalls[0].durationMs).toBeGreaterThanOrEqual(40); // Allow some timing variance
@@ -576,7 +582,7 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     expect(recordedCalls).toHaveLength(1);
     expect(recordedCalls[0].rawResponse).toBe('{"foo":"bar","bar":42}');
@@ -585,6 +591,20 @@ describe("executeAndRecordLlmCall — behavioral tests", () => {
 });
 
 describe("parsed_output update flow", () => {
+  let mockStore: LlmCallStore;
+
+  beforeEach(() => {
+    mockStore = {
+      recordCall: vi.fn().mockResolvedValue({
+        id: "mock-id-1",
+        createdAt: new Date().toISOString(),
+      } as LlmCallRecord),
+      updateParsedOutput: vi.fn().mockResolvedValue(undefined),
+      updateFailure: vi.fn().mockResolvedValue(undefined),
+      getCallsForMetrics: vi.fn().mockResolvedValue([]),
+    } as unknown as LlmCallStore;
+  });
+
   it("updates parsed_output after successful parsing", async () => {
     const updateMock = vi.spyOn(queries, "updateLlmCallParsedOutput").mockResolvedValue(undefined);
 
@@ -600,7 +620,7 @@ describe("parsed_output update flow", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     // Simulate successful parsing/repair
     const parsedOutput = { parsed: "result", biases: [] };
@@ -627,21 +647,28 @@ describe("parsed_output update flow", () => {
 describe("Fallback execution — integration behavior", () => {
   const recordedCalls: Array<Omit<LlmCallRecord, "id" | "createdAt">> = [];
   let mockIdCounter = 0;
+  let mockStore: LlmCallStore;
 
   beforeEach(() => {
     recordedCalls.length = 0;
     mockIdCounter = 0;
     vi.restoreAllMocks();
 
-    vi.spyOn(queries, "recordLlmCall").mockImplementation(async (data) => {
-      recordedCalls.push(data);
-      mockIdCounter++;
-      return {
-        ...data,
-        id: `mock-id-${mockIdCounter}`,
-        createdAt: new Date().toISOString(),
-      } as LlmCallRecord;
-    });
+    // Create mock store that captures calls
+    mockStore = {
+      recordCall: vi.fn().mockImplementation(async (data) => {
+        recordedCalls.push(data);
+        mockIdCounter++;
+        return {
+          ...data,
+          id: `mock-id-${mockIdCounter}`,
+          createdAt: new Date().toISOString(),
+        } as LlmCallRecord;
+      }),
+      updateParsedOutput: vi.fn().mockResolvedValue(undefined),
+      updateFailure: vi.fn().mockResolvedValue(undefined),
+      getCallsForMetrics: vi.fn().mockResolvedValue([]),
+    } as unknown as LlmCallStore;
   });
 
   it("records primary and fallback calls independently", async () => {
@@ -660,7 +687,7 @@ describe("Fallback execution — integration behavior", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     const fallbackProvider = async (): Promise<ProviderResponse<unknown>> => {
       return { result: { test: "fallback" } };
@@ -673,7 +700,7 @@ describe("Fallback execution — integration behavior", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     // Verify two separate rows were created with correct callType
     expect(recordedCalls).toHaveLength(2);
@@ -696,7 +723,7 @@ describe("Fallback execution — integration behavior", () => {
         provider: "gemini",
         model: "gemini-2.0-flash",
         promptVersion: "1.0.0",
-      })
+      }, mockStore)
     ).rejects.toThrow(TimeoutError);
 
     // Fallback succeeds
@@ -711,7 +738,7 @@ describe("Fallback execution — integration behavior", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     // Verify primary has timeout status, fallback has success
     expect(recordedCalls).toHaveLength(2);
@@ -737,7 +764,7 @@ describe("Fallback execution — integration behavior", () => {
       provider: "gemini",
       model: "gemini-2.0-flash",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     // Fallback uses openai
     const fallbackProvider = async (): Promise<ProviderResponse<unknown>> => {
@@ -751,7 +778,7 @@ describe("Fallback execution — integration behavior", () => {
       provider: "openai",
       model: "gpt-4",
       promptVersion: "1.0.0",
-    });
+    }, mockStore);
 
     expect(recordedCalls).toHaveLength(2);
     expect(recordedCalls[0].provider).toBe("gemini");

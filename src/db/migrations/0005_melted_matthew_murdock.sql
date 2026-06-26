@@ -1,0 +1,2 @@
+CREATE INDEX "eval_results_eval_run_id_idx" ON "core"."eval_results" USING btree ("eval_run_id");--> statement-breakpoint
+CREATE INDEX "llm_calls_session_stage_idx" ON "core"."llm_calls" USING btree ("session_id","stage");

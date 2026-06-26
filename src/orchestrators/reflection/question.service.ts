@@ -6,7 +6,7 @@ import { withRetry } from "../retry";
 import type { Provider } from "../../providers/types";
 import type { PromptRegistry } from "../../prompts/registry";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder";
-import { updateLlmCallParsedOutput, updateLlmCallFailure } from "../../db/queries";
+import type { LlmCallStore } from "../../persistence/ports";
 
 const MODULE = "question-service";
 
@@ -15,7 +15,8 @@ export class QuestionService {
   constructor(
     private provider: Provider,
     private prompts: PromptRegistry,
-    private modelName: string
+    private modelName: string,
+    private llmCallStore: LlmCallStore
   ) {}
 
   /**
@@ -72,14 +73,15 @@ export class QuestionService {
           provider: providerId,
           model: this.modelName,
           promptVersion,
-        }
+        },
+        this.llmCallStore
       );
 
       // Use the full repair pipeline: try repair, then fallback model call
       let parsed: QuestionOutput;
       let fallbackLlmCallId: string | null = null;
       try {
-        const { result, metadata } = await repairWithFallback<string | null>(
+        const { result, metadata } = await repairWithFallback<QuestionOutput, string | null>(
           JSON.stringify(raw),
           QuestionOutputSchema,
           async () => {
@@ -96,7 +98,8 @@ export class QuestionService {
                 provider: providerId,
                 model: this.modelName,
                 promptVersion,
-              }
+              },
+              this.llmCallStore
             );
             return { result, metadata: llmCallId };
           }
@@ -113,7 +116,7 @@ export class QuestionService {
         // Update primary call record with failure
         if (primaryLlmCallId) {
           try {
-            await updateLlmCallFailure(primaryLlmCallId, failureType, errorMsg);
+            await this.llmCallStore.updateFailure(primaryLlmCallId, failureType, errorMsg);
           } catch (err) {
             logger.warn(
               { module: MODULE, operation: "updateLlmCallFailure", llmCallId: primaryLlmCallId, error: err },
@@ -127,7 +130,7 @@ export class QuestionService {
       // Update primary call with parsed output (after successful repair/parsing)
       if (primaryLlmCallId) {
         try {
-          await updateLlmCallParsedOutput(primaryLlmCallId, parsed);
+          await this.llmCallStore.updateParsedOutput(primaryLlmCallId, parsed);
         } catch (err) {
           logger.warn(
             { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: primaryLlmCallId, error: err },
@@ -139,7 +142,7 @@ export class QuestionService {
       // Update fallback call with parsed output (if fallback was used)
       if (fallbackLlmCallId) {
         try {
-          await updateLlmCallParsedOutput(fallbackLlmCallId, parsed);
+          await this.llmCallStore.updateParsedOutput(fallbackLlmCallId, parsed);
         } catch (err) {
           logger.warn(
             { module: MODULE, operation: "updateLlmCallParsedOutput", llmCallId: fallbackLlmCallId, error: err },

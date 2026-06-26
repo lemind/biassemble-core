@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import Fastify from "fastify";
 import { registerReflectionRoutes } from "../../src/routes/reflection.js";
 import { MockProvider } from "../mocks/mock-provider.js";
@@ -6,6 +6,28 @@ import { PromptRegistry } from "../../src/prompts/registry.js";
 import { QuestionService } from "../../src/orchestrators/reflection/question.service.js";
 import { AssessmentService } from "../../src/orchestrators/reflection/assessment.service.js";
 import { BiasCatalogService } from "../../src/catalog/bias-catalog.js";
+import type { LlmCallStore, RunStore, TraceStore } from "../../src/persistence/ports.js";
+
+const mockLlmCallStore: LlmCallStore = {
+  recordCall: vi.fn().mockResolvedValue({ id: "test-llm-call-id" }),
+  getCallsBySession: vi.fn().mockResolvedValue([]),
+  getCallsByStage: vi.fn().mockResolvedValue([]),
+  getCallsByProvider: vi.fn().mockResolvedValue([]),
+  getCallsBySessionAndStage: vi.fn().mockResolvedValue([]),
+  updateParsedOutput: vi.fn().mockResolvedValue(undefined),
+  updateFailure: vi.fn().mockResolvedValue(undefined),
+  getCallsForMetrics: vi.fn().mockResolvedValue([]),
+};
+
+const mockRunStore: RunStore = {
+  createRun: vi.fn().mockResolvedValue({ id: "test-run-id" }),
+  getRunsBySession: vi.fn().mockResolvedValue([]),
+};
+
+const mockTraceStore: TraceStore = {
+  persistTrace: vi.fn().mockResolvedValue(undefined),
+  getTrace: vi.fn().mockResolvedValue(null),
+};
 
 /**
  * Integration test for the full repair pipeline (real services + mocked provider).
@@ -21,8 +43,8 @@ describe("Repair pipeline — real QuestionService/AssessmentService with MockPr
     const prompts = new PromptRegistry();
     const catalog = new BiasCatalogService();
 
-    const questionService = new QuestionService(mockProvider, prompts, "mock-model");
-    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model");
+    const questionService = new QuestionService(mockProvider, prompts, "mock-model", mockLlmCallStore);
+    const assessmentService = new AssessmentService(mockProvider, prompts, catalog, "mock-model", mockLlmCallStore, mockRunStore, mockTraceStore);
 
     server = Fastify();
     registerReflectionRoutes(server, {

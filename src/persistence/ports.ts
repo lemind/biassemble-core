@@ -3,28 +3,24 @@
 
 import type {
   RunRecord,
-  SessionRecord,
   TraceRecord,
   EvalResultRecord,
   LlmCallRecord,
   LlmCallStage,
+  LlmCallFailureType,
 } from "./types";
-
-export interface SessionStore {
-  createSession(storyId: string): Promise<SessionRecord>;
-  getSession(id: string): Promise<SessionRecord | null>;
-}
+import type { ReasoningTrace } from "../contracts/reasoning.schemas";
 
 export interface RunStore {
   createRun(
     sessionId: string,
-    data: Omit<RunRecord, "id" | "createdAt">,
+    data: Omit<RunRecord, "id" | "createdAt" | "sessionId">,
   ): Promise<RunRecord>;
   getRunsBySession(sessionId: string): Promise<RunRecord[]>;
 }
 
 export interface TraceStore {
-  persistTrace(runId: string, trace: unknown): Promise<TraceRecord>;
+  persistTrace(runId: string, trace: ReasoningTrace): Promise<TraceRecord>;
   getTrace(runId: string): Promise<TraceRecord | null>;
 }
 
@@ -46,4 +42,13 @@ export interface LlmCallStore {
   getCallsByStage(stage: LlmCallStage): Promise<LlmCallRecord[]>;
   getCallsByProvider(provider: string): Promise<LlmCallRecord[]>;
   getCallsBySessionAndStage(sessionId: string, stage: LlmCallStage): Promise<LlmCallRecord[]>;
+  updateParsedOutput(id: string, parsedOutput: object): Promise<void>;
+  updateFailure(id: string, failureType: LlmCallFailureType, errorMessage: string | null): Promise<void>;
+  getCallsForMetrics(filter?: {
+    timeRange?: { start: Date; end: Date };
+    provider?: string;
+    model?: string;
+    stage?: LlmCallStage;
+    limit?: number;
+  }): Promise<LlmCallRecord[]>;
 }

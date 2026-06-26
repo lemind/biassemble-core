@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { getDb } from "./config";
 import {
   runs,
@@ -82,9 +82,9 @@ export async function persistEvalResult(
     systemMetrics: Record<string, unknown>;
     inputHash: string;
     passed: boolean;
-    evalRunId: string;
+    evalRunId: string | null;
     scenarioId: string;
-    rawOutput?: string;
+    rawOutput?: string | null;
   }
 ) {
   const [row] = await db()
@@ -231,6 +231,50 @@ export async function getCallsBySessionAndStage(
         eq(llmCalls.stage, stage)
       )
     )
+    .orderBy(llmCalls.createdAt);
+}
+
+export async function getCallsForMetrics(filter: {
+  timeRange?: { start: Date; end: Date };
+  provider?: string;
+  model?: string;
+  stage?: LlmCallStage;
+  limit?: number;
+} = {}) {
+  const conditions = [];
+
+  // Default to last 30 days if no timeRange provided to prevent full table scans
+  const timeRange = filter.timeRange ?? {
+    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+    end: new Date()
+  };
+
+  conditions.push(
+    and(
+      gte(llmCalls.createdAt, timeRange.start),
+      lte(llmCalls.createdAt, timeRange.end)
+    )
+  );
+
+  if (filter.provider) {
+    conditions.push(eq(llmCalls.provider, filter.provider));
+  }
+
+  if (filter.model) {
+    conditions.push(eq(llmCalls.model, filter.model));
+  }
+
+  if (filter.stage) {
+    conditions.push(eq(llmCalls.stage, filter.stage));
+  }
+
+  const limit = filter.limit ?? 10000;
+
+  return await db()
+    .select()
+    .from(llmCalls)
+    .where(and(...conditions))
+    .limit(limit)
     .orderBy(llmCalls.createdAt);
 }
 

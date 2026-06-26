@@ -106,14 +106,14 @@ export const RunSchema = z
 // ─── Evaluation result schema ───────────────────────────────
 
 export const EvaluationMetricsSchema = z.object({
-  evidence_grounded_rate: z.number().min(0).max(1).nullable(),
-  false_positive_rate: z.number().min(0).max(1).nullable(),
+  evidenceGroundedRate: z.number().min(0).max(1).nullable(),
+  falsePositiveRate: z.number().min(0).max(1).nullable(),
 });
 export type EvaluationMetrics = z.infer<typeof EvaluationMetricsSchema>;
 
 export const SystemMetricsSchema = z.object({
-  schema_parse_rate: z.number().min(0).max(1).nullable(),
-  repair_rate: z.number().min(0).max(1).nullable(),
+  schemaParseRate: z.number().min(0).max(1).nullable(),
+  repairRate: z.number().min(0).max(1).nullable(),
 });
 export type SystemMetrics = z.infer<typeof SystemMetricsSchema>;
 

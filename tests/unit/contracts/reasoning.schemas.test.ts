@@ -345,17 +345,17 @@ describe("T501 — reasoning.schemas", () => {
 
   describe("EvaluationMetricsSchema", () => {
     it("should accept valid metrics", () => {
-      const metrics = { evidence_grounded_rate: 0.95, false_positive_rate: 0.05 };
+      const metrics = { evidenceGroundedRate: 0.95, falsePositiveRate: 0.05 };
       expect(() => EvaluationMetricsSchema.parse(metrics)).not.toThrow();
     });
 
     it("should accept null values", () => {
-      const metrics = { evidence_grounded_rate: null, false_positive_rate: null };
+      const metrics = { evidenceGroundedRate: null, falsePositiveRate: null };
       expect(() => EvaluationMetricsSchema.parse(metrics)).not.toThrow();
     });
 
     it("should reject out of range", () => {
-      const metrics = { evidence_grounded_rate: 1.5, false_positive_rate: 0.5 };
+      const metrics = { evidenceGroundedRate: 1.5, falsePositiveRate: 0.5 };
       expect(() => EvaluationMetricsSchema.parse(metrics)).toThrow();
     });
   });
@@ -364,12 +364,12 @@ describe("T501 — reasoning.schemas", () => {
 
   describe("SystemMetricsSchema", () => {
     it("should accept valid metrics", () => {
-      const metrics = { schema_parse_rate: 1.0, repair_rate: 0.5 };
+      const metrics = { schemaParseRate: 1.0, repairRate: 0.5 };
       expect(() => SystemMetricsSchema.parse(metrics)).not.toThrow();
     });
 
     it("should accept null values", () => {
-      const metrics = { schema_parse_rate: null, repair_rate: null };
+      const metrics = { schemaParseRate: null, repairRate: null };
       expect(() => SystemMetricsSchema.parse(metrics)).not.toThrow();
     });
   });
@@ -382,8 +382,8 @@ describe("T501 — reasoning.schemas", () => {
       prompt_version: "v1.0",
       model_name: "gemini-2.0-flash",
       dataset: "golden",
-      evaluation_metrics: { evidence_grounded_rate: 0.9, false_positive_rate: 0.1 },
-      system_metrics: { schema_parse_rate: 1.0, repair_rate: 0.5 },
+      evaluation_metrics: { evidenceGroundedRate: 0.9, falsePositiveRate: 0.1 },
+      system_metrics: { schemaParseRate: 1.0, repairRate: 0.5 },
       input_hash: "abc123",
       passed: true,
       run_at: "2026-01-01T00:00:00Z",

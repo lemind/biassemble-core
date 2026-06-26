@@ -8,6 +8,20 @@
       "when": 1750320000000,
       "tag": "0003_observability_reliability",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782387825422,
+      "tag": "0004_melodic_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782394027126,
+      "tag": "0005_melted_matthew_murdock",
+      "breakpoints": true
     }
   ]
 }

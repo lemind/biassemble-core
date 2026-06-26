@@ -1,4 +1,4 @@
-import { recordLlmCall } from "../db/queries";
+import type { LlmCallStore } from "../persistence/ports";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType } from "../persistence/types";
 import type { ProviderResponse } from "../providers/types";
 import { TimeoutError } from "../providers/types";
@@ -25,8 +25,9 @@ export interface LlmCallMetadata {
  */
 export async function executeAndRecordLlmCall<T>(
   call: () => Promise<ProviderResponse<T>>,
-  metadata: LlmCallMetadata
-): Promise<{ result: T; llmCallId: string }> {
+  metadata: LlmCallMetadata,
+  store: LlmCallStore
+): Promise<{ result: T; llmCallId: string | null }> {
   const startedAt = new Date();
   const t0 = Date.now();
 
@@ -58,33 +59,34 @@ export async function executeAndRecordLlmCall<T>(
   } finally {
     const endedAt = new Date();
     const durationMs = Date.now() - t0;
-    const record = await recordLlmCall({
-      sessionId: metadata.sessionId,
-      stage: metadata.stage,
-      callType: metadata.callType,
-      provider: metadata.provider,
-      model: metadata.model,
-      promptVersion: metadata.promptVersion,
-      rawResponse: raw !== undefined ? JSON.stringify(raw) : null,
-      parsedOutput: null,
-      status,
-      failureType,
-      inputTokens,
-      outputTokens,
-      totalTokens,
-      startedAt: startedAt.toISOString(),
-      endedAt: endedAt.toISOString(),
-      durationMs,
-      errorMessage,
-    }).catch((err) => {
+    try {
+      const record = await store.recordCall({
+        sessionId: metadata.sessionId,
+        stage: metadata.stage,
+        callType: metadata.callType,
+        provider: metadata.provider,
+        model: metadata.model,
+        promptVersion: metadata.promptVersion,
+        rawResponse: raw !== undefined ? JSON.stringify(raw) : null,
+        parsedOutput: null,
+        status,
+        failureType,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        startedAt: startedAt.toISOString(),
+        endedAt: endedAt.toISOString(),
+        durationMs,
+        errorMessage,
+      });
+      llmCallId = record?.id ?? null;
+    } catch (err) {
       logger.warn(
         { module: MODULE, operation: "recordLlmCall", error: err },
         "Failed to record LLM call"
       );
-      return null;
-    });
-    llmCallId = record?.id ?? null;
+    }
   }
 
-  return { result: raw as T, llmCallId: llmCallId! };
+  return { result: raw as T, llmCallId };
 }

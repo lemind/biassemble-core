@@ -108,7 +108,7 @@
   - Services call `executeAndRecordLlmCall()` directly, not through `repairWithFallback()`
   - Files: `biassemble-core/src/orchestrators/reflection/assessment.service.ts`, `biassemble-core/src/orchestrators/reflection/question.service.ts`
 
-- [ ] T304 Fix layer violation — move DB updates outside fallback callback
+- [x] T304 Fix layer violation — move DB updates outside fallback callback
   - **Problem**: Services call `updateLlmCallParsedOutput()` directly inside fallback callback, mixing observability concerns with parser logic
   - **Solution**: Fallback callback returns `{ result, llmCallId }`, outer service scope handles all DB updates
   - Validate fallback output through schema before returning
@@ -119,7 +119,7 @@
 
 ### Port Wiring Fix
 
-- [ ] T300 Wire `llm-call-recorder.ts` via `LlmCallStore` port instead of calling `queries.ts` directly — accept `LlmCallStore` as a constructor dependency, mock the port in tests
+- [x] T300 Wire `llm-call-recorder.ts` via `LlmCallStore` port instead of calling `queries.ts` directly — accept `LlmCallStore` as a constructor dependency, mock the port in tests
 
 ---
 
@@ -129,16 +129,16 @@
 
 ### Tests for Phase 3
 
-- [ ] T301 Write unit tests for `computeReliabilityMetrics()` — test with fixture data: empty dataset, single call, mixed statuses, filtering by provider/model/stage/time range, percentile accuracy (p50/p95/p99), schema validation failure rate calculation
+- [x] T301 Write unit tests for `computeReliabilityMetrics()` — test with fixture data: empty dataset, single call, mixed statuses, filtering by provider/model/stage/time range, percentile accuracy (p50/p95/p99), schema validation failure rate calculation
   - File: `biassemble-core/tests/unit/observability/reliability-metrics.test.ts`
 
 ### Implementation for Phase 3
 
-- [ ] T302 Create `src/observability/reliability-metrics.ts`
+- [x] T302 Create `src/observability/reliability-metrics.ts`
   - Export `computeReliabilityMetrics()` function and `ReliabilityMetricsFilter` / `ReliabilityMetrics` interfaces
   - File: `biassemble-core/src/observability/reliability-metrics.ts`
 
-- [ ] T303 Implement `computeReliabilityMetrics()` function
+- [x] T303 Implement `computeReliabilityMetrics()` function
   - Accept filter: timeRange, provider, model, stage
   - Query `llm_calls` table with filters
   - Compute: avg latency, p50/p95/p99 latency, success rate, timeout rate, fallback rate, schema_validation failure rate, total call count
