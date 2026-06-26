@@ -184,11 +184,11 @@
   - Define Inngest job for async eval runs
   - File: `biassemble-core/src/jobs/eval-run.ts`
 
-- [ ] T407 Register eval run job in `src/jobs/inngest-functions.ts`
+- [x] T407 Register eval run job in `src/jobs/inngest-functions.ts`
   - Add import and export for eval run job
   - File: `biassemble-core/src/jobs/inngest-functions.ts`
 
-- [ ] T408 Add CLI script to trigger eval run
+- [x] T408 Add CLI script to trigger eval run
   - Accept dataset name and provider/model as arguments
   - File: `biassemble-core/scripts/trigger-eval-run.ts`
 
