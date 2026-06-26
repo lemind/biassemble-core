@@ -3,12 +3,32 @@ import { computeReliabilityMetrics } from '../../../src/observability/reliabilit
 import type { LlmCallRecord } from '../../../src/persistence/types';
 import type { LlmCallStore } from '../../../src/persistence/ports';
 
-function createMockStore(calls: LlmCallRecord[]): LlmCallStore {
+function createMockStore(allCalls: LlmCallRecord[]): LlmCallStore {
   return {
     recordCall: vi.fn(),
     updateParsedOutput: vi.fn(),
     updateFailure: vi.fn(),
-    getCallsForMetrics: vi.fn().mockResolvedValue(calls),
+    getCallsForMetrics: vi.fn().mockImplementation(async (filter) => {
+      // Simulate DB filtering
+      return allCalls.filter(call => {
+        if (filter?.timeRange) {
+          const callTime = new Date(call.createdAt);
+          if (callTime < filter.timeRange.start || callTime > filter.timeRange.end) {
+            return false;
+          }
+        }
+        if (filter?.provider && call.provider !== filter.provider) {
+          return false;
+        }
+        if (filter?.model && call.model !== filter.model) {
+          return false;
+        }
+        if (filter?.stage && call.stage !== filter.stage) {
+          return false;
+        }
+        return true;
+      });
+    }),
   } as unknown as LlmCallStore;
 }
 

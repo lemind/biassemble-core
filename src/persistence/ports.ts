@@ -44,5 +44,11 @@ export interface LlmCallStore {
   getCallsBySessionAndStage(sessionId: string, stage: LlmCallStage): Promise<LlmCallRecord[]>;
   updateParsedOutput(id: string, parsedOutput: object): Promise<void>;
   updateFailure(id: string, failureType: LlmCallFailureType, errorMessage: string | null): Promise<void>;
-  getCallsForMetrics(): Promise<LlmCallRecord[]>;
+  getCallsForMetrics(filter?: {
+    timeRange?: { start: Date; end: Date };
+    provider?: string;
+    model?: string;
+    stage?: LlmCallStage;
+    limit?: number;
+  }): Promise<LlmCallRecord[]>;
 }

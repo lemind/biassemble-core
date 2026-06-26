@@ -80,8 +80,14 @@ export class DrizzleLlmCallStore implements LlmCallStore {
     return updateLlmCallFailure(id, failureType, errorMessage);
   }
 
-  async getCallsForMetrics(): Promise<LlmCallRecord[]> {
-    const rows = await dbGetCallsForMetrics();
+  async getCallsForMetrics(filter?: {
+    timeRange?: { start: Date; end: Date };
+    provider?: string;
+    model?: string;
+    stage?: LlmCallStage;
+    limit?: number;
+  }): Promise<LlmCallRecord[]> {
+    const rows = await dbGetCallsForMetrics(filter);
     return rows.map(toLlmCallRecord);
   }
 }

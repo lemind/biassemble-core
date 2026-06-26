@@ -49,7 +49,9 @@ export const evalResults = core.table("eval_results", {
   evalRunId: uuid("eval_run_id"),
   scenarioId: text("scenario_id").notNull(),
   rawOutput: text("raw_output"),
-});
+}, (table) => [
+  index("eval_results_eval_run_id_idx").on(table.evalRunId),
+]);
 
 // ── LLM Calls (Stage 003) ──
 // Observability layer: stores raw LLM outputs for debugging and replay.
@@ -80,6 +82,8 @@ export const llmCalls = core.table("llm_calls", {
   index("llm_calls_stage_idx").on(table.stage),
   index("llm_calls_created_at_idx").on(table.createdAt),
   index("llm_calls_session_id_idx").on(table.sessionId),
+  index("llm_calls_metrics_idx").on(table.createdAt, table.provider, table.model, table.stage),
+  index("llm_calls_session_stage_idx").on(table.sessionId, table.stage),
 ]);
 
 // ── Type exports ──

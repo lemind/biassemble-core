@@ -8,6 +8,7 @@ export interface ReliabilityMetricsFilter {
   stage?: LlmCallStage;
 }
 
+// Metrics are per-CALL (primary + fallback counted separately), not per-REQUEST.
 export interface ReliabilityMetrics {
   totalCallCount: number;
   primaryCallCount: number;
@@ -27,30 +28,9 @@ export async function computeReliabilityMetrics(
   filter: ReliabilityMetricsFilter,
   store: LlmCallStore
 ): Promise<ReliabilityMetrics> {
-  const calls = await store.getCallsForMetrics();
-  const filtered = applyFilter(calls, filter);
-  return computeMetricsFromCalls(filtered);
-}
-
-function applyFilter(calls: LlmCallRecord[], filter: ReliabilityMetricsFilter): LlmCallRecord[] {
-  return calls.filter(call => {
-    if (filter.timeRange) {
-      const callTime = new Date(call.createdAt);
-      if (callTime < filter.timeRange.start || callTime > filter.timeRange.end) {
-        return false;
-      }
-    }
-    if (filter.provider && call.provider !== filter.provider) {
-      return false;
-    }
-    if (filter.model && call.model !== filter.model) {
-      return false;
-    }
-    if (filter.stage && call.stage !== filter.stage) {
-      return false;
-    }
-    return true;
-  });
+  // Push filtering to the database for scalability
+  const calls = await store.getCallsForMetrics(filter);
+  return computeMetricsFromCalls(calls);
 }
 
 function computeMetricsFromCalls(calls: LlmCallRecord[]): ReliabilityMetrics {
