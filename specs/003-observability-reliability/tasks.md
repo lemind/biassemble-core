@@ -168,7 +168,7 @@
 
 ### Implementation for Phase 4
 
-- [ ] T404 Create `src/evaluation/eval-runner.ts`
+- [x] T404 Create `src/evaluation/eval-runner.ts`
   - Export `runDataset()` function and `DatasetRunConfig` interface
   - File: `biassemble-core/src/evaluation/eval-runner.ts`
 
