@@ -172,7 +172,7 @@
   - Export `runDataset()` function and `DatasetRunConfig` interface
   - File: `biassemble-core/src/evaluation/eval-runner.ts`
 
-- [ ] T405 Implement `runDataset()` function
+- [x] T405 Implement `runDataset()` function
   - Accept: dataset name, stories array, provider, model
   - Generate `eval_run_id` (randomUUID()) for this execution
   - For each story: run through pipeline, store result in `eval_results` with shared `eval_run_id`, `scenario_id`, `raw_output` (raw LLM text)
