@@ -197,7 +197,7 @@
   - Verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output`
   - Verify raw outputs stored in `raw_output` column
 
-- [ ] T410 Verify backwards compatibility
+- [x] T410 Verify backwards compatibility
   - Run full existing test suite — no regressions
   - Verify existing sessions work without `llm_calls` records
   - Verify existing eval scripts still function
