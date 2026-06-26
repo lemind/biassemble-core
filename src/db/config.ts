@@ -10,7 +10,7 @@ export function getDb() {
     if (!url) {
       throw new Error("DATABASE_URL is required");
     }
-    const client = postgres(url, { max: 1 });
+    const client = postgres(url, { max: 1, prepare: false });
     _db = drizzle(client, { schema });
   }
   return _db;

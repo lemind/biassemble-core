@@ -7,6 +7,7 @@ import {
   llmCalls,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType } from "../persistence/types";
+import type { LlmCall } from "./schema";
 
 function db() {
   return getDb();
@@ -171,7 +172,7 @@ export async function updateLlmCallParsedOutput(
 ): Promise<void> {
   await db()
     .update(llmCalls)
-    .set({ parsedOutput })
+    .set({ parsedOutput } as Partial<LlmCall>)
     .where(eq(llmCalls.id, id));
 }
 
@@ -186,11 +187,11 @@ export async function updateLlmCallFailure(
 ): Promise<void> {
   await db()
     .update(llmCalls)
-    .set({ 
+    .set({
       status: "error",
       failureType,
-      errorMessage 
-    })
+      errorMessage
+    } as Partial<LlmCall>)
     .where(eq(llmCalls.id, id));
 }
 

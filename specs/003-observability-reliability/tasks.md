@@ -157,22 +157,22 @@
 
 ### Tests for Phase 4
 
-- [ ] T401 Write unit tests for `runDataset()` — test with mock pipeline: successful run creates `eval_results` rows with shared `eval_run_id`, `scenario_id`, `raw_output`, provider/model correct
+- [x] T401 Write unit tests for `runDataset()` — test with mock pipeline: successful run creates `eval_results` rows with shared `eval_run_id`, `scenario_id`, `raw_output`, provider/model correct
   - File: `biassemble-core/tests/unit/evaluation/eval-runner.test.ts`
 
-- [ ] T402 Write integration test for eval run flow — run eval on small dataset, verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output` populated, provider/model correct
+- [x] T402 Write integration test for eval run flow — run eval on small dataset, verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output` populated, provider/model correct
   - File: `biassemble-core/tests/integration/eval-run.test.ts`
 
-- [ ] T403 Write backwards compatibility tests — verify existing sessions without `llm_calls` records still work, existing eval scripts still work, no regressions in existing test suite
+- [x] T403 Write backwards compatibility tests — verify existing sessions without `llm_calls` records still work, existing eval scripts still work, no regressions in existing test suite
   - File: `biassemble-core/tests/integration/backwards-compatibility.test.ts`
 
 ### Implementation for Phase 4
 
-- [ ] T404 Create `src/evaluation/eval-runner.ts`
+- [x] T404 Create `src/evaluation/eval-runner.ts`
   - Export `runDataset()` function and `DatasetRunConfig` interface
   - File: `biassemble-core/src/evaluation/eval-runner.ts`
 
-- [ ] T405 Implement `runDataset()` function
+- [x] T405 Implement `runDataset()` function
   - Accept: dataset name, stories array, provider, model
   - Generate `eval_run_id` (randomUUID()) for this execution
   - For each story: run through pipeline, store result in `eval_results` with shared `eval_run_id`, `scenario_id`, `raw_output` (raw LLM text)
@@ -180,24 +180,24 @@
   - No pass/fail changes — just store what the pipeline produced
   - File: `biassemble-core/src/evaluation/eval-runner.ts`
 
-- [ ] T406 Create `src/jobs/eval-run.ts` job definition
+- [x] T406 Create `src/jobs/eval-run.ts` job definition
   - Define Inngest job for async eval runs
   - File: `biassemble-core/src/jobs/eval-run.ts`
 
-- [ ] T407 Register eval run job in `src/jobs/inngest-functions.ts`
+- [x] T407 Register eval run job in `src/jobs/inngest-functions.ts`
   - Add import and export for eval run job
   - File: `biassemble-core/src/jobs/inngest-functions.ts`
 
-- [ ] T408 Add CLI script to trigger eval run
+- [x] T408 Add CLI script to trigger eval run
   - Accept dataset name and provider/model as arguments
   - File: `biassemble-core/scripts/trigger-eval-run.ts`
 
-- [ ] T409 Run existing golden dataset through new eval infrastructure
+- [x] T409 Run existing golden dataset through new eval infrastructure
   - Use existing golden dataset files in `evaluations/golden/reflection/`
   - Verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output`
   - Verify raw outputs stored in `raw_output` column
 
-- [ ] T410 Verify backwards compatibility
+- [x] T410 Verify backwards compatibility
   - Run full existing test suite — no regressions
   - Verify existing sessions work without `llm_calls` records
   - Verify existing eval scripts still function
@@ -212,7 +212,7 @@
 
 ### Implementation for Phase 5
 
-- [ ] T501 Deploy database migration to production
+- [x] T501 Deploy database migration to production
   - Run `pnpm db:migrate` to apply schema changes (new `llm_calls` table, extended `eval_results` columns)
   - Verify migration completes successfully
   - Verify new tables/columns exist in production database

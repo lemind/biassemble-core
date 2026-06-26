@@ -3,5 +3,6 @@
  * Similar to backend's src/lib/workflow/inngest-functions.ts.
  */
 import { evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob } from "./eval-assessment";
+import { evalDatasetRunJob } from "./eval-run";
 
-export const inngestFunctions = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob];
+export const inngestFunctions = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob, evalDatasetRunJob];

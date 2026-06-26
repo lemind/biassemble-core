@@ -42,7 +42,12 @@ Validates that bias evidence excerpts are grounded in the input story/answers.
 ### `computeEvaluationMetrics()`
 Computes evidence_grounded_rate and false_positive_rate for an assessment.
 
-**Ownership:** Only called from `run-eval.ts` during evaluation scenario execution.
+**Ownership:** Only called from `run-eval.ts` during evaluation scenario execution, and from `eval-runner.ts` during dataset runs.
+
+### `runDataset()`
+Runs a dataset of stories through the assessment pipeline and persists per-scenario results to `eval_results` with a shared `eval_run_id`.
+
+**Ownership:** Only called from `src/jobs/eval-run.ts` (Inngest job triggered by `eval/dataset-run` event). To trigger a run, use `scripts/trigger-eval-run.ts` which sends the event.
 
 ## Provider Interface
 

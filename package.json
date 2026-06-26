@@ -15,6 +15,9 @@
     "eval:trigger": "tsx --env-file=.env scripts/trigger-eval.ts",
     "eval:trigger:golden": "tsx --env-file=.env scripts/trigger-eval-golden.ts",
     "eval:trigger:no-bias": "tsx --env-file=.env scripts/trigger-eval-no-bias.ts",
+    "eval:dataset": "tsx --env-file=.env scripts/trigger-eval-run.ts",
+    "eval:dataset:golden": "tsx --env-file=.env scripts/trigger-eval-run.ts --dataset golden",
+    "eval:dataset:no-bias": "tsx --env-file=.env scripts/trigger-eval-run.ts --dataset no_bias",
     "generate:contracts": "tsx scripts/generate-contracts.ts",
     "deploy": "vercel deploy --prod",
     "inngest:sync": "curl -s -o /dev/null -w '%{http_code}' https://biassemble-core.vercel.app/api/inngest",
@@ -25,7 +28,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "0.21.0",
-    "drizzle-orm": "0.38.4",
+    "drizzle-orm": "0.40.0",
     "fastify": "5.8.5",
     "inngest": "3.54.2",
     "pino": "9.14.0",
