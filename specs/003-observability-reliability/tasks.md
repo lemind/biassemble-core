@@ -192,7 +192,7 @@
   - Accept dataset name and provider/model as arguments
   - File: `biassemble-core/scripts/trigger-eval-run.ts`
 
-- [ ] T409 Run existing golden dataset through new eval infrastructure
+- [x] T409 Run existing golden dataset through new eval infrastructure
   - Use existing golden dataset files in `evaluations/golden/reflection/`
   - Verify `eval_results` rows created with `eval_run_id`, `scenario_id`, `raw_output`
   - Verify raw outputs stored in `raw_output` column
