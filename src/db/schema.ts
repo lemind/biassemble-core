@@ -16,6 +16,7 @@ export const runs = core.table("runs", {
   promptVersion: text("prompt_version").notNull(),
   inputHash: text("input_hash").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  ragResult: jsonb("rag_result"),
 });
 
 // ── Reasoning Traces ──
@@ -86,6 +87,29 @@ export const llmCalls = core.table("llm_calls", {
   index("llm_calls_session_stage_idx").on(table.sessionId, table.stage),
 ]);
 
+// ── Retrieval Comparisons (Stage 004) ──
+// One row per completed assessment session. Written fire-and-forget after runFullAssessment.
+// Tracks retrieval-vs-LLM alignment for observability. No FK on session_id — sessions are owned
+// by the public backend. run_id is the post_questions_assessment run that triggered this row.
+export const retrievalComparisons = core.table("retrieval_comparisons", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  sessionId: uuid("session_id").notNull(),
+  runId: uuid("run_id").references(() => runs.id),
+  ragList: jsonb("rag_list").notNull(),
+  llmList: jsonb("llm_list").notNull(),
+  finalList: jsonb("final_list").notNull(),
+  overlap: integer("overlap").notNull(),
+  ragOnly: integer("rag_only").notNull(),
+  llmOnly: integer("llm_only").notNull(),
+  ragHitFinal: integer("rag_hit_final").notNull(),
+  llmHitFinal: integer("llm_hit_final").notNull(),
+  normalizationAdditions: integer("normalization_additions").notNull(),
+  ragStatus: text("rag_status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("retrieval_comparisons_session_id_idx").on(table.sessionId),
+]);
+
 // ── Type exports ──
 export type Run = typeof runs.$inferSelect;
 export type NewRun = typeof runs.$inferInsert;
@@ -98,3 +122,6 @@ export type NewEvalResult = typeof evalResults.$inferInsert;
 
 export type LlmCall = typeof llmCalls.$inferSelect;
 export type NewLlmCall = typeof llmCalls.$inferInsert;
+
+export type RetrievalComparison = typeof retrievalComparisons.$inferSelect;
+export type NewRetrievalComparison = typeof retrievalComparisons.$inferInsert;

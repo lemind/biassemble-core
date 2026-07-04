@@ -10,6 +10,10 @@ const envSchema = z.object({
   INNGEST_SERVE_HOST: z.string().optional(),
   VERCEL_BYPASS_TOKEN: z.string().optional(),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+  // Stage 004: RAG engine
+  RAG_ENGINE_URL: z.url(),
+  RAG_API_KEY: z.string().min(1),
+  RAG_TIMEOUT_MS: z.coerce.number().int().positive().default(500),
 });
 
 function loadEnv() {

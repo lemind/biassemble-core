@@ -14,6 +14,7 @@ import { inngestFunctions } from "./jobs/inngest-functions";
 import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
 import { DrizzleRunStore } from "./persistence/run-store";
 import { DrizzleTraceStore } from "./persistence/trace-store";
+import { RagEngineClient } from "./rag/engine-client";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -35,8 +36,9 @@ export function buildApp() {
   const traceStore = new DrizzleTraceStore();
 
   const modelName = env.GEMINI_MODEL;
+  const ragClient = new RagEngineClient(env.RAG_ENGINE_URL, env.RAG_API_KEY, env.RAG_TIMEOUT_MS);
   const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
-  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore);
+  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore, ragClient);
 
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);

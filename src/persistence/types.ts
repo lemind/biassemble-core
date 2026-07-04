@@ -53,6 +53,26 @@ export interface EvalResultRecord {
   rawOutput: string | null;
 }
 
+// ── Retrieval Comparison Record (Stage 004) ──
+export type RagStatus = "retrieved" | "roster_fallback" | "unavailable";
+
+export interface RetrievalComparisonRecord {
+  id: string;
+  sessionId: string;
+  runId: string | null;
+  ragList: string[];
+  llmList: string[];
+  finalList: string[];
+  overlap: number;
+  ragOnly: number;
+  llmOnly: number;
+  ragHitFinal: number;
+  llmHitFinal: number;
+  normalizationAdditions: number;
+  ragStatus: RagStatus;
+  createdAt: string;
+}
+
 // ── LLM Call Record (Stage 003) ──
 export type LlmCallStatus = "success" | "timeout" | "error";
 export type LlmCallFailureType = "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other";

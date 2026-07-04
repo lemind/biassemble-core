@@ -53,6 +53,8 @@ const mockLlmCallStore: LlmCallStore = {
 const mockRunStore: RunStore = {
   createRun: vi.fn().mockResolvedValue({ id: "test-run-id" }),
   getRunsBySession: vi.fn().mockResolvedValue([]),
+  storeRagResult: vi.fn().mockResolvedValue(undefined),
+  getRagResultForSession: vi.fn().mockResolvedValue(null),
 };
 
 const mockTraceStore: TraceStore = {
@@ -130,7 +132,7 @@ describe("T202 — LLM call recording in assessment flow", () => {
     expect(recordedData.rawResponse).not.toBeNull();
     expect(typeof recordedData.rawResponse).toBe("string");
     
-    expect(recordedData.promptVersion).toBe("1.1.0");
+    expect(recordedData.promptVersion).toBe("1.2.0");
     expect(recordedData.stage).toBe("assessment");
     expect(recordedData.provider).toBe("mock");
     expect(recordedData.model).toBe("mock-model");
