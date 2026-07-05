@@ -14,6 +14,7 @@ import { inngestFunctions } from "./jobs/inngest-functions";
 import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
 import { DrizzleRunStore } from "./persistence/run-store";
 import { DrizzleTraceStore } from "./persistence/trace-store";
+import { DrizzleRetrievalComparisonStore } from "./persistence/retrieval-comparison-store";
 import { RagEngineClient } from "./rag/engine-client";
 
 /**
@@ -37,6 +38,7 @@ export function buildApp() {
 
   const modelName = env.GEMINI_MODEL;
   const ragClient = new RagEngineClient(env.RAG_ENGINE_URL, env.RAG_API_KEY, env.RAG_TIMEOUT_MS);
+  const comparisonStore = new DrizzleRetrievalComparisonStore();
   const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
   const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore, ragClient);
 
@@ -54,6 +56,7 @@ export function buildApp() {
   registerReflectionRoutes(server, {
     question: questionService,
     assessment: assessmentService,
+    comparisonStore,
   });
 
   // Inngest webhook

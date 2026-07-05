@@ -34,6 +34,8 @@ const mockLlmCallStore: LlmCallStore = {
 const mockRunStore: RunStore = {
   createRun: vi.fn().mockResolvedValue({ id: "run-id" }),
   getRunsBySession: vi.fn().mockResolvedValue([]),
+  storeRagResult: vi.fn().mockResolvedValue(undefined),
+  getRagResultForSession: vi.fn().mockResolvedValue(null),
 };
 
 const mockTraceStore: TraceStore = {

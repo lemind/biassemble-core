@@ -43,7 +43,7 @@ export class AssessmentService {
     answers: string[],
     requestId: string
   ): Promise<AssessmentOutput> {
-    return this.runFullAssessment("", story, questions, answers, requestId);
+    return (await this.runFullAssessment("", story, questions, answers, requestId)).output;
   }
 
   /**
@@ -81,7 +81,6 @@ export class AssessmentService {
     // Retrieve RAG context if client is configured
     let ragCase: RagCase = "unavailable";
     let retrievedIds = new Set<string>();
-    let ragList: string[] = [];
 
     if (this.ragClient) {
       const ragResult = await this.ragClient.retrieve(story);
@@ -94,18 +93,15 @@ export class AssessmentService {
       const ctx = buildBiasContext(ragResult, this.catalog.getAll());
       ragCase = ctx.ragCase;
       retrievedIds = ctx.retrievedIds;
-      ragList = ragCase === "retrieved" && ragResult.status === "ok"
-        ? ragResult.data.biases.filter(b => b.retrieval_score > 0).map(b => b.name)
-        : [];
 
       const system = this.prompts.render("assessment", { biasContext: ctx.biasContext });
       const user = `STORY: ${story}`;
 
-      return this.callProvider(
+      return (await this.callProvider(
         sessionId, system, user, requestId, runId,
         "initial_assessment", "story_only", inputHash, promptVersion, providerId,
-        story, [], ragCase, retrievedIds, ragList,
-      );
+        story, [], ragCase, retrievedIds,
+      )).output;
     }
 
     // No RAG client — roster-only path (backward compat)
@@ -117,11 +113,11 @@ export class AssessmentService {
     const system = this.prompts.render("assessment", { biasContext });
     const user = `STORY: ${story}`;
 
-    return this.callProvider(
+    return (await this.callProvider(
       sessionId, system, user, requestId, runId,
       "initial_assessment", "story_only", inputHash, promptVersion, providerId,
-      story, [], ragCase, retrievedIds, ragList,
-    );
+      story, [], ragCase, retrievedIds,
+    )).output;
   }
 
   /**
@@ -134,7 +130,7 @@ export class AssessmentService {
     questions: string[],
     answers: string[],
     requestId: string
-  ): Promise<AssessmentOutput> {
+  ): Promise<{ output: AssessmentOutput; runId: string; ragCase: RagCase; ragList: string[]; llmListRaw: string[] }> {
     const promptVersion = this.prompts.getVersion();
     const providerId = this.provider.mode;
     const inputHash = computeInputHash(
@@ -199,11 +195,12 @@ export class AssessmentService {
       ? `STORY: ${story}\n\nCONVERSATION:\n${qaPairs}`
       : `STORY: ${story}`;
 
-    return this.callProvider(
+    const { output, llmListRaw } = await this.callProvider(
       sessionId, system, user, requestId, runId,
       "post_questions_assessment", "story_plus_answers", inputHash, promptVersion, providerId,
-      story, answers, ragCase, retrievedIds, ragList,
+      story, answers, ragCase, retrievedIds,
     );
+    return { output, runId, ragCase, ragList, llmListRaw };
   }
 
   /**
@@ -224,8 +221,7 @@ export class AssessmentService {
     answers: string[],
     ragCase: RagCase = "unavailable",
     retrievedIds: Set<string> = new Set(),
-    _ragList: string[] = [],
-  ): Promise<AssessmentOutput> {
+  ): Promise<{ output: AssessmentOutput; llmListRaw: string[] }> {
     return await withRetry(async (attempt) => {
       logger.info(
         { module: MODULE, operation: "callProvider", requestId, attempt, stage, scope, rag_context: ragCase },
@@ -363,6 +359,9 @@ export class AssessmentService {
         parsed.noBiasDetected = false;
       }
 
+      // Capture raw LLM bias names before normalization for comparison recording
+      const llmListRaw = parsed.biases.map(b => b.name);
+
       // Normalize bias names against catalog
       const allBiases = this.catalog.getAll();
       const normalizedBiases = parsed.biases.map((bias) => {
@@ -396,7 +395,7 @@ export class AssessmentService {
       }
 
       // Stamp version, model, stage, scope fields
-      return {
+      const output: AssessmentOutput = {
         ...parsed,
         biases: normalizedBiases,
         prompt_version: promptVersion,
@@ -404,6 +403,7 @@ export class AssessmentService {
         modelName: this.modelName,
         inputContext: scope === "story_only" ? "story-only" : "full",
       };
+      return { output, llmListRaw };
     });
   }
 }

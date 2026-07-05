@@ -9,6 +9,9 @@ import {
 import type { StoryAnalysis, Interpretation } from "../contracts/reasoning.schemas";
 import { authHook } from "../lib/auth";
 import { logger } from "../observability/logger";
+import type { RetrievalComparisonStore } from "../persistence/ports";
+import { recordComparison } from "../observability/comparison-recorder";
+import type { RagCase } from "../rag/context-builder";
 
 const MODULE = "routes";
 
@@ -19,9 +22,17 @@ export interface QuestionServiceLike {
   generate(sessionId: string, story: string, requestId: string, storyAnalysis?: StoryAnalysis, interpretations?: Interpretation[]): Promise<QuestionOutput>;
 }
 
+export interface FullAssessmentResult {
+  output: AssessmentOutput;
+  runId: string;
+  ragCase: RagCase;
+  ragList: string[];
+  llmListRaw: string[];
+}
+
 export interface AssessmentServiceLike {
   runStoryOnlyAssessment(sessionId: string, story: string, requestId: string): Promise<AssessmentOutput>;
-  runFullAssessment(sessionId: string, story: string, questions: string[], answers: string[], requestId: string): Promise<AssessmentOutput>;
+  runFullAssessment(sessionId: string, story: string, questions: string[], answers: string[], requestId: string): Promise<FullAssessmentResult>;
 }
 
 export function registerReflectionRoutes(
@@ -29,6 +40,7 @@ export function registerReflectionRoutes(
   services: {
     question: QuestionServiceLike;
     assessment: AssessmentServiceLike;
+    comparisonStore?: RetrievalComparisonStore;
   }
 ) {
   /**
@@ -94,18 +106,33 @@ export function registerReflectionRoutes(
       } else {
         // mode === "full" (default)
         if (body.questions.length !== body.answers.length) {
-          return reply.status(400).send({ 
-            error: "Questions and answers count must match" 
+          return reply.status(400).send({
+            error: "Questions and answers count must match"
           });
         }
 
-        result = await services.assessment.runFullAssessment(
+        const fullResult = await services.assessment.runFullAssessment(
           body.sessionId,
           body.story,
           body.questions,
           body.answers,
           request.id
         );
+        result = fullResult.output;
+
+        if (services.comparisonStore) {
+          recordComparison(
+            {
+              sessionId: body.sessionId,
+              runId: fullResult.runId,
+              ragList: fullResult.ragList,
+              llmListRaw: fullResult.llmListRaw,
+              finalList: result.biases.map(b => b.name),
+              ragCase: fullResult.ragCase,
+            },
+            services.comparisonStore,
+          ).catch(() => {/* already logged in recordComparison */});
+        }
       }
 
       if (!includeTrace) {
