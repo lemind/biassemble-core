@@ -37,7 +37,7 @@ export function buildApp() {
   const traceStore = new DrizzleTraceStore();
 
   const modelName = env.GEMINI_MODEL;
-  const ragClient = new RagEngineClient(env.RAG_ENGINE_URL, env.RAG_API_KEY, env.RAG_TIMEOUT_MS);
+  const ragClient = new RagEngineClient(env.RAG_ENGINE_URL, env.RAG_API_KEY, env.RAG_TIMEOUT_MS, env.RAG_HF_TOKEN);
   const comparisonStore = new DrizzleRetrievalComparisonStore();
   const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
   const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore, ragClient);

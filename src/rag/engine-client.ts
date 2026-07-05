@@ -35,6 +35,7 @@ export class RagEngineClient {
     private readonly url: string,
     private readonly apiKey: string,
     private readonly timeoutMs: number,
+    private readonly hfToken?: string,
   ) {}
 
   async retrieve(story: string): Promise<RagClientResult> {
@@ -42,12 +43,17 @@ export class RagEngineClient {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "X-RAG-Key": this.apiKey,
+      };
+      if (this.hfToken) {
+        headers["Authorization"] = `Bearer ${this.hfToken}`;
+      }
+
       const response = await fetch(`${this.url}/retrieve-biases`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.apiKey}`,
-        },
+        headers,
         body: JSON.stringify({ story }),
         signal: controller.signal,
       });

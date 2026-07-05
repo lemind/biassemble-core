@@ -92,8 +92,8 @@
 
 **Purpose**: Apply schema migration to production and set environment variables.
 
-- [ ] T027 Run `pnpm db:migrate` against production Supabase to apply `0004_rag_integration.sql` — verify `rag_result` column exists on `core.runs` and `core.retrieval_comparisons` table exists
-- [ ] T028 Set `RAG_ENGINE_URL`, `RAG_API_KEY`, `RAG_TIMEOUT_MS` in Vercel environment (production + preview)
+- [x] T027 Run `pnpm db:migrate` against production Supabase to apply `0004_rag_integration.sql` — verify `rag_result` column exists on `core.runs` and `core.retrieval_comparisons` table exists
+- [x] T028 Set `RAG_ENGINE_URL`, `RAG_API_KEY`, `RAG_TIMEOUT_MS` in Vercel environment (production + preview)
 - [ ] T029 Smoke test: trigger one full assessment session in staging; confirm `retrieval_comparisons` row written with correct `rag_status`; confirm `rag_result` populated on the story-only `runs` row
 
 ---

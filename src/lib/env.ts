@@ -14,6 +14,7 @@ const envSchema = z.object({
   RAG_ENGINE_URL: z.url(),
   RAG_API_KEY: z.string().min(1),
   RAG_TIMEOUT_MS: z.coerce.number().int().positive().default(500),
+  RAG_HF_TOKEN: z.string().optional(),
 });
 
 function loadEnv() {
