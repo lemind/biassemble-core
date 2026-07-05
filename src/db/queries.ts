@@ -305,10 +305,9 @@ export async function getEvalRunAggregates() {
 // ── RAG Result (Stage 004) ──
 
 export async function updateRunRagResult(runId: string, ragResult: unknown): Promise<void> {
-  await db()
-    .update(runs)
-    .set({ ragResult })
-    .where(eq(runs.id, runId));
+  await db().execute(
+    sql`UPDATE "core"."runs" SET "rag_result" = ${ragResult === null ? null : JSON.stringify(ragResult)}::jsonb WHERE "id" = ${runId}::uuid`
+  );
 }
 
 export async function getRagResultBySession(sessionId: string): Promise<unknown | null> {
