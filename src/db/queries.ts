@@ -5,8 +5,9 @@ import {
   reasoningTraces,
   evalResults,
   llmCalls,
+  retrievalComparisons,
 } from "./schema";
-import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType } from "../persistence/types";
+import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
 import type { LlmCall } from "./schema";
 
 function db() {
@@ -299,4 +300,43 @@ export async function getEvalRunAggregates() {
     .groupBy(evalResults.evalRunId)
     .orderBy(desc(evalResults.runAt));
   return results;
+}
+
+// ── RAG Result (Stage 004) ──
+
+export async function updateRunRagResult(runId: string, ragResult: unknown): Promise<void> {
+  await db().execute(
+    sql`UPDATE "core"."runs" SET "rag_result" = ${ragResult === null ? null : JSON.stringify(ragResult)}::jsonb WHERE "id" = ${runId}::uuid`
+  );
+}
+
+export async function getRagResultBySession(sessionId: string): Promise<unknown | null> {
+  const result = await db()
+    .select({ ragResult: runs.ragResult })
+    .from(runs)
+    .where(and(eq(runs.sessionId, sessionId), eq(runs.stage, "initial_assessment")))
+    .orderBy(desc(runs.createdAt))
+    .limit(1);
+  return result[0]?.ragResult ?? null;
+}
+
+// ── Retrieval Comparisons (Stage 004) ──
+
+export async function insertRetrievalComparison(data: {
+  sessionId: string;
+  runId: string | null;
+  ragList: string[];
+  llmList: string[];
+  finalList: string[];
+  overlap: number;
+  ragOnly: number;
+  llmOnly: number;
+  ragHitFinal: number;
+  llmHitFinal: number;
+  normalizationAdditions: number;
+  ragStatus: RagStatus;
+}): Promise<void> {
+  await db()
+    .insert(retrievalComparisons)
+    .values(data);
 }

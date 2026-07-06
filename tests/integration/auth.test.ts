@@ -6,7 +6,7 @@ import { authHook } from "../../src/lib/auth.js";
 const mockQuestionService: QuestionServiceLike = { generate: async () => ({ questions: [] as string[], isComplete: false }) };
 const mockAssessmentService: AssessmentServiceLike = {
   runStoryOnlyAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
-  runFullAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
+  runFullAssessment: async () => ({ output: { biases: [], reflectionPrompt: "", noBiasDetected: false }, runId: "", ragCase: "unavailable" as const, ragList: [], llmListRaw: [] }),
 };
 
 describe("Auth Middleware Integration", () => {

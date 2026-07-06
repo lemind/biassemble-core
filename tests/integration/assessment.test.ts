@@ -21,6 +21,8 @@ const mockLlmCallStore: LlmCallStore = {
 const mockRunStore: RunStore = {
   createRun: vi.fn().mockResolvedValue({ id: "test-run-id" }),
   getRunsBySession: vi.fn().mockResolvedValue([]),
+  storeRagResult: vi.fn().mockResolvedValue(undefined),
+  getRagResultForSession: vi.fn().mockResolvedValue(null),
 };
 
 const mockTraceStore: TraceStore = {
@@ -253,7 +255,7 @@ describe("POST /v1/reflection/assessment — integration with MockProvider", () 
     expect(body.reasoningTrace).toHaveProperty("bias_hypotheses");
     expect(body.reasoningTrace).toHaveProperty("evidence_mapping");
     expect(body.reasoningTrace).toHaveProperty("prompt_version");
-    expect(body.reasoningTrace.prompt_version).toBe("1.0.0");
+    expect(body.reasoningTrace.prompt_version).toBe("1.2.0");
   });
 
   it("T505 — should exclude reasoningTrace by default (includeReasoningTrace not set)", async () => {

@@ -21,7 +21,7 @@ describe("POST /v1/reflection/question — integration", () => {
     };
     const assessmentService: AssessmentServiceLike = {
       runStoryOnlyAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
-      runFullAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
+      runFullAssessment: async () => ({ output: { biases: [], reflectionPrompt: "", noBiasDetected: false }, runId: "", ragCase: "unavailable" as const, ragList: [], llmListRaw: [] }),
     };
 
     server = Fastify();

@@ -57,6 +57,8 @@ export const BiasItemSchema = z.object({
   storyConnection: z.string().min(BIAS_FIELD_MIN_LENGTH),
   alternativePerspective: z.string().min(BIAS_FIELD_MIN_LENGTH),
   evidence: z.array(EvidenceEntrySchema).optional(),
+  /** Derived by service code post-LLM: "retrieved" if this bias was in the RAG result, "roster" otherwise. */
+  context_source: z.enum(["retrieved", "roster"]).optional(),
 });
 
 export const QuestionOutputSchema = z.object({

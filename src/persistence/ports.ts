@@ -8,6 +8,7 @@ import type {
   LlmCallRecord,
   LlmCallStage,
   LlmCallFailureType,
+  RetrievalComparisonRecord,
 } from "./types";
 import type { ReasoningTrace } from "../contracts/reasoning.schemas";
 
@@ -17,6 +18,9 @@ export interface RunStore {
     data: Omit<RunRecord, "id" | "createdAt" | "sessionId">,
   ): Promise<RunRecord>;
   getRunsBySession(sessionId: string): Promise<RunRecord[]>;
+  // Stage 004: RAG result bridging between story-only and full assessment requests
+  storeRagResult(runId: string, result: unknown): Promise<void>;
+  getRagResultForSession(sessionId: string): Promise<unknown | null>;
 }
 
 export interface TraceStore {
@@ -33,6 +37,11 @@ export interface EvalResultStore {
   // Stage 003 extensions
   getResultsByEvalRunId(evalRunId: string): Promise<EvalResultRecord[]>;
   getEvalRunAggregates(): Promise<Array<{ evalRunId: string; totalScenarios: number }>>;
+}
+
+// ── Retrieval Comparison Store (Stage 004) ──
+export interface RetrievalComparisonStore {
+  record(data: Omit<RetrievalComparisonRecord, "id" | "createdAt">): Promise<void>;
 }
 
 // ── LLM Call Store (Stage 003) ──

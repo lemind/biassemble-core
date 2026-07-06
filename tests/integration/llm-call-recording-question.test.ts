@@ -58,7 +58,7 @@ describe("T203 — LLM call recording in question flow", () => {
     const questionService = new QuestionService(mockProvider, prompts, "mock-model", mockLlmCallStore);
     const assessmentService: AssessmentServiceLike = {
       runStoryOnlyAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
-      runFullAssessment: async () => ({ biases: [], reflectionPrompt: "", noBiasDetected: false }),
+      runFullAssessment: async () => ({ output: { biases: [], reflectionPrompt: "", noBiasDetected: false }, runId: "", ragCase: "unavailable" as const, ragList: [], llmListRaw: [] }),
     };
 
     server = Fastify();
@@ -110,7 +110,7 @@ describe("T203 — LLM call recording in question flow", () => {
     expect(recordedData.rawResponse).not.toBeNull();
     expect(typeof recordedData.rawResponse).toBe("string");
     
-    expect(recordedData.promptVersion).toBe("1.1.0");
+    expect(recordedData.promptVersion).toBe("1.2.0");
     expect(recordedData.stage).toBe("question");
     expect(recordedData.provider).toBe("mock");
     expect(recordedData.model).toBe("mock-model");

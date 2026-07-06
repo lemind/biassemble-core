@@ -1,6 +1,12 @@
+import { logger } from "../observability/logger";
 import type { RunStore } from "./ports";
 import type { RunRecord } from "./types";
-import { createRun as dbCreateRun, getRunsBySession as dbGetRunsBySession } from "../db/queries";
+import {
+  createRun as dbCreateRun,
+  getRunsBySession as dbGetRunsBySession,
+  updateRunRagResult,
+  getRagResultBySession,
+} from "../db/queries";
 
 export class DrizzleRunStore implements RunStore {
   async createRun(
@@ -31,5 +37,17 @@ export class DrizzleRunStore implements RunStore {
       ...r,
       createdAt: r.createdAt.toISOString(),
     }));
+  }
+
+  async storeRagResult(runId: string, result: unknown): Promise<void> {
+    try {
+      await updateRunRagResult(runId, result);
+    } catch (err) {
+      logger.warn({ err, runId }, "rag_store_failed");
+    }
+  }
+
+  async getRagResultForSession(sessionId: string): Promise<unknown | null> {
+    return getRagResultBySession(sessionId);
   }
 }

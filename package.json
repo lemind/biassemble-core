@@ -38,6 +38,7 @@
   },
   "devDependencies": {
     "@types/node": "22.19.19",
+    "@types/pg": "8.15.6",
     "drizzle-kit": "0.31.10",
     "esbuild": "0.28.0",
     "rimraf": "6.1.3",
