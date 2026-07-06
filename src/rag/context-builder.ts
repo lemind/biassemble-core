@@ -50,7 +50,7 @@ export function buildBiasContext(
     .join("\n\n");
 
   const biasContext = `### Retrieved Biases (full context)\n\n${tier1}\n\n### All Biases (roster)\n\n${roster}`;
-  const retrievedIds = new Set(retrieved.map((b) => b.id));
+  const retrievedIds = new Set(retrieved.map((b) => b.id.replace(/_/g, "-")));
 
   return { biasContext, ragCase: "retrieved", retrievedIds };
 }
