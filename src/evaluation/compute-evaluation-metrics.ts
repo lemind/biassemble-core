@@ -107,7 +107,7 @@ export function computeEvaluationMetrics(
     isFalsePositive = null;
   } else if (options.isNoBiasStory) {
     const threshold = options.confidenceThreshold ?? 0.5;
-    isFalsePositive = biases.some((b) => (b.confidence ?? 1) > threshold);
+    isFalsePositive = biases.some((b) => (b.confidence ?? 0) > threshold);
   } else {
     isFalsePositive = false;
   }
