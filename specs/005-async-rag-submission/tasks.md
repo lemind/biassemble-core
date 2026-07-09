@@ -16,11 +16,11 @@
 
 **⚠️ CRITICAL**: Blocks all downstream phases.
 
-- [ ] T001 [P] Create migration file `src/db/migrations/0005_async_rag_submission.sql` — single statement: `ALTER TABLE runs ADD COLUMN IF NOT EXISTS rag_started_at TIMESTAMPTZ;`
-- [ ] T002 [P] Add `ragStartedAt: timestamp("rag_started_at")` nullable column to the `runs` table definition in `src/db/schema.ts`
-- [ ] T003 [P] Add `updateRagStartedAt(runId: string, startedAt: Date): Promise<void>` and `getRagStartedAtBySession(sessionId: string): Promise<Date | null>` to `src/db/queries.ts` — `getRagStartedAtBySession` reads from the most recent `initial_assessment` run for the session
-- [ ] T004 [P] Extend `RunStore` interface in `src/persistence/ports.ts` with `recordRagStarted(runId: string, startedAt: Date): Promise<void>` and `getRagStartedAtForSession(sessionId: string): Promise<Date | null>` — add Stage 005 comment
-- [ ] T005 Implement `recordRagStarted()` and `getRagStartedAtForSession()` in `src/persistence/run-store.ts` — both best-effort, non-throwing; wrap in try/catch, log warn on failure, never propagate (D011 discipline)
+- [x] T001 [P] Create migration file `src/db/migrations/0005_async_rag_submission.sql` — single statement: `ALTER TABLE runs ADD COLUMN IF NOT EXISTS rag_started_at TIMESTAMPTZ;` (shipped as `0007_async_rag_submission.sql` — next available number; migrations 0005–0006 were already taken)
+- [x] T002 [P] Add `ragStartedAt: timestamp("rag_started_at")` nullable column to the `runs` table definition in `src/db/schema.ts`
+- [x] T003 [P] Add `updateRagStartedAt(runId: string, startedAt: Date): Promise<void>` and `getRagStartedAtBySession(sessionId: string): Promise<Date | null>` to `src/db/queries.ts` — `getRagStartedAtBySession` reads from the most recent `initial_assessment` run for the session
+- [x] T004 [P] Extend `RunStore` interface in `src/persistence/ports.ts` with `recordRagStarted(runId: string, startedAt: Date): Promise<void>` and `getRagStartedAtForSession(sessionId: string): Promise<Date | null>` — add Stage 005 comment
+- [x] T005 Implement `recordRagStarted()` and `getRagStartedAtForSession()` in `src/persistence/run-store.ts` — both best-effort, non-throwing; wrap in try/catch, log warn on failure, never propagate (D011 discipline)
 
 **Checkpoint**: Migration, schema, queries, and RunStore interface all ready — user story implementation can begin.
 
@@ -100,7 +100,7 @@
   2. full assessment READY immediately: mock `getRagResultForSession` returns stored result on first read, `rag_available: true, rag_wait_ms: 0` logged
   3. full assessment RUNNING-then-completes: `getRagResultForSession` returns null on first read, `getRagStartedAtForSession` returns `Date.now() - 72_000` (elapsed ≥ 70s), poll returns result within 2s, `rag_available: true, rag_wait_ms > 0` logged — this covers US3 acceptance scenario 2 and the polling loop ceiling
   4. full assessment never ready: `getRagResultForSession` always null, `rag_available: false` logged, assessment completes with roster-only context
-- [ ] T021 Run `pnpm db:migrate` against Supabase to apply `0005_async_rag_submission.sql` — verify `rag_started_at` column present on `runs` table
+- [ ] T021 Run `pnpm db:migrate` against Supabase to apply `0007_async_rag_submission.sql` — verify `rag_started_at` column present on `runs` table
 - [ ] T022 [P] Set `RAG_TIMEOUT_MS=120000` in Vercel environment dashboard (currently 5000 in Vercel — already correct locally and on HF Space)
 - [ ] T023 Smoke test on staging: submit story → verify questions return in < 5s; wait 90s → submit assessment → verify `rag_available: true` in Vercel function logs
 

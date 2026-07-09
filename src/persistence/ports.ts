@@ -21,6 +21,9 @@ export interface RunStore {
   // Stage 004: RAG result bridging between story-only and full assessment requests
   storeRagResult(runId: string, result: unknown): Promise<void>;
   getRagResultForSession(sessionId: string): Promise<unknown | null>;
+  // Stage 005: async RAG timing
+  recordRagStarted(runId: string, startedAt: Date): Promise<void>;
+  getRagStartedAtForSession(sessionId: string): Promise<Date | null>;
 }
 
 export interface TraceStore {
