@@ -24,6 +24,7 @@ export interface RunStore {
   // Stage 005: async RAG timing
   recordRagStarted(runId: string, startedAt: Date): Promise<void>;
   getRagStartedAtForSession(sessionId: string): Promise<Date | null>;
+  recordRagCompleted(runId: string, completedAt: Date): Promise<void>;
 }
 
 export interface TraceStore {

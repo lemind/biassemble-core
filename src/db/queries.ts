@@ -339,6 +339,15 @@ export async function getRagStartedAtBySession(sessionId: string): Promise<Date 
   return result[0]?.ragStartedAt ?? null;
 }
 
+// ── RAG Completed At (Stage 005) ──
+
+export async function updateRagCompletedAt(runId: string, completedAt: Date): Promise<void> {
+  await db()
+    .update(runs)
+    .set({ ragCompletedAt: completedAt })
+    .where(eq(runs.id, runId));
+}
+
 // ── Retrieval Comparisons (Stage 004) ──
 
 export async function insertRetrievalComparison(data: {

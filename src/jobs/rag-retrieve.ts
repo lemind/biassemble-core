@@ -31,6 +31,7 @@ export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunSt
       try {
         const result = await ragClient.retrieve(story);
         await runStore.storeRagResult(runId, result.status === "ok" ? result.data : null);
+        await runStore.recordRagCompleted(runId, new Date());
         logger.info(
           { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
           "rag_retrieve_complete"
@@ -38,6 +39,7 @@ export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunSt
       } catch (err) {
         logger.warn({ module: MODULE, err, sessionId, runId }, "rag_retrieve_failed");
         await runStore.storeRagResult(runId, null).catch(() => {/* already logged by storeRagResult */});
+        await runStore.recordRagCompleted(runId, new Date()).catch(() => {/* already logged by recordRagCompleted */});
       }
     }
   );

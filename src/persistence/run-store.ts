@@ -8,6 +8,7 @@ import {
   getRagResultBySession,
   updateRagStartedAt,
   getRagStartedAtBySession,
+  updateRagCompletedAt,
 } from "../db/queries";
 
 export class DrizzleRunStore implements RunStore {
@@ -67,6 +68,14 @@ export class DrizzleRunStore implements RunStore {
     } catch (err) {
       logger.warn({ err, sessionId }, "rag_started_at_fetch_failed");
       return null;
+    }
+  }
+
+  async recordRagCompleted(runId: string, completedAt: Date): Promise<void> {
+    try {
+      await updateRagCompletedAt(runId, completedAt);
+    } catch (err) {
+      logger.warn({ err, runId }, "rag_completed_at_store_failed");
     }
   }
 }
