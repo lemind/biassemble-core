@@ -1,11 +1,13 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-specs/004-rag-integration/plan.md
+specs/005-async-rag-submission/plan.md
 
 Supporting artifacts:
-- specs/004-rag-integration/spec.md — feature specification
-- specs/004-rag-integration/data-model.md — schema changes (delta from Stage 003)
+- specs/005-async-rag-submission/spec.md — feature specification
+- specs/005-async-rag-submission/research.md — technical decisions and rationale
+- specs/005-async-rag-submission/data-model.md — schema changes (rag_started_at + enum update)
+- docs/decisions/015-async-rag-fire-at-submission.md — ADR (authoritative decision record)
 <!-- SPECKIT END -->
 
 ## Conventions
