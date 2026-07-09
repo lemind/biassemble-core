@@ -110,7 +110,7 @@ describe("T203 — LLM call recording in question flow", () => {
     expect(recordedData.rawResponse).not.toBeNull();
     expect(typeof recordedData.rawResponse).toBe("string");
     
-    expect(recordedData.promptVersion).toBe("1.2.0");
+    expect(recordedData.promptVersion).toBe("1.3.0");
     expect(recordedData.stage).toBe("question");
     expect(recordedData.provider).toBe("mock");
     expect(recordedData.model).toBe("mock-model");

@@ -17,6 +17,7 @@ import { validateEvidence } from "../../parsers/evidence-validator";
 import type { LlmCallStore, RunStore, TraceStore } from "../../persistence/ports";
 import { isEngineResponse, type RagEngineClient } from "../../rag/engine-client";
 import { buildBiasContext, type RagCase } from "../../rag/context-builder";
+import { buildBiasWorkspace, renderWorkspaceToPrompt } from "../../rag/workspace-builder";
 import type { Inngest } from "inngest";
 
 const MODULE = "assessment-service";
@@ -114,7 +115,7 @@ export class AssessmentService {
     }
 
     const ctx = buildBiasContext({ status: "unavailable" }, this.catalog.getAll());
-    const system = this.prompts.render("assessment", { biasContext: ctx.biasContext });
+    const system = this.prompts.render("assessment", { candidateBiases: ctx.biasContext });
     const user = `STORY: ${story}`;
 
     return (await this.callProvider(
@@ -163,35 +164,36 @@ export class AssessmentService {
       );
     }
 
-    // Reconstruct RAG context from the stored story-only result
+    // Reconstruct RAG workspace from the stored story-only result. RAG fires
+    // asynchronously at story submission (Stage 005) — if it hasn't landed by the
+    // time the user finishes answering questions, we proceed without it. No wait.
     let ragCase: RagCase = "unavailable";
     let retrievedIds = new Set<string>();
     let ragList: string[] = [];
-    let biasContext: string;
+    let candidateBiases: string;
 
     if (sessionId && this.ragClient) {
       const stored = await this.runStore.getRagResultForSession(sessionId).catch(() => null);
+
       // stored is raw EngineResponse (or null) serialised to JSONB — validate shape before trusting
       const ragResult = isEngineResponse(stored)
         ? { status: "ok" as const, data: stored }
         : { status: "unavailable" as const };
 
-      const ctx = buildBiasContext(ragResult, this.catalog.getAll());
-      ragCase = ctx.ragCase;
-      retrievedIds = ctx.retrievedIds;
-      ragList = ragCase === "retrieved" && ragResult.status === "ok"
-        ? ragResult.data.biases.filter(b => b.retrieval_score > 0).map(b => b.name)
-        : [];
-      biasContext = ctx.biasContext;
+      const workspace = buildBiasWorkspace(ragResult, this.catalog.getAll());
+      ragCase = workspace.workspaceCase;
+      retrievedIds = workspace.retrievedIds;
+      ragList = workspace.candidates.map((c) => c.name);
+      candidateBiases = renderWorkspaceToPrompt(workspace, this.catalog.getAll());
     } else {
       // generate() backward-compat path: no sessionId, no RAG
-      biasContext = this.catalog
+      candidateBiases = this.catalog
         .getAll()
         .map((b) => `- ${b.name}: ${b.definition}`)
         .join("\n");
     }
 
-    const system = this.prompts.render("assessment", { biasContext });
+    const system = this.prompts.render("assessment", { candidateBiases });
     const qaPairs = questions
       .map((q, i) => `Q: ${q}\nA: ${answers[i]}`)
       .join("\n\n");
@@ -371,10 +373,11 @@ export class AssessmentService {
       const normalizedBiases = parsed.biases.map((bias) => {
         const result = normalizeBiasName(bias.name, allBiases);
         // Engine BiasResult.id and local BiasEntry.id must share the same string format
-        // (e.g. "confirmation_bias") — see ADR D014. Divergence silently returns "roster" for all.
-        const contextSource: "retrieved" | "roster" = ragCase === "retrieved"
-          ? (retrievedIds.has(result.id ?? "") ? "retrieved" : "roster")
-          : "roster";
+        // (e.g. "confirmation_bias") — see ADR D014. Divergence silently returns "llm" for all.
+        // "both" is in the schema enum but is never emitted here — it requires persisting
+        // the story_only LLM candidate list to DB (deferred to a follow-on spec); without
+        // that persistence there is no LLM-side list to merge retrievedIds against.
+        const contextSource: "retrieved" | "llm" = retrievedIds.has(result.id ?? "") ? "retrieved" : "llm";
         return {
           ...bias,
           name: result.name,

@@ -57,8 +57,13 @@ export const BiasItemSchema = z.object({
   storyConnection: z.string().min(BIAS_FIELD_MIN_LENGTH),
   alternativePerspective: z.string().min(BIAS_FIELD_MIN_LENGTH),
   evidence: z.array(EvidenceEntrySchema).optional(),
-  /** Derived by service code post-LLM: "retrieved" if this bias was in the RAG result, "roster" otherwise. */
-  context_source: z.enum(["retrieved", "roster"]).optional(),
+  /**
+   * Derived by service code post-LLM: "retrieved" if this bias was in the RAG workspace,
+   * "llm" otherwise. "both" is reserved for a future merge of story_only LLM candidates
+   * against the RAG workspace — not emitted yet (see docs/decisions, Stage 005).
+   * Pre-005 rows may still contain "roster" — treat as "llm" on read.
+   */
+  context_source: z.enum(["retrieved", "llm", "both"]).optional(),
 });
 
 export const QuestionOutputSchema = z.object({
