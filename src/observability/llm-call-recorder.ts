@@ -60,25 +60,32 @@ export async function executeAndRecordLlmCall<T>(
     const endedAt = new Date();
     const durationMs = Date.now() - t0;
     try {
-      const record = await store.recordCall({
-        sessionId: metadata.sessionId,
-        stage: metadata.stage,
-        callType: metadata.callType,
-        provider: metadata.provider,
-        model: metadata.model,
-        promptVersion: metadata.promptVersion,
-        rawResponse: raw !== undefined ? JSON.stringify(raw) : null,
-        parsedOutput: null,
-        status,
-        failureType,
-        inputTokens,
-        outputTokens,
-        totalTokens,
-        startedAt: startedAt.toISOString(),
-        endedAt: endedAt.toISOString(),
-        durationMs,
-        errorMessage,
-      });
+      const RECORD_TIMEOUT_MS = 5000;
+      const recordTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("DB record timeout")), RECORD_TIMEOUT_MS)
+      );
+      const record = await Promise.race([
+        store.recordCall({
+          sessionId: metadata.sessionId,
+          stage: metadata.stage,
+          callType: metadata.callType,
+          provider: metadata.provider,
+          model: metadata.model,
+          promptVersion: metadata.promptVersion,
+          rawResponse: raw !== undefined ? JSON.stringify(raw) : null,
+          parsedOutput: null,
+          status,
+          failureType,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          startedAt: startedAt.toISOString(),
+          endedAt: endedAt.toISOString(),
+          durationMs,
+          errorMessage,
+        }),
+        recordTimeout,
+      ]);
       llmCallId = record?.id ?? null;
     } catch (err) {
       logger.warn(

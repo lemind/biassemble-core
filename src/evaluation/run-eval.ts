@@ -31,6 +31,7 @@ import { computeInputHash } from "../lib/hash";
 import { DrizzleLlmCallStore } from "../persistence/llm-call-store";
 import { DrizzleRunStore } from "../persistence/run-store";
 import { DrizzleTraceStore } from "../persistence/trace-store";
+import type { LlmCallStore, RunStore, TraceStore } from "../persistence/ports";
 import type { Provider } from "../providers/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -185,9 +186,9 @@ async function evaluateNoBiasStory(
     if (metrics.isFalsePositive === true) {
       const threshold = story.confidenceThreshold;
       assessmentOutput.biases.forEach((bias: any) => {
-        if ((bias.confidence ?? 1) > threshold) {
+        if ((bias.confidence ?? 0) > threshold) {
           result.failed = true;
-          result.failureReasons.push(`${bias.name} — confidence ${(bias.confidence ?? 1).toFixed(2)} > ${threshold}`);
+          result.failureReasons.push(`${bias.name} — confidence ${(bias.confidence ?? 0).toFixed(2)} > ${threshold}`);
         }
       });
     }
@@ -216,12 +217,17 @@ export async function runEval(
     minSchemaParse: number;
     maxRepairRate: number;
   }>,
+  stores?: {
+    llmCallStore?: LlmCallStore;
+    runStore?: RunStore;
+    traceStore?: TraceStore;
+  },
 ): Promise<EvalRunResult> {
   const prompts = new PromptRegistry();
   const catalog = new BiasCatalogService();
-  const llmCallStore = new DrizzleLlmCallStore();
-  const runStore = new DrizzleRunStore();
-  const traceStore = new DrizzleTraceStore();
+  const llmCallStore = stores?.llmCallStore ?? new DrizzleLlmCallStore();
+  const runStore = stores?.runStore ?? new DrizzleRunStore();
+  const traceStore = stores?.traceStore ?? new DrizzleTraceStore();
   const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
   const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore);
 

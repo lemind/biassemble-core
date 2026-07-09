@@ -29,6 +29,30 @@ import { MockProvider } from "../tests/mocks/mock-provider.js";
 import { GeminiProvider } from "../src/providers/gemini.js";
 import { runEval } from "../src/evaluation/run-eval.js";
 import type { Provider } from "../src/providers/types.js";
+import type { LlmCallStore, RunStore, TraceStore } from "../src/persistence/ports.js";
+
+const noopLlmCallStore: LlmCallStore = {
+  recordCall: async () => ({ id: "" } as any),
+  getCallsBySession: async () => [],
+  getCallsByStage: async () => [],
+  getCallsByProvider: async () => [],
+  getCallsBySessionAndStage: async () => [],
+  updateParsedOutput: async () => {},
+  updateFailure: async () => {},
+  getCallsForMetrics: async () => [],
+};
+
+const noopRunStore: RunStore = {
+  createRun: async () => ({ id: "" } as any),
+  getRunsBySession: async () => [],
+  storeRagResult: async () => {},
+  getRagResultForSession: async () => null,
+};
+
+const noopTraceStore: TraceStore = {
+  persistTrace: async () => ({ id: "" } as any),
+  getTrace: async () => null,
+};
 
 interface ParsedArgs {
   provider: string;
@@ -87,9 +111,8 @@ function createProvider(mode: string): Provider {
   if (mode === "real") return new GeminiProvider();
   const mock = new MockProvider();
 
-  // Question response — matched by unique phrase from question-batch prompt (line 2)
-  // Assessment prompt has same first line, so use "your goal is to help a user reflect"
-  mock.setResponse("Your goal is to help a user reflect", {
+  // Question response — matched by unique phrase from question-batch system prompt
+  mock.setResponse("Generate 2–5 contextual follow-up questions", {
     questions: [
       "What makes you feel this way?",
       "How has this situation affected your daily life?",
@@ -100,28 +123,15 @@ function createProvider(mode: string): Provider {
     schema_version: "1.0.0",
   });
 
-  // Assessment response — default for all assessment calls (both golden and no_bias)
+  // Assessment response — default for all assessment calls (both golden and no_bias).
+  // Returns no biases so evidence grounding and false-positive checks are skipped
+  // in mock mode. Real quality is gated by --provider real.
   mock.setDefault({
-    biases: [
-      {
-        name: "confirmation bias",
-        explanation: "The tendency to search for, interpret, favor, and recall information that confirms preexisting beliefs.",
-        storyConnection: "You described filtering news to match your views, which aligns with this pattern.",
-        evidence: [
-          {
-            source: "story" as const,
-            excerpt: "Only read news that confirms my political views",
-            relevance: "Direct statement of selective exposure",
-          },
-        ],
-        confidence: 0.3,
-        alternativePerspective: "Consider seeking out sources that challenge your existing views.",
-      },
-    ],
-    reflectionPrompt: "Consider whether you might be dismissing contradictory evidence.",
+    biases: [],
+    reflectionPrompt: "Consider whether any assumptions shaped your interpretation.",
     prompt_version: "1.0.0",
     schema_version: "1.0.0",
-    noBiasDetected: false,
+    noBiasDetected: true,
     inputContext: "full" as const,
     modelName: "mock-eval",
   });
@@ -230,7 +240,10 @@ async function main(): Promise<void> {
 
   const provider = createProvider(providerMode);
   const modelName = isMock ? "mock-eval" : "gemini-2.0-flash";
-  const result = await runEval(provider, modelName, storyText, evalMode, thresholds);
+  const stores = isMock
+    ? { llmCallStore: noopLlmCallStore, runStore: noopRunStore, traceStore: noopTraceStore }
+    : undefined;
+  const result = await runEval(provider, modelName, storyText, evalMode, thresholds, stores);
 
   printResults(result, thresholds, isMock);
   process.exit(result.exitCode);
