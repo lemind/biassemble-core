@@ -121,6 +121,16 @@ As a **Biassemble developer**, I want to know, for each assessment, whether retr
 
 ---
 
+## Implementation Notes (post-implementation deviation)
+
+- **Adaptive wait removed.** FR-004, NFR-002, US3 acceptance scenarios 2–3, and SC-004's `rag_wait_ms` all describe a ≤2s adaptive-wait poll at assessment time. This was implemented exactly as specified, then deliberately removed: the poll's 70s trigger threshold was derived from a single latency measurement on one deployment (HF Space cpu-basic) and judged too fragile to keep in code — it silently stops making sense the moment the retrieval service moves to different hardware.
+- **Current behavior**: at assessment time, `runFullAssessment` performs a single non-blocking read of the stored retrieval result. If present, it's used immediately. If not, the assessment proceeds immediately with roster-only (LLM-only) context — no wait, no retry, no poll.
+- **Why this is still consistent with D015's reasoning**: Decision 4's own rationale — human think time (30–120s) absorbs the ~76s retrieval latency in the common case — means the adaptive wait was only ever a narrow safety net for the ~70–72s boundary, not the primary mechanism the feature relies on. Removing it trades a small amount of additional miss-rate (sessions where the user answers right as retrieval is about to finish) for removing a machine-specific magic number from the code.
+- **Telemetry**: `rag_available` is still logged per full assessment on the RAG-configured path. `rag_wait_ms` (FR-008, SC-004) was dropped — it measured poll duration, and there is no poll to measure.
+- **FR-004, NFR-002, US3 scenarios 2–3, and SC-004 above are left unedited** as the historical record of what was originally specified. This note is the authoritative statement of actual, current behavior.
+
+---
+
 ## Out of Scope
 
 - Changes to the bias retrieval service API or infrastructure.

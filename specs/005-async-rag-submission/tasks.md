@@ -61,7 +61,7 @@
   - Types: `WorkspaceCase = "retrieved" | "unavailable"`, `BiasCandidate = { bias_id, name, confidence, evidence, source }`, `BiasWorkspace = { candidates, workspaceCase, retrievedIds }`
   - `buildBiasWorkspace(result: RagClientResult, catalog: BiasEntry[]): BiasWorkspace` — Case READY: build candidates from retrieved biases (confidence = retrieval_score, evidence = indicators); Case unavailable/roster_fallback: `candidates = []`, `workspaceCase = "unavailable"`
   - `renderWorkspaceToPrompt(workspace: BiasWorkspace, catalog: BiasEntry[]): string` — READY: render candidate table + roster; unavailable: render roster-only
-- [x] T011 [US2] Updated `runFullAssessment` in `src/orchestrators/reflection/assessment.service.ts` — adaptive wait implemented exactly as specced: `getRagResultForSession` → if null, `getRagStartedAtForSession` (skip wait if null) → if `elapsedMs >= RAG_POLL_THRESHOLD_MS` poll every 200ms up to a 2s ceiling. `RAG_POLL_THRESHOLD_MS`/`RAG_POLL_INTERVAL_MS`/`RAG_POLL_CEILING_MS` extracted as named module-level constants; narrow-poll-window tradeoff documented in a comment at the poll site.
+- [x] T011 [US2] Updated `runFullAssessment` in `src/orchestrators/reflection/assessment.service.ts` to use `buildBiasWorkspace`/`renderWorkspaceToPrompt`. **DEVIATION from spec, decided after T011 first landed**: the adaptive wait (poll every 200ms up to a 2s ceiling, gated on a 70s/`RAG_POLL_THRESHOLD_MS` elapsed-time threshold) was implemented as specced, then explicitly removed at the user's request — the 70s threshold was measured on one specific machine (HF Space cpu-basic) and judged too fragile/non-portable to keep. Current behavior: single non-blocking read of `getRagResultForSession`; if null, proceeds immediately with roster-only context. No wait, no poll, no `getRagStartedAtForSession` call. `spec.md` (`NFR-002`, `FR-004`) and `plan.md` (Phase 5) still describe the ≤2s adaptive wait — those docs are now out of sync with the implementation and need reconciling (see note below).
 - [x] T012 [US2] Renamed `{{biasContext}}` → `{{candidateBiases}}` in `src/prompts/reflection/assessment/system.md` **and also in `src/prompts/reflection/assessment/system.json`'s `content` field** — the spec only named `system.md`, but `PromptRegistry.render()` actually reads `system.json`'s `content` string at runtime (`system.md` is unused/doc-only, already stale relative to `system.json` before this change). Renaming only `system.md` would have left the live template's `{{biasContext}}` placeholder unsubstituted once T014 landed. Landed together with T014 as specified.
 - [x] T013 [P] [US2] Bumped `version` to `"1.3.0"` in `src/prompts/reflection/assessment/system.json`. Also updated 3 tests that hardcoded the old prompt version (`assessment.test.ts`, `llm-call-recording-assessment.test.ts`, `llm-call-recording-question.test.ts`) — not in the original task list, but a direct, mechanical consequence of this version bump; left unfixed they'd fail.
 - [x] T014 [US2] Updated all `prompts.render("assessment", { biasContext: ... })` call sites to `{ candidateBiases: ... }` — both in T008's story_only roster render and T011's full assessment workspace render. Landed together with T012 as specified.
@@ -78,9 +78,9 @@
 
 **Independent Test**: Call full assessment (both with and without stored RAG result). Check Pino structured log output — verify `rag_available: true/false` and `rag_wait_ms: <number>` are present on the assessment completion log line.
 
-- [ ] T017 [US3] Add telemetry logging in `runFullAssessment` in `src/orchestrators/reflection/assessment.service.ts` — after the adaptive wait block resolves, log at info level: `{ rag_available: workspace.workspaceCase === "retrieved", rag_wait_ms: <ms spent polling> }` — `rag_wait_ms` is 0 if READY on first read, 0 if adaptive wait skipped, elapsed poll time otherwise
+- [x] T017 [US3] Added telemetry logging in `runFullAssessment` — **re-scoped**: logs `{ rag_available: workspace.workspaceCase === "retrieved", sessionId, runId }` at info level (`rag_availability_at_assessment`) right after the workspace is built. `rag_wait_ms` dropped entirely — it measured time spent polling, and there's no poll since the adaptive wait was removed; a field permanently hard-coded to `0` is dead weight, not telemetry. Only logged on the RAG-configured path (`sessionId && this.ragClient`), not the backward-compat `generate()` path where RAG was never in play.
 
-**Checkpoint**: All three user stories complete. `rag_available` and `rag_wait_ms` visible in production logs.
+**Checkpoint**: All three user stories complete. `rag_available` logged for every full assessment on the RAG-configured path.
 
 ---
 
@@ -90,11 +90,10 @@
 
 - [ ] T018 [P] Write unit tests for `src/rag/workspace-builder.ts` in `tests/unit/rag/workspace-builder.test.ts` — retrieved case (candidates built, confidence = retrieval_score), unavailable case (empty candidates, roster-only render), Case B / roster_fallback (all scores = 0.0 → maps to unavailable)
 - [ ] T019 [P] Write unit tests for `src/jobs/rag-retrieve.ts` in `tests/unit/jobs/rag-retrieve.test.ts` — success path calls `storeRagResult(runId, engineData)` and does not throw; failure path calls `storeRagResult(runId, null)` and does not throw; log `rag_retrieve_complete` on success; log warn on catch
-- [ ] T020 [P] Write integration test in `tests/integration/async-rag-assessment.test.ts` — three scenarios:
+- [ ] T020 [P] Write integration test in `tests/integration/async-rag-assessment.test.ts` — three scenarios (revised post-wait-removal; original had a 4th scenario for the poll ceiling, now invalid and merged into scenario 3 since there's no distinction between "still running" and "never ready" without a poll):
   1. story_only fast path: mock `inngestClient.send` called, `ragClient.retrieve` NOT called, response < 5s
-  2. full assessment READY immediately: mock `getRagResultForSession` returns stored result on first read, `rag_available: true, rag_wait_ms: 0` logged
-  3. full assessment RUNNING-then-completes: `getRagResultForSession` returns null on first read, `getRagStartedAtForSession` returns `Date.now() - 72_000` (elapsed ≥ 70s), poll returns result within 2s, `rag_available: true, rag_wait_ms > 0` logged — this covers US3 acceptance scenario 2 and the polling loop ceiling
-  4. full assessment never ready: `getRagResultForSession` always null, `rag_available: false` logged, assessment completes with roster-only context
+  2. full assessment READY immediately: mock `getRagResultForSession` returns stored result on first read, `rag_available: true` logged (no `rag_wait_ms` — dropped, see T017)
+  3. full assessment not ready: `getRagResultForSession` returns null, assessment completes immediately with roster-only context, `rag_available: false` logged — no poll, no wait, matches current `runFullAssessment` behavior
 - [ ] T021 Run `pnpm db:migrate` against Supabase to apply `0007_async_rag_submission.sql` — verify `rag_started_at` column present on `runs` table
 - [ ] T022 [P] Set `RAG_TIMEOUT_MS=120000` in Vercel environment dashboard (currently 5000 in Vercel — already correct locally and on HF Space)
 - [ ] T023 Smoke test on staging: submit story → verify questions return in < 5s; wait 90s → submit assessment → verify `rag_available: true` in Vercel function logs
@@ -153,6 +152,7 @@ Phase 5:  T018 ‖ T019 ‖ T020 (parallel, different test files)
 
 - T005 must not throw — `recordRagStarted` failure must not prevent story_only from returning questions (best-effort discipline from D011)
 - Inngest `.catch()` in T008 must log — bare `.catch(() => {})` is not acceptable per plan review
-- `ragStartedAt === null` guard in T011 is required — `recordRagStarted` is best-effort; null crash was a pre-review bug
 - `"both"` is in the enum (T015) but will not be emitted by T016 — reserved for future merge of story_only LLM candidates
 - Pre-005 DB rows with `context_source = "roster"` remain valid — treat as `"llm"` on read (no DB migration needed for enum change)
+- **Adaptive wait removed post-T011** (see T011 entry above): `spec.md` NFR-002/FR-004 and `plan.md` Phase 5 still describe a ≤2s poll that no longer exists in code. T017 (telemetry) and T020 scenario 3 (poll ceiling test) below are written against the removed mechanism and need re-scoping before implementation — `rag_wait_ms` has no meaning without a wait to measure.
+- **Untracked addition**: `rag_completed_at` column (migration `0008_rag_completed_at.sql`) was added outside this task list — observability-only (job duration = `rag_completed_at - rag_started_at`, queryable via SQL/dashboard). No app-level reader; not wired into any task above.

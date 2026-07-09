@@ -185,6 +185,14 @@ export class AssessmentService {
       retrievedIds = workspace.retrievedIds;
       ragList = workspace.candidates.map((c) => c.name);
       candidateBiases = renderWorkspaceToPrompt(workspace, this.catalog.getAll());
+
+      // Stage 005 telemetry: was RAG done in time for the full assessment, with no
+      // wait budget at all? Validates/refutes the miss-rate assumption in D015 now
+      // that the adaptive wait has been removed.
+      logger.info(
+        { module: MODULE, operation: "runFullAssessment", sessionId, runId, rag_available: workspace.workspaceCase === "retrieved" },
+        "rag_availability_at_assessment"
+      );
     } else {
       // generate() backward-compat path: no sessionId, no RAG
       candidateBiases = this.catalog

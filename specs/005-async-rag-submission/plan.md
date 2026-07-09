@@ -155,6 +155,8 @@ Depends on Phase 1 (`RagClientResult` types already exist from spec-004). Standa
 
 ### Phase 5: Adaptive Wait + Full Assessment Wiring
 
+**⚠️ Superseded post-implementation**: the adaptive wait described below (steps 2 and part of 6) was implemented as written, then removed — the 70s/2s constants were tuned to one specific deployment's measured latency and judged too fragile to keep. Current behavior is just step 1 + step 3 onward, with `ragResult` used as-read (no poll). See `spec.md` → "Implementation Notes (post-implementation deviation)" for the full rationale. Steps below are kept for historical record.
+
 Depends on Phases 1, 3, 4.
 
 - Update `runFullAssessment` in `assessment.service.ts`:
