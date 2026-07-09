@@ -10,7 +10,8 @@ import { QuestionService } from "./orchestrators/reflection/question.service";
 import { AssessmentService } from "./orchestrators/reflection/assessment.service";
 import { registerReflectionRoutes } from "./routes/reflection";
 import { inngest } from "./jobs/client";
-import { inngestFunctions } from "./jobs/inngest-functions";
+import { buildInngestFunctions } from "./jobs/inngest-functions";
+import { createRagRetrieveJob } from "./jobs/rag-retrieve";
 import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
 import { DrizzleRunStore } from "./persistence/run-store";
 import { DrizzleTraceStore } from "./persistence/trace-store";
@@ -43,7 +44,8 @@ export function buildApp() {
       : undefined;
   const comparisonStore = new DrizzleRetrievalComparisonStore();
   const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
-  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore, ragClient);
+  const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore, ragClient, inngest);
+  const ragRetrieveJob = ragClient ? createRagRetrieveJob(ragClient, runStore) : undefined;
 
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);
@@ -73,7 +75,7 @@ export function buildApp() {
 
   server.register(inngestFastify, {
     client: inngest,
-    functions: inngestFunctions,
+    functions: buildInngestFunctions(ragRetrieveJob),
     options: {
       serveHost,
     },

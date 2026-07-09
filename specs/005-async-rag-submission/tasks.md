@@ -32,19 +32,20 @@
 
 **Independent Test**: Call `POST /v1/reflection/assessment` with `mode: "story_only"`. Verify response arrives in < 5s. Verify `RagEngineClient.retrieve` is never called (Inngest send called instead). Verify `rag_job_fired` appears in logs.
 
-- [ ] T006 [US1] Create `src/jobs/rag-retrieve.ts` — Inngest function for background RAG retrieval:
+- [x] T006 [US1] Create `src/jobs/rag-retrieve.ts` — Inngest function for background RAG retrieval:
   - Event name: `"rag/retrieve.requested"`, data: `{ story: string; sessionId: string; runId: string; startedAt: string }`
   - Function body: `ragClient.retrieve(story)` → `runStore.storeRagResult(runId, result.status === "ok" ? result.data : null)` → log `rag_retrieve_complete` with `{ status, sessionId, runId, durationMs }`
   - Entire body wrapped in try/catch — never throws; log failures at warn level
-- [ ] T007 [US1] Register `ragRetrieveJob` in `src/jobs/inngest-functions.ts` — add to `inngestFunctions` array alongside existing eval jobs
-- [ ] T008 [US1] Update `runStoryOnlyAssessment` in `src/orchestrators/reflection/assessment.service.ts`:
-  - Add optional `inngestClient?: Inngest` to `AssessmentService` constructor
-  - **Remove** `await this.ragClient.retrieve(story)` — the blocking call
-  - **Add** `inngestClient.send({ name: "rag/retrieve.requested", data: { story, sessionId, runId, startedAt: now.toISOString() } }).catch((err) => logger.warn({ sessionId, err }, "rag_job_fire_failed"))` — fire-and-forget, always logs failure
-  - **Add** `runStore.recordRagStarted(runId, now)` immediately after — best-effort, non-blocking
-  - **Change context**: story_only always uses roster-only context (`buildBiasContext({ status: "unavailable" }, catalog)`)
-  - Log `rag_job_fired` at info level after successful send
-- [ ] T009 [US1] Update `src/server.ts` — pass `ragClient` to `ragRetrieveJob` closure/factory and `inngestClient` to `AssessmentService` constructor
+  - Implemented as a `createRagRetrieveJob(ragClient, runStore)` factory rather than a static export — the job needs `ragClient`/`runStore` injected from `server.ts` (see T009)
+- [x] T007 [US1] Register `ragRetrieveJob` in `src/jobs/inngest-functions.ts` — `inngestFunctions` became `buildInngestFunctions(ragRetrieveJob?)` since the job instance is constructed in `server.ts`, not statically importable; omits the job when RAG isn't configured
+- [x] T008 [US1] Update `runStoryOnlyAssessment` in `src/orchestrators/reflection/assessment.service.ts`:
+  - Added optional `inngestClient?: Inngest` to `AssessmentService` constructor
+  - **Removed** `await this.ragClient.retrieve(story)` — the blocking call
+  - **Added** `inngestClient.send({ name: "rag/retrieve.requested", data: { story, sessionId, runId, startedAt: startedAt.toISOString() } })` with `.then()` logging `rag_job_fired` and `.catch()` logging `rag_job_fire_failed` — fire-and-forget, always logs
+  - **Added** `runStore.recordRagStarted(runId, startedAt)` immediately after — best-effort, non-blocking (`.catch()` no-op since the store already logs internally)
+  - **Changed context**: story_only always uses roster-only context (`buildBiasContext({ status: "unavailable" }, catalog)`)
+  - Logs `rag_job_fired` at info level after successful send
+- [x] T009 [US1] Update `src/server.ts` — passes `ragClient` to `createRagRetrieveJob` factory (only when `ragClient` is configured) and `inngestClient` (the `inngest` client instance) to `AssessmentService` constructor
 
 **Checkpoint**: Story submission returns questions in < 5s. RAG runs in Inngest background. US1 independently testable.
 

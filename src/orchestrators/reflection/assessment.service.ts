@@ -17,6 +17,7 @@ import { validateEvidence } from "../../parsers/evidence-validator";
 import type { LlmCallStore, RunStore, TraceStore } from "../../persistence/ports";
 import { isEngineResponse, type RagEngineClient } from "../../rag/engine-client";
 import { buildBiasContext, type RagCase } from "../../rag/context-builder";
+import type { Inngest } from "inngest";
 
 const MODULE = "assessment-service";
 
@@ -31,6 +32,7 @@ export class AssessmentService {
     private runStore: RunStore,
     private traceStore: TraceStore,
     private ragClient?: RagEngineClient,
+    private inngestClient?: Inngest,
   ) {}
 
   /**
@@ -78,39 +80,41 @@ export class AssessmentService {
       );
     }
 
-    // Retrieve RAG context if client is configured
-    let ragCase: RagCase = "unavailable";
-    let retrievedIds = new Set<string>();
+    // Stage 005: RAG now fires as a background job at submission instead of blocking
+    // this response — story_only always renders roster-only context immediately.
+    // The retrieval result lands asynchronously on the run record for
+    // runFullAssessment's adaptive wait (T011) to pick up later.
+    const ragCase: RagCase = "unavailable";
+    const retrievedIds = new Set<string>();
 
-    if (this.ragClient) {
-      const ragResult = await this.ragClient.retrieve(story);
+    if (this.ragClient && this.inngestClient && runId) {
+      const startedAt = new Date();
 
-      // Store raw EngineResponse (or null) fire-and-forget — bridge for runFullAssessment
-      if (runId) {
-        this.runStore.storeRagResult(runId, ragResult.status === "ok" ? ragResult.data : null).catch(() => {/* already logged in storeRagResult */});
-      }
-
-      const ctx = buildBiasContext(ragResult, this.catalog.getAll());
-      ragCase = ctx.ragCase;
-      retrievedIds = ctx.retrievedIds;
-
-      const system = this.prompts.render("assessment", { biasContext: ctx.biasContext });
-      const user = `STORY: ${story}`;
-
-      return (await this.callProvider(
-        sessionId, system, user, requestId, runId,
-        "initial_assessment", "story_only", inputHash, promptVersion, providerId,
-        story, [], ragCase, retrievedIds,
-      )).output;
+      this.inngestClient
+        .send({
+          name: "rag/retrieve.requested",
+          data: { story, sessionId, runId, startedAt: startedAt.toISOString() },
+        })
+        .then(() => {
+          logger.info(
+            { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId },
+            "rag_job_fired"
+          );
+          // Only record a start time if the job was actually queued — otherwise
+          // the adaptive wait in runFullAssessment (T011) polls for a result
+          // that will never arrive.
+          this.runStore.recordRagStarted(runId, startedAt).catch(() => {/* already logged in recordRagStarted */});
+        })
+        .catch((err) => {
+          logger.warn(
+            { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId, error: err },
+            "rag_job_fire_failed"
+          );
+        });
     }
 
-    // No RAG client — roster-only path (backward compat)
-    const biasContext = this.catalog
-      .getAll()
-      .map((b) => `- ${b.name}: ${b.definition}`)
-      .join("\n");
-
-    const system = this.prompts.render("assessment", { biasContext });
+    const ctx = buildBiasContext({ status: "unavailable" }, this.catalog.getAll());
+    const system = this.prompts.render("assessment", { biasContext: ctx.biasContext });
     const user = `STORY: ${story}`;
 
     return (await this.callProvider(
