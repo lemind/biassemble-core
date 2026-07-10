@@ -71,7 +71,7 @@ describe("rag-retrieve job", () => {
     expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
   });
 
-  it("engine-unavailable path calls storeRagResult(runId, null) and does not throw", async () => {
+  it("engine-unavailable path calls storeRagResult(runId, null) and does NOT set rag_completed_at", async () => {
     const ragClient = {
       retrieve: vi.fn().mockResolvedValue({ status: "unavailable" }),
     } as unknown as RagEngineClient;
@@ -80,10 +80,12 @@ describe("rag-retrieve job", () => {
     await job.fn(buildEvent());
 
     expect(runStore.storeRagResult).toHaveBeenCalledWith("run-1", null);
-    expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
+    // rag_completed_at means "genuinely finished" — a timeout/unavailable outcome
+    // must leave it null, not stamp a false-positive completion time.
+    expect(runStore.recordRagCompleted).not.toHaveBeenCalled();
   });
 
-  it("failure path (thrown error) calls storeRagResult(runId, null) and does not throw", async () => {
+  it("failure path (thrown error) calls storeRagResult(runId, null), does not throw, does NOT set rag_completed_at", async () => {
     const ragClient = {
       retrieve: vi.fn().mockRejectedValue(new Error("network error")),
     } as unknown as RagEngineClient;
@@ -92,7 +94,7 @@ describe("rag-retrieve job", () => {
     await job.fn(buildEvent());
 
     expect(runStore.storeRagResult).toHaveBeenCalledWith("run-1", null);
-    expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
+    expect(runStore.recordRagCompleted).not.toHaveBeenCalled();
   });
 
   it("logs rag_retrieve_complete on success", async () => {

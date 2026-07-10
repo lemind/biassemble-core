@@ -31,15 +31,21 @@ export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunSt
       try {
         const result = await ragClient.retrieve(story);
         await runStore.storeRagResult(runId, result.status === "ok" ? result.data : null);
-        await runStore.recordRagCompleted(runId, new Date());
+        // rag_completed_at means what it says: RAG genuinely finished with a
+        // result. Only set it on real success — a timeout/unavailable/auth_error
+        // outcome leaves it null, since nothing actually "completed". Job
+        // duration for the failure case is still in the logs below if needed.
+        if (result.status === "ok") {
+          await runStore.recordRagCompleted(runId, new Date());
+        }
         logger.info(
           { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
           "rag_retrieve_complete"
         );
       } catch (err) {
-        logger.warn({ module: MODULE, err, sessionId, runId }, "rag_retrieve_failed");
+        logger.warn({ module: MODULE, err, sessionId, runId, durationMs: Date.now() - t0 }, "rag_retrieve_failed");
         await runStore.storeRagResult(runId, null).catch(() => {/* already logged by storeRagResult */});
-        await runStore.recordRagCompleted(runId, new Date()).catch(() => {/* already logged by recordRagCompleted */});
+        // rag_completed_at stays null here too — the job did not complete.
       }
     }
   );
