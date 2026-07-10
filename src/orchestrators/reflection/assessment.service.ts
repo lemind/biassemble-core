@@ -51,6 +51,78 @@ export class AssessmentService {
   }
 
   /**
+   * Fires RAG retrieval as a background Inngest job. This is the ONLY place
+   * RAG gets fired — called from the POST /v1/reflection/question route,
+   * which is the actual story-submission trigger point the backend calls on
+   * every request. (runStoryOnlyAssessment used to also fire RAG, but nothing
+   * in production calls that endpoint; keeping the fire there too would have
+   * meant a double-fire — two Inngest jobs, two initial_assessment run rows —
+   * for any client that called both. Removed rather than left as a
+   * caller-discipline invariant.)
+   *
+   * Creates a correlation-only run record (stage=initial_assessment,
+   * scope=story_only) purely to give the background job a runId to write its
+   * result against — this row has no LLM call, no reasoning_trace, no parsed
+   * output. To distinguish it from a "real" assessment run at query time:
+   * LEFT JOIN reasoning_traces — correlation-only rows have no match.
+   *
+   * Fire-and-forget by design: internally wraps the work in `waitUntil()` so
+   * it survives past the caller's HTTP response on Vercel, and returns void
+   * rather than a promise so there's nothing for a caller to forget to await
+   * or wrap themselves (see D016 for why that matters on Vercel).
+   */
+  fireRagRetrieval(sessionId: string, story: string, requestId: string): void {
+    waitUntil(
+      this.doFireRagRetrieval(sessionId, story, requestId).catch(() => {/* already logged in doFireRagRetrieval */})
+    );
+  }
+
+  private async doFireRagRetrieval(sessionId: string, story: string, requestId: string): Promise<void> {
+    if (!this.ragClient || !this.inngestClient) return;
+
+    let runId = "";
+    try {
+      const promptVersion = this.prompts.getVersion();
+      const providerId = this.provider.mode;
+      const inputHash = computeInputHash(promptVersion, this.modelName, story, []);
+      const run = await this.runStore.createRun(sessionId, {
+        provider: providerId,
+        modelName: this.modelName,
+        stage: "initial_assessment",
+        scope: "story_only",
+        promptVersion,
+        inputHash,
+      });
+      runId = run?.id ?? "";
+    } catch (err) {
+      logger.warn(
+        { module: MODULE, operation: "fireRagRetrieval", error: err, requestId },
+        "Failed to create run record for RAG correlation — skipping RAG fire"
+      );
+      return;
+    }
+    if (!runId) return;
+
+    const startedAt = new Date();
+    try {
+      await this.inngestClient.send({
+        name: "rag/retrieve.requested",
+        data: { story, sessionId, runId, startedAt: startedAt.toISOString() },
+      });
+      logger.info(
+        { module: MODULE, operation: "fireRagRetrieval", sessionId, runId },
+        "rag_job_fired"
+      );
+      await this.runStore.recordRagStarted(runId, startedAt).catch(() => {/* already logged in recordRagStarted */});
+    } catch (err) {
+      logger.warn(
+        { module: MODULE, operation: "fireRagRetrieval", sessionId, runId, error: err },
+        "rag_job_fire_failed"
+      );
+    }
+  }
+
+  /**
    * Run a story-only assessment (no questions/answers yet).
    * Creates a run with stage=initial_assessment, scope=story_only.
    */
@@ -82,43 +154,11 @@ export class AssessmentService {
       );
     }
 
-    // Stage 005: RAG now fires as a background job at submission instead of blocking
-    // this response — story_only always renders roster-only context immediately.
-    // The retrieval result lands asynchronously on the run record for
-    // runFullAssessment to pick up later (single non-blocking read, no wait).
+    // Stage 005: RAG firing lives entirely in fireRagRetrieval, called only from
+    // the POST /v1/reflection/question route — see that method's doc comment for
+    // why. story_only always renders roster-only context immediately regardless.
     const ragCase: RagCase = "unavailable";
     const retrievedIds = new Set<string>();
-
-    if (this.ragClient && this.inngestClient && runId) {
-      const startedAt = new Date();
-
-      // waitUntil() keeps this Vercel serverless invocation alive until the promise
-      // below settles, without delaying the HTTP response. Without it, Vercel can
-      // freeze the function the instant the response is sent — before this
-      // fire-and-forget .send() call ever gets to run, so neither rag_job_fired
-      // nor rag_job_fire_failed would ever log. No-ops safely outside Vercel
-      // (local dev, tests) since getContext().waitUntil is simply undefined there.
-      waitUntil(
-        this.inngestClient
-          .send({
-            name: "rag/retrieve.requested",
-            data: { story, sessionId, runId, startedAt: startedAt.toISOString() },
-          })
-          .then(() => {
-            logger.info(
-              { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId },
-              "rag_job_fired"
-            );
-            return this.runStore.recordRagStarted(runId, startedAt).catch(() => {/* already logged in recordRagStarted */});
-          })
-          .catch((err) => {
-            logger.warn(
-              { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId, error: err },
-              "rag_job_fire_failed"
-            );
-          })
-      );
-    }
 
     const ctx = buildBiasContext({ status: "unavailable" }, this.catalog.getAll());
     const system = this.prompts.render("assessment", { candidateBiases: ctx.biasContext });

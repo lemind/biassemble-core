@@ -67,7 +67,30 @@ describe("Async RAG submission — assessment flow (spec-005)", () => {
     infoSpy.mockRestore();
   });
 
-  it("scenario 1 — story_only fires the RAG job instead of blocking, response is fast", async () => {
+  it("scenario 1 — fireRagRetrieval fires the RAG job without blocking (fire-and-forget, void return)", async () => {
+    const runStore = buildRunStore();
+    const ragClient = { retrieve: vi.fn() } as unknown as RagEngineClient;
+    const inngestSend = vi.fn().mockResolvedValue({ ids: ["evt-1"] });
+    const inngestClient = { send: inngestSend } as unknown as Inngest;
+
+    const service = new AssessmentService(
+      mockProvider, prompts, catalog, "mock-model",
+      mockLlmCallStore, runStore, mockTraceStore, ragClient, inngestClient,
+    );
+
+    // fireRagRetrieval returns void, not a promise — this is the actual call
+    // the POST /v1/reflection/question route makes on every story submission.
+    service.fireRagRetrieval("00000000-0000-4000-8000-000000000001", "a".repeat(100), "req-1");
+
+    await vi.waitFor(() => {
+      expect(inngestSend).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "rag/retrieve.requested" })
+      );
+    });
+    expect(ragClient.retrieve).not.toHaveBeenCalled();
+  });
+
+  it("scenario 1b — runStoryOnlyAssessment does NOT fire RAG (regression guard against the double-fire bug)", async () => {
     const runStore = buildRunStore();
     const ragClient = { retrieve: vi.fn() } as unknown as RagEngineClient;
     const inngestSend = vi.fn().mockResolvedValue({ ids: ["evt-1"] });
@@ -84,9 +107,10 @@ describe("Async RAG submission — assessment flow (spec-005)", () => {
 
     expect(elapsedMs).toBeLessThan(5000);
     expect(ragClient.retrieve).not.toHaveBeenCalled();
-    expect(inngestSend).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "rag/retrieve.requested" })
-    );
+    // RAG firing lives only in fireRagRetrieval (called from the question route) —
+    // runStoryOnlyAssessment must never fire it too, or a client calling both
+    // endpoints would double-fire RAG for the same session.
+    expect(inngestSend).not.toHaveBeenCalled();
   });
 
   it("scenario 2 — full assessment: RAG already stored, rag_available: true logged, no poll", async () => {

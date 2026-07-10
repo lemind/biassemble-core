@@ -33,6 +33,11 @@ export interface FullAssessmentResult {
 export interface AssessmentServiceLike {
   runStoryOnlyAssessment(sessionId: string, story: string, requestId: string): Promise<AssessmentOutput>;
   runFullAssessment(sessionId: string, story: string, questions: string[], answers: string[], requestId: string): Promise<FullAssessmentResult>;
+  // Stage 005: fires RAG retrieval as a background job — fire-and-forget by
+  // design, returns void (internally waitUntil-wrapped). Optional so existing
+  // AssessmentServiceLike mocks (question-focused tests) don't need updating —
+  // routes must guard with `?.()` when calling it.
+  fireRagRetrieval?(sessionId: string, story: string, requestId: string): void;
 }
 
 export function registerReflectionRoutes(
@@ -57,7 +62,15 @@ export function registerReflectionRoutes(
   server.post("/v1/reflection/question", { preHandler: [authHook] }, async (request, reply) => {
     try {
       const body = GenerateQuestionRequestSchema.parse(request.body);
-      
+
+      // Stage 005: fire RAG retrieval in the background alongside question
+      // generation — this is the actual story-submission trigger point the
+      // backend calls on every request, unlike the story_only assessment mode
+      // which nothing in production ever invokes. fireRagRetrieval is
+      // fire-and-forget by design (void return, internally waitUntil-wrapped)
+      // — nothing further needed here.
+      services.assessment.fireRagRetrieval?.(body.sessionId, body.story, request.id);
+
       const result = await services.question.generate(
         body.sessionId,
         body.story,
@@ -67,9 +80,9 @@ export function registerReflectionRoutes(
       return result;
     } catch (error) {
       if (error instanceof ZodError) {
-        return reply.status(400).send({ 
+        return reply.status(400).send({
           error: "Invalid request body",
-          details: error.issues 
+          details: error.issues
         });
       }
       logger.error(
