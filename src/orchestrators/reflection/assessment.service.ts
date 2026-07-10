@@ -19,6 +19,7 @@ import { isEngineResponse, type RagEngineClient } from "../../rag/engine-client"
 import { buildBiasContext, type RagCase } from "../../rag/context-builder";
 import { buildBiasWorkspace, renderWorkspaceToPrompt } from "../../rag/workspace-builder";
 import type { Inngest } from "inngest";
+import { waitUntil } from "@vercel/functions";
 
 const MODULE = "assessment-service";
 
@@ -84,34 +85,39 @@ export class AssessmentService {
     // Stage 005: RAG now fires as a background job at submission instead of blocking
     // this response — story_only always renders roster-only context immediately.
     // The retrieval result lands asynchronously on the run record for
-    // runFullAssessment's adaptive wait (T011) to pick up later.
+    // runFullAssessment to pick up later (single non-blocking read, no wait).
     const ragCase: RagCase = "unavailable";
     const retrievedIds = new Set<string>();
 
     if (this.ragClient && this.inngestClient && runId) {
       const startedAt = new Date();
 
-      this.inngestClient
-        .send({
-          name: "rag/retrieve.requested",
-          data: { story, sessionId, runId, startedAt: startedAt.toISOString() },
-        })
-        .then(() => {
-          logger.info(
-            { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId },
-            "rag_job_fired"
-          );
-          // Only record a start time if the job was actually queued — otherwise
-          // the adaptive wait in runFullAssessment (T011) polls for a result
-          // that will never arrive.
-          this.runStore.recordRagStarted(runId, startedAt).catch(() => {/* already logged in recordRagStarted */});
-        })
-        .catch((err) => {
-          logger.warn(
-            { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId, error: err },
-            "rag_job_fire_failed"
-          );
-        });
+      // waitUntil() keeps this Vercel serverless invocation alive until the promise
+      // below settles, without delaying the HTTP response. Without it, Vercel can
+      // freeze the function the instant the response is sent — before this
+      // fire-and-forget .send() call ever gets to run, so neither rag_job_fired
+      // nor rag_job_fire_failed would ever log. No-ops safely outside Vercel
+      // (local dev, tests) since getContext().waitUntil is simply undefined there.
+      waitUntil(
+        this.inngestClient
+          .send({
+            name: "rag/retrieve.requested",
+            data: { story, sessionId, runId, startedAt: startedAt.toISOString() },
+          })
+          .then(() => {
+            logger.info(
+              { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId },
+              "rag_job_fired"
+            );
+            return this.runStore.recordRagStarted(runId, startedAt).catch(() => {/* already logged in recordRagStarted */});
+          })
+          .catch((err) => {
+            logger.warn(
+              { module: MODULE, operation: "runStoryOnlyAssessment", sessionId, runId, error: err },
+              "rag_job_fire_failed"
+            );
+          })
+      );
     }
 
     const ctx = buildBiasContext({ status: "unavailable" }, this.catalog.getAll());
