@@ -1,0 +1,125 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createRagRetrieveJob } from "../../../src/jobs/rag-retrieve.js";
+import { logger } from "../../../src/observability/logger.js";
+import type { RagEngineClient } from "../../../src/rag/engine-client.js";
+import type { RunStore } from "../../../src/persistence/ports.js";
+
+// job.fn (below) reaches into an Inngest implementation detail — createFunction()
+// exposes the raw handler at `.fn`, undocumented but stable across recent SDK
+// versions. If an Inngest upgrade changes this shape, these tests fail as
+// "fn is not a function" rather than a meaningful assertion — check here first.
+
+function buildEvent(data: Record<string, unknown> = {}) {
+  return {
+    event: {
+      name: "rag/retrieve.requested",
+      data: {
+        story: "a story",
+        sessionId: "session-1",
+        runId: "run-1",
+        startedAt: new Date().toISOString(),
+        ...data,
+      },
+    },
+  } as never;
+}
+
+function buildRunStore(): RunStore {
+  return {
+    createRun: vi.fn(),
+    getRunsBySession: vi.fn(),
+    storeRagResult: vi.fn().mockResolvedValue(undefined),
+    getRagResultForSession: vi.fn(),
+    recordRagStarted: vi.fn(),
+    getRagStartedAtForSession: vi.fn(),
+    recordRagCompleted: vi.fn().mockResolvedValue(undefined),
+  } as unknown as RunStore;
+}
+
+describe("rag-retrieve job", () => {
+  let runStore: RunStore;
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    runStore = buildRunStore();
+    infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
+    warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+  });
+
+  afterEach(() => {
+    infoSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("success path calls storeRagResult(runId, engineData) and does not throw", async () => {
+    const engineData = {
+      biases: [],
+      retrieved_chunks: 0,
+      taxonomy_version: "v1",
+      embedding_model: "mock-embed",
+      request_id: "req-1",
+    };
+    const ragClient = {
+      retrieve: vi.fn().mockResolvedValue({ status: "ok", data: engineData }),
+    } as unknown as RagEngineClient;
+    const job = createRagRetrieveJob(ragClient, runStore);
+
+    await job.fn(buildEvent());
+
+    expect(runStore.storeRagResult).toHaveBeenCalledWith("run-1", engineData);
+    expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
+  });
+
+  it("engine-unavailable path calls storeRagResult(runId, null) and does not throw", async () => {
+    const ragClient = {
+      retrieve: vi.fn().mockResolvedValue({ status: "unavailable" }),
+    } as unknown as RagEngineClient;
+    const job = createRagRetrieveJob(ragClient, runStore);
+
+    await job.fn(buildEvent());
+
+    expect(runStore.storeRagResult).toHaveBeenCalledWith("run-1", null);
+    expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
+  });
+
+  it("failure path (thrown error) calls storeRagResult(runId, null) and does not throw", async () => {
+    const ragClient = {
+      retrieve: vi.fn().mockRejectedValue(new Error("network error")),
+    } as unknown as RagEngineClient;
+    const job = createRagRetrieveJob(ragClient, runStore);
+
+    await job.fn(buildEvent());
+
+    expect(runStore.storeRagResult).toHaveBeenCalledWith("run-1", null);
+    expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
+  });
+
+  it("logs rag_retrieve_complete on success", async () => {
+    const ragClient = {
+      retrieve: vi.fn().mockResolvedValue({ status: "ok", data: { biases: [], retrieved_chunks: 0, taxonomy_version: "v1", embedding_model: "m", request_id: "r" } }),
+    } as unknown as RagEngineClient;
+    const job = createRagRetrieveJob(ragClient, runStore);
+
+    await job.fn(buildEvent());
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "ok", sessionId: "session-1", runId: "run-1" }),
+      "rag_retrieve_complete"
+    );
+  });
+
+  it("logs warn on catch", async () => {
+    const ragClient = {
+      retrieve: vi.fn().mockRejectedValue(new Error("boom")),
+    } as unknown as RagEngineClient;
+    const job = createRagRetrieveJob(ragClient, runStore);
+
+    await job.fn(buildEvent());
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session-1", runId: "run-1" }),
+      "rag_retrieve_failed"
+    );
+  });
+});
