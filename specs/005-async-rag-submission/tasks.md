@@ -94,8 +94,8 @@
   1. story_only fast path: mock `inngestClient.send` called, `ragClient.retrieve` NOT called, response < 5s
   2. full assessment READY immediately: mock `getRagResultForSession` returns stored result on first read, `rag_available: true` logged (no `rag_wait_ms` — dropped, see T017)
   3. full assessment not ready: `getRagResultForSession` returns null, assessment completes immediately with roster-only context, `rag_available: false` logged — no poll, no wait, matches current `runFullAssessment` behavior
-- [ ] T021 Run `pnpm db:migrate` against Supabase to apply `0007_async_rag_submission.sql` — verify `rag_started_at` column present on `runs` table
-- [ ] T022 [P] Set `RAG_TIMEOUT_MS=120000` in Vercel environment dashboard (currently 5000 in Vercel — already correct locally and on HF Space)
+- [x] T021 Ran `pnpm db:migrate` against Supabase — applied both `0007_async_rag_submission.sql` (`rag_started_at`) and `0008_rag_completed_at.sql` (`rag_completed_at`). Migration succeeded (the two NOTICE lines are Postgres skipping already-existing `drizzle` internal tracking objects — harmless).
+- [x] T022 [P] Set `RAG_TIMEOUT_MS=120000` for Production via `vercel env add RAG_TIMEOUT_MS production --value 120000 --force`. **Note**: Vercel env vars only take effect on the next deployment — the currently-running deployment still has the old value (5000ms) until redeployed.
 - [ ] T023 Smoke test on staging: submit story → verify questions return in < 5s; wait 90s → submit assessment → verify `rag_available: true` in Vercel function logs
 
 ---
