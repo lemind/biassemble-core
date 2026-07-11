@@ -17,6 +17,8 @@ export const runs = core.table("runs", {
   inputHash: text("input_hash").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   ragResult: jsonb("rag_result"),
+  ragStartedAt: timestamp("rag_started_at", { withTimezone: true }),
+  ragCompletedAt: timestamp("rag_completed_at", { withTimezone: true }),
 });
 
 // ── Reasoning Traces ──

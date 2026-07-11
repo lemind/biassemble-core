@@ -320,6 +320,34 @@ export async function getRagResultBySession(sessionId: string): Promise<unknown 
   return result[0]?.ragResult ?? null;
 }
 
+// ── RAG Started At (Stage 005) ──
+
+export async function updateRagStartedAt(runId: string, startedAt: Date): Promise<void> {
+  await db()
+    .update(runs)
+    .set({ ragStartedAt: startedAt })
+    .where(eq(runs.id, runId));
+}
+
+export async function getRagStartedAtBySession(sessionId: string): Promise<Date | null> {
+  const result = await db()
+    .select({ ragStartedAt: runs.ragStartedAt })
+    .from(runs)
+    .where(and(eq(runs.sessionId, sessionId), eq(runs.stage, "initial_assessment")))
+    .orderBy(desc(runs.createdAt))
+    .limit(1);
+  return result[0]?.ragStartedAt ?? null;
+}
+
+// ── RAG Completed At (Stage 005) ──
+
+export async function updateRagCompletedAt(runId: string, completedAt: Date): Promise<void> {
+  await db()
+    .update(runs)
+    .set({ ragCompletedAt: completedAt })
+    .where(eq(runs.id, runId));
+}
+
 // ── Retrieval Comparisons (Stage 004) ──
 
 export async function insertRetrievalComparison(data: {

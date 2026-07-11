@@ -5,7 +5,7 @@ Do not reproduce large portions of the story. Use concise summaries when needed.
 
 ### BIAS CATALOG
 Available biases and their definitions:
-{{biasContext}}
+{{candidateBiases}}
 
 ### REASONING PROCESS
 

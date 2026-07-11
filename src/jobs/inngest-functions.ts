@@ -4,5 +4,12 @@
  */
 import { evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob } from "./eval-assessment";
 import { evalDatasetRunJob } from "./eval-run";
+import type { createRagRetrieveJob } from "./rag-retrieve";
 
-export const inngestFunctions = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob, evalDatasetRunJob];
+// ragRetrieveJob is constructed in server.ts (needs ragClient + runStore injected)
+// and is undefined when RAG isn't configured for this environment — so the full
+// function list is assembled here rather than exported statically.
+export function buildInngestFunctions(ragRetrieveJob?: ReturnType<typeof createRagRetrieveJob>) {
+  const base = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob, evalDatasetRunJob];
+  return ragRetrieveJob ? [...base, ragRetrieveJob] : base;
+}

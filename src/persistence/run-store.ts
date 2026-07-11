@@ -6,6 +6,9 @@ import {
   getRunsBySession as dbGetRunsBySession,
   updateRunRagResult,
   getRagResultBySession,
+  updateRagStartedAt,
+  getRagStartedAtBySession,
+  updateRagCompletedAt,
 } from "../db/queries";
 
 export class DrizzleRunStore implements RunStore {
@@ -49,5 +52,30 @@ export class DrizzleRunStore implements RunStore {
 
   async getRagResultForSession(sessionId: string): Promise<unknown | null> {
     return getRagResultBySession(sessionId);
+  }
+
+  async recordRagStarted(runId: string, startedAt: Date): Promise<void> {
+    try {
+      await updateRagStartedAt(runId, startedAt);
+    } catch (err) {
+      logger.warn({ err, runId }, "rag_started_at_store_failed");
+    }
+  }
+
+  async getRagStartedAtForSession(sessionId: string): Promise<Date | null> {
+    try {
+      return await getRagStartedAtBySession(sessionId);
+    } catch (err) {
+      logger.warn({ err, sessionId }, "rag_started_at_fetch_failed");
+      return null;
+    }
+  }
+
+  async recordRagCompleted(runId: string, completedAt: Date): Promise<void> {
+    try {
+      await updateRagCompletedAt(runId, completedAt);
+    } catch (err) {
+      logger.warn({ err, runId }, "rag_completed_at_store_failed");
+    }
   }
 }
