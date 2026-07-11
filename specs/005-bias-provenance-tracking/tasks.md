@@ -91,13 +91,13 @@ the retained `retrieval_score` inference rule with zero regressions. (ADR D015 D
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] Unit test in tests/unit/context-builder-fallback.test.ts: engine response with NO `source` on any bias yields `engineSources` = `["vector"]` for every `retrieval_score>0` bias and excludes `retrieval_score=0` biases (Case B unchanged) — must FAIL first
-- [ ] T016 [P] [US2] Unit test in tests/unit/context-builder-provenance.test.ts (extend): mixed response (some biases with `source`, some null) resolves each bias independently — must FAIL first
+- [x] T015 [P] [US2] Added tests/unit/rag/context-builder-fallback.test.ts (1 test): no-source response → `["vector"]` for every score>0 bias, excludes score=0. NOTE: passed on first run — the per-bias fallback already landed in T008, so no separate red phase (capability existed).
+- [x] T016 [P] [US2] Extended context-builder-provenance.test.ts with a mixed case (source `["llm"]` / null / absent) — each bias resolves independently: `["llm"]`, `["vector"]`, `["vector"]`.
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Verify the T008 fallback branch handles null/absent `source` **per-bias** (not per-response) so mixed responses are correct; adjust `buildBiasContext` if the map-build short-circuits on the first null
-- [ ] T018 [US2] Run US2 tests green and re-run the full suite to confirm no regression in existing RAG/context tests (`pnpm vitest run`)
+- [x] T017 [US2] Verified by inspection: `buildBiasContext` builds the map via `retrieved.map(...)` per-bias with no short-circuit — null/absent handled independently. No change needed.
+- [x] T018 [US2] US2 tests GREEN (5/5); full suite 340 pass / 16 known-red / 356 — no regressions; typecheck clean.
 
 **Checkpoint**: Non-`llm_union` and legacy responses behave exactly as before.
 

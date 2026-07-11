@@ -51,6 +51,20 @@ describe("buildBiasContext — engineSources provenance map (D015)", () => {
     );
   });
 
+  it("resolves each bias independently in a mixed response (some with source, some without)", () => {
+    const ctx = buildBiasContext(
+      ok([
+        bias({ id: "confirmation_bias", retrieval_score: 0.9, source: ["llm"] }),
+        bias({ id: "anchoring", retrieval_score: 0.5, source: null }), // fallback ["vector"]
+        bias({ id: "sunk_cost_fallacy", retrieval_score: 0.4 }), // no source → fallback ["vector"]
+      ]),
+      catalog,
+    );
+    expect(ctx.engineSources.get("confirmation-bias")).toEqual(["llm"]);
+    expect(ctx.engineSources.get("anchoring")).toEqual(["vector"]);
+    expect(ctx.engineSources.get("sunk-cost-fallacy")).toEqual(["vector"]);
+  });
+
   it("returns an empty map for roster_fallback (all scores 0)", () => {
     const ctx = buildBiasContext(
       ok([bias({ id: "confirmation_bias", retrieval_score: 0, source: ["vector"] })]),
