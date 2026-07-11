@@ -57,8 +57,13 @@ export const BiasItemSchema = z.object({
   storyConnection: z.string().min(BIAS_FIELD_MIN_LENGTH),
   alternativePerspective: z.string().min(BIAS_FIELD_MIN_LENGTH),
   evidence: z.array(EvidenceEntrySchema).optional(),
-  /** Derived by service code post-LLM: "retrieved" if this bias was in the RAG result, "roster" otherwise. */
-  context_source: z.enum(["retrieved", "roster"]).optional(),
+  /**
+   * Derived by service code post-LLM (D015): the engine signal(s) that surfaced this bias —
+   * `["vector"]` / `["llm"]` / `["vector","llm"]`, or `[]` if the assessment LLM named it with no
+   * engine signal. Observability-only; the engine-ran-vs-not disambiguation of `[]` lives in the
+   * stored comparison record (ragStatus), not here (review finding 3).
+   */
+  engineSources: z.array(z.enum(["vector", "llm"])).optional(),
 });
 
 export const QuestionOutputSchema = z.object({

@@ -64,18 +64,18 @@ is distinguishable from a roster-fallback bias (`[]`, `ragCase!="retrieved"`) in
 
 ### Tests for User Story 1
 
-- [ ] T006 [P] [US1] Unit test in tests/unit/context-builder-provenance.test.ts: `buildBiasContext` returns an `engineSources` map with `["vector"]`/`["llm"]`/`["vector","llm"]`, normalizes ids underscore→hyphen, and falls back to `["vector"]` when `source` is null but `retrieval_score>0` — must FAIL first
-- [ ] T007 [P] [US1] Unit test in tests/unit/assessment-provenance.test.ts: per-bias `engineSources` resolves via `map.get(id) ?? []` inside `callProvider`, and the two `[]` cases stay separable via `ragCase` (data-model.md §2 table) — must FAIL first
+- [x] T006 [P] [US1] Added tests/unit/rag/context-builder-provenance.test.ts (3 tests): engineSources map with `["vector"]`/`["llm"]`/`["vector","llm"]`, underscore→hyphen ids, `["vector"]` fallback when source null but score>0, excludes score-0, empty map on roster_fallback/unavailable. RED first.
+- [x] T007 [P] [US1] Added tests/unit/orchestrators/assessment-provenance.test.ts (2 tests) via runFullAssessment + MockProvider + mock stores: engine=retrieved copies sources & LLM-alone bias gets `[]`; engine=roster_fallback yields `[]` disambiguated by returned `ragCase`; asserts per-bias output has NO ragCase. RED first.
 
 ### Implementation for User Story 1
 
-- [ ] T008 [US1] Extend `BiasContextResult` in src/rag/context-builder.ts with `engineSources: Map<string, ("vector"|"llm")[]>`; build it in `buildBiasContext` from each retrieved bias's normalized `source` (hyphenated id), applying the `retrieval_score>0` ⇒ `["vector"]` fallback when `source` is null (research R3); return empty map for Case B/C
-- [ ] T009 [US1] In src/orchestrators/reflection/assessment.service.ts: capture `ctx.engineSources` at both `buildBiasContext` call sites (~L93 in `runStoryOnlyAssessment`, ~L175 in `runFullAssessment`) into a local, alongside the existing `retrievedIds`
-- [ ] T010 [US1] In src/orchestrators/reflection/assessment.service.ts: **extend `callProvider`'s signature** (~L209) with `engineSourcesMap: Map<string, ("vector"|"llm")[]> = new Map()` and pass it from BOTH call sites (~L100, ~L198) — WITHOUT this the L371 lookup reads an undefined map and yields `[]` for every bias (review finding 1)
-- [ ] T011 [US1] In src/orchestrators/reflection/assessment.service.ts (~L371): replace the `context_source: "retrieved"|"roster"` derivation with `engineSources = engineSourcesMap.get(result.id ?? "") ?? []` on each normalized bias; keep `ragCase` available for downstream disambiguation (do NOT collapse the two `[]` meanings; do NOT add `ragCase` to the per-bias output — storage-only, review finding 3)
-- [ ] T012 [US1] Update src/contracts/reflection.schemas.ts (~L61): replace `context_source: z.enum(["retrieved","roster"]).optional()` with `engineSources: z.array(z.enum(["vector","llm"])).optional()` per data-model.md §2
-- [ ] T013 [US1] Confirm no prompt/context change: the provenance is computed AFTER the model call; verify the prompt builder path is untouched (FR-011/FR-012)
-- [ ] T014 [US1] Run US1 tests green (T006, T007) and `pnpm typecheck`
+- [x] T008 [US1] Extended `BiasContextResult` with `engineSources: Map<string, EngineSource[]>` in src/rag/context-builder.ts; built from each retrieved bias's `source` with the `["vector"]` fallback (R3); empty map for roster_fallback/unavailable.
+- [x] T009 [US1] Captured `ctx.engineSources` at both `buildBiasContext` call sites (runStoryOnlyAssessment, runFullAssessment) in src/orchestrators/reflection/assessment.service.ts.
+- [x] T010 [US1] Extended `callProvider` signature with `engineSourcesMap: Map<string, EngineSource[]> = new Map()` and passed it from all 3 call sites (finding 1). During review, dropped the now-dead `retrievedIds` param it superseded.
+- [x] T011 [US1] Replaced the `context_source` derivation with `engineSources = engineSourcesMap.get(result.id ?? "") ?? []`; kept `ragCase` request-level (not on per-bias output, finding 3); updated the stale D014 comment in context-builder.
+- [x] T012 [US1] Swapped `context_source` enum for `engineSources: z.array(z.enum(["vector","llm"])).optional()` in src/contracts/reflection.schemas.ts. Re-checked the 2 known-red prompt_version failures there = orthogonal `.optional()`-vs-test divergence, unaffected by this swap.
+- [x] T013 [US1] Verified prompt untouched: only post-LLM derivation + the returned map changed; `ctx.biasContext` (fed to the prompt) is unchanged (FR-011/FR-012).
+- [x] T014 [US1] US1 tests GREEN (5/5); typecheck clean; full suite 338 pass / 16 known-red / 354 — identical failure set, zero regressions.
 
 **Checkpoint**: Live assessment results carry three-way provenance; MVP demonstrable.
 

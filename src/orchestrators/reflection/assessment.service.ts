@@ -15,7 +15,7 @@ import type { BiasCatalogService } from "../../catalog/bias-catalog";
 import { normalizeBiasName } from "../../catalog/normalize";
 import { validateEvidence } from "../../parsers/evidence-validator";
 import type { LlmCallStore, RunStore, TraceStore } from "../../persistence/ports";
-import { isEngineResponse, type RagEngineClient } from "../../rag/engine-client";
+import { isEngineResponse, type EngineSource, type RagEngineClient } from "../../rag/engine-client";
 import { buildBiasContext, type RagCase } from "../../rag/context-builder";
 
 const MODULE = "assessment-service";
@@ -80,7 +80,7 @@ export class AssessmentService {
 
     // Retrieve RAG context if client is configured
     let ragCase: RagCase = "unavailable";
-    let retrievedIds = new Set<string>();
+    let engineSources = new Map<string, EngineSource[]>();
 
     if (this.ragClient) {
       const ragResult = await this.ragClient.retrieve(story);
@@ -92,7 +92,7 @@ export class AssessmentService {
 
       const ctx = buildBiasContext(ragResult, this.catalog.getAll());
       ragCase = ctx.ragCase;
-      retrievedIds = ctx.retrievedIds;
+      engineSources = ctx.engineSources;
 
       const system = this.prompts.render("assessment", { biasContext: ctx.biasContext });
       const user = `STORY: ${story}`;
@@ -100,7 +100,7 @@ export class AssessmentService {
       return (await this.callProvider(
         sessionId, system, user, requestId, runId,
         "initial_assessment", "story_only", inputHash, promptVersion, providerId,
-        story, [], ragCase, retrievedIds,
+        story, [], ragCase, engineSources,
       )).output;
     }
 
@@ -116,7 +116,7 @@ export class AssessmentService {
     return (await this.callProvider(
       sessionId, system, user, requestId, runId,
       "initial_assessment", "story_only", inputHash, promptVersion, providerId,
-      story, [], ragCase, retrievedIds,
+      story, [], ragCase, engineSources,
     )).output;
   }
 
@@ -161,7 +161,7 @@ export class AssessmentService {
 
     // Reconstruct RAG context from the stored story-only result
     let ragCase: RagCase = "unavailable";
-    let retrievedIds = new Set<string>();
+    let engineSources = new Map<string, EngineSource[]>();
     let ragList: string[] = [];
     let biasContext: string;
 
@@ -174,7 +174,7 @@ export class AssessmentService {
 
       const ctx = buildBiasContext(ragResult, this.catalog.getAll());
       ragCase = ctx.ragCase;
-      retrievedIds = ctx.retrievedIds;
+      engineSources = ctx.engineSources;
       ragList = ragCase === "retrieved" && ragResult.status === "ok"
         ? ragResult.data.biases.filter(b => b.retrieval_score > 0).map(b => b.name)
         : [];
@@ -198,7 +198,7 @@ export class AssessmentService {
     const { output, llmListRaw } = await this.callProvider(
       sessionId, system, user, requestId, runId,
       "post_questions_assessment", "story_plus_answers", inputHash, promptVersion, providerId,
-      story, answers, ragCase, retrievedIds,
+      story, answers, ragCase, engineSources,
     );
     return { output, runId, ragCase, ragList, llmListRaw };
   }
@@ -220,7 +220,7 @@ export class AssessmentService {
     story: string,
     answers: string[],
     ragCase: RagCase = "unavailable",
-    retrievedIds: Set<string> = new Set(),
+    engineSourcesMap: Map<string, EngineSource[]> = new Map(),
   ): Promise<{ output: AssessmentOutput; llmListRaw: string[] }> {
     return await withRetry(async (attempt) => {
       logger.info(
@@ -366,16 +366,18 @@ export class AssessmentService {
       const allBiases = this.catalog.getAll();
       const normalizedBiases = parsed.biases.map((bias) => {
         const result = normalizeBiasName(bias.name, allBiases);
+        // Per-bias engine provenance (D015): copy the engine's source array for this bias, or [] if
+        // the engine did not surface it. `[]` + ragCase==="retrieved" = assessment-LLM-alone; `[]` +
+        // ragCase!=="retrieved" = engine did not run — the two are kept separable via the
+        // request-level ragCase (stored as ragStatus), NOT on this per-bias output (review finding 3).
         // Engine BiasResult.id and local BiasEntry.id must share the same string format
-        // (e.g. "confirmation_bias") — see ADR D014. Divergence silently returns "roster" for all.
-        const contextSource: "retrieved" | "roster" = ragCase === "retrieved"
-          ? (retrievedIds.has(result.id ?? "") ? "retrieved" : "roster")
-          : "roster";
+        // (e.g. "confirmation_bias") — see ADR D014. Divergence silently yields [] for all.
+        const engineSources: EngineSource[] = engineSourcesMap.get(result.id ?? "") ?? [];
         return {
           ...bias,
           name: result.name,
           ...(result.id ? { biasCatalogId: result.id } : {}),
-          context_source: contextSource,
+          engineSources,
         };
       });
 
