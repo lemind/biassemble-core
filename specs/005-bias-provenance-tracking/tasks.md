@@ -33,7 +33,7 @@ Single package: `src/`, `tests/` at `biassemble-core/` root. Migrations under `s
 
 **Purpose**: Confirm working baseline before edits.
 
-- [ ] T001 Confirm on branch `005-bias-provenance-tracking` and baseline green: run `pnpm typecheck && pnpm vitest run` and note the current pass count (expected ~224/225)
+- [x] T001 Baseline captured on b423fff: `pnpm typecheck` passes; `pnpm vitest run` = **326 pass / 16 known-red / 342** (NOT green as expected). The 16 are pre-existing and unrelated to provenance (normalize.test.ts 9/9 test-impl divergence; reflection.schemas 2× prompt_version; eval-metrics 1; integration DB 4). Per user decision: snapshot-gate — proceed, gate on no NEW failures beyond this set. Snapshot in scratchpad/baseline-known-red.md.
 
 ---
 
