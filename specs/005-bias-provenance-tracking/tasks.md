@@ -44,10 +44,10 @@ US3 (persistence) consume. Maps to ADR D015 Decision 1.
 
 **⚠️ CRITICAL**: US1 and US3 cannot begin until this phase is complete.
 
-- [ ] T002 [P] Add contract test in tests/contract/engine-response-provenance.test.ts covering the parse table in specs/005-bias-provenance-tracking/contracts/engine-response-v3.md (array `source`, legacy scalar `"both"`, `null` with `retrieval_score>0`, unknown value dropped, v2 response without `source`/`llm_*`) — must FAIL first
-- [ ] T003 Extend `BiasResult` in src/rag/engine-client.ts with `source?: ("vector"|"llm")[] | null` and `EngineResponse` with optional `selection_strategy`, `llm_model`, `llm_latency_ms`, `truncated_story`, `llm_scores`, `vector_scores` (all additive/optional per data-model.md §1)
-- [ ] T004 Add a `normalizeSource(raw: unknown): ("vector"|"llm")[] | null` helper in src/rag/engine-client.ts implementing research.md R1 (array→dedup known values; `"both"`→`["vector","llm"]`; scalar→singleton; unknown/empty→null) and apply it when parsing each bias in `retrieve()`; keep `isEngineResponse` lenient (do not reject on new fields)
-- [ ] T005 Verify T002 contract test now passes (`pnpm vitest run tests/contract/engine-response-provenance.test.ts`)
+- [x] T002 [P] Added tests/contract/engine-response-provenance.test.ts (7 tests): normalizeSource table (array passthrough+dedup, legacy scalar `"both"`/`"vector"`/`"llm"`, null/empty→null, unknown dropped) + retrieve() parsing via mocked fetch (v2 no-source→null, array+scalar per-bias, top-level llm_* capture). Confirmed RED first (5 fail).
+- [x] T003 Extended `BiasResult` with `source?: EngineSource[] | null` and `EngineResponse` with optional `selection_strategy`/`llm_model`/`llm_latency_ms`/`truncated_story`/`llm_scores`/`vector_scores` in src/rag/engine-client.ts (additive).
+- [x] T004 Added exported `normalizeSource(raw): EngineSource[] | null` (array→dedup known; `"both"`→`["vector","llm"]`; scalar→singleton; unknown/empty/null→null) and applied it per-bias in `retrieve()` via a normalized EngineResponse; `isEngineResponse` left lenient. Correctly did NOT apply the `retrieval_score>0`⇒`["vector"]` inference here (that's context-builder, R3).
+- [x] T005 Contract test GREEN (7/7); typecheck clean; full suite 333 pass / 16 known-red / 349 — no new failures. Removed the now-stale `@ts-expect-error` on the import during review.
 
 **Checkpoint**: Engine response types + normalization ready.
 
