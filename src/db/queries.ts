@@ -335,6 +335,12 @@ export async function insertRetrievalComparison(data: {
   llmHitFinal: number;
   normalizationAdditions: number;
   ragStatus: RagStatus;
+  // Per-source split & confirmation counts (D015) — additive/nullable.
+  ragVectorList?: string[] | null;
+  ragLlmList?: string[] | null;
+  ragVectorHitFinal?: number | null;
+  ragLlmHitFinal?: number | null;
+  ragBothHitFinal?: number | null;
 }): Promise<void> {
   await db()
     .insert(retrievalComparisons)

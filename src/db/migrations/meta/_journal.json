@@ -29,6 +29,13 @@
       "when": 1783123200000,
       "tag": "0006_rag_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783788874483,
+      "tag": "0007_flat_meltdown",
+      "breakpoints": true
     }
   ]
 }

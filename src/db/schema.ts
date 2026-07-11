@@ -105,6 +105,13 @@ export const retrievalComparisons = core.table("retrieval_comparisons", {
   llmHitFinal: integer("llm_hit_final").notNull(),
   normalizationAdditions: integer("normalization_additions").notNull(),
   ragStatus: text("rag_status").notNull(),
+  // Per-source split & confirmation counts (D015). Additive/nullable — null on historical rows
+  // and non-llm_union runs; lists are name-keyed (consistent with rag_list / final_list).
+  ragVectorList: jsonb("rag_vector_list"),
+  ragLlmList: jsonb("rag_llm_list"),
+  ragVectorHitFinal: integer("rag_vector_hit_final"),
+  ragLlmHitFinal: integer("rag_llm_hit_final"),
+  ragBothHitFinal: integer("rag_both_hit_final"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index("retrieval_comparisons_session_id_idx").on(table.sessionId),

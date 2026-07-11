@@ -130,7 +130,7 @@ export class AssessmentService {
     questions: string[],
     answers: string[],
     requestId: string
-  ): Promise<{ output: AssessmentOutput; runId: string; ragCase: RagCase; ragList: string[]; llmListRaw: string[] }> {
+  ): Promise<{ output: AssessmentOutput; runId: string; ragCase: RagCase; ragList: string[]; ragVectorList: string[]; ragLlmList: string[]; llmListRaw: string[] }> {
     const promptVersion = this.prompts.getVersion();
     const providerId = this.provider.mode;
     const inputHash = computeInputHash(
@@ -163,6 +163,8 @@ export class AssessmentService {
     let ragCase: RagCase = "unavailable";
     let engineSources = new Map<string, EngineSource[]>();
     let ragList: string[] = [];
+    let ragVectorList: string[] = [];
+    let ragLlmList: string[] = [];
     let biasContext: string;
 
     if (sessionId && this.ragClient) {
@@ -175,9 +177,17 @@ export class AssessmentService {
       const ctx = buildBiasContext(ragResult, this.catalog.getAll());
       ragCase = ctx.ragCase;
       engineSources = ctx.engineSources;
-      ragList = ragCase === "retrieved" && ragResult.status === "ok"
-        ? ragResult.data.biases.filter(b => b.retrieval_score > 0).map(b => b.name)
-        : [];
+      if (ragCase === "retrieved" && ragResult.status === "ok") {
+        const retrieved = ragResult.data.biases.filter(b => b.retrieval_score > 0);
+        ragList = retrieved.map(b => b.name);
+        // Per-source split by NAME (D015 / review finding 2): use the normalized source, applying
+        // the same retrieval_score>0 ⇒ ["vector"] fallback as context-builder. A both-bias appears
+        // in both lists. Names keep the downstream *HitFinal intersections aligned with finalList.
+        const srcOf = (b: { source?: EngineSource[] | null }): EngineSource[] =>
+          b.source && b.source.length > 0 ? b.source : ["vector"];
+        ragVectorList = retrieved.filter(b => srcOf(b).includes("vector")).map(b => b.name);
+        ragLlmList = retrieved.filter(b => srcOf(b).includes("llm")).map(b => b.name);
+      }
       biasContext = ctx.biasContext;
     } else {
       // generate() backward-compat path: no sessionId, no RAG
@@ -200,7 +210,7 @@ export class AssessmentService {
       "post_questions_assessment", "story_plus_answers", inputHash, promptVersion, providerId,
       story, answers, ragCase, engineSources,
     );
-    return { output, runId, ragCase, ragList, llmListRaw };
+    return { output, runId, ragCase, ragList, ragVectorList, ragLlmList, llmListRaw };
   }
 
   /**

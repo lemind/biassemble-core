@@ -27,6 +27,8 @@ export interface FullAssessmentResult {
   runId: string;
   ragCase: RagCase;
   ragList: string[];
+  ragVectorList: string[];
+  ragLlmList: string[];
   llmListRaw: string[];
 }
 
@@ -126,6 +128,8 @@ export function registerReflectionRoutes(
               sessionId: body.sessionId,
               runId: fullResult.runId,
               ragList: fullResult.ragList,
+              ragVectorList: fullResult.ragVectorList,
+              ragLlmList: fullResult.ragLlmList,
               llmListRaw: fullResult.llmListRaw,
               finalList: result.biases.map(b => b.name),
               ragCase: fullResult.ragCase,

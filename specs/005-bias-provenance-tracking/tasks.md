@@ -115,18 +115,18 @@ existing counts unchanged; forced write failure does not affect the response.
 
 ### Tests for User Story 3
 
-- [ ] T019 [P] [US3] Unit test in tests/unit/comparison-recorder-per-source.test.ts: given name-keyed `ragVectorList`/`ragLlmList`, `recordComparison` computes `ragVectorHitFinal`/`ragLlmHitFinal`/`ragBothHitFinal` against `finalList` (all **names**), a both-bias appears in both lists, without inflating aggregate `ragHitFinal` — must FAIL first
-- [ ] T020 [P] [US3] Unit test in tests/unit/comparison-recorder-per-source.test.ts (extend): store throwing still resolves without propagating (fire-and-forget, FR-010) — must FAIL first
+- [x] T019 [P] [US3] Added tests/unit/observability/comparison-recorder-per-source.test.ts: name-keyed per-source hit counts (vector=2, llm=1, both=1) against finalList, both-bias in both lists, aggregate ragHitFinal unchanged (=2). RED first.
+- [x] T020 [P] [US3] Same file: throwing store → recordComparison resolves (fire-and-forget, FR-010). Passed on first run (try/catch already existed).
 
 ### Implementation for User Story 3
 
-- [ ] T021 [US3] Add additive nullable columns to `retrievalComparisons` in src/db/schema.ts: `ragVectorList`/`ragLlmList` (jsonb), `ragVectorHitFinal`/`ragLlmHitFinal`/`ragBothHitFinal` (integer), all nullable (data-model.md §3)
-- [ ] T022 [US3] Generate the additive migration (`pnpm drizzle-kit generate`) producing src/db/migrations/0007_*.sql; confirm it only ADDs nullable columns (no drop/rename)
-- [ ] T023 [US3] Extend `RetrievalComparisonStore.record()` param type in src/persistence/ports.ts with the five new nullable fields
-- [ ] T024 [US3] Map the new fields through the Drizzle store in src/persistence/retrieval-comparison-store.ts; confirm the mock/noop store path ignores them unchanged
-- [ ] T025 [US3] Build the name-keyed split in src/orchestrators/reflection/assessment.service.ts `runFullAssessment`: from the engine response, `ragVectorList = biases.filter(b => src(b).includes("vector")).map(b => b.name)` and `ragLlmList` for `"llm"` (where `src(b)` is the normalized `source` with the `retrieval_score>0` ⇒ `["vector"]` fallback), and return them alongside `ragList`/`llmListRaw`/`ragCase` — lists MUST be **names** to match `finalList` (review finding 2)
-- [ ] T026 [US3] Extend `RecordComparisonParams` + `recordComparison` in src/observability/comparison-recorder.ts to accept `ragVectorList`/`ragLlmList` (names) and compute `ragVectorHitFinal`/`ragLlmHitFinal`/`ragBothHitFinal` against `finalList`, keeping existing counts and the try/catch fire-and-forget path intact; thread the two lists from src/routes/reflection.ts (~L124 `recordComparison(...)`) via `fullResult`
-- [ ] T027 [US3] Run US3 tests green, `pnpm typecheck`, and apply the migration against a local/dev DB to confirm it applies cleanly
+- [x] T021 [US3] Added 5 additive nullable columns to `retrievalComparisons` in src/db/schema.ts: `ragVectorList`/`ragLlmList` (jsonb), `ragVectorHitFinal`/`ragLlmHitFinal`/`ragBothHitFinal` (integer).
+- [x] T022 [US3] Ran `pnpm db:generate` → src/db/migrations/0007_flat_meltdown.sql. ⚠️ drizzle emitted a full CREATE TABLE (+ runs.rag_result) because meta/0006_snapshot.json is MISSING (pre-existing drift). Hand-corrected the SQL to only the 5 idempotent `ADD COLUMN IF NOT EXISTS`; kept the auto 0007_snapshot (correct full state, repairs future generate).
+- [x] T023 [US3] Extended `RetrievalComparisonRecord` (persistence/types.ts) + `insertRetrievalComparison` (db/queries.ts) with the 5 optional/nullable fields; `RetrievalComparisonStore.record` uses `Omit<...Record>` so the port picks them up.
+- [x] T024 [US3] Mapped the 5 fields through DrizzleRetrievalComparisonStore. Mock stores (tests) construct the record via the optional fields → unaffected.
+- [x] T025 [US3] Built name-keyed `ragVectorList`/`ragLlmList` in `runFullAssessment` directly from the engine response (`srcOf(b)` with the `retrieval_score>0`⇒`["vector"]` fallback), returned alongside ragList/llmListRaw/ragCase; extended `FullAssessmentResult`. Names match finalList (finding 2).
+- [x] T026 [US3] Extended `RecordComparisonParams` + `recordComparison` to compute the 3 per-source counts; kept existing counts + fire-and-forget; threaded the 2 lists from routes/reflection.ts via `fullResult`.
+- [ ] T027 [US3] Unit tests GREEN (recorder 2/2); typecheck clean; full suite 342 pass / 16 known-red / 358 — no regressions. ⛔ **Migration NOT applied** — loop stop condition: awaiting explicit user go-ahead before running against the shared Supabase (also blocked on the missing-0006-snapshot drift; see T022).
 
 **Checkpoint**: Confirmation-rate-per-source dataset is queryable (SC-003).
 

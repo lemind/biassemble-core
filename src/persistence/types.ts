@@ -71,6 +71,13 @@ export interface RetrievalComparisonRecord {
   normalizationAdditions: number;
   ragStatus: RagStatus;
   createdAt: string;
+  // Per-source split & confirmation counts (D015 Decision 3). Additive/nullable — absent on
+  // historical rows and non-llm_union runs (name-keyed, consistent with ragList/finalList).
+  ragVectorList?: string[] | null;
+  ragLlmList?: string[] | null;
+  ragVectorHitFinal?: number | null;
+  ragLlmHitFinal?: number | null;
+  ragBothHitFinal?: number | null;
 }
 
 // ── LLM Call Record (Stage 003) ──
