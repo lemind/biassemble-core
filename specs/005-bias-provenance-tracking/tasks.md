@@ -126,7 +126,7 @@ existing counts unchanged; forced write failure does not affect the response.
 - [x] T024 [US3] Mapped the 5 fields through DrizzleRetrievalComparisonStore. Mock stores (tests) construct the record via the optional fields → unaffected.
 - [x] T025 [US3] Built name-keyed `ragVectorList`/`ragLlmList` in `runFullAssessment` directly from the engine response (`srcOf(b)` with the `retrieval_score>0`⇒`["vector"]` fallback), returned alongside ragList/llmListRaw/ragCase; extended `FullAssessmentResult`. Names match finalList (finding 2).
 - [x] T026 [US3] Extended `RecordComparisonParams` + `recordComparison` to compute the 3 per-source counts; kept existing counts + fire-and-forget; threaded the 2 lists from routes/reflection.ts via `fullResult`.
-- [ ] T027 [US3] Unit tests GREEN (recorder 2/2); typecheck clean; full suite 342 pass / 16 known-red / 358 — no regressions. ⛔ **Migration NOT applied** — loop stop condition: awaiting explicit user go-ahead before running against the shared Supabase (also blocked on the missing-0006-snapshot drift; see T022).
+- [x] T027 [US3] Unit tests GREEN (recorder 2/2); typecheck clean; full suite 342 pass / 16 known-red / 358 — no regressions. Migration APPLIED to live Supabase (project owphkfvcxmpeqggwctqc, same as engine link) via `supabase db query --linked -f` with explicit user go-ahead: pre-check showed 0/5 columns, applied 5 idempotent ADD COLUMN, verified all 5 present. Snapshot-drift (missing 0006) left as documented per user decision.
 
 **Checkpoint**: Confirmation-rate-per-source dataset is queryable (SC-003).
 
@@ -134,9 +134,9 @@ existing counts unchanged; forced write failure does not affect the response.
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T028 [P] Run the full quickstart in specs/005-bias-provenance-tracking/quickstart.md end-to-end (or against fixtures) and confirm SC-001..SC-006
-- [ ] T029 [P] Confirm model-call count per assessment is unchanged (SC-004) — no new provider call introduced anywhere in the diff
-- [ ] T030 Verify `context_source` has no live consumer before removal (review finding 4): `grep -rn "context_source" --include=*.ts --include=*.tsx . | grep -v node_modules` — only source + the generated `api/index.js` bundle should appear; regenerate the bundle if present. Then update docs/integration-map.md / docs/decisions cross-refs that enumerate `context_source` → `engineSources`, and note the engine-side contract-array follow-up from research R1
+- [x] T028 [P] Fixtures-based verification (per quickstart): all 16 spec-005 tests green across 5 files; typecheck clean; migration columns confirmed live. SC-001/002 ← provenance+ragCase tests; SC-003 ← applied columns + recorder counts; SC-004 ← T029; SC-005 ← T020 throwing-store test; SC-006 ← US2 tests + identical 16 known-red. Did NOT run a live-LLM e2e (heavy; DB integration tests are in the known-red set) — fixtures cover all SCs.
+- [x] T029 [P] Confirmed no new model calls: assessment path still has only its pre-existing primary (assessment.service L244) + repair-fallback (L274) `completeJson` calls; provenance is derived post-parse. Model-call count per assessment unchanged (SC-004).
+- [x] T030 Verified no live `context_source` consumer: 0 refs in tracked `.ts` source; remaining refs are docs/specs (historical 004, ADR, 005 docs describing the swap). `api/index.js` still has 2 refs but is a GITIGNORED build artifact (regenerates on build) — not a tracked consumer. docs/integration-map.md has none. Engine-side contract-array follow-up (research R1) remains an out-of-scope engine task.
 
 ---
 
