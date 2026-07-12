@@ -111,6 +111,11 @@ export function registerReflectionRoutes(
       const body = GenerateAssessmentRequestSchema.parse(request.body);
       const includeTrace = request.query && (request.query as Record<string, string>).includeReasoningTrace === "true";
 
+      logger.info(
+        { requestId: request.id, mode: body.mode, sessionId: body.sessionId, comparisonStoreConfigured: !!services.comparisonStore },
+        "reflection_assessment_received"
+      );
+
       let result: AssessmentOutput;
 
       if (body.mode === "story_only") {
@@ -150,7 +155,9 @@ export function registerReflectionRoutes(
               llmModel: fullResult.llmModel,
             },
             services.comparisonStore,
-          ).catch(() => {/* already logged in recordComparison */});
+          ).catch(() => {/* recordComparison never rejects — success/failure logged inside it */});
+        } else {
+          logger.warn({ requestId: request.id }, "comparison_store_not_configured — skipping retrieval_comparisons write");
         }
       }
 

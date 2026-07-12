@@ -65,7 +65,11 @@ export async function recordComparison(
       selectionStrategy: selectionStrategy ?? null,
       llmModel: llmModel ?? null,
     });
+    // This is the ONLY place that knows whether the write actually landed — the caller's
+    // promise always resolves regardless (this function never rethrows), so logging success
+    // has to happen here, not at the call site.
+    logger.info({ sessionId, runId, ragCase, hasSourceBreakdown: sourceBreakdown !== null }, "comparison_record_ok");
   } catch (err) {
-    logger.warn({ err, sessionId }, "comparison_record_failed");
+    logger.warn({ err, sessionId, runId, ragCase }, "comparison_record_failed");
   }
 }

@@ -94,6 +94,7 @@ export class AssessmentService {
         inputHash,
       });
       runId = run?.id ?? "";
+      logger.info({ module: MODULE, operation: "fireRagRetrieval", requestId, runId }, "run_record_created");
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "fireRagRetrieval", error: err, requestId },
@@ -147,6 +148,7 @@ export class AssessmentService {
         inputHash,
       });
       runId = run?.id ?? "";
+      logger.info({ module: MODULE, operation: "runStoryOnlyAssessment", requestId, runId }, "run_record_created");
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "runStoryOnlyAssessment", error: err, requestId },
@@ -212,6 +214,7 @@ export class AssessmentService {
         inputHash,
       });
       runId = run?.id ?? "";
+      logger.info({ module: MODULE, operation: "runFullAssessment", requestId, runId, sessionId }, "run_record_created");
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "runFullAssessment", error: err, requestId },
