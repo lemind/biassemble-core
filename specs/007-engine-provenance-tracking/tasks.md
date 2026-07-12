@@ -151,7 +151,7 @@ write failure does not affect the response.
 - [x] T037 [P] Grepped the full diff (f947761..HEAD) + current tree for the literal `"both"`: every hit is either the deleted old enum value, an explanatory comment, or the legacy-scalar-expansion input (never a stored/output value). SC-007 confirmed clean.
 - [x] T038 [P] Confirmed 4 `completeJson` call sites total (2 in assessment.service.ts: primary + repair-fallback; 2 in question.service.ts) — identical to pre-D017, no new calls added.
 - [x] T039 Found 2 stale comment-only references to `context_source` in the vestigial `context-builder.ts` (never touched by this feature's code changes) — updated the wording to reference `engineSources`/note the file's vestigial status instead. Zero remaining references in `src/**/*.ts` after the fix.
-- [ ] T040 Apply the migration to the live database **only after explicit go-ahead** — this repo's convention (per prior sessions) is to confirm before any live-DB write, even an additive one
+- [x] T040 Applied with explicit go-ahead via `supabase db query --linked` (raw ALTER statements, since the migration file's `--> statement-breakpoint` markers are Drizzle-migrator-only syntax, not valid for direct execution). Verified live: `retrieval_comparisons` now has 17 columns — the original 14 plus `source_breakdown`/`selection_strategy`/`llm_model`. Also re-confirmed the 5 old 'both'-era orphan columns from the original abandoned attempt remain gone (dropped earlier this session).
 
 ---
 
