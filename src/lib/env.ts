@@ -13,7 +13,12 @@ const envSchema = z.object({
   // Stage 004: RAG engine (optional — omit in CI/eval to disable RAG, service falls back to roster)
   RAG_ENGINE_URL: z.url().optional(),
   RAG_API_KEY: z.string().min(1).optional(),
-  RAG_TIMEOUT_MS: z.coerce.number().int().positive().default(500),
+  // RAG runs in a background Inngest job (Stage 005), decoupled from the response
+  // path, so the timeout only bounds the engine call itself — no user waits on it.
+  // The llm_union strategy (Gemma on cpu-basic) takes ~2.9s p50; 500ms aborted every
+  // call and made the engine permanently "unavailable". 8s covers p50 plus cold-start
+  // and concurrency headroom.
+  RAG_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   RAG_HF_TOKEN: z.string().optional(),
 });
 
