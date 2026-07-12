@@ -412,10 +412,12 @@ export class AssessmentService {
         );
       }
 
-      // T205: Enforce noBiasDetected flag consistency
+      // T205: Enforce noBiasDetected flag consistency. Check == null (not === undefined) —
+      // repair.ts's partialParseObject sets any field missing after a failed strict parse
+      // to null, not undefined, so a strict-undefined check silently misses that path.
       if (parsed.biases.length === 0 && !parsed.noBiasDetected) {
         parsed.noBiasDetected = true;
-      } else if (parsed.biases.length > 0 && parsed.noBiasDetected === undefined) {
+      } else if (parsed.biases.length > 0 && parsed.noBiasDetected == null) {
         parsed.noBiasDetected = false;
       }
 

@@ -303,8 +303,8 @@ describe("T508 — Two-phase session integration", () => {
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
     expect(body).toHaveProperty("reasoningTrace");
+    expect(body.reasoningTrace.prompt_version).toBe(new PromptRegistry().getVersion());
     expect(body.reasoningTrace.story_analysis.themes).toContain("confirmation");
-    expect(body.reasoningTrace.prompt_version).toBe("1.0.0");
   });
 
   it("Phase 2 — full mode should exclude reasoningTrace by default", async () => {
