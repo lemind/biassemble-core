@@ -1,13 +1,13 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-specs/005-async-rag-submission/plan.md
+specs/007-engine-provenance-tracking/plan.md
 
 Supporting artifacts:
-- specs/005-async-rag-submission/spec.md — feature specification
-- specs/005-async-rag-submission/research.md — technical decisions and rationale
-- specs/005-async-rag-submission/data-model.md — schema changes (rag_started_at + enum update)
-- docs/decisions/015-async-rag-fire-at-submission.md — ADR (authoritative decision record)
+- specs/007-engine-provenance-tracking/spec.md — feature specification
+- specs/007-engine-provenance-tracking/research.md — technical decisions, incl. no-fixed-arity constraint
+- specs/007-engine-provenance-tracking/data-model.md — schema changes (source_breakdown jsonb)
+- docs/decisions/017-engine-provenance-tracking.md — ADR (authoritative decision record)
 <!-- SPECKIT END -->
 
 ## Conventions
