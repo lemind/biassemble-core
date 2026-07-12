@@ -59,11 +59,10 @@ export function buildBiasWorkspace(
 
   // Per-bias provenance: source array as-is, or ["vector"] fallback when the engine sent no
   // source but did retrieve it (D017 Decision 1 — vector_only/nli_union carry source: null).
+  // normalizeSource() (engine-client.ts) never returns an empty array — only null or a
+  // non-empty array — so `?? ["vector"]` alone covers the fallback correctly.
   const engineSources = new Map<string, EngineSource[]>(
-    retrieved.map((b) => [
-      b.id.replace(/_/g, "-"),
-      b.source && b.source.length > 0 ? b.source : ["vector"],
-    ]),
+    retrieved.map((b) => [b.id.replace(/_/g, "-"), b.source ?? ["vector"]]),
   );
 
   return { candidates, workspaceCase: "retrieved", retrievedIds, engineSources };

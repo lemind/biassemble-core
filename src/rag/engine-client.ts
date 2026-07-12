@@ -134,7 +134,7 @@ export class RagEngineClient {
         ...body,
         biases: body.biases.map((b) => ({
           ...b,
-          source: normalizeSource((b as { source?: unknown }).source),
+          source: normalizeSource(b.source),
         })),
       };
 
