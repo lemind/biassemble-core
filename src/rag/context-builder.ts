@@ -6,7 +6,9 @@ export type RagCase = "retrieved" | "roster_fallback" | "unavailable";
 export interface BiasContextResult {
   biasContext: string;
   ragCase: RagCase;
-  /** Bias IDs from engine response with retrieval_score > 0; used to derive context_source per bias. */
+  /** Bias IDs from engine response with retrieval_score > 0. Note: this module is vestigial —
+   * only reachable via runStoryOnlyAssessment's hardcoded roster-only stub. The real retrieval
+   * consumption path (workspace-builder.ts) has its own separate retrievedIds/engineSources. */
   retrievedIds: Set<string>;
 }
 
@@ -29,8 +31,7 @@ export function buildBiasContext(
 
   // Case B: engine returned all-zero scores (roster fallback from engine T008).
   // Engine BiasResult.id and local BiasEntry.id must share the same string format
-  // (e.g. "confirmation_bias") — see ADR D014. If they diverge, context_source
-  // silently returns "roster" for all biases on Case A.
+  // (e.g. "confirmation_bias") — see ADR D014.
   if (retrieved.length === 0) {
     return { biasContext: roster, ragCase: "roster_fallback", retrievedIds: new Set() };
   }

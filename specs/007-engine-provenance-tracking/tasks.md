@@ -148,9 +148,9 @@ write failure does not affect the response.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T037 [P] Run quickstart.md's fast-verification block; grep the full diff for the literal string `"both"` outside comments/docs explaining its absence — zero hits expected (SC-007 self-check)
-- [ ] T038 [P] Confirm model-call count per assessment is unchanged (SC-004) — no new provider call anywhere in the diff
-- [ ] T039 Confirm `context_source` has zero remaining references in `src/**/*.ts` after T018/T019 (`grep -rn "context_source" --include=*.ts src/`); update any doc/comment cross-refs found
+- [x] T037 [P] Grepped the full diff (f947761..HEAD) + current tree for the literal `"both"`: every hit is either the deleted old enum value, an explanatory comment, or the legacy-scalar-expansion input (never a stored/output value). SC-007 confirmed clean.
+- [x] T038 [P] Confirmed 4 `completeJson` call sites total (2 in assessment.service.ts: primary + repair-fallback; 2 in question.service.ts) — identical to pre-D017, no new calls added.
+- [x] T039 Found 2 stale comment-only references to `context_source` in the vestigial `context-builder.ts` (never touched by this feature's code changes) — updated the wording to reference `engineSources`/note the file's vestigial status instead. Zero remaining references in `src/**/*.ts` after the fix.
 - [ ] T040 Apply the migration to the live database **only after explicit go-ahead** — this repo's convention (per prior sessions) is to confirm before any live-DB write, even an additive one
 
 ---
