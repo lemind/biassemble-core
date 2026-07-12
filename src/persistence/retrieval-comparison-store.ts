@@ -17,6 +17,9 @@ export class DrizzleRetrievalComparisonStore implements RetrievalComparisonStore
       llmHitFinal: data.llmHitFinal,
       normalizationAdditions: data.normalizationAdditions,
       ragStatus: data.ragStatus,
+      sourceBreakdown: data.sourceBreakdown,
+      selectionStrategy: data.selectionStrategy,
+      llmModel: data.llmModel,
     });
   }
 }

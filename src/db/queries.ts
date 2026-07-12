@@ -363,6 +363,9 @@ export async function insertRetrievalComparison(data: {
   llmHitFinal: number;
   normalizationAdditions: number;
   ragStatus: RagStatus;
+  sourceBreakdown: Record<string, { list: string[]; hitFinal: number }> | null;
+  selectionStrategy: string | null;
+  llmModel: string | null;
 }): Promise<void> {
   await db()
     .insert(retrievalComparisons)

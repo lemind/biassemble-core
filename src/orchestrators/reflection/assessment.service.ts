@@ -181,7 +181,16 @@ export class AssessmentService {
     questions: string[],
     answers: string[],
     requestId: string
-  ): Promise<{ output: AssessmentOutput; runId: string; ragCase: RagCase; ragList: string[]; llmListRaw: string[] }> {
+  ): Promise<{
+    output: AssessmentOutput;
+    runId: string;
+    ragCase: RagCase;
+    ragList: string[];
+    sourceLists: Record<string, string[]>;
+    selectionStrategy?: string;
+    llmModel?: string;
+    llmListRaw: string[];
+  }> {
     const promptVersion = this.prompts.getVersion();
     const providerId = this.provider.mode;
     const inputHash = computeInputHash(
@@ -216,6 +225,9 @@ export class AssessmentService {
     let ragCase: RagCase = "unavailable";
     let engineSources = new Map<string, EngineSource[]>();
     let ragList: string[] = [];
+    let sourceLists: Record<string, string[]> = {};
+    let selectionStrategy: string | undefined;
+    let llmModel: string | undefined;
     let candidateBiases: string;
 
     if (sessionId && this.ragClient) {
@@ -231,6 +243,23 @@ export class AssessmentService {
       engineSources = workspace.engineSources;
       ragList = workspace.candidates.map((c) => c.name);
       candidateBiases = renderWorkspaceToPrompt(workspace, this.catalog.getAll());
+
+      // D017 Decision 3: build the per-source name lists from the WORKSPACE layer
+      // (candidates + engineSources), not by re-reading the raw EngineResponse a second
+      // time — re-deriving the retrieval_score filter / ["vector"] fallback here would
+      // duplicate buildBiasWorkspace's logic in a second place and risk silent divergence
+      // (data-model.md §4 / plan.md Decision 5).
+      for (const c of workspace.candidates) {
+        const hyphenatedId = c.bias_id.replace(/_/g, "-");
+        const sources = workspace.engineSources.get(hyphenatedId) ?? [];
+        for (const s of sources) {
+          (sourceLists[s] ??= []).push(c.name);
+        }
+      }
+      if (ragResult.status === "ok") {
+        selectionStrategy = ragResult.data.selection_strategy;
+        llmModel = ragResult.data.llm_model;
+      }
 
       // Stage 005 telemetry: was RAG done in time for the full assessment, with no
       // wait budget at all? Validates/refutes the miss-rate assumption in D015 now
@@ -260,7 +289,7 @@ export class AssessmentService {
       "post_questions_assessment", "story_plus_answers", inputHash, promptVersion, providerId,
       story, answers, ragCase, engineSources,
     );
-    return { output, runId, ragCase, ragList, llmListRaw };
+    return { output, runId, ragCase, ragList, sourceLists, selectionStrategy, llmModel, llmListRaw };
   }
 
   /**

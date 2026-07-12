@@ -27,6 +27,9 @@ export interface FullAssessmentResult {
   runId: string;
   ragCase: RagCase;
   ragList: string[];
+  sourceLists: Record<string, string[]>;
+  selectionStrategy?: string;
+  llmModel?: string;
   llmListRaw: string[];
 }
 
@@ -139,9 +142,12 @@ export function registerReflectionRoutes(
               sessionId: body.sessionId,
               runId: fullResult.runId,
               ragList: fullResult.ragList,
+              sourceLists: fullResult.sourceLists,
               llmListRaw: fullResult.llmListRaw,
               finalList: result.biases.map(b => b.name),
               ragCase: fullResult.ragCase,
+              selectionStrategy: fullResult.selectionStrategy,
+              llmModel: fullResult.llmModel,
             },
             services.comparisonStore,
           ).catch(() => {/* already logged in recordComparison */});

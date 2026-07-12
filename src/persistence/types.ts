@@ -70,6 +70,10 @@ export interface RetrievalComparisonRecord {
   llmHitFinal: number;
   normalizationAdditions: number;
   ragStatus: RagStatus;
+  // D017: generic per-source breakdown (no fixed set of source names) + per-run engine metadata.
+  sourceBreakdown: Record<string, { list: string[]; hitFinal: number }> | null;
+  selectionStrategy: string | null;
+  llmModel: string | null;
   createdAt: string;
 }
 
