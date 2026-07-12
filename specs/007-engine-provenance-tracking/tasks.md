@@ -58,10 +58,10 @@ and at a different, non-overlapping block (the `noBiasDetected` consistency chec
 
 **⚠️ CRITICAL**: US1 and US3 cannot begin until this phase is complete.
 
-- [ ] T009 [P] Add unit test in tests/unit/rag/engine-client-provenance.test.ts covering: array `source` passthrough+dedup, legacy scalar `"both"`→`["vector","llm"]` expansion (never the reverse — assert the string `"both"` never appears in any output value), `null`/absent/unknown→`null`, mixed known+unknown array drops the unknown — write RED first
-- [ ] T010 In src/rag/engine-client.ts: add `export type EngineSource = "vector" | "llm"`; extend `BiasResult` with `source?: EngineSource[] | null`; extend `EngineResponse` with optional `selection_strategy`, `llm_model`, `llm_latency_ms`, `truncated_story`, `llm_scores`, `vector_scores` (data-model.md §1 — all additive)
-- [ ] T011 In src/rag/engine-client.ts: add `normalizeSource(raw: unknown): EngineSource[] | null` (array→dedup known values; scalar `"both"`→`["vector","llm"]`, `"vector"`→`["vector"]`, `"llm"`→`["llm"]`; unknown/empty/null→`null`) and apply it per-bias inside `retrieve()` when parsing the response body; keep `isEngineResponse` lenient (unchanged)
-- [ ] T012 Verify T009 passes; run `pnpm typecheck`
+- [x] T009 [P] Added tests/unit/rag/engine-client-provenance.test.ts (6 tests: array passthrough+dedup, legacy "both" expansion, null/absent/unknown handling, response parsing with/without source, top-level llm_* metadata). Confirmed RED first (4/6 failed before implementation).
+- [x] T010 Extended `BiasResult` with `source?: EngineSource[] | null` and `EngineResponse` with optional `selection_strategy`/`llm_model`/`llm_latency_ms`/`truncated_story`/`llm_scores`/`vector_scores` in src/rag/engine-client.ts.
+- [x] T011 Added exported `normalizeSource()` implementing the array/legacy-scalar/unknown rules; applied per-bias in `retrieve()`; `isEngineResponse` left lenient.
+- [x] T012 6/6 green; typecheck clean.
 
 **Checkpoint**: Engine response types + normalization ready; `"both"` never survives past this layer as a value.
 
