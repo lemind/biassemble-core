@@ -104,12 +104,12 @@ inference rule, unchanged.
 
 ### Tests for User Story 2
 
-- [ ] T022 [P] [US2] Extend tests/unit/rag/workspace-builder-provenance.test.ts (or add workspace-builder-fallback.test.ts): a response with NO `source` field on any bias yields `engineSources` = `["vector"]` for every `retrieval_score>0` bias, excludes `retrieval_score=0` biases — write RED first if not already covered by T013
+- [x] T022 [P] [US2] Added tests/unit/rag/workspace-builder-fallback.test.ts: a response with NO source field on any bias yields `["vector"]` for every retrieval_score>0 bias, excludes score=0. Ran immediately green (1/1) — the T015 fallback logic was already per-bias, confirming US2's requirement was already satisfied by the Phase 4 implementation.
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Verify the T015 fallback branch is applied per-bias inside the `retrieved.map(...)` in `buildBiasWorkspace`, not per-response — so a response mixing biases with and without `source` resolves each independently (already required by T013's mixed-response case; this task is the explicit regression guard)
-- [ ] T024 [US2] Run US2 tests green; re-run the full suite to confirm zero regressions against the Phase 2 green baseline
+- [x] T023 [US2] Confirmed by direct code inspection: the `b.source && b.source.length > 0 ? b.source : ["vector"]` ternary lives inside `retrieved.map(...)` in workspace-builder.ts, evaluated independently per bias — no per-response branching that could apply the fallback to the whole set. No code change needed.
+- [x] T024 [US2] Full suite: 368 pass / 0 fail / 35 files; typecheck clean. Zero regressions.
 
 **Checkpoint**: Non-`llm_union` and legacy stored results behave exactly as before.
 
