@@ -6,16 +6,20 @@ export interface BiasResult {
   id: string;
   name: string;
   retrieval_score: number;
-  definition: string;
-  examples: string;
   indicators: string;
-  false_positives: string;
-  related_biases: string;
   /**
    * Which engine signal(s) surfaced this bias — normalized to an array (D017 Decision 1).
    * `null` when the engine doesn't produce it for the active retrieval configuration.
    */
   source?: EngineSource[] | null;
+  // Descriptive text the engine sends but nothing downstream reads back after persistence
+  // (only workspace-builder.ts consumes a stored BiasResult, and it only uses the fields
+  // above). Optional so `toStorableEngineResponse` can omit them before storage — see there
+  // for why. Still present on the live response from `retrieve()`.
+  definition?: string;
+  examples?: string;
+  false_positives?: string;
+  related_biases?: string;
 }
 
 export interface EngineResponse {
@@ -31,6 +35,28 @@ export interface EngineResponse {
   truncated_story?: boolean;
   llm_scores?: Record<string, number>;
   vector_scores?: Record<string, number>;
+}
+
+/**
+ * Projects an EngineResponse down to what's actually consumed after persistence —
+ * `workspace-builder.ts` (the only reader of a stored response) only ever uses
+ * `id`/`name`/`retrieval_score`/`indicators`/`source` per bias, plus the top-level
+ * metadata. `definition`/`examples`/`false_positives`/`related_biases` are multi-paragraph
+ * engine text that made up the bulk of a stored row's size for zero downstream benefit —
+ * drop them before writing to `runs.rag_result`. Does not mutate the input; used at the
+ * storage boundary only, never on the live response returned from `retrieve()`.
+ */
+export function toStorableEngineResponse(response: EngineResponse): EngineResponse {
+  return {
+    ...response,
+    biases: response.biases.map((b) => ({
+      id: b.id,
+      name: b.name,
+      retrieval_score: b.retrieval_score,
+      indicators: b.indicators,
+      source: b.source,
+    })),
+  };
 }
 
 const KNOWN_SOURCES = new Set<EngineSource>(["vector", "llm"]);

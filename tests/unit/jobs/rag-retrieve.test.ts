@@ -71,6 +71,38 @@ describe("rag-retrieve job", () => {
     expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
   });
 
+  it("success path trims bulky per-bias text before storing (see toStorableEngineResponse)", async () => {
+    const engineData = {
+      biases: [{
+        id: "confirmation_bias",
+        name: "Confirmation Bias",
+        retrieval_score: 0.5,
+        indicators: "seeks confirming evidence",
+        source: ["llm"],
+        definition: "a very long definition".repeat(50),
+        examples: "many examples".repeat(50),
+        false_positives: "notes".repeat(50),
+        related_biases: "Anchoring Bias",
+      }],
+      retrieved_chunks: 1,
+      taxonomy_version: "v1",
+      embedding_model: "mock-embed",
+      request_id: "req-2",
+    };
+    const ragClient = {
+      retrieve: vi.fn().mockResolvedValue({ status: "ok", data: engineData }),
+    } as unknown as RagEngineClient;
+    const job = createRagRetrieveJob(ragClient, runStore);
+
+    await job.fn(buildEvent());
+
+    const stored = (runStore.storeRagResult as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(stored.biases[0].definition).toBeUndefined();
+    expect(stored.biases[0].examples).toBeUndefined();
+    expect(stored.biases[0].id).toBe("confirmation_bias");
+    expect(stored.biases[0].indicators).toBe("seeks confirming evidence");
+  });
+
   it("engine-unavailable path calls storeRagResult(runId, null) and does NOT set rag_completed_at", async () => {
     const ragClient = {
       retrieve: vi.fn().mockResolvedValue({ status: "unavailable" }),

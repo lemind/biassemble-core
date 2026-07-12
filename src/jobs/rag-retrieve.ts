@@ -10,7 +10,7 @@
  */
 import { inngest } from "./client";
 import { logger } from "../observability/logger";
-import type { RagEngineClient } from "../rag/engine-client";
+import { toStorableEngineResponse, type RagEngineClient } from "../rag/engine-client";
 import type { RunStore } from "../persistence/ports";
 
 const MODULE = "rag-retrieve-job";
@@ -30,7 +30,7 @@ export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunSt
       const t0 = Date.now();
       try {
         const result = await ragClient.retrieve(story);
-        await runStore.storeRagResult(runId, result.status === "ok" ? result.data : null);
+        await runStore.storeRagResult(runId, result.status === "ok" ? toStorableEngineResponse(result.data) : null);
         // rag_completed_at means what it says: RAG genuinely finished with a
         // result. Only set it on real success — a timeout/unavailable/auth_error
         // outcome leaves it null, since nothing actually "completed". Job
