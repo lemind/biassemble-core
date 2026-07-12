@@ -17,7 +17,7 @@ import { validateEvidence } from "../../parsers/evidence-validator";
 import type { LlmCallStore, RunStore, TraceStore } from "../../persistence/ports";
 import { isEngineResponse, type EngineSource, type RagEngineClient } from "../../rag/engine-client";
 import { buildBiasContext, type RagCase } from "../../rag/context-builder";
-import { buildBiasWorkspace, renderWorkspaceToPrompt } from "../../rag/workspace-builder";
+import { buildBiasWorkspace, buildSourceListsFromWorkspace, renderWorkspaceToPrompt } from "../../rag/workspace-builder";
 import type { Inngest } from "inngest";
 import { waitUntil } from "@vercel/functions";
 
@@ -247,18 +247,11 @@ export class AssessmentService {
       ragList = workspace.candidates.map((c) => c.name);
       candidateBiases = renderWorkspaceToPrompt(workspace, this.catalog.getAll());
 
-      // D017 Decision 3: build the per-source name lists from the WORKSPACE layer
-      // (candidates + engineSources), not by re-reading the raw EngineResponse a second
-      // time — re-deriving the retrieval_score filter / ["vector"] fallback here would
-      // duplicate buildBiasWorkspace's logic in a second place and risk silent divergence
-      // (data-model.md §4 / plan.md Decision 5).
-      for (const c of workspace.candidates) {
-        const hyphenatedId = c.bias_id.replace(/_/g, "-");
-        const sources = workspace.engineSources.get(hyphenatedId) ?? [];
-        for (const s of sources) {
-          (sourceLists[s] ??= []).push(c.name);
-        }
-      }
+      // D017 Decision 3: build the per-source name lists from the WORKSPACE layer, not by
+      // re-reading the raw EngineResponse a second time (data-model.md §4 / plan.md Decision
+      // 5). Shared with the backfill path (comparison-recorder.ts) via workspace-builder.ts
+      // so there's exactly one implementation of this derivation.
+      sourceLists = buildSourceListsFromWorkspace(workspace);
       if (ragResult.status === "ok") {
         selectionStrategy = ragResult.data.selection_strategy;
         llmModel = ragResult.data.llm_model;

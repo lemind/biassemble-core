@@ -11,11 +11,18 @@
 import { inngest } from "./client";
 import { logger } from "../observability/logger";
 import { toStorableEngineResponse, type RagEngineClient } from "../rag/engine-client";
-import type { RunStore } from "../persistence/ports";
+import type { RunStore, RetrievalComparisonStore } from "../persistence/ports";
+import { backfillComparisonSourceData } from "../observability/comparison-recorder";
+import type { BiasEntry } from "../catalog/bias-catalog";
 
 const MODULE = "rag-retrieve-job";
 
-export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunStore) {
+export function createRagRetrieveJob(
+  ragClient: RagEngineClient,
+  runStore: RunStore,
+  catalog: BiasEntry[],
+  comparisonStore?: RetrievalComparisonStore,
+) {
   return inngest.createFunction(
     { id: "rag-retrieve", name: "RAG — Background Retrieve" },
     { event: "rag/retrieve.requested" },
@@ -42,6 +49,15 @@ export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunSt
           { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
           "rag_retrieve_complete"
         );
+
+        // D017 backfill: RAG often finishes after the full assessment already ran and
+        // recorded rag_status="unavailable" (measured 35s-120s+ RAG latency in production).
+        // If this run's result is usable, patch any comparison row for this session that's
+        // still stuck without RAG data — see backfillComparisonSourceData's own doc comment.
+        if (comparisonStore) {
+          await backfillComparisonSourceData(sessionId, result, catalog, comparisonStore)
+            .catch((err) => logger.warn({ module: MODULE, err, sessionId, runId }, "comparison_backfill_dispatch_failed"));
+        }
       } catch (err) {
         logger.warn({ module: MODULE, err, sessionId, runId, durationMs: Date.now() - t0 }, "rag_retrieve_failed");
         await runStore.storeRagResult(runId, null).catch(() => {/* already logged by storeRagResult */});

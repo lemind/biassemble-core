@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { getDb } from "./config";
 import {
   runs,
@@ -370,4 +370,49 @@ export async function insertRetrievalComparison(data: {
   await db()
     .insert(retrievalComparisons)
     .values(data);
+}
+
+/**
+ * Rows for this session still stuck at rag_status="unavailable" with no source_breakdown —
+ * candidates for the D017 backfill once a late-arriving RAG result becomes available.
+ */
+export async function findUnbackfilledRetrievalComparisonsBySession(
+  sessionId: string
+): Promise<Array<{ id: string; llmList: unknown; finalList: unknown }>> {
+  return db()
+    .select({
+      id: retrievalComparisons.id,
+      llmList: retrievalComparisons.llmList,
+      finalList: retrievalComparisons.finalList,
+    })
+    .from(retrievalComparisons)
+    .where(
+      and(
+        eq(retrievalComparisons.sessionId, sessionId),
+        eq(retrievalComparisons.ragStatus, "unavailable"),
+        isNull(retrievalComparisons.sourceBreakdown),
+      )
+    );
+}
+
+/** Patches a single retrieval_comparisons row's RAG-derived fields once retrieval data lands late. */
+export async function backfillRetrievalComparisonSourceData(
+  id: string,
+  data: {
+    ragList: string[];
+    ragStatus: RagStatus;
+    ragOnly: number;
+    llmOnly: number;
+    overlap: number;
+    ragHitFinal: number;
+    normalizationAdditions: number;
+    sourceBreakdown: Record<string, { list: string[]; hitFinal: number }> | null;
+    selectionStrategy: string | null;
+    llmModel: string | null;
+  }
+): Promise<void> {
+  await db()
+    .update(retrievalComparisons)
+    .set(data)
+    .where(eq(retrievalComparisons.id, id));
 }

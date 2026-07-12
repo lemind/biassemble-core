@@ -46,6 +46,33 @@ export interface EvalResultStore {
 // ── Retrieval Comparison Store (Stage 004) ──
 export interface RetrievalComparisonStore {
   record(data: Omit<RetrievalComparisonRecord, "id" | "createdAt">): Promise<void>;
+  /**
+   * Rows for this session still stuck at rag_status="unavailable" with no source_breakdown —
+   * candidates for backfill once a late-arriving RAG result shows up (D017 backfill). Returns
+   * only the fields needed to recompute stats (llmList/finalList are frozen at record time and
+   * don't change on backfill — only the RAG-derived fields do).
+   */
+  findUnbackfilledBySession(sessionId: string): Promise<Array<{ id: string; llmList: string[]; finalList: string[] }>>;
+  /**
+   * Patches a single row's RAG-derived fields in place once retrieval data becomes available.
+   * overlap/ragOnly/llmOnly/ragHitFinal/normalizationAdditions ALL depend on ragList, so all
+   * five get recomputed and rewritten here — not just the ones that look "RAG-only" at a
+   * glance (llmOnly and normalizationAdditions are easy to miss since they're llm*-named but
+   * both subtract/reference ragList too). llmHitFinal is the only aggregate count that
+   * genuinely doesn't depend on ragList, so it's the only one NOT rewritten.
+   */
+  backfillSourceData(id: string, data: {
+    ragList: string[];
+    ragStatus: RetrievalComparisonRecord["ragStatus"];
+    ragOnly: number;
+    llmOnly: number;
+    overlap: number;
+    ragHitFinal: number;
+    normalizationAdditions: number;
+    sourceBreakdown: RetrievalComparisonRecord["sourceBreakdown"];
+    selectionStrategy: string | null;
+    llmModel: string | null;
+  }): Promise<void>;
 }
 
 // ── LLM Call Store (Stage 003) ──

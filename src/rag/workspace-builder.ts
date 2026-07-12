@@ -68,6 +68,27 @@ export function buildBiasWorkspace(
   return { candidates, workspaceCase: "retrieved", retrievedIds, engineSources };
 }
 
+/**
+ * Builds per-source name lists (D017 Decision 3) from an already-built workspace — the
+ * canonical build site per data-model.md §4 / plan.md Decision 5: workspace-derived, not a
+ * second re-read of the raw engine response, so the retrieval_score filter and ["vector"]
+ * fallback logic in buildBiasWorkspace only ever lives in one place. Used by both the live
+ * assessment path (assessment.service.ts) and the backfill path (comparison-recorder.ts) —
+ * extracted here specifically so a second implementation doesn't silently diverge from the
+ * first.
+ */
+export function buildSourceListsFromWorkspace(workspace: BiasWorkspace): Record<string, string[]> {
+  const sourceLists: Record<string, string[]> = {};
+  for (const c of workspace.candidates) {
+    const hyphenatedId = c.bias_id.replace(/_/g, "-");
+    const sources = workspace.engineSources.get(hyphenatedId) ?? [];
+    for (const s of sources) {
+      (sourceLists[s] ??= []).push(c.name);
+    }
+  }
+  return sourceLists;
+}
+
 export function renderWorkspaceToPrompt(workspace: BiasWorkspace, catalog: BiasEntry[]): string {
   const roster = buildRoster(catalog);
 
