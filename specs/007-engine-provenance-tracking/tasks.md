@@ -77,18 +77,18 @@ distinguishable in the stored record from a no-retrieval-available bias (`[]`, r
 
 ### Tests for User Story 1
 
-- [ ] T013 [P] [US1] Unit test in tests/unit/rag/workspace-builder-provenance.test.ts: `buildBiasWorkspace` returns an `engineSources` map (hyphenated id → `EngineSource[]`) with `["vector"]`/`["llm"]`/`["vector","llm"]`, falls back to `["vector"]` when `source` is null but `retrieval_score>0`, resolves a mixed response (some biases with `source`, some without) independently, and returns an empty map when `workspaceCase === "unavailable"` — write RED first
-- [ ] T014 [P] [US1] Unit test in tests/unit/orchestrators/assessment-provenance.test.ts: via `runFullAssessment` with a mocked stored `EngineResponse`, assert each output bias's `engineSources` matches the engine's per-bias source, an LLM-alone bias gets `[]`, and the per-bias output does NOT carry a `ragCase`/`ragStatus` field (that stays request-level, in the stored comparison record only — data-model.md §2) — write RED first
+- [x] T013 [P] [US1] Added tests/unit/rag/workspace-builder-provenance.test.ts (3 tests: array sources, fallback, mixed response, unavailable cases). Confirmed RED first (3/3 failed).
+- [x] T014 [P] [US1] Added tests/unit/orchestrators/assessment-provenance.test.ts (2 tests: engine=retrieved copies sources + LLM-alone gets [], engine=unavailable [] means unknown). Confirmed RED first (2/2 failed).
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] In src/rag/workspace-builder.ts: extend `BiasWorkspace` with `engineSources: Map<string, EngineSource[]>`; build it in `buildBiasWorkspace` alongside `retrievedIds` (same hyphenation, same `["vector"]` fallback); return an empty map on both `"unavailable"` branches
-- [ ] T016 [US1] In src/orchestrators/reflection/assessment.service.ts: capture `workspace.engineSources` in `runFullAssessment` (~L229) into a local, alongside the existing `retrievedIds`
-- [ ] T017 [US1] In src/orchestrators/reflection/assessment.service.ts: **extend `callProvider`'s signature** (~L269) with `engineSourcesMap: Map<string, EngineSource[]> = new Map()`, and pass it from BOTH call sites — `runStoryOnlyAssessment` (~L167, will pass an empty map since that path never has a real workspace) and `runFullAssessment` (~L258). Without this the per-bias lookup has no map to read from (plan.md Decision 3 / research.md R4 — this exact gap was caught in review on a prior, reverted attempt at this feature)
-- [ ] T018 [US1] In src/orchestrators/reflection/assessment.service.ts (~L434, inside `callProvider`'s bias-normalization loop): replace the `context_source: "retrieved"|"llm"` derivation with `engineSources: engineSourcesMap.get(result.id ?? "") ?? []`; remove the old comment about `"both"` being reserved-but-unemitted (that field no longer exists). **Different block than T005** (Phase 2, ~L415–419) — verify no line-range overlap.
-- [ ] T019 [US1] In src/contracts/reflection.schemas.ts (~L66): replace `context_source: z.enum(["retrieved","llm","both"]).optional()` with `engineSources: z.array(z.enum(["vector","llm"])).optional()`; update the doc comment to describe the new field per data-model.md §2
-- [ ] T020 [US1] Confirm no prompt/context change: the provenance is computed AFTER the model call in `callProvider`; verify `renderWorkspaceToPrompt`/the prompt-building path is untouched (FR-010/FR-011)
-- [ ] T021 [US1] Run US1 tests green (T013, T014); `pnpm typecheck`; confirm zero regressions against the Phase 2 green baseline
+- [x] T015 [US1] Extended `BiasWorkspace` with `engineSources: Map<string, EngineSource[]>` in src/rag/workspace-builder.ts; built alongside `retrievedIds` with the `["vector"]` fallback; empty map on both unavailable branches.
+- [x] T016 [US1] Captured `workspace.engineSources` in `runFullAssessment`.
+- [x] T017 [US1] Extended `callProvider`'s signature with `engineSourcesMap` param, passed from both call sites — done before T018 to avoid the known gap.
+- [x] T018 [US1] Replaced the `context_source` derivation with `engineSources: engineSourcesMap.get(result.id ?? "") ?? []`; confirmed no line-range collision with T005 (Phase 2's noBiasDetected fix is a separate, earlier block).
+- [x] T019 [US1] Swapped `context_source` enum for `engineSources: z.array(z.enum(["vector","llm"])).optional()` in reflection.schemas.ts.
+- [x] T020 [US1] Verified by inspection: only the post-parse bias-normalization loop and callProvider's signature/call sites were touched; `renderWorkspaceToPrompt`/`prompts.render()` untouched.
+- [x] T021 [US1] Cleaned up now-dead `retrievedIds` param (superseded by `engineSourcesMap`) from callProvider and both call sites during the wiring. T013/T014 green (5/5); typecheck clean; full suite 367 pass / 0 fail / 34 files (356 Phase-2 baseline + 6 Phase-3 + 5 Phase-4 = 367, zero regressions).
 
 **Checkpoint**: Live assessment results carry per-bias provenance; MVP demonstrable.
 

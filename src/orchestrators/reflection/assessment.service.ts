@@ -15,7 +15,7 @@ import type { BiasCatalogService } from "../../catalog/bias-catalog";
 import { normalizeBiasName } from "../../catalog/normalize";
 import { validateEvidence } from "../../parsers/evidence-validator";
 import type { LlmCallStore, RunStore, TraceStore } from "../../persistence/ports";
-import { isEngineResponse, type RagEngineClient } from "../../rag/engine-client";
+import { isEngineResponse, type EngineSource, type RagEngineClient } from "../../rag/engine-client";
 import { buildBiasContext, type RagCase } from "../../rag/context-builder";
 import { buildBiasWorkspace, renderWorkspaceToPrompt } from "../../rag/workspace-builder";
 import type { Inngest } from "inngest";
@@ -158,7 +158,7 @@ export class AssessmentService {
     // the POST /v1/reflection/question route — see that method's doc comment for
     // why. story_only always renders roster-only context immediately regardless.
     const ragCase: RagCase = "unavailable";
-    const retrievedIds = new Set<string>();
+    const engineSources = new Map<string, EngineSource[]>();
 
     const ctx = buildBiasContext({ status: "unavailable" }, this.catalog.getAll());
     const system = this.prompts.render("assessment", { candidateBiases: ctx.biasContext });
@@ -167,7 +167,7 @@ export class AssessmentService {
     return (await this.callProvider(
       sessionId, system, user, requestId, runId,
       "initial_assessment", "story_only", inputHash, promptVersion, providerId,
-      story, [], ragCase, retrievedIds,
+      story, [], ragCase, engineSources,
     )).output;
   }
 
@@ -214,7 +214,7 @@ export class AssessmentService {
     // asynchronously at story submission (Stage 005) — if it hasn't landed by the
     // time the user finishes answering questions, we proceed without it. No wait.
     let ragCase: RagCase = "unavailable";
-    let retrievedIds = new Set<string>();
+    let engineSources = new Map<string, EngineSource[]>();
     let ragList: string[] = [];
     let candidateBiases: string;
 
@@ -228,7 +228,7 @@ export class AssessmentService {
 
       const workspace = buildBiasWorkspace(ragResult, this.catalog.getAll());
       ragCase = workspace.workspaceCase;
-      retrievedIds = workspace.retrievedIds;
+      engineSources = workspace.engineSources;
       ragList = workspace.candidates.map((c) => c.name);
       candidateBiases = renderWorkspaceToPrompt(workspace, this.catalog.getAll());
 
@@ -258,7 +258,7 @@ export class AssessmentService {
     const { output, llmListRaw } = await this.callProvider(
       sessionId, system, user, requestId, runId,
       "post_questions_assessment", "story_plus_answers", inputHash, promptVersion, providerId,
-      story, answers, ragCase, retrievedIds,
+      story, answers, ragCase, engineSources,
     );
     return { output, runId, ragCase, ragList, llmListRaw };
   }
@@ -280,7 +280,7 @@ export class AssessmentService {
     story: string,
     answers: string[],
     ragCase: RagCase = "unavailable",
-    retrievedIds: Set<string> = new Set(),
+    engineSourcesMap: Map<string, EngineSource[]> = new Map(),
   ): Promise<{ output: AssessmentOutput; llmListRaw: string[] }> {
     return await withRetry(async (attempt) => {
       logger.info(
@@ -428,17 +428,19 @@ export class AssessmentService {
       const allBiases = this.catalog.getAll();
       const normalizedBiases = parsed.biases.map((bias) => {
         const result = normalizeBiasName(bias.name, allBiases);
-        // Engine BiasResult.id and local BiasEntry.id must share the same string format
-        // (e.g. "confirmation_bias") — see ADR D014. Divergence silently returns "llm" for all.
-        // "both" is in the schema enum but is never emitted here — it requires persisting
-        // the story_only LLM candidate list to DB (deferred to a follow-on spec); without
-        // that persistence there is no LLM-side list to merge retrievedIds against.
-        const contextSource: "retrieved" | "llm" = retrievedIds.has(result.id ?? "") ? "retrieved" : "llm";
+        // Per-bias engine provenance (D017 Decision 2): copy the engine's source array for this
+        // bias, or [] if the engine did not surface it. `[]` + ragCase==="retrieved" =
+        // assessment-LLM-alone; `[]` + ragCase!=="retrieved" = engine did not run — the two are
+        // kept separable via the request-level ragCase (stored as ragStatus), NOT on this
+        // per-bias output. Engine BiasResult.id and local BiasEntry.id must share the same
+        // string format (e.g. "confirmation_bias") — see ADR D014. Divergence silently yields
+        // [] for all.
+        const engineSources: EngineSource[] = engineSourcesMap.get(result.id ?? "") ?? [];
         return {
           ...bias,
           name: result.name,
           ...(result.id ? { biasCatalogId: result.id } : {}),
-          context_source: contextSource,
+          engineSources,
         };
       });
 
