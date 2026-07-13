@@ -126,13 +126,20 @@ export class RagEngineClient {
         signal: controller.signal,
       });
 
+      // Error categorization per docs/decisions/014-tiered-context-retrieval.md Decision 2:
+      // distinct event names/levels are load-bearing, not cosmetic — a 401 silently sharing
+      // "rag_fallback" with ordinary timeouts would mask auth misconfiguration indefinitely.
+      // (This was accidentally collapsed into one generic "rag_retrieve_error" for a while —
+      // restored here. The job-level "rag_retrieve_unavailable" log in jobs/rag-retrieve.ts,
+      // which adds sessionId/runId correlation, is unaffected and still fires for every
+      // non-"ok" outcome regardless of which of these three categories caused it.)
       if (response.status === 401 || response.status === 403) {
-        logger.error({ status: response.status }, "rag_retrieve_error");
+        logger.warn({ status: response.status }, "rag_auth_error");
         return { status: "auth_error" };
       }
 
       if (!response.ok) {
-        logger.error({ status: response.status }, "rag_retrieve_error");
+        logger.info({ status: response.status }, "rag_fallback");
         return { status: "unavailable" };
       }
 
@@ -142,14 +149,13 @@ export class RagEngineClient {
       } catch (err) {
         const isTimeout = err instanceof Error && err.name === "AbortError";
         // This job has no retry — a timeout here is not "still in flight, will complete
-        // later," it's a final, permanent miss for this session. Log it as loudly as any
-        // other failure so it's easy to find, not just count.
-        logger.error({ err, isTimeout }, "rag_retrieve_error");
+        // later," it's a final, permanent miss for this session.
+        logger.info({ err, isTimeout }, "rag_fallback");
         return { status: "unavailable" };
       }
 
       if (!isEngineResponse(body)) {
-        logger.error({ body }, "rag_retrieve_error");
+        logger.warn({ body }, "rag_invalid_response");
         return { status: "unavailable" };
       }
 
@@ -166,7 +172,7 @@ export class RagEngineClient {
       return { status: "ok", data: normalized };
     } catch (err) {
       const isTimeout = err instanceof Error && err.name === "AbortError";
-      logger.error({ err, isTimeout }, "rag_retrieve_error");
+      logger.info({ err, isTimeout }, "rag_fallback");
       return { status: "unavailable" };
     } finally {
       clearTimeout(timer);

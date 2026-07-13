@@ -5,6 +5,12 @@ import { buildBiasWorkspace, buildSourceListsFromWorkspace } from "../rag/worksp
 import type { RagClientResult } from "../rag/engine-client";
 import type { BiasEntry } from "../catalog/bias-catalog";
 
+// How long to keep retrying findUnbackfilledBySession before giving up on a session whose
+// comparison row hasn't landed yet — see backfillComparisonSourceData. Exported so tests
+// can derive their fake-timer advance window from the same numbers instead of guessing one.
+export const BACKFILL_LOOKUP_RETRY_COUNT = 3;
+export const BACKFILL_LOOKUP_RETRY_DELAY_MS = 2000;
+
 export interface RecordComparisonParams {
   sessionId: string;
   runId: string;
@@ -127,7 +133,17 @@ export async function backfillComparisonSourceData(
     return;
   }
 
-  const candidates = await store.findUnbackfilledBySession(sessionId);
+  // The matching retrieval_comparisons row is written by an independent, unawaited path
+  // (routes/reflection.ts fire-and-forgets recordComparison) — its INSERT can still be
+  // in flight the instant this runs, right as the RAG job finishes. A single zero-result
+  // check here used to give up permanently, silently losing RAG data that genuinely
+  // arrived in time (caught 2026-07-13 code review). Bounded retry closes that ordinary
+  // scheduling/DB-latency race without meaningfully delaying this already-background job.
+  let candidates = await store.findUnbackfilledBySession(sessionId);
+  for (let attempt = 0; candidates.length === 0 && attempt < BACKFILL_LOOKUP_RETRY_COUNT; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, BACKFILL_LOOKUP_RETRY_DELAY_MS));
+    candidates = await store.findUnbackfilledBySession(sessionId);
+  }
   if (candidates.length === 0) return;
 
   const ragList = workspace.candidates.map((c) => c.name);

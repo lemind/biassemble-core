@@ -1,8 +1,15 @@
-import { describe, it, expect, vi } from "vitest";
-import { backfillComparisonSourceData } from "../../../src/observability/comparison-recorder.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  backfillComparisonSourceData,
+  BACKFILL_LOOKUP_RETRY_COUNT,
+  BACKFILL_LOOKUP_RETRY_DELAY_MS,
+} from "../../../src/observability/comparison-recorder.js";
+
 import { BiasCatalogService } from "../../../src/catalog/bias-catalog.js";
 import type { RetrievalComparisonStore } from "../../../src/persistence/ports.js";
 import type { BiasResult, EngineResponse, RagClientResult } from "../../../src/rag/engine-client.js";
+
+const MAX_RETRY_WINDOW_MS = BACKFILL_LOOKUP_RETRY_COUNT * BACKFILL_LOOKUP_RETRY_DELAY_MS;
 
 // D017 follow-up: RAG regularly takes 35s-120s+ to complete (measured against live data),
 // while the full assessment's recordComparison fires immediately after the LLM call — so
@@ -41,6 +48,14 @@ function mockStore(unbackfilled: Array<{ id: string; llmList: string[]; finalLis
 }
 
 describe("backfillComparisonSourceData (D017 backfill)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("recomputes and writes RAG-derived fields against the row's frozen llmList/finalList", async () => {
     const { store, backfillSourceData } = mockStore([
       { id: "row-1", llmList: ["Confirmation Bias", "Sunk Cost Fallacy"], finalList: ["Confirmation Bias"] },
@@ -90,17 +105,50 @@ describe("backfillComparisonSourceData (D017 backfill)", () => {
     expect(backfillSourceData).not.toHaveBeenCalled();
   });
 
-  it("does nothing when there are no unbackfilled rows for the session", async () => {
-    const { store, backfillSourceData } = mockStore([]);
+  it("does nothing when there are no unbackfilled rows for the session, after exhausting retries", async () => {
+    const { store, backfillSourceData, findUnbackfilledBySession } = mockStore([]);
 
-    await backfillComparisonSourceData(
+    const result = backfillComparisonSourceData(
       "sess-3",
       retrievedResult([bias({ id: "confirmation_bias", name: "Confirmation Bias", retrieval_score: 0.9, source: ["vector"] })]),
       catalog,
       store,
     );
+    await vi.advanceTimersByTimeAsync(MAX_RETRY_WINDOW_MS);
+    await result;
 
+    // 1 initial check + 3 retries — bounded, not infinite.
+    expect(findUnbackfilledBySession).toHaveBeenCalledTimes(4);
     expect(backfillSourceData).not.toHaveBeenCalled();
+  });
+
+  it("retries when the comparison row's INSERT hasn't landed yet, catching it once it does", async () => {
+    // Regression for the race: routes/reflection.ts fire-and-forgets recordComparison, so
+    // its INSERT can still be in flight the instant the RAG job's backfill call checks —
+    // a single zero-result check used to give up and lose the RAG data permanently.
+    const findUnbackfilledBySession = vi
+      .fn()
+      .mockResolvedValueOnce([]) // row not inserted yet
+      .mockResolvedValueOnce([]) // still not there
+      .mockResolvedValueOnce([{ id: "row-1", llmList: [], finalList: [] }]); // landed
+    const backfillSourceData = vi.fn().mockResolvedValue(undefined);
+    const store: RetrievalComparisonStore = {
+      record: vi.fn().mockResolvedValue(undefined),
+      findUnbackfilledBySession,
+      backfillSourceData,
+    };
+
+    const result = backfillComparisonSourceData(
+      "sess-5",
+      retrievedResult([bias({ id: "confirmation_bias", name: "Confirmation Bias", retrieval_score: 0.9, source: ["vector"] })]),
+      catalog,
+      store,
+    );
+    await vi.advanceTimersByTimeAsync(MAX_RETRY_WINDOW_MS);
+    await result;
+
+    expect(findUnbackfilledBySession).toHaveBeenCalledTimes(3);
+    expect(backfillSourceData).toHaveBeenCalledTimes(1);
   });
 
   it("logs and continues if one row's backfill write fails, without throwing", async () => {
