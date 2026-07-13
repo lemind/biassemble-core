@@ -252,7 +252,11 @@ export class AssessmentService {
       // 5). Shared with the backfill path (comparison-recorder.ts) via workspace-builder.ts
       // so there's exactly one implementation of this derivation.
       sourceLists = buildSourceListsFromWorkspace(workspace);
-      if (ragResult.status === "ok") {
+      // Gate on workspace.workspaceCase, not ragResult.status — otherwise a valid-but-empty
+      // engine response (zero-scored biases, workspaceCase stays "unavailable") would populate
+      // selectionStrategy/llmModel while source_breakdown stays null, an inconsistent row where
+      // rag_status says "unavailable" next to non-null RAG metadata.
+      if (ragResult.status === "ok" && workspace.workspaceCase === "retrieved") {
         selectionStrategy = ragResult.data.selection_strategy;
         llmModel = ragResult.data.llm_model;
       }

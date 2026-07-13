@@ -99,4 +99,28 @@ describe("AssessmentService — per-bias engineSources derivation (D017)", () =>
     expect(ragCase).toBe("unavailable");
     expect(output.biases[0].engineSources).toEqual([]);
   });
+
+  it("engine=ok but all-zero scores (roster fallback): selectionStrategy/llmModel stay undefined, matching source_breakdown's unavailable gate", async () => {
+    // Regression: these were previously gated on ragResult.status === "ok" alone, which is
+    // true here even though the workspace has nothing retrieved — that produced a row where
+    // rag_status said "unavailable" but selectionStrategy/llmModel were non-null.
+    const { service, provider } = makeService({
+      ...storedResponse([engineBias({ id: "confirmation_bias", retrieval_score: 0, source: ["llm"] })]),
+      // Present on the raw stored response even though nothing scored above 0 — proves the
+      // fix reads workspace.workspaceCase, not just ragResult.status, before copying these.
+      selection_strategy: "llm_union",
+      llm_model: "test-model",
+    });
+    provider.setDefault({
+      biases: [providerBias("Confirmation Bias")],
+      reflectionPrompt: "Reflect on your reasoning here in a meaningful way.",
+    });
+
+    const result = await service.runFullAssessment("sess-3", "the story", [], [], "req-3");
+
+    expect(result.ragCase).toBe("unavailable");
+    expect(result.selectionStrategy).toBeUndefined();
+    expect(result.llmModel).toBeUndefined();
+    expect(result.sourceLists).toEqual({});
+  });
 });
