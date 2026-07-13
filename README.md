@@ -46,6 +46,12 @@ Auditable reasoning engine with structured traces, evidence binding, and evaluat
 
 All 40 tasks across 7 phases complete. 224/225 tests pass. See `specs/002-reasoning-infrastructure/` for full spec.
 
+## RAG Integration — Stage 005 + D017
+
+`biassemble-engine` (a separate FastAPI sidecar — vector search + a local LLM over the bias catalog) augments assessments with retrieved evidence. Retrieval is **async, no wait budget**: fired as a background Inngest job (`rag/retrieve.requested`) at story-submission time; the full assessment reads whatever's landed in `runs.rag_result` as a one-time snapshot and proceeds regardless — a slow/unavailable engine never blocks or fails a user-facing response (see `docs/decisions/014-tiered-context-retrieval.md`).
+
+Every assessment records provenance to `core.retrieval_comparisons` — which signal (engine vector search, engine's own LLM, or the assessment LLM alone) surfaced each bias, via an open-ended `source_breakdown` map (never a fixed "both" column — see `docs/decisions/017-engine-provenance-tracking.md`). `rag_status` distinguishes `retrieved` (RAG was available live, in time to inform the output) from `backfilled` (RAG arrived after the fact; a background job patches the analytics-only fields in for retrospective comparison, but it did not shape what the user saw).
+
 ## Evaluation
 
 - **Golden set**: 5 curated stories in `evaluations/golden/reflection/` (work-conflict, relationship-decision, financial-regret, health-uncertainty, creative-block)
@@ -56,9 +62,12 @@ All 40 tasks across 7 phases complete. 224/225 tests pass. See `specs/002-reason
 
 ```
 Public App → Public API (Next.js) → AI Core (Fastify) → LLM Provider
-                     ↑              ↑
-               session state     prompts, provider keys,
-               Inngest jobs      reasoning traces (Postgres)
+                     ↑              ↑      ↓
+               session state     prompts   biassemble-engine (RAG sidecar)
+               Inngest jobs      provider   — async, no wait budget —
+                                 keys        vector search + local LLM
+                                 reasoning
+                                 traces (Postgres)
 ```
 
 ## Tech Stack
@@ -67,7 +76,8 @@ Public App → Public API (Next.js) → AI Core (Fastify) → LLM Provider
 - **Framework**: Fastify 5
 - **LLM**: Provider-agnostic adapter (currently Gemini Flash)
 - **Validation**: Zod 4
-- **DB**: Drizzle ORM + PostgreSQL (reasoning traces, eval results)
+- **DB**: Drizzle ORM + PostgreSQL (reasoning traces, eval results, RAG provenance)
+- **Background jobs**: Inngest (eval runs + async RAG retrieval)
 - **Logging**: Pino
 - **Testing**: Vitest (unit + integration)
 - **Deploy**: Vercel Functions
@@ -86,7 +96,7 @@ curl http://localhost:3001/health
 
 # run tests
 pnpm test
-# → 122 tests passing
+# → all tests passing (388 as of this writing — grows with each feature)
 ```
 
 ### Local Dev vs Vercel Deployment
@@ -120,8 +130,10 @@ src/
 ├── parsers/         # JSON extraction + repair pipeline
 ├── catalog/         # Bias taxonomy + normalization
 ├── evaluation/      # Metrics functions
+├── rag/             # biassemble-engine client + workspace builder (RAG integration)
+├── observability/   # Structured logging + retrieval_comparisons provenance recorder
 ├── db/              # Drizzle schema + queries
-├── jobs/            # Inngest eval job
+├── jobs/            # Inngest jobs (eval runs, async RAG retrieval)
 └── routes/          # Fastify HTTP routes
 
 evaluations/
