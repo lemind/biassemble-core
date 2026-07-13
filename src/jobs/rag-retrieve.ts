@@ -44,11 +44,19 @@ export function createRagRetrieveJob(
         // duration for the failure case is still in the logs below if needed.
         if (result.status === "ok") {
           await runStore.recordRagCompleted(runId, new Date());
+          logger.info(
+            { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
+            "rag_retrieve_complete"
+          );
+        } else {
+          // No retry happens after this — result.status !== "ok" means this session's RAG
+          // data is permanently unavailable, not "still pending." Log at error so it's
+          // unmistakable (and greppable by sessionId/runId) rather than blending into info noise.
+          logger.error(
+            { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
+            "rag_retrieve_unavailable"
+          );
         }
-        logger.info(
-          { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
-          "rag_retrieve_complete"
-        );
 
         // D017 backfill: RAG often finishes after the full assessment already ran and
         // recorded rag_status="unavailable" (measured 35s-120s+ RAG latency in production).

@@ -127,12 +127,12 @@ export class RagEngineClient {
       });
 
       if (response.status === 401 || response.status === 403) {
-        logger.warn({ status: response.status }, "rag_auth_error");
+        logger.error({ status: response.status }, "rag_retrieve_error");
         return { status: "auth_error" };
       }
 
       if (!response.ok) {
-        logger.info({ status: response.status }, "rag_fallback");
+        logger.error({ status: response.status }, "rag_retrieve_error");
         return { status: "unavailable" };
       }
 
@@ -140,17 +140,16 @@ export class RagEngineClient {
       try {
         body = await response.json();
       } catch (err) {
-        const isAbort = err instanceof Error && err.name === "AbortError";
-        if (isAbort) {
-          logger.info({ err, isTimeout: true }, "rag_fallback");
-        } else {
-          logger.warn({ err }, "rag_invalid_response");
-        }
+        const isTimeout = err instanceof Error && err.name === "AbortError";
+        // This job has no retry — a timeout here is not "still in flight, will complete
+        // later," it's a final, permanent miss for this session. Log it as loudly as any
+        // other failure so it's easy to find, not just count.
+        logger.error({ err, isTimeout }, "rag_retrieve_error");
         return { status: "unavailable" };
       }
 
       if (!isEngineResponse(body)) {
-        logger.warn({ body }, "rag_invalid_response");
+        logger.error({ body }, "rag_retrieve_error");
         return { status: "unavailable" };
       }
 
@@ -167,7 +166,7 @@ export class RagEngineClient {
       return { status: "ok", data: normalized };
     } catch (err) {
       const isTimeout = err instanceof Error && err.name === "AbortError";
-      logger.info({ err, isTimeout }, "rag_fallback");
+      logger.error({ err, isTimeout }, "rag_retrieve_error");
       return { status: "unavailable" };
     } finally {
       clearTimeout(timer);
