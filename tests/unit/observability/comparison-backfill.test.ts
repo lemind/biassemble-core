@@ -59,7 +59,9 @@ describe("backfillComparisonSourceData (D017 backfill)", () => {
     expect(backfillSourceData).toHaveBeenCalledTimes(1);
     const [id, data] = backfillSourceData.mock.calls[0];
     expect(id).toBe("row-1");
-    expect(data.ragStatus).toBe("retrieved");
+    // "backfilled", not "retrieved" — RAG arrived after llmList/finalList were already
+    // frozen; this row's output was decided without RAG, only the analytics are patched in.
+    expect(data.ragStatus).toBe("backfilled");
     expect(data.ragList).toEqual(["Confirmation Bias", "Anchoring Bias"]);
     // overlap: ragList ∩ llmList = ["Confirmation Bias"]
     expect(data.overlap).toBe(1);

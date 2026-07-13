@@ -140,7 +140,10 @@ export async function backfillComparisonSourceData(
       const stats = computeDerivedStats({ ragList, sourceLists, llmListRaw: row.llmList, finalList: row.finalList });
       await store.backfillSourceData(row.id, {
         ragList,
-        ragStatus: "retrieved",
+        // "backfilled", not "retrieved" — RAG arrived after the assessment already ran and
+        // decided finalList without it; this only makes the data usable for retrospective
+        // analysis, it did not inform the output. See RagStatus in persistence/types.ts.
+        ragStatus: "backfilled",
         ragOnly: stats.ragOnly,
         llmOnly: stats.llmOnly,
         overlap: stats.overlap,

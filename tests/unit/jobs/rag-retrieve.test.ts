@@ -175,7 +175,7 @@ describe("rag-retrieve job", () => {
     expect(comparisonStore.findUnbackfilledBySession).toHaveBeenCalledWith("session-1");
     expect(comparisonStore.backfillSourceData).toHaveBeenCalledWith(
       "row-1",
-      expect.objectContaining({ ragStatus: "retrieved", ragList: ["Confirmation Bias"] }),
+      expect.objectContaining({ ragStatus: "backfilled", ragList: ["Confirmation Bias"] }),
     );
   });
 

@@ -263,9 +263,19 @@ export class AssessmentService {
 
       // Stage 005 telemetry: was RAG done in time for the full assessment, with no
       // wait budget at all? Validates/refutes the miss-rate assumption in D015 now
-      // that the adaptive wait has been removed.
+      // that the adaptive wait has been removed. ragCase is additive alongside the
+      // existing rag_available boolean (asserted by async-rag-assessment.test.ts) —
+      // grep this event name to see, per session/run, whether RAG was actually used
+      // ("retrieved") or not ("unavailable") without needing a DB join. For how LONG
+      // the RAG call itself took, see the job's own "rag_retrieve_complete" log
+      // (durationMs), correlated by runId — that's the real end-to-end duration;
+      // this log only captures the assessment's read at whatever moment it happened.
       logger.info(
-        { module: MODULE, operation: "runFullAssessment", sessionId, runId, rag_available: workspace.workspaceCase === "retrieved" },
+        {
+          module: MODULE, operation: "runFullAssessment", sessionId, runId,
+          rag_available: workspace.workspaceCase === "retrieved",
+          ragCase: workspace.workspaceCase,
+        },
         "rag_availability_at_assessment"
       );
     } else {
