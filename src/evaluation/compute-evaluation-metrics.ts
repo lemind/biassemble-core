@@ -107,7 +107,9 @@ export function computeEvaluationMetrics(
     isFalsePositive = null;
   } else if (options.isNoBiasStory) {
     const threshold = options.confidenceThreshold ?? 0.5;
-    isFalsePositive = biases.some((b) => (b.confidence ?? 0) > threshold);
+    // Missing confidence defaults to 1.0 (maximally confident), not 0 — an unscored bias
+    // in a no-bias story should count toward false positives, not be silently exempted.
+    isFalsePositive = biases.some((b) => (b.confidence ?? 1) > threshold);
   } else {
     isFalsePositive = false;
   }

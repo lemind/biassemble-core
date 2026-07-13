@@ -106,7 +106,16 @@ export const retrievalComparisons = core.table("retrieval_comparisons", {
   ragHitFinal: integer("rag_hit_final").notNull(),
   llmHitFinal: integer("llm_hit_final").notNull(),
   normalizationAdditions: integer("normalization_additions").notNull(),
-  ragStatus: text("rag_status").notNull(),
+  // "retrieved" = RAG was available live, in time to inform the assessment output.
+  // "backfilled" = RAG arrived late; only the analytics fields below were patched in
+  // afterward — the output itself was already decided without RAG. See RagStatus in
+  // persistence/types.ts. Plain text column, no DB-level CHECK constraint, so adding
+  // "backfilled" needed no migration.
+  ragStatus: text("rag_status", { enum: ["retrieved", "roster_fallback", "unavailable", "backfilled"] }).notNull(),
+  // D017: generic per-source breakdown (no fixed-arity "both" columns — see ADR).
+  sourceBreakdown: jsonb("source_breakdown"),
+  selectionStrategy: text("selection_strategy"),
+  llmModel: text("llm_model"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index("retrieval_comparisons_session_id_idx").on(table.sessionId),

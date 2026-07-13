@@ -54,7 +54,13 @@ export interface EvalResultRecord {
 }
 
 // ── Retrieval Comparison Record (Stage 004) ──
-export type RagStatus = "retrieved" | "roster_fallback" | "unavailable";
+// "retrieved": RAG was available synchronously when the assessment ran — it could
+// have informed the output. "backfilled": RAG arrived late; the D017 backfill patched
+// this row's RAG-derived fields in afterward, for retrospective analysis only — the
+// assessment output itself was already decided without RAG. Conflating these two under
+// one "retrieved" value was misleading (caught 2026-07-13: every "retrieved" row in a
+// live spot-check turned out to be backfilled, none synchronous).
+export type RagStatus = "retrieved" | "roster_fallback" | "unavailable" | "backfilled";
 
 export interface RetrievalComparisonRecord {
   id: string;
@@ -70,6 +76,10 @@ export interface RetrievalComparisonRecord {
   llmHitFinal: number;
   normalizationAdditions: number;
   ragStatus: RagStatus;
+  // D017: generic per-source breakdown (no fixed set of source names) + per-run engine metadata.
+  sourceBreakdown: Record<string, { list: string[]; hitFinal: number }> | null;
+  selectionStrategy: string | null;
+  llmModel: string | null;
   createdAt: string;
 }
 

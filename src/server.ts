@@ -45,7 +45,7 @@ export function buildApp() {
   const comparisonStore = new DrizzleRetrievalComparisonStore();
   const questionService = new QuestionService(provider, prompts, modelName, llmCallStore);
   const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore, ragClient, inngest);
-  const ragRetrieveJob = ragClient ? createRagRetrieveJob(ragClient, runStore) : undefined;
+  const ragRetrieveJob = ragClient ? createRagRetrieveJob(ragClient, runStore, catalog.getAll(), comparisonStore) : undefined;
 
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);

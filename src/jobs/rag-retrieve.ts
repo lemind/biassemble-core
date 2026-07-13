@@ -10,12 +10,19 @@
  */
 import { inngest } from "./client";
 import { logger } from "../observability/logger";
-import type { RagEngineClient } from "../rag/engine-client";
-import type { RunStore } from "../persistence/ports";
+import { toStorableEngineResponse, type RagEngineClient } from "../rag/engine-client";
+import type { RunStore, RetrievalComparisonStore } from "../persistence/ports";
+import { backfillComparisonSourceData } from "../observability/comparison-recorder";
+import type { BiasEntry } from "../catalog/bias-catalog";
 
 const MODULE = "rag-retrieve-job";
 
-export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunStore) {
+export function createRagRetrieveJob(
+  ragClient: RagEngineClient,
+  runStore: RunStore,
+  catalog: BiasEntry[],
+  comparisonStore?: RetrievalComparisonStore,
+) {
   return inngest.createFunction(
     { id: "rag-retrieve", name: "RAG — Background Retrieve" },
     { event: "rag/retrieve.requested" },
@@ -30,18 +37,35 @@ export function createRagRetrieveJob(ragClient: RagEngineClient, runStore: RunSt
       const t0 = Date.now();
       try {
         const result = await ragClient.retrieve(story);
-        await runStore.storeRagResult(runId, result.status === "ok" ? result.data : null);
+        await runStore.storeRagResult(runId, result.status === "ok" ? toStorableEngineResponse(result.data) : null);
         // rag_completed_at means what it says: RAG genuinely finished with a
         // result. Only set it on real success — a timeout/unavailable/auth_error
         // outcome leaves it null, since nothing actually "completed". Job
         // duration for the failure case is still in the logs below if needed.
         if (result.status === "ok") {
           await runStore.recordRagCompleted(runId, new Date());
+          logger.info(
+            { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
+            "rag_retrieve_complete"
+          );
+        } else {
+          // No retry happens after this — result.status !== "ok" means this session's RAG
+          // data is permanently unavailable, not "still pending." Log at error so it's
+          // unmistakable (and greppable by sessionId/runId) rather than blending into info noise.
+          logger.error(
+            { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
+            "rag_retrieve_unavailable"
+          );
         }
-        logger.info(
-          { module: MODULE, status: result.status, sessionId, runId, durationMs: Date.now() - t0 },
-          "rag_retrieve_complete"
-        );
+
+        // D017 backfill: RAG often finishes after the full assessment already ran and
+        // recorded rag_status="unavailable" (measured 35s-120s+ RAG latency in production).
+        // If this run's result is usable, patch any comparison row for this session that's
+        // still stuck without RAG data — see backfillComparisonSourceData's own doc comment.
+        if (comparisonStore) {
+          await backfillComparisonSourceData(sessionId, result, catalog, comparisonStore)
+            .catch((err) => logger.warn({ module: MODULE, err, sessionId, runId }, "comparison_backfill_dispatch_failed"));
+        }
       } catch (err) {
         logger.warn({ module: MODULE, err, sessionId, runId, durationMs: Date.now() - t0 }, "rag_retrieve_failed");
         await runStore.storeRagResult(runId, null).catch(() => {/* already logged by storeRagResult */});

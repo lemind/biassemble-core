@@ -15,9 +15,9 @@ import type { BiasCatalogService } from "../../catalog/bias-catalog";
 import { normalizeBiasName } from "../../catalog/normalize";
 import { validateEvidence } from "../../parsers/evidence-validator";
 import type { LlmCallStore, RunStore, TraceStore } from "../../persistence/ports";
-import { isEngineResponse, type RagEngineClient } from "../../rag/engine-client";
+import { isEngineResponse, type EngineSource, type RagEngineClient } from "../../rag/engine-client";
 import { buildBiasContext, type RagCase } from "../../rag/context-builder";
-import { buildBiasWorkspace, renderWorkspaceToPrompt } from "../../rag/workspace-builder";
+import { buildBiasWorkspace, buildSourceListsFromWorkspace, renderWorkspaceToPrompt } from "../../rag/workspace-builder";
 import type { Inngest } from "inngest";
 import { waitUntil } from "@vercel/functions";
 
@@ -94,6 +94,7 @@ export class AssessmentService {
         inputHash,
       });
       runId = run?.id ?? "";
+      logger.info({ module: MODULE, operation: "fireRagRetrieval", requestId, runId }, "run_record_created");
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "fireRagRetrieval", error: err, requestId },
@@ -147,6 +148,7 @@ export class AssessmentService {
         inputHash,
       });
       runId = run?.id ?? "";
+      logger.info({ module: MODULE, operation: "runStoryOnlyAssessment", requestId, runId }, "run_record_created");
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "runStoryOnlyAssessment", error: err, requestId },
@@ -158,7 +160,7 @@ export class AssessmentService {
     // the POST /v1/reflection/question route — see that method's doc comment for
     // why. story_only always renders roster-only context immediately regardless.
     const ragCase: RagCase = "unavailable";
-    const retrievedIds = new Set<string>();
+    const engineSources = new Map<string, EngineSource[]>();
 
     const ctx = buildBiasContext({ status: "unavailable" }, this.catalog.getAll());
     const system = this.prompts.render("assessment", { candidateBiases: ctx.biasContext });
@@ -167,7 +169,7 @@ export class AssessmentService {
     return (await this.callProvider(
       sessionId, system, user, requestId, runId,
       "initial_assessment", "story_only", inputHash, promptVersion, providerId,
-      story, [], ragCase, retrievedIds,
+      story, [], ragCase, engineSources,
     )).output;
   }
 
@@ -181,7 +183,16 @@ export class AssessmentService {
     questions: string[],
     answers: string[],
     requestId: string
-  ): Promise<{ output: AssessmentOutput; runId: string; ragCase: RagCase; ragList: string[]; llmListRaw: string[] }> {
+  ): Promise<{
+    output: AssessmentOutput;
+    runId: string;
+    ragCase: RagCase;
+    ragList: string[];
+    sourceLists: Record<string, string[]>;
+    selectionStrategy?: string;
+    llmModel?: string;
+    llmListRaw: string[];
+  }> {
     const promptVersion = this.prompts.getVersion();
     const providerId = this.provider.mode;
     const inputHash = computeInputHash(
@@ -203,6 +214,7 @@ export class AssessmentService {
         inputHash,
       });
       runId = run?.id ?? "";
+      logger.info({ module: MODULE, operation: "runFullAssessment", requestId, runId, sessionId }, "run_record_created");
     } catch (err) {
       logger.warn(
         { module: MODULE, operation: "runFullAssessment", error: err, requestId },
@@ -214,8 +226,11 @@ export class AssessmentService {
     // asynchronously at story submission (Stage 005) — if it hasn't landed by the
     // time the user finishes answering questions, we proceed without it. No wait.
     let ragCase: RagCase = "unavailable";
-    let retrievedIds = new Set<string>();
+    let engineSources = new Map<string, EngineSource[]>();
     let ragList: string[] = [];
+    let sourceLists: Record<string, string[]> = {};
+    let selectionStrategy: string | undefined;
+    let llmModel: string | undefined;
     let candidateBiases: string;
 
     if (sessionId && this.ragClient) {
@@ -228,15 +243,39 @@ export class AssessmentService {
 
       const workspace = buildBiasWorkspace(ragResult, this.catalog.getAll());
       ragCase = workspace.workspaceCase;
-      retrievedIds = workspace.retrievedIds;
+      engineSources = workspace.engineSources;
       ragList = workspace.candidates.map((c) => c.name);
       candidateBiases = renderWorkspaceToPrompt(workspace, this.catalog.getAll());
 
+      // D017 Decision 3: build the per-source name lists from the WORKSPACE layer, not by
+      // re-reading the raw EngineResponse a second time (data-model.md §4 / plan.md Decision
+      // 5). Shared with the backfill path (comparison-recorder.ts) via workspace-builder.ts
+      // so there's exactly one implementation of this derivation.
+      sourceLists = buildSourceListsFromWorkspace(workspace);
+      // Gate on workspace.workspaceCase, not ragResult.status — otherwise a valid-but-empty
+      // engine response (zero-scored biases, workspaceCase stays "unavailable") would populate
+      // selectionStrategy/llmModel while source_breakdown stays null, an inconsistent row where
+      // rag_status says "unavailable" next to non-null RAG metadata.
+      if (ragResult.status === "ok" && workspace.workspaceCase === "retrieved") {
+        selectionStrategy = ragResult.data.selection_strategy;
+        llmModel = ragResult.data.llm_model;
+      }
+
       // Stage 005 telemetry: was RAG done in time for the full assessment, with no
       // wait budget at all? Validates/refutes the miss-rate assumption in D015 now
-      // that the adaptive wait has been removed.
+      // that the adaptive wait has been removed. ragCase is additive alongside the
+      // existing rag_available boolean (asserted by async-rag-assessment.test.ts) —
+      // grep this event name to see, per session/run, whether RAG was actually used
+      // ("retrieved") or not ("unavailable") without needing a DB join. For how LONG
+      // the RAG call itself took, see the job's own "rag_retrieve_complete" log
+      // (durationMs), correlated by runId — that's the real end-to-end duration;
+      // this log only captures the assessment's read at whatever moment it happened.
       logger.info(
-        { module: MODULE, operation: "runFullAssessment", sessionId, runId, rag_available: workspace.workspaceCase === "retrieved" },
+        {
+          module: MODULE, operation: "runFullAssessment", sessionId, runId,
+          rag_available: workspace.workspaceCase === "retrieved",
+          ragCase: workspace.workspaceCase,
+        },
         "rag_availability_at_assessment"
       );
     } else {
@@ -258,9 +297,9 @@ export class AssessmentService {
     const { output, llmListRaw } = await this.callProvider(
       sessionId, system, user, requestId, runId,
       "post_questions_assessment", "story_plus_answers", inputHash, promptVersion, providerId,
-      story, answers, ragCase, retrievedIds,
+      story, answers, ragCase, engineSources,
     );
-    return { output, runId, ragCase, ragList, llmListRaw };
+    return { output, runId, ragCase, ragList, sourceLists, selectionStrategy, llmModel, llmListRaw };
   }
 
   /**
@@ -280,7 +319,7 @@ export class AssessmentService {
     story: string,
     answers: string[],
     ragCase: RagCase = "unavailable",
-    retrievedIds: Set<string> = new Set(),
+    engineSourcesMap: Map<string, EngineSource[]> = new Map(),
   ): Promise<{ output: AssessmentOutput; llmListRaw: string[] }> {
     return await withRetry(async (attempt) => {
       logger.info(
@@ -412,10 +451,12 @@ export class AssessmentService {
         );
       }
 
-      // T205: Enforce noBiasDetected flag consistency
+      // T205: Enforce noBiasDetected flag consistency. Check == null (not === undefined) —
+      // repair.ts's partialParseObject sets any field missing after a failed strict parse
+      // to null, not undefined, so a strict-undefined check silently misses that path.
       if (parsed.biases.length === 0 && !parsed.noBiasDetected) {
         parsed.noBiasDetected = true;
-      } else if (parsed.biases.length > 0 && parsed.noBiasDetected === undefined) {
+      } else if (parsed.biases.length > 0 && parsed.noBiasDetected == null) {
         parsed.noBiasDetected = false;
       }
 
@@ -426,17 +467,19 @@ export class AssessmentService {
       const allBiases = this.catalog.getAll();
       const normalizedBiases = parsed.biases.map((bias) => {
         const result = normalizeBiasName(bias.name, allBiases);
-        // Engine BiasResult.id and local BiasEntry.id must share the same string format
-        // (e.g. "confirmation_bias") — see ADR D014. Divergence silently returns "llm" for all.
-        // "both" is in the schema enum but is never emitted here — it requires persisting
-        // the story_only LLM candidate list to DB (deferred to a follow-on spec); without
-        // that persistence there is no LLM-side list to merge retrievedIds against.
-        const contextSource: "retrieved" | "llm" = retrievedIds.has(result.id ?? "") ? "retrieved" : "llm";
+        // Per-bias engine provenance (D017 Decision 2): copy the engine's source array for this
+        // bias, or [] if the engine did not surface it. `[]` + ragCase==="retrieved" =
+        // assessment-LLM-alone; `[]` + ragCase!=="retrieved" = engine did not run — the two are
+        // kept separable via the request-level ragCase (stored as ragStatus), NOT on this
+        // per-bias output. Engine BiasResult.id and local BiasEntry.id must share the same
+        // string format (e.g. "confirmation_bias") — see ADR D014. Divergence silently yields
+        // [] for all.
+        const engineSources: EngineSource[] = engineSourcesMap.get(result.id ?? "") ?? [];
         return {
           ...bias,
           name: result.name,
           ...(result.id ? { biasCatalogId: result.id } : {}),
-          context_source: contextSource,
+          engineSources,
         };
       });
 

@@ -142,8 +142,10 @@ describe("T510 — Inngest eval integration", () => {
   beforeEach(() => {
     // Reset mock between tests so each test gets fresh provider state
     mockProvider.reset();
-    // Configure mock responses using substrings from rendered system prompts
-    mockProvider.setResponse("asking 2-5", QUESTION_MOCK);
+    // Configure mock responses using substrings from rendered system prompts. Use a
+    // structural heading (all-caps section title) rather than prose wording, which has
+    // drifted before (was "asking 2-5", prompt now reads "Generate 2-5 contextual...").
+    mockProvider.setResponse("QUESTION DESIGN PRINCIPLES", QUESTION_MOCK);
     mockProvider.setResponse("answered follow-up questions", ASSESSMENT_BIAS_MOCK);
   });
 

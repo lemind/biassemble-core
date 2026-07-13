@@ -201,14 +201,14 @@ describe("QuestionOutputSchema", () => {
     ).toThrow();
   });
 
-  it("should reject missing prompt_version", () => {
+  it("should accept missing prompt_version — orchestrator stamps it post-parse, LLM never generates it (commit 4b27bb8, ADR D003)", () => {
     expect(() =>
       QuestionOutputSchema.parse({
         questions: ["Q1?", "Q2?"],
         isComplete: true,
         schema_version: "1.0.0",
       })
-    ).toThrow();
+    ).not.toThrow();
   });
 
   it("should reject wrong schema_version", () => {
@@ -304,13 +304,13 @@ describe("AssessmentOutputSchema", () => {
     expect(result.biases[0].biasCatalogId).toBe("confirmation-bias");
   });
 
-  it("should reject missing prompt_version", () => {
+  it("should accept missing prompt_version — orchestrator stamps it post-parse, LLM never generates it (commit 4b27bb8, ADR D003)", () => {
     expect(() =>
       AssessmentOutputSchema.parse({
         ...validAssessment,
         prompt_version: undefined,
       })
-    ).toThrow();
+    ).not.toThrow();
   });
 
   it("should reject wrong schema_version", () => {

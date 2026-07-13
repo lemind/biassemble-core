@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createRagRetrieveJob } from "../../../src/jobs/rag-retrieve.js";
 import { logger } from "../../../src/observability/logger.js";
 import type { RagEngineClient } from "../../../src/rag/engine-client.js";
-import type { RunStore } from "../../../src/persistence/ports.js";
+import type { RunStore, RetrievalComparisonStore } from "../../../src/persistence/ports.js";
+import { BiasCatalogService } from "../../../src/catalog/bias-catalog.js";
 
 // job.fn (below) reaches into an Inngest implementation detail — createFunction()
 // exposes the raw handler at `.fn`, undocumented but stable across recent SDK
@@ -63,7 +64,7 @@ describe("rag-retrieve job", () => {
     const ragClient = {
       retrieve: vi.fn().mockResolvedValue({ status: "ok", data: engineData }),
     } as unknown as RagEngineClient;
-    const job = createRagRetrieveJob(ragClient, runStore);
+    const job = createRagRetrieveJob(ragClient, runStore, []);
 
     await job.fn(buildEvent());
 
@@ -71,11 +72,43 @@ describe("rag-retrieve job", () => {
     expect(runStore.recordRagCompleted).toHaveBeenCalledWith("run-1", expect.any(Date));
   });
 
+  it("success path trims bulky per-bias text before storing (see toStorableEngineResponse)", async () => {
+    const engineData = {
+      biases: [{
+        id: "confirmation_bias",
+        name: "Confirmation Bias",
+        retrieval_score: 0.5,
+        indicators: "seeks confirming evidence",
+        source: ["llm"],
+        definition: "a very long definition".repeat(50),
+        examples: "many examples".repeat(50),
+        false_positives: "notes".repeat(50),
+        related_biases: "Anchoring Bias",
+      }],
+      retrieved_chunks: 1,
+      taxonomy_version: "v1",
+      embedding_model: "mock-embed",
+      request_id: "req-2",
+    };
+    const ragClient = {
+      retrieve: vi.fn().mockResolvedValue({ status: "ok", data: engineData }),
+    } as unknown as RagEngineClient;
+    const job = createRagRetrieveJob(ragClient, runStore, []);
+
+    await job.fn(buildEvent());
+
+    const stored = (runStore.storeRagResult as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(stored.biases[0].definition).toBeUndefined();
+    expect(stored.biases[0].examples).toBeUndefined();
+    expect(stored.biases[0].id).toBe("confirmation_bias");
+    expect(stored.biases[0].indicators).toBe("seeks confirming evidence");
+  });
+
   it("engine-unavailable path calls storeRagResult(runId, null) and does NOT set rag_completed_at", async () => {
     const ragClient = {
       retrieve: vi.fn().mockResolvedValue({ status: "unavailable" }),
     } as unknown as RagEngineClient;
-    const job = createRagRetrieveJob(ragClient, runStore);
+    const job = createRagRetrieveJob(ragClient, runStore, []);
 
     await job.fn(buildEvent());
 
@@ -89,7 +122,7 @@ describe("rag-retrieve job", () => {
     const ragClient = {
       retrieve: vi.fn().mockRejectedValue(new Error("network error")),
     } as unknown as RagEngineClient;
-    const job = createRagRetrieveJob(ragClient, runStore);
+    const job = createRagRetrieveJob(ragClient, runStore, []);
 
     await job.fn(buildEvent());
 
@@ -101,7 +134,7 @@ describe("rag-retrieve job", () => {
     const ragClient = {
       retrieve: vi.fn().mockResolvedValue({ status: "ok", data: { biases: [], retrieved_chunks: 0, taxonomy_version: "v1", embedding_model: "m", request_id: "r" } }),
     } as unknown as RagEngineClient;
-    const job = createRagRetrieveJob(ragClient, runStore);
+    const job = createRagRetrieveJob(ragClient, runStore, []);
 
     await job.fn(buildEvent());
 
@@ -111,11 +144,56 @@ describe("rag-retrieve job", () => {
     );
   });
 
+  it("triggers the D017 backfill when a comparisonStore is wired and RAG succeeds", async () => {
+    const engineData = {
+      biases: [{
+        id: "confirmation_bias",
+        name: "Confirmation Bias",
+        retrieval_score: 0.9,
+        indicators: "i",
+        source: ["vector"],
+      }],
+      retrieved_chunks: 1,
+      taxonomy_version: "v1",
+      embedding_model: "mock-embed",
+      request_id: "req-3",
+    };
+    const ragClient = {
+      retrieve: vi.fn().mockResolvedValue({ status: "ok", data: engineData }),
+    } as unknown as RagEngineClient;
+    const comparisonStore: RetrievalComparisonStore = {
+      record: vi.fn(),
+      findUnbackfilledBySession: vi.fn().mockResolvedValue([
+        { id: "row-1", llmList: ["Confirmation Bias"], finalList: ["Confirmation Bias"] },
+      ]),
+      backfillSourceData: vi.fn().mockResolvedValue(undefined),
+    };
+    const job = createRagRetrieveJob(ragClient, runStore, new BiasCatalogService().getAll(), comparisonStore);
+
+    await job.fn(buildEvent());
+
+    expect(comparisonStore.findUnbackfilledBySession).toHaveBeenCalledWith("session-1");
+    expect(comparisonStore.backfillSourceData).toHaveBeenCalledWith(
+      "row-1",
+      expect.objectContaining({ ragStatus: "backfilled", ragList: ["Confirmation Bias"] }),
+    );
+  });
+
+  it("does not touch comparisonStore when it isn't configured (undefined)", async () => {
+    const ragClient = {
+      retrieve: vi.fn().mockResolvedValue({ status: "ok", data: { biases: [], retrieved_chunks: 0, taxonomy_version: "v1", embedding_model: "m", request_id: "r" } }),
+    } as unknown as RagEngineClient;
+    // no comparisonStore passed — should not throw, should just skip backfill
+    const job = createRagRetrieveJob(ragClient, runStore, []);
+
+    await job.fn(buildEvent());
+  });
+
   it("logs warn on catch", async () => {
     const ragClient = {
       retrieve: vi.fn().mockRejectedValue(new Error("boom")),
     } as unknown as RagEngineClient;
-    const job = createRagRetrieveJob(ragClient, runStore);
+    const job = createRagRetrieveJob(ragClient, runStore, []);
 
     await job.fn(buildEvent());
 

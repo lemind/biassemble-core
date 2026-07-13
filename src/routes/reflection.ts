@@ -27,6 +27,9 @@ export interface FullAssessmentResult {
   runId: string;
   ragCase: RagCase;
   ragList: string[];
+  sourceLists: Record<string, string[]>;
+  selectionStrategy?: string;
+  llmModel?: string;
   llmListRaw: string[];
 }
 
@@ -108,6 +111,11 @@ export function registerReflectionRoutes(
       const body = GenerateAssessmentRequestSchema.parse(request.body);
       const includeTrace = request.query && (request.query as Record<string, string>).includeReasoningTrace === "true";
 
+      logger.info(
+        { requestId: request.id, mode: body.mode, sessionId: body.sessionId, comparisonStoreConfigured: !!services.comparisonStore },
+        "reflection_assessment_received"
+      );
+
       let result: AssessmentOutput;
 
       if (body.mode === "story_only") {
@@ -139,12 +147,17 @@ export function registerReflectionRoutes(
               sessionId: body.sessionId,
               runId: fullResult.runId,
               ragList: fullResult.ragList,
+              sourceLists: fullResult.sourceLists,
               llmListRaw: fullResult.llmListRaw,
               finalList: result.biases.map(b => b.name),
               ragCase: fullResult.ragCase,
+              selectionStrategy: fullResult.selectionStrategy,
+              llmModel: fullResult.llmModel,
             },
             services.comparisonStore,
-          ).catch(() => {/* already logged in recordComparison */});
+          ).catch(() => {/* recordComparison never rejects — success/failure logged inside it */});
+        } else {
+          logger.warn({ requestId: request.id }, "comparison_store_not_configured — skipping retrieval_comparisons write");
         }
       }
 
