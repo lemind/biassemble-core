@@ -1,0 +1,441 @@
+{
+  "source_filing": "evaluations/golden/audit/source-filing.md",
+  "task_context_default": "Summarize Apple's fiscal Q2 2026 (period ended March 28, 2026) results. As-of date: 2026-07-15.",
+  "labeling_order": "expected_claims and excluded_content were hand-written by the author at the same time as output_text, before any EXTRACT prompt existed to run against them. Do not edit expected_claims after looking at a real model run \u2014 add a new scenario instead.",
+  "scenarios": [
+    {
+      "id": "extract-001-iphone-headline",
+      "title": "iPhone-led quarter, one derived share claim, one opinion",
+      "output_text": "Apple's total net sales for the quarter reached $111,184 million, up from $95,359 million a year earlier. iPhone was the primary driver, with iPhone net sales climbing to $56,994 million from $46,841 million. Management attributed the growth to stronger demand for Pro models. iPhone therefore accounted for roughly 51% of total quarterly revenue. We think this concentration makes Apple more exposed to iPhone-cycle risk than peers with more diversified mixes.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Total net sales reached $111,184 million, up from $95,359 million a year earlier",
+          "excerpt": "Apple's total net sales for the quarter reached $111,184 million, up from $95,359 million a year earlier",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "numeric",
+          "claim": "iPhone net sales climbed to $56,994 million from $46,841 million",
+          "excerpt": "iPhone net sales climbing to $56,994 million from $46,841 million",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c3",
+          "type": "attribution",
+          "claim": "Management attributed the growth to stronger demand for Pro models",
+          "excerpt": "Management attributed the growth to stronger demand for Pro models",
+          "locations": [
+            "p1s3"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c4",
+          "type": "derived",
+          "claim": "iPhone accounted for roughly 51% of total quarterly revenue",
+          "excerpt": "iPhone therefore accounted for roughly 51% of total quarterly revenue",
+          "locations": [
+            "p1s4"
+          ],
+          "period": "Q2 2026",
+          "derived": true
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "We think this concentration makes Apple more exposed to iPhone-cycle risk than peers with more diversified mixes.",
+          "reason": "opinion/judgment, not checkable"
+        }
+      ]
+    },
+    {
+      "id": "extract-002-compound-category-split",
+      "title": "One run-on sentence must split into 3 atomic claims; opinion excluded",
+      "output_text": "iPhone net sales rose 22% to $56,994 million and Mac net sales rose 6% to $8,399 million, while iPad net sales grew 8% to $6,914 million. The company said Wearables, Home and Accessories net sales increased due to higher sales of Accessories and Wearables. Some analysts believe the Wearables category has peaked, but we are not convinced.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "iPhone net sales rose 22% to $56,994 million",
+          "excerpt": "iPhone net sales rose 22% to $56,994 million",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "numeric",
+          "claim": "Mac net sales rose 6% to $8,399 million",
+          "excerpt": "Mac net sales rose 6% to $8,399 million",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c3",
+          "type": "numeric",
+          "claim": "iPad net sales grew 8% to $6,914 million",
+          "excerpt": "iPad net sales grew 8% to $6,914 million",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c4",
+          "type": "attribution",
+          "claim": "The company said Wearables, Home and Accessories net sales increased due to higher sales of Accessories and Wearables",
+          "excerpt": "The company said Wearables, Home and Accessories net sales increased due to higher sales of Accessories and Wearables",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "Some analysts believe the Wearables category has peaked, but we are not convinced.",
+          "reason": "hedged opinion/speculation, not attributed to a checkable source"
+        }
+      ]
+    },
+    {
+      "id": "extract-003-margins-eps",
+      "title": "Income-statement claims plus an excluded forward-looking forecast",
+      "output_text": "Gross margin for the quarter was $54,781 million, up from $44,867 million in the prior-year quarter. Operating income rose to $35,885 million from $29,589 million. Net income reached $29,578 million, and diluted earnings per share came in at $2.01, compared with $1.65 a year ago. Based on this trajectory, we expect EPS to keep climbing through the back half of the fiscal year.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Gross margin was $54,781 million, up from $44,867 million in the prior-year quarter",
+          "excerpt": "Gross margin for the quarter was $54,781 million, up from $44,867 million in the prior-year quarter",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "numeric",
+          "claim": "Operating income rose to $35,885 million from $29,589 million",
+          "excerpt": "Operating income rose to $35,885 million from $29,589 million",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c3",
+          "type": "numeric",
+          "claim": "Net income reached $29,578 million",
+          "excerpt": "Net income reached $29,578 million",
+          "locations": [
+            "p1s3"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c4",
+          "type": "numeric",
+          "claim": "Diluted earnings per share came in at $2.01, compared with $1.65 a year ago",
+          "excerpt": "diluted earnings per share came in at $2.01, compared with $1.65 a year ago",
+          "locations": [
+            "p1s3"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "Based on this trajectory, we expect EPS to keep climbing through the back half of the fiscal year.",
+          "reason": "author-AI's own forecast, not checkable against sources"
+        }
+      ]
+    },
+    {
+      "id": "extract-004-period-trap",
+      "title": "Six-month total mislabeled as 'this quarter' (feeds verify-006 period trap)",
+      "output_text": "Apple's total net sales this quarter reached $254,940 million, a strong result.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Total net sales this quarter reached $254,940 million",
+          "excerpt": "Apple's total net sales this quarter reached $254,940 million",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "a strong result",
+          "reason": "vague qualitative characterization, not an independently checkable atomic fact"
+        }
+      ],
+      "notes": "EXTRACT must resolve period from task context (Q2 2026) as written \u2014 it has no way to know the $254,940M figure is actually the six-month total. That mismatch is VERIFY's job (see verify-006)."
+    },
+    {
+      "id": "extract-005-mac-wearables-flat",
+      "title": "Two flat six-month claims plus an interpretive opinion",
+      "output_text": "Year-over-year Mac net sales during the first six months of fiscal 2026 were relatively flat. Wearables, Home and Accessories net sales during the same six-month period were also relatively flat year-over-year. We believe this points to category maturity across Apple's smaller hardware lines.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Mac net sales during the first six months of fiscal 2026 were relatively flat year-over-year",
+          "excerpt": "Year-over-year Mac net sales during the first six months of fiscal 2026 were relatively flat",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "H1 FY2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "numeric",
+          "claim": "Wearables, Home and Accessories net sales during the first six months of fiscal 2026 were relatively flat year-over-year",
+          "excerpt": "Wearables, Home and Accessories net sales during the same six-month period were also relatively flat year-over-year",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "H1 FY2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "We believe this points to category maturity across Apple's smaller hardware lines.",
+          "reason": "opinion/interpretation"
+        }
+      ]
+    },
+    {
+      "id": "extract-006-china-contradiction-and-forecast",
+      "title": "Fabricated China figure (feeds verify-008 contradiction) plus a forecast",
+      "output_text": "Greater China net sales fell 8% year-over-year this quarter, a sign of continued weakness in the region. iPhone net sales, however, climbed to $56,994 million from $46,841 million. We expect iPhone momentum to carry into the September quarter.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Greater China net sales fell 8% year-over-year this quarter",
+          "excerpt": "Greater China net sales fell 8% year-over-year this quarter",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "numeric",
+          "claim": "iPhone net sales climbed to $56,994 million from $46,841 million",
+          "excerpt": "iPhone net sales, however, climbed to $56,994 million from $46,841 million",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "a sign of continued weakness in the region",
+          "reason": "interpretive framing, not an independent checkable fact"
+        },
+        {
+          "text": "We expect iPhone momentum to carry into the September quarter.",
+          "reason": "author-AI's own forecast, not checkable"
+        }
+      ],
+      "notes": "c1 is factually false (real Greater China growth was +28%, see source-filing.md) but EXTRACT's job is to extract stated claims, not judge truth \u2014 truth-checking is VERIFY's job (see verify-008). Extracting c1 correctly, unflagged, is the pass condition here."
+    },
+    {
+      "id": "extract-007-silence-unit-sales",
+      "title": "Unit-sales figure the filing never states (feeds verify-007 silence trap) plus a derived claim built on it",
+      "output_text": "Apple sold roughly 58 million iPhones during the quarter, driving total net sales to $111,184 million, up from $95,359 million a year earlier. That implies an average selling price gain of about 15% year-over-year.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Apple sold roughly 58 million iPhones during the quarter",
+          "excerpt": "Apple sold roughly 58 million iPhones during the quarter",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "numeric",
+          "claim": "Total net sales reached $111,184 million, up from $95,359 million a year earlier",
+          "excerpt": "driving total net sales to $111,184 million, up from $95,359 million a year earlier",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c3",
+          "type": "derived",
+          "claim": "Average selling price gained about 15% year-over-year",
+          "excerpt": "That implies an average selling price gain of about 15% year-over-year",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": true
+        }
+      ],
+      "excluded_content": []
+    },
+    {
+      "id": "extract-008-japan-fx",
+      "title": "Two causal claims plus an excluded investment recommendation",
+      "output_text": "Japan net sales increased during the first six months of fiscal 2026, primarily due to higher net sales of iPhone. The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the same period. Given the currency backdrop, we think Japan could be an attractive entry point for yen-hedged investors.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "causal",
+          "claim": "Japan net sales increased during the first six months of fiscal 2026, primarily due to higher net sales of iPhone",
+          "excerpt": "Japan net sales increased during the first six months of fiscal 2026, primarily due to higher net sales of iPhone",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "H1 FY2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "causal",
+          "claim": "Yen weakness relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the first six months of fiscal 2026",
+          "excerpt": "The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the same period",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "H1 FY2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "we think Japan could be an attractive entry point for yen-hedged investors",
+          "reason": "investment recommendation/opinion"
+        }
+      ]
+    },
+    {
+      "id": "extract-009-services-growth",
+      "title": "Services growth plus a flat-share derived claim and a recommendation",
+      "output_text": "Services net sales grew 16% to $30,976 million from $26,645 million. Services now represents roughly 28% of Apple's total quarterly revenue, up from about 28% a year ago. Investors should keep a close eye on Services momentum as a hedge against hardware cyclicality.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Services net sales grew 16% to $30,976 million from $26,645 million",
+          "excerpt": "Services net sales grew 16% to $30,976 million from $26,645 million",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "derived",
+          "claim": "Services represents roughly 28% of total quarterly revenue, up from about 28% a year ago",
+          "excerpt": "Services now represents roughly 28% of Apple's total quarterly revenue, up from about 28% a year ago",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": true
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "Investors should keep a close eye on Services momentum as a hedge against hardware cyclicality.",
+          "reason": "recommendation, not checkable"
+        }
+      ]
+    },
+    {
+      "id": "extract-010-cross-category-compound-derived",
+      "title": "Dense compound sentence, subtraction-derived claim, attribution \u2014 heaviest EXTRACT stress test",
+      "output_text": "Combined, iPhone, Mac, and iPad net sales reached $72,307 million this quarter, and Services alone added another $30,976 million on top of that. The company said total net sales across all categories came to $111,184 million. Excluding Services, hardware net sales were therefore about $80,208 million, or roughly 72% of the total.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "derived",
+          "claim": "Combined iPhone, Mac, and iPad net sales reached $72,307 million this quarter",
+          "excerpt": "Combined, iPhone, Mac, and iPad net sales reached $72,307 million this quarter",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": true
+        },
+        {
+          "id": "c2",
+          "type": "numeric",
+          "claim": "Services net sales added $30,976 million on top of that",
+          "excerpt": "Services alone added another $30,976 million on top of that",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c3",
+          "type": "attribution",
+          "claim": "The company said total net sales across all categories came to $111,184 million",
+          "excerpt": "The company said total net sales across all categories came to $111,184 million",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c4",
+          "type": "derived",
+          "claim": "Excluding Services, hardware net sales were about $80,208 million, or roughly 72% of the total",
+          "excerpt": "Excluding Services, hardware net sales were therefore about $80,208 million, or roughly 72% of the total",
+          "locations": [
+            "p1s3"
+          ],
+          "period": "Q2 2026",
+          "derived": true
+        }
+      ],
+      "excluded_content": []
+    }
+  ]
+}

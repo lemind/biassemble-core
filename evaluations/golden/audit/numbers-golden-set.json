@@ -1,0 +1,147 @@
+{
+  "purpose": "Tests the deterministic code-side normalization/comparison layer that runs between EXTRACT and VERIFY (D018 §2.3: 'arithmetic happens in code, never in the LLM'). Each case gives a claim-side and source-side numeric statement; the normalizer must decide (a) are they comparable at all, and only if so (b) are they equal. VERIFY never sees raw numbers — only this layer's comparable/equal output plus a note.",
+  "pass_bar": "Zero false 'not comparable = contradicted'. Whenever comparable=false, the case must never be treated downstream as evidence of contradiction — a currency mismatch or missing unit is a data gap, not proof the claim is wrong. A false 'contradicted' from an incomparable pair is the one failure mode that accuses a customer's AI of an error it didn't make, and fails this golden set outright regardless of aggregate score.",
+  "source_filing": "evaluations/golden/audit/source-filing.md",
+  "cases": [
+    {
+      "id": "num-001-exact-match",
+      "trap_type": "sanity: same unit/scale/period, exact",
+      "claim": { "value": 56994, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "source": { "value": 56994, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "identical after normalization" }
+    },
+    {
+      "id": "num-002-scale-conversion-billion",
+      "trap_type": "scale conversion, should reconcile not trap",
+      "claim": { "value": 56.994, "unit": "USD", "scale": "billion", "period": "Q2 2026" },
+      "source": { "value": 56994, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "billion→million conversion is exact; this must NOT be flagged as a scale mismatch — it's the same number" }
+    },
+    {
+      "id": "num-003-scale-mismatch-1000x",
+      "trap_type": "genuine scale mismatch",
+      "claim": { "value": 29578, "unit": "USD", "scale": "thousand", "period": "Q2 2026" },
+      "source": { "value": 29578, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": false, "note": "same unit family, scale differs by 1000x after normalization — real mismatch, not a conversion artifact" }
+    },
+    {
+      "id": "num-004-currency-mismatch-no-fx",
+      "trap_type": "currency mismatch, no conversion rate available",
+      "claim": { "value": 56994, "unit": "EUR", "scale": "million", "period": "Q2 2026" },
+      "source": { "value": 56994, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "expected": { "comparable": false, "equal": null, "note": "different currency, no FX rate provided in source — cannot compare; must not default to 'equal' just because the digits match" }
+    },
+    {
+      "id": "num-005-currency-conversion-with-fx",
+      "trap_type": "currency conversion, FX rate provided in source",
+      "claim": { "value": 60000, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "source": { "value": 55000, "unit": "EUR", "scale": "million", "period": "Q2 2026", "fx_rate_to_usd": 1.0909 },
+      "expected": { "comparable": true, "equal": true, "note": "55,000 EUR × 1.0909 ≈ 60,000 USD — comparable once a source-provided FX rate exists, equal within rounding" }
+    },
+    {
+      "id": "num-006-rounding-hedged-supported",
+      "trap_type": "rounding tolerance, hedged claim",
+      "claim": { "value": 10, "unit": "percent", "scale": null, "period": "Q2 2026", "hedge": "about" },
+      "source": { "value": 10.4, "unit": "percent", "scale": null, "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "hedged 'about 10%' vs 10.4% — within rounding tolerance" }
+    },
+    {
+      "id": "num-007-rounding-precise-mismatch",
+      "trap_type": "precise claim, precise mismatch beyond tolerance",
+      "claim": { "value": 10.4, "unit": "percent", "scale": null, "period": "Q2 2026", "hedge": null },
+      "source": { "value": 10.9, "unit": "percent", "scale": null, "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": false, "note": "unhedged precise claim (10.4%) vs source's precise 10.9% — 0.5pp gap on an unhedged number exceeds tolerance" }
+    },
+    {
+      "id": "num-008-pp-vs-percent-confusion",
+      "trap_type": "percentage-point vs percent unit mismatch",
+      "claim": { "value": 5, "unit": "percentage_points", "scale": null, "period": "Q2 2026" },
+      "source": { "value": 5, "unit": "percent", "scale": null, "period": "Q2 2026" },
+      "expected": { "comparable": false, "equal": null, "note": "pp and % are not the same unit unless the base value is known — 5pp of a 20% base is not 5% growth; flag as incomparable rather than assume equivalence" }
+    },
+    {
+      "id": "num-009-basis-points-conversion",
+      "trap_type": "basis points to percent, should reconcile",
+      "claim": { "value": 50, "unit": "basis_points", "scale": null, "period": "Q2 2026" },
+      "source": { "value": 0.5, "unit": "percent", "scale": null, "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "50bp = 0.5% by definition — exact conversion, not a trap" }
+    },
+    {
+      "id": "num-010-derived-growth-rate-match",
+      "trap_type": "derived arithmetic, correct",
+      "claim": { "derived_op": "pct_change", "inputs": [56994, 46841], "claimed_result": 22, "unit": "percent", "period": "Q2 2026" },
+      "source": { "value": 22, "unit": "percent", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "(56994-46841)/46841 = 21.68% ≈ 22%, matches source's stated 22%; computed in code, never by the LLM" }
+    },
+    {
+      "id": "num-011-derived-growth-rate-rounding-ok",
+      "trap_type": "derived arithmetic, rounds to source figure",
+      "claim": { "derived_op": "pct_change", "inputs": [111184, 95359], "claimed_result": 17, "unit": "percent", "period": "Q2 2026" },
+      "source": { "value": 17, "unit": "percent", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "(111184-95359)/95359 = 16.59%, source displays rounded 17% — claimed 17% matches the source's own rounding" }
+    },
+    {
+      "id": "num-012-derived-growth-rate-wrong",
+      "trap_type": "derived arithmetic, materially wrong",
+      "claim": { "derived_op": "pct_change", "inputs": [111184, 95359], "claimed_result": 25, "unit": "percent", "period": "Q2 2026" },
+      "source": { "value": 17, "unit": "percent", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": false, "note": "correct computation from the same inputs yields ~16.6%/17%, not 25% — claimed derivation is arithmetically wrong" }
+    },
+    {
+      "id": "num-013-period-mismatch-quarter-vs-sixmonth",
+      "trap_type": "period mismatch — layer-boundary case, corrected after review",
+      "claim": { "value": 254940, "unit": "USD", "scale": "million", "period": "Q2 2026 (three months)" },
+      "source": { "value": 111184, "unit": "USD", "scale": "million", "period": "Q2 2026 (three months)" },
+      "expected": { "comparable": true, "equal": false, "note": "the normalizer only sees structured (value, unit, scale, period-label) tuples — both sides are labeled 'Q2 2026 (three months)', same currency, same scale, so the normalizer correctly reports comparable=true, equal=false (254,940 ≠ 111,184 for the same stated period-label). It has no lookup to know 254,940 actually belongs to the six-month period — that requires the real source passage, which only VERIFY sees. So this case's job is narrower than the case name suggests: it proves the normalizer must NOT be the layer that decides 'unsupported' vs 'contradicted' here. That period-mismatch judgment belongs to VERIFY against the full passage (D018 §2.3, see verify-006), using this normalizer output only as one input, not as the final verdict." }
+    },
+    {
+      "id": "num-014-scope-mismatch-segment-vs-total",
+      "trap_type": "scope mismatch, real number wrong scope",
+      "claim": { "value": 28, "unit": "percent", "period": "Q2 2026", "scope": "consolidated total" },
+      "source": { "value": 17, "unit": "percent", "period": "Q2 2026", "scope": "consolidated total" },
+      "expected": { "comparable": true, "equal": false, "note": "both sides claim consolidated-total scope, source states 17% for that scope — the 28% figure genuinely exists in the filing but for a different scope (Greater China segment), so it is correctly flagged not-equal at the claimed (consolidated) scope, not silently accepted because '28%' appears somewhere in the source text" }
+    },
+    {
+      "id": "num-015-negative-accounting-notation",
+      "trap_type": "accounting-parens negative vs signed minus",
+      "claim": { "value": -1, "unit": "percent", "period": "H1 FY2026" },
+      "source": { "value": "(1)", "unit": "percent", "period": "H1 FY2026", "notation": "accounting_parens" },
+      "expected": { "comparable": true, "equal": true, "note": "'(1)%' in accounting notation normalizes to -1% — must be parsed, not string-compared" }
+    },
+    {
+      "id": "num-016-missing-unit-claim",
+      "trap_type": "claim omits scale entirely",
+      "claim": { "value": 56994, "unit": null, "scale": null, "period": "Q2 2026" },
+      "source": { "value": 56994, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "expected": { "comparable": false, "equal": null, "note": "claim gives a bare number with no stated unit/scale — do not assume it matches the source's scale just because the digits agree; flag for disambiguation rather than guessing" }
+    },
+    {
+      "id": "num-017-sum-check-correct",
+      "trap_type": "derived sum, correct",
+      "claim": { "derived_op": "sum", "inputs": [56994, 8399, 6914], "claimed_result": 72307, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "source": { "components": [56994, 8399, 6914], "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "56994+8399+6914 = 72307, arithmetic verified in code" }
+    },
+    {
+      "id": "num-018-sum-check-wrong",
+      "trap_type": "derived sum, arithmetic error",
+      "claim": { "derived_op": "sum", "inputs": [56994, 8399, 6914], "claimed_result": 73000, "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "source": { "components": [56994, 8399, 6914], "unit": "USD", "scale": "million", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": false, "note": "correctly-summed components equal 72,307, not the claimed 73,000 — a real arithmetic error, not a rounding artifact (gap exceeds tolerance)" }
+    },
+    {
+      "id": "num-019-derived-share-of-total",
+      "trap_type": "derived percentage-of-total, correct within rounding",
+      "claim": { "derived_op": "share", "inputs": [56994, 111184], "claimed_result": 51, "unit": "percent", "period": "Q2 2026" },
+      "source": { "components": [56994, 111184], "unit": "percent", "period": "Q2 2026" },
+      "expected": { "comparable": true, "equal": true, "note": "56994/111184 = 51.27%, rounds to claimed 51%" }
+    },
+    {
+      "id": "num-020-fiscal-vs-calendar-period-ambiguity",
+      "trap_type": "fiscal/calendar period label ambiguity",
+      "claim": { "value": 111184, "unit": "USD", "scale": "million", "period": "Q2 2026 (calendar)" },
+      "source": { "value": 111184, "unit": "USD", "scale": "million", "period": "Q2 2026 (fiscal, ended March 28 2026)" },
+      "expected": { "comparable": false, "equal": null, "note": "same digits, but claim doesn't specify fiscal vs calendar quarter — Apple's fiscal Q2 ends in March, not June; do not assume equivalence without task-context resolution of which calendar this claim's 'Q2 2026' means" }
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "source_filing": "evaluations/golden/audit/source-filing.md",
+  "labeling_order": "expected_verdict and expected_note were hand-written before any VERIFY prompt existed to run against them.",
+  "verdict_taxonomy_ref": "biassemble-core/docs/decisions/018-audit-mode-flag.md §2.3 — canonical definitions, do not restate here",
+  "scenarios": [
+    {
+      "id": "verify-001-clear-support",
+      "trap_type": "clear support",
+      "claim": "iPhone net sales rose 22% to $56,994 million in the quarter, up from $46,841 million a year earlier.",
+      "passages": [{ "location": "products-table", "text": "iPhone $56,994 $46,841 22% $142,263 $115,979 23%" }],
+      "expected_verdict": "supported",
+      "expected_evidence": "iPhone $56,994 $46,841 22%",
+      "expected_note": "direct match, three months ended column"
+    },
+    {
+      "id": "verify-002-clear-support-segment",
+      "trap_type": "clear support",
+      "claim": "Greater China net sales grew 28% year-over-year this quarter.",
+      "passages": [{ "location": "segment-table", "text": "Greater China 20,497 16,002 28% 46,023 34,515 33%" }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Greater China 20,497 16,002 28%",
+      "expected_note": "direct match, three months ended column"
+    },
+    {
+      "id": "verify-003-rounding-near-miss-ok",
+      "trap_type": "rounding near-miss",
+      "claim": "Total net sales grew approximately 16% year-over-year this quarter.",
+      "passages": [{ "location": "products-table", "text": "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%" }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Total net sales $111,184 $95,359 17%",
+      "expected_note": "claim says ~16% (hedged with 'approximately'), exact computed growth is 16.59%, filing displays the rounded figure as 17% — within rounding tolerance of a hedged claim; not a precise-vs-precise mismatch",
+      "test_boundary": "this case exercises VERIFY *with* the numeric normalizer's output already piped in (16.59% precomputed from the raw $111,184/$95,359 values, per D018 §2.3 — VERIFY never does this arithmetic itself). Run as a VERIFY-prompt-only test with no normalizer preprocessing, '~16%' vs a passage literally showing '17%' is ambiguous and this case should not be expected to pass in isolation."
+    },
+    {
+      "id": "verify-004-rounding-contradicted",
+      "trap_type": "rounding contradicted (precise claim, precise mismatch)",
+      "claim": "Diluted earnings per share was $2.05 this quarter.",
+      "passages": [{ "location": "eps-table", "text": "Diluted $2.01 $1.65 $4.85 $4.05" }],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Diluted $2.01 $1.65",
+      "expected_note": "claim is precise ($2.05, not hedged), same subject/measure/period, source states $2.01 — a $0.04 gap on an unhedged precise EPS claim exceeds rounding tolerance"
+    },
+    {
+      "id": "verify-005-unit-scale-trap",
+      "trap_type": "unit-scale trap",
+      "claim": "Net income was $29,578 thousand this quarter.",
+      "passages": [{ "location": "income-statement", "text": "Net income $29,578 $24,780 $71,675 $61,110" }],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Net income $29,578",
+      "expected_note": "same subject/period, but claim's scale (thousand) is 1000x off from the source's stated scale (million, per the filing's 'dollars in millions' header) — a genuine scale mismatch, not the same fact restated"
+    },
+    {
+      "id": "verify-006-period-trap",
+      "trap_type": "period trap",
+      "claim": "Total net sales this quarter reached $254,940 million.",
+      "passages": [{ "location": "products-table", "text": "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%" }],
+      "expected_verdict": "unsupported",
+      "expected_evidence": null,
+      "expected_note": "$254,940 million is the six-month total, not the quarterly (three-month) total ($111,184 million) — the claim's stated period (quarter) does not match the period the cited figure actually belongs to; per D018 §2.3 a different-period number is unsupported with a note, never contradicted",
+      "linked_extract_scenario": "extract-004-period-trap"
+    },
+    {
+      "id": "verify-007-silence",
+      "trap_type": "silence",
+      "claim": "Apple sold roughly 58 million iPhones during the quarter.",
+      "passages": [{ "location": "products-table", "text": "iPhone $56,994 $46,841 22% $142,263 $115,979 23%" }],
+      "expected_verdict": "unsupported",
+      "expected_evidence": null,
+      "expected_note": "the filing states iPhone net sales in dollars only; no unit-sales/activation count appears anywhere in this filing — absence from provided passages, not a claim the source disputes",
+      "linked_extract_scenario": "extract-007-silence-unit-sales"
+    },
+    {
+      "id": "verify-008-contradiction-china",
+      "trap_type": "contradiction",
+      "claim": "Greater China net sales fell 8% year-over-year this quarter.",
+      "passages": [{ "location": "segment-table", "text": "Greater China 20,497 16,002 28% 46,023 34,515 33%" }],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Greater China 20,497 16,002 28%",
+      "expected_note": "same subject/measure/period/scope (Greater China segment, YoY %, Q2 2026, consolidated-segment level) — source shows +28%, directly opposing the claimed -8%",
+      "linked_extract_scenario": "extract-006-china-contradiction-and-forecast"
+    },
+    {
+      "id": "verify-009-segment-scope-trap",
+      "trap_type": "scope/segment trap",
+      "claim": "Apple's total net sales grew 28% year-over-year this quarter.",
+      "passages": [
+        { "location": "segment-table", "text": "Greater China 20,497 16,002 28% 46,023 34,515 33%" },
+        { "location": "products-table", "text": "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%" }
+      ],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Total net sales $111,184 $95,359 17%",
+      "expected_note": "28% is real, but it is Greater China's segment growth, not the consolidated total's growth (17%) — claim's subject is 'total net sales', which the source directly addresses with a different number; the presence of '28%' in a passage for a different scope must not be credited as support. This is the case that tests whether VERIFY gets fooled by a real number attached to the wrong scope."
+    },
+    {
+      "id": "verify-010-paraphrase",
+      "trap_type": "paraphrase",
+      "claim": "Apple's services business kept growing at a healthy double-digit pace.",
+      "passages": [{ "location": "products-table", "text": "Services 30,976 26,645 16% 60,989 52,985 15%" }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Services 30,976 26,645 16%",
+      "expected_note": "qualitative paraphrase of a stated 16% YoY growth figure — 'healthy double-digit pace' is consistent with 16%, no numeric specificity to contradict"
+    },
+    {
+      "id": "verify-011-synthesis-two-passage",
+      "trap_type": "two-passage synthesis",
+      "claim": "Apple's net income margin was approximately 27% of total net sales this quarter.",
+      "passages": [
+        { "location": "income-statement", "text": "Net income $29,578 $24,780 $71,675 $61,110" },
+        { "location": "products-table", "text": "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%" }
+      ],
+      "expected_verdict": "supported",
+      "expected_evidence": ["Net income $29,578", "Total net sales $111,184"],
+      "expected_note": "29,578 / 111,184 = 26.6%, rounds to ~27% — requires combining two separate table passages",
+      "expected_synthesized": true
+    },
+    {
+      "id": "verify-012-attribution-check-true",
+      "trap_type": "attribution, correctly checked",
+      "claim": "The company said Wearables, Home and Accessories net sales increased due to higher sales of Accessories and Wearables.",
+      "passages": [{ "location": "wearables-narrative", "text": "Wearables, Home and Accessories net sales increased during the second quarter of 2026 compared to the second quarter of 2025 primarily due to higher net sales of Accessories and Wearables." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Wearables, Home and Accessories net sales increased during the second quarter of 2026 compared to the second quarter of 2025 primarily due to higher net sales of Accessories and Wearables.",
+      "expected_note": "verifies the SOURCE contains this explanation (it's the filing's own MD&A narrative), not that the explanation is independently true — attribution claims check presence, not truth",
+      "linked_extract_scenario": "extract-002-compound-category-split"
+    },
+    {
+      "id": "verify-013-attribution-false",
+      "trap_type": "attribution, contradicted inner content",
+      "claim": "Management said Mac net sales declined during the quarter due to weak laptop demand.",
+      "passages": [{ "location": "mac-narrative", "text": "Mac net sales increased during the second quarter of 2026 compared to the second quarter of 2025 due to higher net sales of laptops." }],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Mac net sales increased during the second quarter of 2026 compared to the second quarter of 2025 due to higher net sales of laptops.",
+      "expected_note": "the attributed content itself is directly opposed: source says Mac net sales increased due to higher laptop sales, claim says declined due to weak laptop demand — same subject/period"
+    },
+    {
+      "id": "verify-014-partially-supported",
+      "trap_type": "partially supported",
+      "claim": "Apple's revenue grew across every product category during the first six months of fiscal 2026.",
+      "passages": [{ "location": "products-table", "text": "iPhone $56,994 $46,841 22% $142,263 $115,979 23% Mac 8,399 7,949 6% 16,785 16,936 (1)% iPad 6,914 6,402 8% 15,509 14,490 7% Wearables, Home and Accessories 7,901 7,522 5% 19,394 19,269 1% Services 30,976 26,645 16% 60,989 52,985 15%" }],
+      "expected_verdict": "partially_supported",
+      "expected_evidence": "Mac 8,399 7,949 6% 16,785 16,936 (1)%",
+      "expected_note": "four of five categories grew during the six-month period (iPhone +23%, iPad +7%, Wearables +1%, Services +15%), but Mac declined (1)% for the six months — the 'every category' claim is broader than what the source supports"
+    },
+    {
+      "id": "verify-015-unverifiable",
+      "trap_type": "unverifiable / below-threshold",
+      "claim": "Apple's device ecosystem continues to show resilience amid a mixed consumer spending backdrop this quarter.",
+      "passages": [{ "location": "products-table", "text": "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%" }],
+      "expected_verdict": "unverifiable",
+      "expected_evidence": null,
+      "expected_note": "too vague/qualitative to bind confidently to any specific passage — 'resilience' and 'mixed consumer spending backdrop' are not claims the provided passages can confirm or deny; confidence should fall below threshold rather than being guessed toward supported or unsupported"
+    }
+  ]
+}
