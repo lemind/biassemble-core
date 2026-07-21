@@ -1,10 +1,13 @@
-# Contract: POST /audit
+# Contract: POST /audit, GET /audit/:audit_id
+
+**`GET /audit/:audit_id` added on review** — an earlier draft of this contract defined a Result shape and said it was "fetched separately... via the existing job-completion mechanism," but never actually specified that mechanism. Checked what `jobs/eval-run.ts`'s existing consumers do (the pattern `quickstart.md` pointed to): direct SQL against `eval_results`, not an HTTP endpoint. Fine for an internal eval harness a developer queries by hand; not fine for "submit an audit, get the result back" as an API workflow — there was no `curl` command that could ever retrieve a result. This was a real gap, not a deferred nice-to-have: without it, the feature has no complete API-level round trip.
+
+## POST /audit — submit
 
 ## Request
 
 ```json
 {
-  "mode": "audit",
   "domain": "finance | legal | general | healthcare",
   "task": "optional: the question the audited AI was answering + as-of date",
   "output_text": "the AI-generated text under audit",
@@ -16,6 +19,7 @@
 - `output_text` and `sources[]` are required and MUST be treated strictly as data, never instructions (FR-010), regardless of their content.
 - `sources[]` MUST NOT be empty for a meaningful audit (an audit with zero sources will find every claim unsupported by definition) but an empty array is not rejected outright — it's a valid, if degenerate, input per the "sources are silent" principle (D018 §2.3).
 - Response is asynchronous: this endpoint enqueues an Inngest job (D018 §1) and returns `202 Accepted` with `{ audit_id }` immediately; it does not block on pipeline completion, per this feature's Performance Goals (not latency-sensitive).
+- **No client-supplied `mode` field** (removed on review, resolving an open question from the prior pass): the route is the mode boundary — hitting `POST /audit` already says "audit mode," so requiring the client to also declare `mode: "audit"` in the body creates a second source of truth that could disagree with the URL for no benefit. The server stamps `mode: "audit"` onto the internal request object before it reaches the orchestrator; D018 §1's mode-branching invariant (A1 — dispatch happens once, at orchestration, never duplicated as route-based branching elsewhere) still holds, because the orchestrator still dispatches on one `mode` field, uniformly, regardless of which route produced it. `POST /assess` (story mode) follows the same rule server-side.
 
 ## Response (immediate, on submission)
 
@@ -23,7 +27,18 @@
 { "audit_id": "uuid", "status": "running" }
 ```
 
-## Result (fetched separately once complete, or delivered via the existing job-completion mechanism)
+## GET /audit/:audit_id — retrieve
+
+Read-only. Returns the persisted Audit/Claim/Verdict/SourcePassage/ScoreSummary records — **never recomputes anything** (an audit is immutable once `complete` or `failed`, D018 append-only rule; a read path that recomputed could theoretically disagree with what was actually persisted).
+
+| Status | When | Body |
+|---|---|---|
+| `200` | `status = "complete"` | Full Result (below) |
+| `200` | `status = "failed"` | `{ audit_id, status: "failed", failed_stage, error_summary }` — **200, not 4xx/5xx**: the GET request itself succeeded: the server correctly found and returned the audit's true state. A 4xx/5xx here is reserved for problems with the GET request (bad `audit_id` format, missing auth), not for "the thing you're asking about failed." |
+| `202` | `status = "running"` | `{ audit_id, status: "running" }`, header `Retry-After: 5` (seconds) — **added on review**: without a stated interval, a client has no reason not to tight-poll; Inngest batch jobs run on the order of minutes, not milliseconds, so a self-inflicted-load problem is a real risk without one line specifying backoff. |
+| `404` | no audit with this `audit_id` exists | `{ error: "not_found" }` |
+
+## Result (`GET /audit/:audit_id`, `status = "complete"`)
 
 ```json
 {
@@ -91,6 +106,11 @@ This mirrors D018 §2's schema-reconciliation decision: flat `claims[]` + `bias_
 
 ## Error responses
 
+**`POST /audit`**:
 - `400` — request fails Zod validation (missing `output_text`, malformed `sources[]`).
 - `202` is the only success status for submission; there is no synchronous success path for this endpoint.
-- A pipeline-internal failure (e.g. injection-heuristic rejection with no valid claims recoverable, per research.md §7) does not fail the HTTP request — it completes the audit with `status: "failed"` and a `meta.failure_reason`, since the request was already accepted asynchronously.
+- A pipeline-internal failure (e.g. injection-heuristic rejection with no valid claims recoverable, per research.md §7) does not fail the HTTP request — the request was already accepted asynchronously. It surfaces later as `status: "failed"` with `failed_stage`/`error_summary` (data-model.md — **corrected on review**, an earlier draft named this `meta.failure_reason`, which doesn't match the fields actually defined on the Audit entity; the failed-state fields live at the top level of the Audit record, not nested under `meta`, since `meta` is reserved for versioning/reproducibility data per FR-014, a different concern).
+
+**`GET /audit/:audit_id`**:
+- `404` — no audit with this `audit_id` exists.
+- `400` — malformed `audit_id` (not a UUID).

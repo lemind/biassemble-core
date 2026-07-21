@@ -20,7 +20,6 @@ curl -X POST http://localhost:PORT/audit \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "mode": "audit",
     "domain": "finance",
     "task": "Summarize Apple Q2 FY2026 results. As-of: 2026-07-15",
     "output_text": "Apple'\''s total net sales for the quarter reached $111,184 million, up from $95,359 million a year earlier.",
@@ -30,9 +29,19 @@ curl -X POST http://localhost:PORT/audit \
 # → 202 { "audit_id": "..." }
 ```
 
+No `mode` field in the request body (removed on review — the route is the mode boundary, the server stamps it before the orchestrator sees it; see `contracts/audit-endpoint.md`).
+
 `sources[]` here is the actual text to check the claim against — pasted directly from `evaluations/golden/audit/source-filing.md`'s `products-table` excerpt for this example. There is no separate "fixture reference" mechanism: the retrieval stub (research.md §1) does naive lexical retrieval over whatever `sources[]` text a request actually submits, so this same call shape works identically for a golden-set excerpt or genuinely new source material — the only thing that changes when engine-side corpus ingestion (D018 §2.1/§2.2, separate spec) lands is that `sources[]` gets ingested once per engagement instead of resent on every request.
 
-Fetch the result via the existing job-status mechanism keyed by `audit_id` (same pattern as `jobs/eval-run.ts`'s existing consumers use).
+**Poll for the result** (added on review — an earlier draft of this quickstart pointed at "the existing job-status mechanism," which turned out on inspection to mean direct SQL against `jobs/eval-run.ts`'s table, not an HTTP path; `GET /audit/:audit_id` closes that gap):
+
+```bash
+curl http://localhost:PORT/audit/$AUDIT_ID -H "Authorization: Bearer $TOKEN"
+# → 202 { "audit_id": "...", "status": "running" }, header Retry-After: 5 — back off, don't tight-poll
+# ... wait, retry ...
+# → 200 { "audit_id": "...", "claims": [...], "scores": {...}, ... }
+# or → 200 { "audit_id": "...", "status": "failed", "failed_stage": "verify", "error_summary": "..." }
+```
 
 ## What "done" looks like for this feature
 

@@ -13,7 +13,9 @@ One complete pipeline run over one submitted `{ output_text, sources[], task }` 
 <!-- `mode` field removed on review: an earlier draft justified it as "schema parity with the existing runs table's mode-adjacent fields" — checked src/db/schema.ts directly, no such field exists anywhere in the current schema. Same false-premise error as the removed T002 (Setup phase). This table already lives in the `audit` pg schema (D018 §2.4); every row is definitionally an audit. -->
 
 | `domain` | enum `general \| finance \| legal \| healthcare` | From request. |
-| `status` | enum `running \| complete \| failed` | Set `complete` only after GATE finishes; immutable once `complete` (D018 append-only rule). |
+| `status` | enum `running \| complete \| failed` | Set `complete` only after GATE finishes; immutable once `complete` or `failed` (D018 append-only rule — `failed` is a real, permanent terminal state, not a transient error to retry silently). |
+| `failed_stage` | enum `extract \| retrieve \| verify \| gate`, nullable | **Added on review** — which pipeline stage failed, null unless `status = "failed"`. If the failure originated in EXTRACT or VERIFY, it's also recorded as a normal row in the existing `llm_calls` observability table (it's an LLM call, D004's existing pattern applies); RETRIEVE and GATE failures are not LLM calls and have no `llm_calls` row — `failed_stage`/`error_summary` here are their only record. |
+| `error_summary` | string, nullable | **Added on review** — human-readable failure reason, null unless `status = "failed"`. |
 | `created_at` | timestamp | |
 | `completed_at` | timestamp, nullable | Null while `running`. |
 | `prompt_revision_extract` | string | Stamped at EXTRACT call time. |
