@@ -1,0 +1,57 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { compare } from "../../../src/numbers/compare.js";
+import type { NumericFact } from "../../../src/numbers/normalize.js";
+
+interface GoldenCase {
+  id: string;
+  trap_type: string;
+  claim: NumericFact;
+  source: NumericFact;
+  expected: { comparable: boolean; equal: boolean | null; note: string };
+}
+
+const goldenSet: { cases: GoldenCase[] } = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../evaluations/golden/audit/numbers-golden-set.json",
+      import.meta.url
+    ),
+    "utf-8"
+  )
+);
+
+// T009 scope: only the comparability cases (research.md §4 / D018 §2.3).
+// Cases with a `derived_op` (num-010/011/012/017/018/019) exercise derive.ts,
+// which is Phase 4 (US2) work — out of scope for Phase 2 Foundational.
+const comparabilityCases = goldenSet.cases.filter(
+  (c) => !("derived_op" in c.claim)
+);
+
+describe("compare() against numbers-golden-set.json comparability cases", () => {
+  it("covers exactly the 14 non-derived cases", () => {
+    expect(comparabilityCases).toHaveLength(14);
+  });
+
+  for (const c of comparabilityCases) {
+    it(`${c.id} — ${c.trap_type}`, () => {
+      const result = compare(c.claim, c.source);
+      expect(result.comparable).toBe(c.expected.comparable);
+      expect(result.equal).toBe(c.expected.equal);
+    });
+  }
+
+  // Numbers-golden-set.json's own stated pass bar (README.md): zero false
+  // "not comparable = contradicted". This is the aggregate invariant, not
+  // just per-case matching — restated here as its own assertion so a future
+  // change that passes every individual case but violates the invariant in
+  // aggregate still fails loudly.
+  it("never reports comparable=false alongside equal=true or equal=false (not-comparable implies equal is null)", () => {
+    for (const c of comparabilityCases) {
+      const result = compare(c.claim, c.source);
+      if (!result.comparable) {
+        expect(result.equal).toBeNull();
+      }
+    }
+  });
+});

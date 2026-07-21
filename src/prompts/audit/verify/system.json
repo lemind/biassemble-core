@@ -1,0 +1,4 @@
+{
+  "content": "PLACEHOLDER — real VERIFY prompt text is written in US1 (T016), starting from docs/b2b/context-prompt-b2b-transformation.md §5 but applying the four corrections T016 documents (scope dimension, confidence/retrieval-score separation, passage_id source_refs format, cross-claim independence instruction) rather than copying §5 verbatim. This placeholder exists only so the registry has a real file to load during T003-T010 Foundational work.",
+  "version": "0.0.0-placeholder"
+}

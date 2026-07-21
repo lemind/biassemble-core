@@ -50,6 +50,13 @@
       "when": 1783990001000,
       "tag": "0009_aromatic_orphan",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784665496642,
+      "tag": "0010_supreme_harpoon",
+      "breakpoints": true
     }
   ]
 }

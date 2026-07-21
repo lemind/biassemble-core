@@ -43,6 +43,7 @@ Read-only. Returns the persisted Audit/Claim/Verdict/SourcePassage/ScoreSummary 
 ```json
 {
   "audit_id": "uuid",
+  "status": "complete",
   "input_ref": "sha256...",
   "domain": "finance",
   "claims": [
@@ -95,6 +96,8 @@ Read-only. Returns the persisted Audit/Claim/Verdict/SourcePassage/ScoreSummary 
 ```
 
 **Added on review**: `mode` dropped from this response — data-model.md dropped it from the Audit entity for the same reason (redundant; this is the `/audit` endpoint's own result, there's no other mode it could be). `claims[].retrieval_status`/`passages_retrieved_count` now exposed per claim, not just internal — this is what lets a drill-down UI show "no relevant evidence retrieved" vs. "evidence retrieved but didn't support this claim" for the same `unsupported` verdict, which is exactly the distinction a buyer asks about first. `corpus_ref` split into `corpus_id`/`retrieval_provider` in `meta`, matching data-model.md's Audit entity split — "which documents did you check against" and "which retrieval code produced this" are different questions with different answers once real corpus ingestion exists. `corpus_id` is content-addressed (SHA-256 of the normalized `sources[]`, not a static label — corrected on a later review pass after an earlier draft made it a fixed string that couldn't actually distinguish different source sets from each other).
+
+**`status: "complete"` added to this example on Phase 1-2 implementation review** — the `running` and `failed` bodies both already carried an explicit `status` field, but this one didn't, and the Zod discriminated union implementing this contract (`src/contracts/audit.schemas.ts`) needs a literal discriminator to type the three shapes distinctly. Adding it here makes all three response shapes self-describing the same way, not a special case.
 
 This mirrors D018 §2's schema-reconciliation decision: flat `claims[]` + `bias_flags[]` (the latter empty in this feature, since the bias module/source_qa pass is out of scope — D018 §3), not `audit-output-spec.md`'s superseded nested shape. `bias_flags[]` is included in the contract now, always empty, so the later spec that implements D018 §3 extends this contract rather than introducing a breaking change to it.
 
