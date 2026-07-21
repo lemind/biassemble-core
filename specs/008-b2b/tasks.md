@@ -157,7 +157,7 @@ Single project (per plan.md's Structure Decision) — `src/`, `tests/` at reposi
 ### Parallel Opportunities
 
 - T005, T006, T007 (Phase 2) can run in parallel — different files, no interdependency.
-- T011, T012, T013 (US1 tests) can run in parallel.
+- T011, T012, T013, T018a, T021b (US1 tests) can run in parallel.
 - T024, T025 (US2 tests) can run in parallel.
 - T031, T032 (US3 tests) can run in parallel.
 - US2 and US3 implementation can proceed in parallel once US1 is complete (they touch different files — `gate.service.ts`'s score extension vs. `audit.service.ts`'s identity/versioning extension — though both should be reviewed together before merge since both touch the same completed-audit record).
