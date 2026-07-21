@@ -436,6 +436,32 @@
         }
       ],
       "excluded_content": []
+    },
+    {
+      "id": "extract-011-dedup-same-fact-twice",
+      "title": "Same fact stated twice in different wording \u2014 one claim, two locations, not two claims",
+      "output_text": "Apple's total net sales for the quarter reached $111,184 million. Margins and category mix both improved, continuing a trend from prior quarters. Restating the headline: the company's overall revenue for the quarter came in at $111,184 million, consistent with the total net sales figure mentioned earlier.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Total net sales reached $111,184 million",
+          "excerpt": "Apple's total net sales for the quarter reached $111,184 million",
+          "locations": [
+            "p1s1",
+            "p1s3"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [
+        {
+          "text": "Margins and category mix both improved, continuing a trend from prior quarters.",
+          "reason": "vague qualitative characterization, no specific checkable figure named"
+        }
+      ],
+      "notes": "Tests the EXTRACT dedup rule explicitly (spec.md edge case: 'the same fact stated twice = one claim, record both locations'). The second sentence restates the first quarter's total net sales figure in different wording ('the company's overall revenue' vs 'total net sales') \u2014 must resolve to ONE claim (c1) with two locations, not a second claim c2. Added on review (speckit-analyze finding E4) \u2014 this edge case had zero coverage across the original 10 scenarios."
     }
   ]
 }

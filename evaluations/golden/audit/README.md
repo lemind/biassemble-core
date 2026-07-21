@@ -14,7 +14,7 @@ If you need a new case: write the input and its expected answer together, commit
 
 | File | Cases | Tests |
 |---|---|---|
-| `extract-golden-set.json` | 10 | EXTRACT prompt (D018 §2, `context-prompt-b2b-transformation.md` §4) |
+| `extract-golden-set.json` | 11 | EXTRACT prompt (D018 §2, `context-prompt-b2b-transformation.md` §4) — case 11 (dedup) added during `specs/008-b2b` task-review, spec.md's own edge case had zero coverage until then |
 | `verify-golden-set.json` | 15 | VERIFY prompt (D018 §2.3, `context-prompt-b2b-transformation.md` §5) |
 | `numbers-golden-set.json` | 20 | Code-side normalization layer between EXTRACT and VERIFY (D018 §2.3, "arithmetic happens in code, never in the LLM") |
 
@@ -39,7 +39,7 @@ VERIFY doesn't need an equivalent rule — its output is an enum (`supported | p
 
 ## What's still missing
 
-**EXTRACT's attribution instruction is unimplementable as written.** The prompt says, for attribution claims: "mark the inner content separately if itself checkable" — but the output schema has no field for it (no second claim, no link between an attribution claim and its inner-content claim). None of the 10 EXTRACT cases here test it, because there's nothing to test yet. Needs a decision before EXTRACT is wired: either cut the instruction, or add the schema field (e.g. `inner_claim_ref`) and a golden case exercising it. Not decided here.
+**EXTRACT's attribution instruction is unimplementable as written.** The prompt says, for attribution claims: "mark the inner content separately if itself checkable" — but the output schema has no field for it (no second claim, no link between an attribution claim and its inner-content claim). None of the 11 EXTRACT cases here test it, because there's nothing to test yet. Needs a decision before EXTRACT is wired: either cut the instruction, or add the schema field (e.g. `inner_claim_ref`) and a golden case exercising it. Not decided here.
 
 **`entity` claim type (numeric/entity/attribution/causal/derived per the EXTRACT prompt) is never exercised** in `extract-golden-set.json`. Fine for a first draft — every scenario here happened to produce numeric, attribution, causal, or derived claims — but worth a case before calling this set complete (e.g. "Apple's CFO is Kevan Parekh" style entity fact, or a product/segment identity claim).
 
