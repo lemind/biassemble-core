@@ -1,6 +1,6 @@
 # User Flows — B2B Audit
 ### What a human actually does, step by step. Two flows: the operator (you, running an audit) and the prospect (the company receiving one). Everything below already exists as a component somewhere in D018/b2b-change-plan/audit-output-spec/ADR-000 — this document is the missing thing that walks a person through them in order.
-### Checked against source docs before being added; 3 corrections applied inline (marked **corrected on review**), one new proposal flagged as new rather than presented as established (marked **new, unsourced**).
+### Checked against source docs across two passes; 4 corrections applied inline (marked **corrected on review**/**citation corrected**), two new proposals flagged as new rather than presented as established (marked **new, unsourced**).
 
 ---
 
@@ -38,7 +38,7 @@
 3. **20-minute call.** You walk through the 3 teaser findings, explain the method (evidence-binding, FP<10%, silent-on-clean), and pitch the paid audit: $3k, ~40 real outputs, 10 days (ADR-000 §2).
 4. **They say yes → NDA + SOW** (gap #2 from `b2b-change-plan.md` §6 — this paperwork has to exist by this point, not be improvised mid-call). They send their real outputs + source documents.
 5. **You run Flow 1** on their real data.
-6. **Report delivery.** They receive: executive block (Groundedness Score + denominator + contradiction/unsupported rates), the mandatory contradiction-first worked example if any exist, the drill-down table, recommendations, and the continuous-check upsell paragraph (D018 §4.3).
+6. **Report delivery.** They receive: executive block (Groundedness Score + denominator + contradiction/unsupported rates), the mandatory contradiction-first worked example if any exist, the drill-down table (D018 §4.3), recommendations, and the continuous-check upsell paragraph (**citation corrected on this pass** — an earlier draft attributed this to D018 §4.3, which never mentions it; it's actually ADR-000 §2's go-to-market line — "→ report → continuous-check upsell" — and `audit-output-spec.md` item 8 — "the continuous-API upsell paragraph").
 7. **They read it and do one of three things** (also currently undescribed):
    - **Nothing.** → the engagement ends; you have the anonymized labels. **New, unsourced**: using this as a case study, or asking permission to reference the engagement, isn't written down anywhere in the existing docs either — reasonable practice, but a new proposal, not a documented policy; decide whether/when to ask (e.g. at SOW time) rather than treating it as already settled.
    - **Fix internally and thank you.** → same as above, a happy one-off client; asking for a testimonial/referral is the same new-not-sourced proposal as above.
