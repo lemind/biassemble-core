@@ -164,4 +164,23 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     const updated = auditStore.claims.get(claim.claimId)!;
     expect(updated.verdict).toBe("unverifiable");
   });
+
+  it("rejects a response whose results array fails schema validation (e.g. confidence out of 0-1 range), not a crash on null (found on review)", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const claim = toClaim(auditId, randomUUID(), "Some claim");
+    auditStore.claims.set(claim.claimId, claim);
+
+    // confidence: 1.5 fails VerifyResultSchema's z.number().min(0).max(1) —
+    // repair.ts's partial-field-recovery step nulls out the whole `results`
+    // array as a unit rather than throwing; runBatch must fail cleanly, not
+    // crash on `for...of null`.
+    provider.setDefault({
+      results: [{ claim_id: claim.claimId, verdict: "supported", evidence: null, source_refs: [], synthesized: false, note: null, confidence: 1.5 }],
+      trace: {},
+    });
+
+    await expect(service.run(auditId, [{ claim, passages: [] }], 0.6)).rejects.toThrow(/results could not be parsed/);
+  });
 });

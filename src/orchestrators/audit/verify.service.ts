@@ -191,6 +191,16 @@ export class VerifyService {
     try {
       const { result } = await repairWithFallback(JSON.stringify(raw), VerifyResponseSchema, null);
       parsed = result;
+      // repair.ts's partial-field-recovery step (Stage 004) sets a whole
+      // top-level field to null rather than throwing when only that field
+      // fails validation — e.g. one VerifyResultSchema item with an
+      // out-of-range confidence or invalid verdict fails the whole
+      // `results` array as a unit, nulling it out. Mirrors the identical
+      // guard extract.service.ts needed for `claims` — must fail VERIFY
+      // cleanly, not crash on `for...of null` a few lines below.
+      if (parsed.results === null || parsed.results === undefined) {
+        throw new Error("VERIFY response failed schema validation: results could not be parsed (see repair warnings)");
+      }
       if (llmCallId) await this.llmCallStore.updateParsedOutput(llmCallId, parsed).catch(() => {});
     } catch (err) {
       if (llmCallId) {

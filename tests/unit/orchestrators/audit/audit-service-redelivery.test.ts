@@ -45,4 +45,76 @@ describe("AuditService — redelivered event for an already-complete audit (mark
     const audit = await auditStore.getAudit(auditId);
     expect(audit?.status).toBe("complete");
   });
+
+  it("a redelivered event for an already-FAILED audit is also blocked (guard originally only covered 'complete')", async () => {
+    const auditStore = new MockAuditStore();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    await auditStore.updateAudit(auditId, {
+      status: "failed",
+      failedStage: "extract",
+      errorSummary: "original failure",
+      completedAt: new Date(),
+    });
+
+    const throwingExtractService = {
+      run: async () => {
+        throw new AuditImmutableError(auditId);
+      },
+    } as unknown as ExtractService;
+
+    const auditService = new AuditService(
+      throwingExtractService,
+      {} as VerifyService,
+      {} as GateService,
+      auditStore,
+      "test-version"
+    );
+
+    await expect(
+      auditService.run(auditId, { outputText: "text", sources: [], task: undefined, threshold: 0.6, maxClaims: 50 })
+    ).resolves.toBeUndefined();
+
+    // Still "failed" with the ORIGINAL error — a redelivered event must not
+    // insert a duplicate claim set or silently resurrect a terminal audit.
+    const audit = await auditStore.getAudit(auditId);
+    expect(audit?.status).toBe("failed");
+    expect(audit?.errorSummary).toBe("original failure");
+  });
+
+  it("a genuine (non-immutability) failure while recording a failure still propagates, not silently swallowed", async () => {
+    const auditStore = new MockAuditStore();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+
+    const throwingExtractService = {
+      run: async () => {
+        throw new Error("genuine extraction failure");
+      },
+    } as unknown as ExtractService;
+    // updateAudit throws something OTHER than AuditImmutableError — e.g. a
+    // transient DB error — while markFailed is trying to record the above.
+    const brokenAuditStore = {
+      ...auditStore,
+      getAudit: auditStore.getAudit.bind(auditStore),
+      updateAudit: async () => {
+        throw new Error("transient DB error");
+      },
+    };
+
+    const auditService = new AuditService(
+      throwingExtractService,
+      {} as VerifyService,
+      {} as GateService,
+      brokenAuditStore as unknown as typeof auditStore,
+      "test-version"
+    );
+
+    // Must reject with the transient DB error, not resolve silently — a
+    // caller (jobs/audit-run.ts) needs to see this as a real failure so
+    // Inngest can retry/alert, instead of believing the run finished.
+    await expect(
+      auditService.run(auditId, { outputText: "text", sources: [], task: undefined, threshold: 0.6, maxClaims: 50 })
+    ).rejects.toThrow("transient DB error");
+  });
 });

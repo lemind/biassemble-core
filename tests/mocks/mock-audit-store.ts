@@ -44,7 +44,7 @@ export class MockAuditStore implements AuditStore {
   async updateAudit(auditId: string, data: Partial<Audit>): Promise<void> {
     const existing = this.audits.get(auditId);
     if (!existing) throw new Error(`updateAudit: no audit ${auditId}`);
-    if (existing.status === "complete") throw new AuditImmutableError(auditId);
+    this.assertAuditMutable(auditId);
     this.audits.set(auditId, { ...existing, ...data });
   }
 
@@ -52,11 +52,22 @@ export class MockAuditStore implements AuditStore {
     return this.audits.get(auditId) ?? null;
   }
 
+  /**
+   * Mirrors db/queries.ts's TERMINAL_AUDIT_STATUSES — complete OR failed are
+   * both permanent, append-only states (data-model.md's Audit entity), not
+   * just complete. Factored into one helper (found on review: the four call
+   * sites below each re-inlined this check instead of sharing it).
+   */
+  private assertAuditMutable(auditId: string): void {
+    const status = this.audits.get(auditId)?.status;
+    if (status === "complete" || status === "failed") {
+      throw new AuditImmutableError(auditId);
+    }
+  }
+
   private assertClaimsAuditMutable(claimId: string): void {
     const claim = this.claims.get(claimId);
-    if (claim && this.audits.get(claim.auditId)?.status === "complete") {
-      throw new AuditImmutableError(claim.auditId);
-    }
+    if (claim) this.assertAuditMutable(claim.auditId);
   }
 
   async createClaims(
@@ -71,9 +82,7 @@ export class MockAuditStore implements AuditStore {
       derived: boolean;
     }>
   ): Promise<Claim[]> {
-    if (rows.length > 0 && this.audits.get(rows[0]!.auditId)?.status === "complete") {
-      throw new AuditImmutableError(rows[0]!.auditId);
-    }
+    if (rows.length > 0) this.assertAuditMutable(rows[0]!.auditId);
     const inserted: Claim[] = [];
     for (const row of rows) {
       const claim: Claim = {
@@ -124,9 +133,7 @@ export class MockAuditStore implements AuditStore {
   async createSourcePassages(
     rows: Array<{ passageId: string; auditId: string; docId: string; location: string | null; text: string }>
   ): Promise<SourcePassage[]> {
-    if (rows.length > 0 && this.audits.get(rows[0]!.auditId)?.status === "complete") {
-      throw new AuditImmutableError(rows[0]!.auditId);
-    }
+    if (rows.length > 0) this.assertAuditMutable(rows[0]!.auditId);
     const inserted: SourcePassage[] = [];
     for (const row of rows) {
       this.passages.set(row.passageId, row as SourcePassage);

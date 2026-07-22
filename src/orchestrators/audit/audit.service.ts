@@ -121,13 +121,45 @@ export class AuditService {
       return;
     }
 
-    await this.auditStore.updateAudit(auditId, {
+    await this.commitTerminalUpdate(auditId, {
       status: "complete",
       completedAt: new Date(),
       pipelineCodeVersion: this.pipelineCodeVersion,
     });
 
     await this.logCostSummary(auditId);
+  }
+
+  /**
+   * Writes a terminal-state transition (complete or failed) to the audits
+   * row — shared by the success path and markFailed, since both are
+   * subject to the same T035 immutability guard (db/queries.ts).
+   *
+   * If the audit is already terminal (AuditImmutableError — a
+   * redelivered/racing invocation lost the race to another run of the same
+   * auditId), that's benign: logged at info level, not an error, and
+   * swallowed — there's nothing left to do. Any OTHER failure here is a
+   * genuine, unexpected problem (e.g. a transient DB error) and is
+   * rethrown so it reaches the caller (run(), and beyond it
+   * jobs/audit-run.ts's outer catch and Inngest's own retry/alerting)
+   * instead of being silently swallowed and leaving the audit stuck
+   * without ever surfacing why (found on review — the original version
+   * of this catch never rethrew for any reason).
+   */
+  private async commitTerminalUpdate(auditId: string, data: Parameters<AuditStore["updateAudit"]>[1]): Promise<void> {
+    try {
+      await this.auditStore.updateAudit(auditId, data);
+    } catch (err) {
+      if (err instanceof AuditImmutableError) {
+        logger.info(
+          { module: MODULE, operation: "commitTerminalUpdate", auditId, err },
+          "Audit already terminal — a concurrent or redelivered run already completed/failed it first"
+        );
+        return;
+      }
+      logger.error({ module: MODULE, operation: "commitTerminalUpdate", auditId, err }, "Failed to persist terminal audit state");
+      throw err;
+    }
   }
 
   /**
@@ -140,12 +172,21 @@ export class AuditService {
   private async logCostSummary(auditId: string): Promise<void> {
     if (!this.llmCallStore) return;
     try {
-      const calls = await this.llmCallStore.getCallsBySession(auditId);
-      const totalTokens = calls.reduce((sum, c) => sum + (c.totalTokens ?? 0), 0);
-      const inputTokens = calls.reduce((sum, c) => sum + (c.inputTokens ?? 0), 0);
-      const outputTokens = calls.reduce((sum, c) => sum + (c.outputTokens ?? 0), 0);
+      // Prefer the projected aggregate (no full rawResponse/parsedOutput
+      // rows fetched just to sum 3 integers) when the store provides it;
+      // fall back to summing full rows for any LlmCallStore implementation
+      // that doesn't (found on review — the original version always did
+      // the wasteful full-row fetch).
+      const { count: callCount, inputTokens, outputTokens, totalTokens } = this.llmCallStore.getCallCostsBySession
+        ? await this.llmCallStore.getCallCostsBySession(auditId)
+        : await this.llmCallStore.getCallsBySession(auditId).then((calls) => ({
+            count: calls.length,
+            inputTokens: calls.reduce((sum, c) => sum + (c.inputTokens ?? 0), 0),
+            outputTokens: calls.reduce((sum, c) => sum + (c.outputTokens ?? 0), 0),
+            totalTokens: calls.reduce((sum, c) => sum + (c.totalTokens ?? 0), 0),
+          }));
       logger.info(
-        { module: MODULE, operation: "logCostSummary", auditId, callCount: calls.length, inputTokens, outputTokens, totalTokens },
+        { module: MODULE, operation: "logCostSummary", auditId, callCount, inputTokens, outputTokens, totalTokens },
         "Audit cost summary"
       );
     } catch (err) {
@@ -156,26 +197,15 @@ export class AuditService {
   private async markFailed(auditId: string, stage: Stage, err: unknown): Promise<void> {
     const message = (err as Error)?.message ?? String(err);
     logger.error({ module: MODULE, operation: "markFailed", auditId, stage, err }, "Audit failed");
-    try {
-      await this.auditStore.updateAudit(auditId, {
-        status: "failed",
-        failedStage: stage,
-        errorSummary: message,
-        completedAt: new Date(),
-      });
-    } catch (markFailedErr) {
-      // T035's immutability guard (db/queries.ts) can itself be what `err`
-      // is — e.g. a redelivered pipeline event hit the guard on an audit
-      // that's already status="complete". In that case this update is
-      // blocked too (nothing to transition — it's already terminal), and
-      // that's fine: the original error is already logged above. Any other
-      // failure here still needs to be visible, not silently dropped.
-      if (!(markFailedErr instanceof AuditImmutableError)) {
-        logger.error(
-          { module: MODULE, operation: "markFailed", auditId, stage, markFailedErr },
-          "Failed to persist audit failure — original error logged above only"
-        );
-      }
-    }
+    // commitTerminalUpdate rethrows on any failure other than the benign
+    // already-terminal case — intentionally left uncaught here so a genuine
+    // failure to persist this audit's failure state surfaces to run()'s
+    // caller instead of leaving the row stuck at "running" with no trace.
+    await this.commitTerminalUpdate(auditId, {
+      status: "failed",
+      failedStage: stage,
+      errorSummary: message,
+      completedAt: new Date(),
+    });
   }
 }

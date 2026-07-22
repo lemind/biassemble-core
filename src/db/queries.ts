@@ -208,6 +208,30 @@ export async function getCallsBySession(sessionId: string) {
     .orderBy(llmCalls.createdAt);
 }
 
+/**
+ * Token/call-count aggregate for one session — a projected select, not
+ * `getCallsBySession`'s full rows (found on review: summing 3 integer
+ * columns doesn't need `rawResponse`/`parsedOutput`'s full LLM
+ * response text/jsonb pulled over the wire for every call).
+ */
+export async function getCallCostsBySession(
+  sessionId: string
+): Promise<{ count: number; inputTokens: number; outputTokens: number; totalTokens: number }> {
+  const rows = await db()
+    .select({ inputTokens: llmCalls.inputTokens, outputTokens: llmCalls.outputTokens, totalTokens: llmCalls.totalTokens })
+    .from(llmCalls)
+    .where(eq(llmCalls.sessionId, sessionId));
+  return rows.reduce<{ count: number; inputTokens: number; outputTokens: number; totalTokens: number }>(
+    (acc, r) => ({
+      count: acc.count + 1,
+      inputTokens: acc.inputTokens + (r.inputTokens ?? 0),
+      outputTokens: acc.outputTokens + (r.outputTokens ?? 0),
+      totalTokens: acc.totalTokens + (r.totalTokens ?? 0),
+    }),
+    { count: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  );
+}
+
 export async function getCallsByStage(stage: LlmCallStage) {
   return await db()
     .select()
@@ -424,30 +448,47 @@ export async function backfillRetrievalComparisonSourceData(
 // ── Audits (specs/008-b2b, D018) ──
 
 /**
- * T035: a completed audit is immutable — enforced here, at the persistence
- * layer, not just by orchestration-layer discipline (AuditService.run()
- * never running twice for the same auditId in the normal case). Guards
- * against a redelivered/replayed pipeline event silently mutating or
- * extending an audit a caller has already read as "complete."
+ * T035: a completed OR failed audit is immutable — enforced here, at the
+ * persistence layer, not just by orchestration-layer discipline
+ * (AuditService.run() never running twice for the same auditId in the
+ * normal case). Guards against a redelivered/replayed pipeline event (e.g.
+ * a manual Inngest replay of a failed run) silently mutating or extending
+ * an audit a caller has already read as terminal — data-model.md's Audit
+ * entity documents both "complete" and "failed" as equally permanent,
+ * append-only states, not just "complete" (found on review: the original
+ * guard only checked "complete").
  */
 export class AuditImmutableError extends Error {
   constructor(auditId: string) {
-    super(`Audit ${auditId} is already complete — no further writes are permitted`);
+    super(`Audit ${auditId} is already complete or failed — no further writes are permitted`);
     this.name = "AuditImmutableError";
   }
 }
 
+const TERMINAL_AUDIT_STATUSES = new Set(["complete", "failed"]);
+
 async function assertAuditMutable(auditId: string): Promise<void> {
   const audit = await getAudit(auditId);
-  if (audit?.status === "complete") {
+  if (audit && TERMINAL_AUDIT_STATUSES.has(audit.status)) {
     throw new AuditImmutableError(auditId);
   }
 }
 
-/** Resolves a claim's auditId, then applies the same immutability guard. */
+/**
+ * Resolves a claim's auditId and checks its terminal status in one query
+ * (a join, not two sequential SELECTs — found on review: the original form
+ * fetched the claim's auditId, then made a second round trip to fetch the
+ * full audit row just to read `.status`).
+ */
 async function assertClaimsAuditMutable(claimId: string): Promise<void> {
-  const [row] = await db().select({ auditId: claims.auditId }).from(claims).where(eq(claims.claimId, claimId));
-  if (row) await assertAuditMutable(row.auditId);
+  const [row] = await db()
+    .select({ auditId: claims.auditId, status: audits.status })
+    .from(claims)
+    .innerJoin(audits, eq(claims.auditId, audits.auditId))
+    .where(eq(claims.claimId, claimId));
+  if (row && TERMINAL_AUDIT_STATUSES.has(row.status)) {
+    throw new AuditImmutableError(row.auditId);
+  }
 }
 
 export async function insertAudit(data: {

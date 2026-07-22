@@ -79,6 +79,17 @@ export interface RetrievalComparisonStore {
 export interface LlmCallStore {
   recordCall(data: Omit<LlmCallRecord, "id" | "createdAt">): Promise<LlmCallRecord>;
   getCallsBySession(sessionId: string): Promise<LlmCallRecord[]>;
+  /**
+   * Token/call-count aggregate for one session, without fetching full rows
+   * (rawResponse/parsedOutput blobs) — optional so existing implementations
+   * and test doubles that only need getCallsBySession aren't forced to add
+   * it; callers that want the efficient path (e.g. audit.service.ts's
+   * logCostSummary, T040) fall back to summing getCallsBySession's full
+   * rows when this isn't provided.
+   */
+  getCallCostsBySession?(
+    sessionId: string
+  ): Promise<{ count: number; inputTokens: number; outputTokens: number; totalTokens: number }>;
   getCallsByStage(stage: LlmCallStage): Promise<LlmCallRecord[]>;
   getCallsByProvider(provider: string): Promise<LlmCallRecord[]>;
   getCallsBySessionAndStage(sessionId: string, stage: LlmCallStage): Promise<LlmCallRecord[]>;

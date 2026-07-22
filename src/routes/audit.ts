@@ -83,13 +83,24 @@ export function registerAuditRoutes(
         // The audits row already exists (status="running") — if enqueue
         // fails, it must not be left stuck at "running" forever with no way
         // to ever discover or resolve it. Mark it failed the same way a
-        // pipeline-stage failure would.
-        await services.auditStore.updateAudit(auditId, {
-          status: "failed",
-          failedStage: "extract",
-          errorSummary: `Failed to enqueue audit run: ${(enqueueError as Error).message ?? String(enqueueError)}`,
-          completedAt: new Date(),
-        });
+        // pipeline-stage failure would. This write is wrapped in its own
+        // try/catch (found on review: it wasn't before) so a secondary
+        // failure here — e.g. a transient DB error — logs loudly instead of
+        // silently replacing/discarding the original enqueueError and
+        // leaving the audit stuck at "running" with no trace of either failure.
+        try {
+          await services.auditStore.updateAudit(auditId, {
+            status: "failed",
+            failedStage: "extract",
+            errorSummary: `Failed to enqueue audit run: ${(enqueueError as Error)?.message ?? String(enqueueError)}`,
+            completedAt: new Date(),
+          });
+        } catch (markFailedError) {
+          logger.error(
+            { module: MODULE, operation: "POST /audit", auditId, enqueueError, markFailedError, requestId: request.id },
+            "Failed to record enqueue failure — audit may be left stuck at status=running"
+          );
+        }
         throw enqueueError;
       }
 
