@@ -15,7 +15,7 @@ If you need a new case: write the input and its expected answer together, commit
 | File | Cases | Tests |
 |---|---|---|
 | `extract-golden-set.json` | 11 | EXTRACT prompt (D018 §2, `context-prompt-b2b-transformation.md` §4) — case 11 (dedup) added during `specs/008-b2b` task-review, spec.md's own edge case had zero coverage until then |
-| `verify-golden-set.json` | 16 | VERIFY prompt (D018 §2.3, `context-prompt-b2b-transformation.md` §5) — case 16 (derived-ratio magnitude miss) added after a real production incident (2026-07-22): VERIFY computed a correct ratio in its own note but emitted `supported` instead of `contradicted` |
+| `verify-golden-set.json` | 17 | VERIFY prompt (D018 §2.3, `context-prompt-b2b-transformation.md` §5) — case 16 (derived-ratio magnitude miss) added after a real production incident (2026-07-22): VERIFY computed a correct ratio in its own note but emitted `supported` instead of `contradicted`; case 17 is the partial-credit boundary condition for the same fix (synthetic numbers, not from the source filing) |
 | `numbers-golden-set.json` | 20 | Code-side normalization layer between EXTRACT and VERIFY (D018 §2.3, "arithmetic happens in code, never in the LLM") |
 
 ## EXTRACT match rule (there was none before this file — defining it here)

@@ -21,69 +21,217 @@ export interface ClaimWithPassages {
 }
 
 /**
- * Extracts the first number-like token from text (commas stripped). Used
- * only by the narrow compare.ts safety net below — not a general-purpose
- * claim/evidence parser.
+ * If a third numeric-claim-shape bug shows up after this one (percentage-
+ * point claims, date-arithmetic claims, ...), stop writing a fourth bespoke
+ * comparator here — that's the signal to build a generic "does VERIFY's own
+ * stated reasoning in `note` match the verdict it emitted" check instead of
+ * per-type patches. Not built now (T041b/tasks.md's own note) — this file
+ * would just be guessing at how to parse arbitrary reasoning prose, which is
+ * exactly the kind of free-text parsing this module has always refused to
+ * do without a real design for it.
  */
-function firstNumber(text: string): number | null {
-  const match = text.replace(/,/g, "").match(/-?\d+(\.\d+)?/);
-  return match ? parseFloat(match[0]) : null;
+
+type CurrencyOrPercentUnit = "USD" | "percent";
+
+interface ExtractedNumericFact {
+  value: number;
+  unit: CurrencyOrPercentUnit;
+  /** Only meaningful for unit === "USD". null = no scale word found in this text. */
+  scale: string | null;
+}
+
+const CURRENCY_RE = /\$\s?([\d,]+(?:\.\d+)?)\s*(billion|million|thousand)?/i;
+const PERCENT_RE = /(-?[\d,]+(?:\.\d+)?)\s*%/;
+
+/**
+ * Extracts a comparable currency-or-percent fact from free text. Tries
+ * currency first (so "$2.05" isn't misread as a bare unitless number), falls
+ * back to percent, else unresolved (null) — same "not comparable != wrong"
+ * discipline as compare.ts itself.
+ */
+export function extractNumericFact(text: string): ExtractedNumericFact | null {
+  const currencyMatch = text.match(CURRENCY_RE);
+  if (currencyMatch?.[1]) {
+    const value = parseFloat(currencyMatch[1].replace(/,/g, ""));
+    if (Number.isNaN(value)) return null;
+    return { value, unit: "USD", scale: currencyMatch[2]?.toLowerCase() ?? null };
+  }
+  const percentMatch = text.match(PERCENT_RE);
+  if (percentMatch?.[1]) {
+    const value = parseFloat(percentMatch[1].replace(/,/g, ""));
+    if (Number.isNaN(value)) return null;
+    return { value, unit: "percent", scale: null };
+  }
+  return null;
 }
 
 /**
- * Narrow, honest compare.ts integration (T018) — NOT a general free-text
- * comparability parser. What it does: when the LLM verdict is "contradicted"
- * for a claim with an evidence quote, extract the first number from the
- * claim and from the evidence, and — assuming the same unit/scale/period
- * (there is no reliable way to detect period/scope/unit from free text
- * without a real NLP pass, which no design doc specifies how to do; this is
- * a known, documented limitation, not silently ignored) — run them through
- * compare()'s rounding-tolerance logic. If the numbers are actually within
- * tolerance despite the LLM calling it a contradiction, downgrade to
- * "supported" — this directly enforces D018 §2.3's rounding rule
- * ("arithmetic happens in code, never in the LLM") as a code-level backstop
- * on the one sub-case that's cleanly checkable without deeper text parsing:
- * did the LLM overreact to a rounding difference. It intentionally does NOT
- * attempt to catch period/scope mismatches from free text — VERIFY's own
- * prompt instructions (T016) are the only defense against those right now.
+ * Fix 1 (found on review, real production incident 2026-07-22): a
+ * bidirectional compare.ts integration for direct number-vs-number
+ * disagreements — e.g. a claim states "$640 million" R&D spend, the cited
+ * evidence says "$64 million," and VERIFY nonetheless returned
+ * verdict="supported" with a `note` that correctly computed the mismatch
+ * itself. `compare.ts`'s own equality/tolerance logic decides the outcome;
+ * this function only decides *whether* to trust VERIFY's verdict or the
+ * numbers.
  *
- * **Actual coverage is narrower than "numeric claims" — found on review**:
- * the unit inferred below is `"percent"` when the claim text contains `%`,
- * `null` otherwise — and `compare()` refuses to compare anything with a
- * `null` (unresolved) unit. So this backstop only ever engages for
- * percent-type claims; a dollar-amount rounding case (e.g. verify-004's
- * "$2.05" vs "$2.01" EPS claim) never reaches the tolerance check at all —
- * it's `unit: null` both sides, `compare()` returns `comparable: false`
- * immediately, and the LLM's own verdict passes through unchanged. That's
- * harmless for verify-004 specifically (it's *supposed* to stay
- * "contradicted"), but it means this function is not the general
- * dollar-amount safety net its own name implies — only a percent one.
+ * Two deliberate widenings from the original (T018) version, plus one new
+ * safety rule:
+ * 1. Currency (`$` + optional scale word), not just `%` — a bare `%` was
+ *    the only unit this used to recognize.
+ * 2. Bidirectional — arbitrates both `contradicted -> supported` (numbers
+ *    actually agree, downgrade the false alarm) AND `supported ->
+ *    contradicted` (numbers actually disagree beyond tolerance, upgrade the
+ *    miss). Only ever touches these two verdicts; `partially_supported`,
+ *    `unsupported`, and `unverifiable` reflect judgments (retrieval,
+ *    attribution, hedged confidence) this narrow numeric check isn't
+ *    equipped to override.
+ * 3. **Scale-ambiguity guard**: currency scale is only trusted when BOTH
+ *    texts state an explicit scale word ("million"/"billion"/"thousand") —
+ *    or neither does. A bare `"$56,994"` in a compact evidence table
+ *    typically means "already in millions" by a filing-wide convention this
+ *    function cannot see from the snippet alone; guessing that would create
+ *    false contradictions across nearly every dollar claim in the golden
+ *    set (verified against it directly — this is not a hypothetical
+ *    concern). When only one side has an explicit scale word, this returns
+ *    the verdict unchanged rather than guess.
+ *
+ * Still does NOT attempt period/scope mismatches from free text — same
+ * pre-existing, documented limitation as before (`period: claim.period` is
+ * passed identically to both sides, so a period difference can never be
+ * what `compare()` reports).
  */
-function reconcileContradictionWithTolerance(
+export function reconcileNumericVerdict(
   claim: Claim,
   result: { verdict: string; evidence: string[] | null; note: string | null }
 ): { verdict: string; note: string | null } {
   const firstEvidence = result.evidence?.[0];
-  if (result.verdict !== "contradicted" || !firstEvidence) {
+  if (!firstEvidence) {
     return { verdict: result.verdict, note: result.note };
   }
-  const claimValue = firstNumber(claim.claimText);
-  const evidenceValue = firstNumber(firstEvidence);
-  if (claimValue === null || evidenceValue === null) {
+  if (result.verdict !== "supported" && result.verdict !== "contradicted") {
+    return { verdict: result.verdict, note: result.note };
+  }
+
+  const claimFact = extractNumericFact(claim.claimText);
+  const evidenceFact = extractNumericFact(firstEvidence);
+  if (!claimFact || !evidenceFact || claimFact.unit !== evidenceFact.unit) {
     return { verdict: result.verdict, note: result.note }; // can't check — trust the LLM
   }
-  const unit = /%/.test(claim.claimText) ? "percent" : null;
+  if (claimFact.unit === "USD" && (claimFact.scale === null) !== (evidenceFact.scale === null)) {
+    return { verdict: result.verdict, note: result.note }; // ambiguous scale — don't guess
+  }
+
   const comparison = compare(
-    { value: claimValue, unit, period: claim.period },
-    { value: evidenceValue, unit, period: claim.period }
+    { value: claimFact.value, unit: claimFact.unit, scale: claimFact.scale, period: claim.period },
+    { value: evidenceFact.value, unit: evidenceFact.unit, scale: evidenceFact.scale, period: claim.period }
   );
-  if (comparison.comparable && comparison.equal) {
+  if (!comparison.comparable) {
+    return { verdict: result.verdict, note: result.note };
+  }
+
+  if (comparison.equal && result.verdict === "contradicted") {
     return {
       verdict: "supported",
-      note: `${result.note ?? ""} [downgraded from contradicted on review: ${claimValue} and ${evidenceValue} are within rounding tolerance — compare.ts, D018 §2.3]`.trim(),
+      note: `${result.note ?? ""} [downgraded from contradicted on review: ${claimFact.value} and ${evidenceFact.value} are within tolerance — compare.ts, D018 §2.3]`.trim(),
+    };
+  }
+  if (!comparison.equal && result.verdict === "supported") {
+    return {
+      verdict: "contradicted",
+      note: `${result.note ?? ""} [upgraded from supported on review: ${claimFact.value} and ${evidenceFact.value} disagree beyond tolerance — compare.ts, D018 §2.3]`.trim(),
     };
   }
   return { verdict: result.verdict, note: result.note };
+}
+
+/** Multiple thresholds this checks for — expand only when a real case justifies it (T041b). */
+const MAGNITUDE_PHRASES: Array<{ pattern: RegExp; multiple: number }> = [
+  { pattern: /more than quadrupl/i, multiple: 4.0 },
+  { pattern: /more than tripl/i, multiple: 3.0 },
+  { pattern: /more than doubl/i, multiple: 2.0 },
+];
+
+export function detectMagnitudeClaim(claimText: string): { multiple: number } | null {
+  for (const { pattern, multiple } of MAGNITUDE_PHRASES) {
+    if (pattern.test(claimText)) return { multiple };
+  }
+  return null;
+}
+
+/**
+ * Extracts [current, prior] from a compact "$current $prior ..." evidence
+ * table shape (this golden set's and this project's source filings'
+ * consistent convention — narrow by design, not a general table parser).
+ */
+export function extractCurrentPriorPair(evidenceText: string): [number, number] | null {
+  const values = [...evidenceText.matchAll(/\$?([\d,]+(?:\.\d+)?)/g)]
+    .map((m) => (m[1] ? parseFloat(m[1].replace(/,/g, "")) : NaN))
+    .filter((n) => !Number.isNaN(n));
+  if (values.length < 2 || values[0] === undefined || values[1] === undefined) return null;
+  return [values[0], values[1]];
+}
+
+/**
+ * Fix 2 (T041b, real production incident 2026-07-22): a claim using
+ * comparative magnitude language ("more than doubled/tripled/quadrupled")
+ * has no explicit numbers of its own to compare via reconcileNumericVerdict
+ * above — the comparison is against a ratio computed from the cited
+ * evidence's own current/prior pair. VERIFY can (and did, in production)
+ * compute that ratio correctly in its own `note` while still emitting a
+ * verdict that disagrees with its own math.
+ *
+ * Boundary rule (not just a floor): a ratio at or above the claimed
+ * multiple is `supported`; within 90% of it is `partially_supported`
+ * (directionally right, magnitude overstated but not wildly); below 90% is
+ * `contradicted` (materially wrong — this is where the real incident's
+ * 1.166x landed against a claimed 2.0x). Only overrides `supported`,
+ * `partially_supported`, and `contradicted` — never touches `unsupported`/
+ * `unverifiable`, which reflect a retrieval/attribution judgment this ratio
+ * check has no basis to override.
+ */
+export function reconcileMagnitudeClaim(
+  claim: Claim,
+  result: { verdict: string; evidence: string[] | null; note: string | null }
+): { verdict: string; note: string | null } {
+  const firstEvidence = result.evidence?.[0];
+  if (!firstEvidence) {
+    return { verdict: result.verdict, note: result.note };
+  }
+  if (result.verdict !== "supported" && result.verdict !== "partially_supported" && result.verdict !== "contradicted") {
+    return { verdict: result.verdict, note: result.note };
+  }
+
+  const magnitude = detectMagnitudeClaim(claim.claimText);
+  if (!magnitude) {
+    return { verdict: result.verdict, note: result.note };
+  }
+  const pair = extractCurrentPriorPair(firstEvidence);
+  if (!pair) {
+    return { verdict: result.verdict, note: result.note };
+  }
+  const [current, prior] = pair;
+  if (prior === 0) {
+    return { verdict: result.verdict, note: result.note };
+  }
+  const ratio = current / prior;
+
+  let forcedVerdict: string;
+  if (ratio >= magnitude.multiple) {
+    forcedVerdict = "supported";
+  } else if (ratio >= magnitude.multiple * 0.9) {
+    forcedVerdict = "partially_supported";
+  } else {
+    forcedVerdict = "contradicted";
+  }
+
+  if (forcedVerdict === result.verdict) {
+    return { verdict: result.verdict, note: result.note };
+  }
+  return {
+    verdict: forcedVerdict,
+    note: `${result.note ?? ""} [verdict set by code: computed ratio ${current}/${prior} = ${ratio.toFixed(3)}x vs claimed ${magnitude.multiple}x — compare.ts/D018 §2.3]`.trim(),
+  };
 }
 
 /** Groups claims into 5–10-sized batches, grouping by the doc_id their passages share (research.md §6). */
@@ -225,9 +373,14 @@ export class VerifyService {
         verdict = "unverifiable";
         note = `${note ?? ""} [forced to unverifiable: retrieval_status=error, not a genuine absence-of-evidence signal]`.trim();
       } else {
-        const reconciled = reconcileContradictionWithTolerance(claim, { verdict, evidence: result.evidence, note });
-        verdict = reconciled.verdict as typeof verdict;
-        note = reconciled.note;
+        const numericReconciled = reconcileNumericVerdict(claim, { verdict, evidence: result.evidence, note });
+        const magnitudeReconciled = reconcileMagnitudeClaim(claim, {
+          verdict: numericReconciled.verdict,
+          evidence: result.evidence,
+          note: numericReconciled.note,
+        });
+        verdict = magnitudeReconciled.verdict as typeof verdict;
+        note = magnitudeReconciled.note;
       }
 
       // FR-020 / A6: confidence comes exclusively from VERIFY's own output —

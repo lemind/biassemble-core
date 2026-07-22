@@ -158,6 +158,15 @@
       "expected_verdict": "contradicted",
       "expected_evidence": "Total net sales $111,184 $95,359 17%",
       "expected_note": "$111,184 / $95,359 = 1.166x — a 17% increase (matching the source's own stated 17%), not 'more than doubling' (which requires >=2.0x, i.e. >=100% increase). Real incident: production VERIFY computed this exact ratio correctly in its own note ('$111,184 / $95,359 = 1.166, which is more than doubling') and then emitted verdict=supported anyway — the stated arithmetic and the verdict disagreed, and the verdict was trusted. This is the mirror-image failure of verify-004 (rounding-contradicted): there the risk is a false 'contradicted' on a near-miss; here the risk is a false 'supported' on an order-of-magnitude miss on a derived ratio claim — arguably worse, since it's a miss rather than an over-flag, and confidence was reported as 1.0."
+    },
+    {
+      "id": "verify-017-derived-ratio-magnitude-boundary",
+      "trap_type": "derived claim, magnitude phrase directionally right but short of the claimed multiple — the boundary condition verify-016's fix needs, not just its most obvious setting",
+      "claim": "Revenue more than doubled from a year earlier.",
+      "passages": [{ "location": "synthetic-boundary-case", "text": "Revenue $190 $100 90%" }],
+      "expected_verdict": "partially_supported",
+      "expected_evidence": "Revenue $190 $100 90%",
+      "expected_note": "190 / 100 = 1.9x — directionally correct (revenue did grow substantially, 90% is a large increase) and close to the claimed 2.0x ('more than doubled'), but short of it. Per D018 §2.3's spirit (arithmetic happens in code): a ratio within 90% of the claimed multiple (1.9x >= 2.0x * 0.9 = 1.8x) is partially_supported, not contradicted outright — reserve contradicted for the materially-wrong case (verify-016's 1.166x, well under the 1.8x floor). Synthetic numbers, not from the real source filing (unlike every other case in this file) — constructed specifically to land exactly at this boundary, which no real filing excerpt happens to hit."
     }
   ]
 }
