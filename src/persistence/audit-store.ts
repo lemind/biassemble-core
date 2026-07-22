@@ -12,6 +12,12 @@ import {
 } from "../db/queries";
 import type { Audit, Claim, SourcePassage } from "../db/schema";
 
+// T035 (data-model.md/Phase 5): re-exported so callers that only import from
+// this port (not db/queries.ts directly) can still catch it. Defined in
+// db/queries.ts, not here, to avoid a circular import — this file already
+// imports the db*() functions that throw it.
+export { AuditImmutableError } from "../db/queries";
+
 export interface AuditStore {
   createAudit(data: {
     auditId: string;

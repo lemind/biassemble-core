@@ -127,7 +127,14 @@ describe("EXTRACT service against extract-golden-set.json (T011)", () => {
       truncated: false,
     });
 
-    await expect(service.run(auditId, "Actual output text about revenue.", undefined, 50)).rejects.toThrow();
+    // Every claim's excerpt fails the superRefine check, so repair.ts's
+    // partial-field-recovery step (Stage 004) nulls out the whole `claims`
+    // field rather than throwing — this must still surface as a clean
+    // EXTRACT failure, not an unhandled TypeError from `.length` on null
+    // (a real crash this exact scenario triggered before being fixed).
+    await expect(service.run(auditId, "Actual output text about revenue.", undefined, 50)).rejects.toThrow(
+      /claims could not be parsed/
+    );
   });
 
   it("enforces maxClaims as a code-level cap even if the model ignores it (FR-019, belt-and-suspenders)", async () => {

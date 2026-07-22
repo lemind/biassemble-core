@@ -423,6 +423,33 @@ export async function backfillRetrievalComparisonSourceData(
 
 // ── Audits (specs/008-b2b, D018) ──
 
+/**
+ * T035: a completed audit is immutable — enforced here, at the persistence
+ * layer, not just by orchestration-layer discipline (AuditService.run()
+ * never running twice for the same auditId in the normal case). Guards
+ * against a redelivered/replayed pipeline event silently mutating or
+ * extending an audit a caller has already read as "complete."
+ */
+export class AuditImmutableError extends Error {
+  constructor(auditId: string) {
+    super(`Audit ${auditId} is already complete — no further writes are permitted`);
+    this.name = "AuditImmutableError";
+  }
+}
+
+async function assertAuditMutable(auditId: string): Promise<void> {
+  const audit = await getAudit(auditId);
+  if (audit?.status === "complete") {
+    throw new AuditImmutableError(auditId);
+  }
+}
+
+/** Resolves a claim's auditId, then applies the same immutability guard. */
+async function assertClaimsAuditMutable(claimId: string): Promise<void> {
+  const [row] = await db().select({ auditId: claims.auditId }).from(claims).where(eq(claims.claimId, claimId));
+  if (row) await assertAuditMutable(row.auditId);
+}
+
 export async function insertAudit(data: {
   auditId: string;
   inputRef: string;
@@ -453,6 +480,7 @@ export async function updateAudit(
     truncated: boolean;
   }>
 ): Promise<void> {
+  await assertAuditMutable(auditId);
   await db().update(audits).set(data).where(eq(audits.auditId, auditId));
 }
 
@@ -474,6 +502,7 @@ export async function insertClaims(
   }>
 ) {
   if (rows.length === 0) return [];
+  await assertAuditMutable(rows[0]!.auditId);
   return await db().insert(claims).values(rows).returning();
 }
 
@@ -481,6 +510,7 @@ export async function updateClaimRetrieval(
   claimId: string,
   data: { passagesRetrievedCount: number; retrievalStatus: "ok" | "error" }
 ): Promise<void> {
+  await assertClaimsAuditMutable(claimId);
   await db().update(claims).set(data).where(eq(claims.claimId, claimId));
 }
 
@@ -495,6 +525,7 @@ export async function updateClaimVerdict(
     note: string | null;
   }
 ): Promise<void> {
+  await assertClaimsAuditMutable(claimId);
   await db().update(claims).set(data).where(eq(claims.claimId, claimId));
 }
 
@@ -506,6 +537,7 @@ export async function insertSourcePassages(
   rows: Array<{ passageId: string; auditId: string; docId: string; location: string | null; text: string }>
 ) {
   if (rows.length === 0) return [];
+  await assertAuditMutable(rows[0]!.auditId);
   return await db().insert(sourcePassages).values(rows).returning();
 }
 
@@ -519,6 +551,7 @@ export async function insertClaimPassages(
   }>
 ): Promise<void> {
   if (rows.length === 0) return;
+  await assertClaimsAuditMutable(rows[0]!.claimId);
   await db().insert(claimPassages).values(rows);
 }
 

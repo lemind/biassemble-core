@@ -1,7 +1,12 @@
-import type { AuditStore } from "../../src/persistence/audit-store.js";
+import { AuditImmutableError, type AuditStore } from "../../src/persistence/audit-store.js";
 import type { Audit, Claim, SourcePassage } from "../../src/db/schema.js";
 
-/** In-memory AuditStore for tests — no real database. */
+/**
+ * In-memory AuditStore for tests — no real database. Mirrors the real
+ * DrizzleAuditStore's T035 immutability guard (db/queries.ts) so tests
+ * exercise the same invariant against this port's contract, not just the
+ * Drizzle-backed implementation.
+ */
 export class MockAuditStore implements AuditStore {
   audits = new Map<string, Audit>();
   claims = new Map<string, Claim>();
@@ -39,11 +44,19 @@ export class MockAuditStore implements AuditStore {
   async updateAudit(auditId: string, data: Partial<Audit>): Promise<void> {
     const existing = this.audits.get(auditId);
     if (!existing) throw new Error(`updateAudit: no audit ${auditId}`);
+    if (existing.status === "complete") throw new AuditImmutableError(auditId);
     this.audits.set(auditId, { ...existing, ...data });
   }
 
   async getAudit(auditId: string): Promise<Audit | null> {
     return this.audits.get(auditId) ?? null;
+  }
+
+  private assertClaimsAuditMutable(claimId: string): void {
+    const claim = this.claims.get(claimId);
+    if (claim && this.audits.get(claim.auditId)?.status === "complete") {
+      throw new AuditImmutableError(claim.auditId);
+    }
   }
 
   async createClaims(
@@ -58,6 +71,9 @@ export class MockAuditStore implements AuditStore {
       derived: boolean;
     }>
   ): Promise<Claim[]> {
+    if (rows.length > 0 && this.audits.get(rows[0]!.auditId)?.status === "complete") {
+      throw new AuditImmutableError(rows[0]!.auditId);
+    }
     const inserted: Claim[] = [];
     for (const row of rows) {
       const claim: Claim = {
@@ -80,6 +96,7 @@ export class MockAuditStore implements AuditStore {
   async updateClaimRetrieval(claimId: string, data: { passagesRetrievedCount: number; retrievalStatus: "ok" | "error" }): Promise<void> {
     const existing = this.claims.get(claimId);
     if (!existing) throw new Error(`updateClaimRetrieval: no claim ${claimId}`);
+    this.assertClaimsAuditMutable(claimId);
     this.claims.set(claimId, { ...existing, ...data });
   }
 
@@ -96,6 +113,7 @@ export class MockAuditStore implements AuditStore {
   ): Promise<void> {
     const existing = this.claims.get(claimId);
     if (!existing) throw new Error(`updateClaimVerdict: no claim ${claimId}`);
+    this.assertClaimsAuditMutable(claimId);
     this.claims.set(claimId, { ...existing, ...data });
   }
 
@@ -106,6 +124,9 @@ export class MockAuditStore implements AuditStore {
   async createSourcePassages(
     rows: Array<{ passageId: string; auditId: string; docId: string; location: string | null; text: string }>
   ): Promise<SourcePassage[]> {
+    if (rows.length > 0 && this.audits.get(rows[0]!.auditId)?.status === "complete") {
+      throw new AuditImmutableError(rows[0]!.auditId);
+    }
     const inserted: SourcePassage[] = [];
     for (const row of rows) {
       this.passages.set(row.passageId, row as SourcePassage);
@@ -117,6 +138,7 @@ export class MockAuditStore implements AuditStore {
   async createClaimPassages(
     rows: Array<{ claimId: string; passageId: string; retrievalRank: number; retrievalScore: number; selectedForVerification: boolean }>
   ): Promise<void> {
+    if (rows.length > 0) this.assertClaimsAuditMutable(rows[0]!.claimId);
     this.claimPassageRows.push(...rows);
   }
 

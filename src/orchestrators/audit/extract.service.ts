@@ -74,6 +74,16 @@ export class ExtractService {
     try {
       const { result } = await repairWithFallback(JSON.stringify(raw), schema, null);
       parsed = result;
+      // repair.ts's partial-field-recovery step (Stage 004) sets a whole
+      // top-level field to null rather than throwing when only that field
+      // fails validation — e.g. every claim's excerpt failing the
+      // verbatim-substring superRefine check nulls out `claims` entirely
+      // while `truncated` still parses fine. That's a legitimate partial
+      // parse, not an absent response — it must fail EXTRACT cleanly, not
+      // crash on `.length` a few lines below.
+      if (parsed.claims === null || parsed.claims === undefined) {
+        throw new Error("EXTRACT response failed schema validation: claims could not be parsed (see repair warnings)");
+      }
       if (llmCallId) await this.llmCallStore.updateParsedOutput(llmCallId, parsed).catch(() => {});
     } catch (err) {
       if (llmCallId) {
