@@ -24,7 +24,7 @@ export interface ComparisonResult {
  * needs a different value, the same way D018 §4.1's 0.5 partial-credit
  * weight is an explicit, documented convention rather than an empirical fit.
  */
-const HEDGE_TOLERANCE_ABSOLUTE = 1.0;
+export const HEDGE_TOLERANCE_ABSOLUTE = 1.0;
 
 /**
  * Relative tolerance for unhedged comparisons — covers legitimate floating-point
@@ -33,7 +33,7 @@ const HEDGE_TOLERANCE_ABSOLUTE = 1.0;
  * every real mismatch this golden set tests (all of which differ by whole
  * percentage points or more) and comfortably above float rounding noise.
  */
-const RELATIVE_TOLERANCE = 0.001;
+export const RELATIVE_TOLERANCE = 0.001;
 
 function normalizeLabel(s: string): string {
   return s.trim().toLowerCase();
