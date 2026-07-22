@@ -57,7 +57,11 @@ export class ExtractService {
 
     const { result: raw, llmCallId } = await executeAndRecordLlmCall(
       () => this.provider.completeJson<unknown>({ system, user }),
-      { sessionId: null, stage: "extract", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
+      // sessionId is auditId here, not null (T040) — audit mode has no
+      // "session" concept, but llm_calls.session_id is a plain UUID with no
+      // FK (schema.ts), so it doubles as the correlation key that lets
+      // getCallsBySession(auditId) attribute LLM calls/tokens back to a run.
+      { sessionId: auditId, stage: "extract", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
       this.llmCallStore
     );
 

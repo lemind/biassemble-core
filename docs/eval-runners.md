@@ -1,6 +1,7 @@
 # Eval Runners
 
-Two separate evaluation systems exist. Do not conflate them.
+Two separate LLM-output evaluation systems exist, plus a third, unrelated
+convention for code that has no LLM in its loop. Do not conflate any of them.
 
 ## Comparison
 
@@ -17,6 +18,43 @@ Two separate evaluation systems exist. Do not conflate them.
 | `scenario_id` | `"aggregate"` | Story ID (e.g. `"golden-001"`) |
 | `raw_output` | `null` | Raw LLM JSON string |
 | Purpose | CI quality gate, regression detection | Raw output capture for debugging and drift analysis |
+
+---
+
+## `numbers/` — plain unit tests, not `runEval`/`runDataset` (D018 §4.3 rule 5)
+
+`src/numbers/` (`normalize.ts`, `compare.ts`, `derive.ts`) and the audit-mode
+business metrics it feeds (`orchestrators/audit/scores.ts`) are **deterministic
+code with no LLM in the loop** — a fixed formula over already-decided verdict
+counts, or arithmetic over numbers already extracted from text. D018 §4.3 rule
+5 is explicit about why neither `runEval()` nor `runDataset()` applies here:
+those two systems exist to evaluate *LLM output quality* (does the model's
+judgment hold up against a golden answer, is it deterministic across reruns
+of the same prompt) — there is no model judgment to evaluate in a pure
+function. Testing it as an "eval" would imply a category of risk (prompt
+drift, non-determinism, model-quality regression) this code doesn't have.
+
+Instead, this code is tested the ordinary way: plain Vitest unit tests
+against hand-computed fixtures, run as part of the normal `vitest run` suite
+— not a separate `pnpm eval*` script, no `eval_results` row, no
+`eval_run_id`. See:
+
+- `tests/unit/numbers/compare.test.ts` / `tests/unit/numbers/derive.test.ts`
+  — against `evaluations/golden/audit/numbers-golden-set.json`'s
+  comparability and derived-arithmetic cases respectively. ("golden" in that
+  fixture's filename is a naming convention carried over from the
+  LLM-evaluation golden sets, not a claim that this is a `runEval`/
+  `runDataset` golden set — it's a hand-computed arithmetic fixture, checked
+  the same way any other unit-test fixture is.)
+- `tests/unit/orchestrators/audit/gate-scores.test.ts` — against D018 §4.1's
+  own worked example (20 supported / 10 partially-supported / 0 unsupported
+  / 0 contradicted → groundedness 83, strict 67%) plus the zero-denominator
+  edge case.
+
+When to run: same as any other unit test — on every change to `numbers/` or
+`scores.ts`, as part of `npx vitest run`. There is no separate cadence to
+remember, unlike `eval:trigger:*`'s "before prompt file changes merge"
+schedule — this code doesn't drift the way a prompt does.
 
 ---
 

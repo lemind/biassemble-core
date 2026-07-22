@@ -122,17 +122,18 @@ export class VerifyService {
     const batches = batchClaims(items);
     const promptVersion = this.prompts.getAuditVersion("verify");
     const providerId = this.provider.mode;
-    let stamped = false;
+
+    // Stamped unconditionally, not gated on a batch actually running — an
+    // audit with zero extracted claims (batches = []) still reaches
+    // status="complete" and must not leave these null (schema.ts's Audit
+    // comment: "all non-null once status = complete").
+    await this.auditStore.updateAudit(auditId, {
+      promptRevisionVerify: promptVersion,
+      modelRevisionVerify: this.modelName,
+    });
 
     for (const batch of batches) {
       await this.runBatch(auditId, batch, threshold, promptVersion, providerId);
-      if (!stamped) {
-        await this.auditStore.updateAudit(auditId, {
-          promptRevisionVerify: promptVersion,
-          modelRevisionVerify: this.modelName,
-        });
-        stamped = true;
-      }
     }
     // batchClaims may produce fewer than BATCH_MIN in the last group for a
     // small audit — intentional; BATCH_MIN/BATCH_MAX bound the *target* size,
@@ -172,7 +173,9 @@ export class VerifyService {
 
     const { result: raw, llmCallId } = await executeAndRecordLlmCall(
       () => this.provider.completeJson<unknown>({ system, user }),
-      { sessionId: null, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
+      // sessionId is auditId here, not null (T040) — see extract.service.ts's
+      // matching comment.
+      { sessionId: auditId, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
       this.llmCallStore
     );
 
@@ -197,9 +200,11 @@ export class VerifyService {
     }
 
     const byClaimId = new Map(batch.map((b) => [b.claim.claimId, b.claim]));
+    const answeredClaimIds = new Set<string>();
     for (const result of parsed.results) {
       const claim = byClaimId.get(result.claim_id);
       if (!claim) continue; // model echoed an id we didn't send — ignore, don't persist
+      answeredClaimIds.add(claim.claimId);
 
       // Retrieval-failure gate rule (data-model.md): a claim whose retrieval
       // itself errored must never resolve to "unsupported" — that would
@@ -225,6 +230,27 @@ export class VerifyService {
         synthesized: result.synthesized,
         confidence: result.confidence,
         note,
+      });
+    }
+
+    // A claim sent to VERIFY but absent from its results (a partial/truncated
+    // response that still passed schema validation) must not be left at
+    // verdict=null forever — that would silently reach status="complete"
+    // with an unverified claim. Force it to "unverifiable" rather than
+    // guessing a verdict with no LLM output to back it.
+    for (const { claim } of batch) {
+      if (answeredClaimIds.has(claim.claimId)) continue;
+      logger.warn(
+        { module: MODULE, operation: "runBatch", auditId, claimId: claim.claimId },
+        "Claim sent to VERIFY but absent from its response — forcing unverifiable"
+      );
+      await this.auditStore.updateClaimVerdict(claim.claimId, {
+        verdict: "unverifiable",
+        evidence: null,
+        sourceRefs: [],
+        synthesized: false,
+        confidence: 0,
+        note: "[forced to unverifiable: VERIFY's response did not include a result for this claim]",
       });
     }
   }

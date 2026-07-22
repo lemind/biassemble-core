@@ -70,14 +70,28 @@ export function registerAuditRoutes(
         threshold: body.options.threshold,
       });
 
-      await services.enqueuer.enqueue({
-        auditId,
-        outputText: body.output_text,
-        sources: body.sources,
-        task: body.task,
-        threshold: body.options.threshold,
-        maxClaims: body.options.maxClaims,
-      });
+      try {
+        await services.enqueuer.enqueue({
+          auditId,
+          outputText: body.output_text,
+          sources: body.sources,
+          task: body.task,
+          threshold: body.options.threshold,
+          maxClaims: body.options.maxClaims,
+        });
+      } catch (enqueueError) {
+        // The audits row already exists (status="running") — if enqueue
+        // fails, it must not be left stuck at "running" forever with no way
+        // to ever discover or resolve it. Mark it failed the same way a
+        // pipeline-stage failure would.
+        await services.auditStore.updateAudit(auditId, {
+          status: "failed",
+          failedStage: "extract",
+          errorSummary: `Failed to enqueue audit run: ${(enqueueError as Error).message ?? String(enqueueError)}`,
+          completedAt: new Date(),
+        });
+        throw enqueueError;
+      }
 
       return reply.status(202).send({ audit_id: auditId, status: "running" });
     } catch (error) {

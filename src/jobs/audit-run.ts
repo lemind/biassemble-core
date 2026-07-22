@@ -52,7 +52,7 @@ export const auditRunJob = inngest.createFunction(
     const verifyService = new VerifyService(provider, prompts, modelName, llmCallStore, auditStore);
     const gateService = new GateService(auditStore);
     const pipelineCodeVersion = process.env.VERCEL_GIT_COMMIT_SHA ?? "dev";
-    const auditService = new AuditService(extractService, verifyService, gateService, auditStore, pipelineCodeVersion);
+    const auditService = new AuditService(extractService, verifyService, gateService, auditStore, pipelineCodeVersion, llmCallStore);
 
     try {
       await auditService.run(auditId, { outputText, sources, task, threshold, maxClaims });
