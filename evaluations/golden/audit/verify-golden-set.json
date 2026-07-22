@@ -149,6 +149,15 @@
       "expected_verdict": "unverifiable",
       "expected_evidence": null,
       "expected_note": "too vague/qualitative to bind confidently to any specific passage — 'resilience' and 'mixed consumer spending backdrop' are not claims the provided passages can confirm or deny; confidence should fall below threshold rather than being guessed toward supported or unsupported"
+    },
+    {
+      "id": "verify-016-derived-ratio-magnitude-miss",
+      "trap_type": "derived claim, correct arithmetic in the model's own stated reasoning, wrong verdict — a real production incident (2026-07-22), not a hypothetical",
+      "claim": "Apple's total net sales more than doubled from a year earlier.",
+      "passages": [{ "location": "products-table", "text": "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%" }],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Total net sales $111,184 $95,359 17%",
+      "expected_note": "$111,184 / $95,359 = 1.166x — a 17% increase (matching the source's own stated 17%), not 'more than doubling' (which requires >=2.0x, i.e. >=100% increase). Real incident: production VERIFY computed this exact ratio correctly in its own note ('$111,184 / $95,359 = 1.166, which is more than doubling') and then emitted verdict=supported anyway — the stated arithmetic and the verdict disagreed, and the verdict was trusted. This is the mirror-image failure of verify-004 (rounding-contradicted): there the risk is a false 'contradicted' on a near-miss; here the risk is a false 'supported' on an order-of-magnitude miss on a derived ratio claim — arguably worse, since it's a miss rather than an over-flag, and confidence was reported as 1.0."
     }
   ]
 }

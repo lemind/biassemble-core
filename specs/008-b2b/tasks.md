@@ -160,6 +160,16 @@ Single project (per plan.md's Structure Decision) — `src/`, `tests/` at reposi
 
 ---
 
+## Phase 7: Post-launch finding — derived-claim magnitude/verdict disagreement (found 2026-07-22)
+
+**Context**: T039's real production verification (above) surfaced a genuine correctness bug, not a hypothetical — added to the golden set as `verify-016-derived-ratio-magnitude-miss` (`evaluations/golden/audit/verify-golden-set.json`) the same day.
+
+- [x] T041a Add the production incident to `verify-golden-set.json` as case 16 and raise the pass bar (`≥14/15` → `≥15/16`) in `tests/integration/audit-verify.test.ts`, `evaluations/golden/audit/README.md`, and `specs/008-b2b/quickstart.md`. Done — real prod audit against `output_text: "...more than doubling from $95,359 million..."` returned `verdict: "supported"` with `note: "$111,184 / $95,359 = 1.166, which is more than doubling"` — the model's own arithmetic (1.166×) is correct, its own stated conclusion ("more than doubling," which implies ≥2.0×) is wrong, and the verdict trusted the wrong conclusion at `confidence: 1.0`. Mirror-image of `verify-004-rounding-contradicted` (false "contradicted" on a near-miss) — this is a false "supported" on an order-of-magnitude miss, arguably worse since it's a miss rather than an over-flag.
+- [ ] T041b Build a deterministic post-check in `verify.service.ts` (alongside the existing `reconcileContradictionWithTolerance`/`compare.ts` integration, T018) that catches this class of error before a verdict is persisted. Scope: for a claim whose text contains a magnitude/comparative phrase with a well-defined numeric threshold ("more than doubled"/"tripled" ⇒ ratio ≥ 2.0/3.0, "increased"/"decreased" ⇒ ratio >{"/"}< 1.0, etc.), compute the actual ratio from the same numbers `compare.ts` already extracts (not a fresh LLM call, not re-parsing the model's own prose reasoning from `note` — the note is human-readable narrative, not a reliable machine-parseable source of truth going forward, even though it happened to be correct in this specific incident) and force the verdict to `contradicted` if the claimed comparative doesn't match the actual ratio, regardless of what VERIFY itself returned. Needs: (1) a small phrase→threshold table (start with "more than doubled/tripled/quadrupled," "increased," "decreased," "declined" — extend only as real cases justify it, per this project's existing "expand only when evaluations justify it" discipline); (2) wiring into the same post-processing step in `runBatch` where `reconcileContradictionWithTolerance` already runs; (3) a unit test using this exact incident's numbers (`111184`, `95359`, claim text "more than doubled") as the first case, asserting the code-level check forces `contradicted` even if a mock VERIFY response says `supported`.
+- [ ] T041c Add 2-3 more unit tests to `numbers-golden-set.json`/`tests/unit/numbers/` for the same trap family in isolation (verified-correct-ratio, verified-wrong-direction, verified-boundary-case-e.g.-exactly-2.0x) so the phrase→threshold logic itself has direct coverage, not just the one end-to-end VERIFY scenario.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

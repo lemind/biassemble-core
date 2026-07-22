@@ -10,7 +10,7 @@ pnpm vitest run tests/integration/audit-verify.test.ts     # verify-golden-set.j
 
 Pass bars (from `evaluations/golden/audit/README.md`, restated here so this quickstart doesn't drift from it — cites, doesn't restate the definitions):
 - EXTRACT: recall ≥ 0.90, precision ≥ 0.85, zero `excluded_content` leaks.
-- VERIFY: ≥ 14/15 expected verdicts matched, zero false "contradicted" on period/scale/scope-only mismatches.
+- VERIFY: ≥ 15/16 expected verdicts matched, zero false "contradicted" on period/scale/scope-only mismatches, zero false "supported" on a derived claim whose own stated magnitude is wrong (verify-016).
 - Numbers: zero false "not comparable = contradicted" — every `comparable: false` case in the golden set must never surface as a contradiction downstream.
 
 ## Run one audit end to end (once the endpoint is wired)

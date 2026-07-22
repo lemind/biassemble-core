@@ -92,7 +92,7 @@ const evidenceArray = (e: string | string[] | null): string[] | null => (e === n
 
 describe("VERIFY service against verify-golden-set.json (T012)", () => {
   it(`covers all ${goldenSet.scenarios.length} scenarios`, () => {
-    expect(goldenSet.scenarios.length).toBe(15);
+    expect(goldenSet.scenarios.length).toBe(16);
   });
 
   let matched = 0;
@@ -141,9 +141,9 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     });
   }
 
-  it("meets the ≥14/15 pass bar in aggregate", () => {
-    expect(matched).toBeGreaterThanOrEqual(14);
-    expect(total).toBe(15);
+  it("meets the ≥15/16 pass bar in aggregate", () => {
+    expect(matched).toBeGreaterThanOrEqual(15);
+    expect(total).toBe(16);
   });
 
   it("retrieval-failure gate rule: a claim with retrieval_status=error never resolves to unsupported, even if VERIFY said so", async () => {
