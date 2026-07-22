@@ -9,6 +9,7 @@ import { BiasCatalogService } from "./catalog/bias-catalog";
 import { QuestionService } from "./orchestrators/reflection/question.service";
 import { AssessmentService } from "./orchestrators/reflection/assessment.service";
 import { registerReflectionRoutes } from "./routes/reflection";
+import { registerAuditRoutes, type AuditEnqueuer } from "./routes/audit";
 import { inngest } from "./jobs/client";
 import { buildInngestFunctions } from "./jobs/inngest-functions";
 import { createRagRetrieveJob } from "./jobs/rag-retrieve";
@@ -16,6 +17,7 @@ import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
 import { DrizzleRunStore } from "./persistence/run-store";
 import { DrizzleTraceStore } from "./persistence/trace-store";
 import { DrizzleRetrievalComparisonStore } from "./persistence/retrieval-comparison-store";
+import { DrizzleAuditStore } from "./persistence/audit-store";
 import { RagEngineClient } from "./rag/engine-client";
 
 /**
@@ -47,6 +49,16 @@ export function buildApp() {
   const assessmentService = new AssessmentService(provider, prompts, catalog, modelName, llmCallStore, runStore, traceStore, ragClient, inngest);
   const ragRetrieveJob = ragClient ? createRagRetrieveJob(ragClient, runStore, catalog.getAll(), comparisonStore) : undefined;
 
+  // specs/008-b2b — audit mode DI. Inngest job (jobs/audit-run.ts) is
+  // self-contained (constructs its own dependency graph, matching
+  // jobs/eval-run.ts's existing pattern) — this enqueuer just sends the event.
+  const auditStore = new DrizzleAuditStore();
+  const auditEnqueuer: AuditEnqueuer = {
+    async enqueue(data) {
+      await inngest.send({ name: "audit/run", data });
+    },
+  };
+
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);
 
@@ -62,6 +74,16 @@ export function buildApp() {
     question: questionService,
     assessment: assessmentService,
     comparisonStore,
+  });
+
+  // Audit routes (specs/008-b2b)
+  registerAuditRoutes(server, {
+    auditStore,
+    enqueuer: auditEnqueuer,
+    modelName,
+    extractPromptVersion: prompts.getAuditVersion("extract"),
+    verifyPromptVersion: prompts.getAuditVersion("verify"),
+    pipelineCodeVersion: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev",
   });
 
   // Inngest webhook

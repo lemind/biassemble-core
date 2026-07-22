@@ -11,6 +11,7 @@ export class MockProvider implements Provider {
   readonly mode = "mock";
 
   private responseMap: Map<string, unknown> = new Map();
+  private responseFnMap: Map<string, (request: CompletionRequest) => unknown> = new Map();
   private defaultResponse: unknown | null = null;
   private callCount = 0;
   private failOnAttempt: number | null = null;
@@ -22,6 +23,17 @@ export class MockProvider implements Provider {
    */
   setResponse(systemPrefix: string, response: unknown): void {
     this.responseMap.set(systemPrefix, response);
+  }
+
+  /**
+   * Register a response *function* for a system prompt prefix — for cases
+   * where the correct response depends on something only known at call time
+   * (e.g. a UUID assigned by the caller between two chained LLM calls, which
+   * a static setResponse() value can't reference). Checked before the
+   * static responseMap.
+   */
+  setResponseFn(systemPrefix: string, fn: (request: CompletionRequest) => unknown): void {
+    this.responseFnMap.set(systemPrefix, fn);
   }
 
   /**
@@ -73,6 +85,13 @@ export class MockProvider implements Provider {
       throw new Error(this.failMessage ?? "Mock provider failure");
     }
 
+    // Function-based responses take precedence — more specific than a static value.
+    for (const [prefix, fn] of this.responseFnMap) {
+      if (request.system.includes(prefix)) {
+        return { result: fn(request) as T };
+      }
+    }
+
     // Find a matching response by system prefix
     for (const [prefix, response] of this.responseMap) {
       if (request.system.includes(prefix)) {
@@ -89,6 +108,7 @@ export class MockProvider implements Provider {
 
   reset(): void {
     this.responseMap.clear();
+    this.responseFnMap.clear();
     this.defaultResponse = null;
     this.callCount = 0;
     this.failOnAttempt = null;

@@ -67,7 +67,9 @@ export const evalResults = core.table("eval_results", {
 export const llmCalls = core.table("llm_calls", {
   id: uuid("id").defaultRandom().primaryKey(),
   sessionId: uuid("session_id"),
-  stage: text("stage", { enum: ["assessment", "question"] }).notNull(),
+  // "extract"/"verify" added for specs/008-b2b (persistence/types.ts LlmCallStage) —
+  // plain text column, no DB CHECK constraint, same D017 precedent as RagStatus.
+  stage: text("stage", { enum: ["assessment", "question", "extract", "verify"] }).notNull(),
   callType: text("call_type", { enum: ["primary", "fallback"] }).notNull(),
   provider: text("provider").notNull(),
   model: text("model").notNull(),

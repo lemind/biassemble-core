@@ -76,7 +76,14 @@ export const ClaimSchema = z.object({
   passages_retrieved_count: z.number().int().nonnegative(),
   verdict: VerdictEnum.nullable(),
   evidence: z.array(z.string()).nullable(),
-  source_refs: z.array(z.string()),
+  // Accepts null (Drizzle's jsonb returns null, not undefined, for an unset
+  // column — pre-VERIFY claim rows) and coerces to []. The contract's own
+  // invariant (a "complete" response only ever contains verified claims, so
+  // this should always already be at least []) is a design assumption, not
+  // something enforced anywhere yet — no service code exists to guarantee it
+  // (Phase 3). `.default([])` alone would NOT fix this: Zod's .default()
+  // only substitutes on `undefined`, never on an explicit `null`.
+  source_refs: z.array(z.string()).nullable().transform((v) => v ?? []),
   synthesized: z.boolean().nullable(),
   confidence: z.number().min(0).max(1).nullable(),
   note: z.string().nullable(),

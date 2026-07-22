@@ -6,6 +6,10 @@ import {
   evalResults,
   llmCalls,
   retrievalComparisons,
+  audits,
+  claims,
+  sourcePassages,
+  claimPassages,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
 import type { LlmCall } from "./schema";
@@ -415,4 +419,118 @@ export async function backfillRetrievalComparisonSourceData(
     .update(retrievalComparisons)
     .set(data)
     .where(eq(retrievalComparisons.id, id));
+}
+
+// ── Audits (specs/008-b2b, D018) ──
+
+export async function insertAudit(data: {
+  auditId: string;
+  inputRef: string;
+  domain: "general" | "finance" | "legal" | "healthcare";
+  threshold: number;
+}) {
+  const [row] = await db()
+    .insert(audits)
+    .values({ ...data, status: "running" })
+    .returning();
+  return row;
+}
+
+export async function updateAudit(
+  auditId: string,
+  data: Partial<{
+    status: "running" | "complete" | "failed";
+    failedStage: "extract" | "retrieve" | "verify" | "gate";
+    errorSummary: string;
+    completedAt: Date;
+    promptRevisionExtract: string;
+    promptRevisionVerify: string;
+    modelRevisionExtract: string;
+    modelRevisionVerify: string;
+    corpusId: string;
+    retrievalProvider: string;
+    pipelineCodeVersion: string;
+    truncated: boolean;
+  }>
+): Promise<void> {
+  await db().update(audits).set(data).where(eq(audits.auditId, auditId));
+}
+
+export async function getAudit(auditId: string) {
+  const [row] = await db().select().from(audits).where(eq(audits.auditId, auditId));
+  return row ?? null;
+}
+
+export async function insertClaims(
+  rows: Array<{
+    claimId: string;
+    auditId: string;
+    type: "numeric" | "entity" | "attribution" | "causal" | "derived";
+    claimText: string;
+    excerpt: string;
+    locations: string[];
+    period: string | null;
+    derived: boolean;
+  }>
+) {
+  if (rows.length === 0) return [];
+  return await db().insert(claims).values(rows).returning();
+}
+
+export async function updateClaimRetrieval(
+  claimId: string,
+  data: { passagesRetrievedCount: number; retrievalStatus: "ok" | "error" }
+): Promise<void> {
+  await db().update(claims).set(data).where(eq(claims.claimId, claimId));
+}
+
+export async function updateClaimVerdict(
+  claimId: string,
+  data: {
+    verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable";
+    evidence: string[] | null;
+    sourceRefs: string[];
+    synthesized: boolean;
+    confidence: number;
+    note: string | null;
+  }
+): Promise<void> {
+  await db().update(claims).set(data).where(eq(claims.claimId, claimId));
+}
+
+export async function getClaimsByAudit(auditId: string) {
+  return await db().select().from(claims).where(eq(claims.auditId, auditId));
+}
+
+export async function insertSourcePassages(
+  rows: Array<{ passageId: string; auditId: string; docId: string; location: string | null; text: string }>
+) {
+  if (rows.length === 0) return [];
+  return await db().insert(sourcePassages).values(rows).returning();
+}
+
+export async function insertClaimPassages(
+  rows: Array<{
+    claimId: string;
+    passageId: string;
+    retrievalRank: number;
+    retrievalScore: number;
+    selectedForVerification: boolean;
+  }>
+): Promise<void> {
+  if (rows.length === 0) return;
+  await db().insert(claimPassages).values(rows);
+}
+
+export async function getClaimPassagesByAudit(auditId: string) {
+  return await db()
+    .select({
+      claimId: claimPassages.claimId,
+      passageId: claimPassages.passageId,
+      retrievalScore: claimPassages.retrievalScore,
+      selectedForVerification: claimPassages.selectedForVerification,
+    })
+    .from(claimPassages)
+    .innerJoin(claims, eq(claimPassages.claimId, claims.claimId))
+    .where(eq(claims.auditId, auditId));
 }
