@@ -29,7 +29,13 @@ export const VerifyResultSchema = z.object({
   evidence: z.array(z.string()).nullable(),
   source_refs: z.array(z.string()),
   synthesized: z.boolean(),
-  note: z.string().nullable(),
+  // Found on review (real production incident): Gemini sometimes omits this
+  // key entirely instead of sending `note: null`. `.nullable()` alone
+  // rejects `undefined` (missing key) — that failed the whole `results`
+  // array's validation as one unit over a cosmetic field, killing an
+  // otherwise-good batch of verdicts. Same normalization idiom as
+  // audit.schemas.ts's `source_refs` fix.
+  note: z.string().nullable().optional().transform((v) => v ?? null),
   confidence: z.number().min(0).max(1),
 });
 
