@@ -11,12 +11,14 @@ LLM-powered reasoning engine for cognitive bias detection. Structured, evaluable
 
 ## What It Does
 
-Two endpoints. Structured output. Auditable reasoning.
+Four endpoints. Structured output. Auditable reasoning.
 
 | Endpoint | Trigger | Output |
 |----------|---------|--------|
 | `POST /v1/reflection/question` | User submits story | 2–5 contextual follow-up questions |
 | `POST /v1/reflection/assessment` | User answers questions | Bias assessment + reflection prompt |
+| `POST /audit` | Submit an AI-generated text + its source documents | `202` + `audit_id` (async job) |
+| `GET /audit/:audit_id` | Poll for the result | Per-claim verdicts + groundedness scores |
 
 Every response is validated through Zod → JSON, stamped with `prompt_version` + `schema_version`, and goes through a 3-stage repair pipeline (parse → validate → fallback model call).
 
@@ -51,6 +53,18 @@ All 40 tasks across 7 phases complete. 224/225 tests pass. See `specs/002-reason
 `biassemble-engine` (a separate FastAPI sidecar — vector search + a local LLM over the bias catalog) augments assessments with retrieved evidence. Retrieval is **async, no wait budget**: fired as a background Inngest job (`rag/retrieve.requested`) at story-submission time; the full assessment reads whatever's landed in `runs.rag_result` as a one-time snapshot and proceeds regardless — a slow/unavailable engine never blocks or fails a user-facing response (see `docs/decisions/014-tiered-context-retrieval.md`).
 
 Every assessment records provenance to `core.retrieval_comparisons` — which signal (engine vector search, engine's own LLM, or the assessment LLM alone) surfaced each bias, via an open-ended `source_breakdown` map (never a fixed "both" column — see `docs/decisions/017-engine-provenance-tracking.md`). `rag_status` distinguishes `retrieved` (RAG was available live, in time to inform the output) from `backfilled` (RAG arrived after the fact; a background job patches the analytics-only fields in for retrospective comparison, but it did not shape what the user saw).
+
+## B2B Audit Mode — Stage 008
+
+`POST /audit` checks someone else's AI-generated output (e.g. a financial research tool's summary) against the source documents it claims to be drawn from — built to answer "can I trust what this AI just told me?" for a buyer, not a builder.
+
+- **Claim pipeline**: EXTRACT (pull individual factual claims out of the submitted text) → RETRIEVE (find matching passages in the submitted sources) → VERIFY (compare each claim against its evidence) → GATE (compute business-facing scores)
+- **Verdicts**: `supported`, `partially_supported`, `contradicted`, `unsupported`, `unverifiable` — the last reserved for retrieval infrastructure failures, so they never contaminate the contradiction/unsupported rates
+- **Numeric reconciliation**: a deterministic code-side check (not another LLM call) catches cases where a model's own arithmetic is right but its stated conclusion is wrong — e.g. "$111,184M vs $95,359M is more than doubling" (it's 1.17×, not ≥2×) — and cases of scale/unit mismatches ($640M claimed vs $64M cited)
+- **Async by design**: submitting an audit returns immediately with `{ audit_id, status: "running" }`; poll `GET /audit/:audit_id` for the finished result (`Retry-After: 5` while running)
+- **Immutable results**: a completed or failed audit is never recomputed — `GET` always returns exactly what was persisted
+
+See `specs/008-b2b/quickstart.md` for example `curl` commands and `docs/decisions/018-audit-mode-flag.md` for the full design rationale. Out of scope for this stage: real document corpus ingestion (still a lexical stub retriever), the bias-module cross-check, and a review UI.
 
 ## Evaluation
 
