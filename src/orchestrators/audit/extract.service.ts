@@ -13,6 +13,40 @@ import type { Claim } from "../../db/schema.js";
 
 const MODULE = "extract-service";
 
+const REFERENCE_RE = /\b(?:Article|Section|Paragraph|Item|§)\s*\d+(?:[-.]\d+)?\b/gi;
+
+function extractReferences(text: string): string[] {
+  return [...text.matchAll(REFERENCE_RE)].map((m) => m[0].replace(/\s+/g, " ").trim());
+}
+
+/**
+ * Catches EXTRACT paraphrasing a legal/financial reference down to a bare
+ * base number when its own excerpt cites a more specific sub-reference —
+ * e.g. excerpt "Article 19-2 provides a special indemnity..." paraphrased
+ * as claim "Article 19 provides...". Found in production 2026-07-23: the
+ * mangled claim was then correctly rejected by VERIFY as unsupported (bare
+ * Article 19 is just the damages-period article), producing a confident,
+ * false "the audited output got this wrong" reading of a claim the audited
+ * output actually stated correctly. Only fires when the claim keeps a bare
+ * form of the same base number — a claim that drops the reference entirely
+ * (fair paraphrasing) is not flagged.
+ */
+export function findReferenceDrift(claim: string, excerpt: string): string | null {
+  for (const ref of extractReferences(excerpt)) {
+    if (claim.includes(ref)) continue;
+    const baseMatch = ref.match(/^(\D*)(\d+)/);
+    if (!baseMatch) continue;
+    const [, prefix, baseNum] = baseMatch;
+    const baseToken = `${prefix}${baseNum}`.trim();
+    const escaped = baseToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const baseRe = new RegExp(`\\b${escaped}\\b(?!\\s*[-.]\\d)`, "i");
+    if (baseRe.test(claim)) {
+      return `excerpt cites "${ref}" but claim only cites "${baseToken}" — sub-reference dropped`;
+    }
+  }
+  return null;
+}
+
 /** Zod schema with the excerpt-verbatim-substring rule baked in via the captured outputText (data-model.md's Claim validation). */
 function buildExtractResponseSchema(outputText: string) {
   return z.object({
@@ -23,6 +57,14 @@ function buildExtractResponseSchema(outputText: string) {
             code: z.ZodIssueCode.custom,
             path: [i, "excerpt"],
             message: "excerpt is not a verbatim substring of output_text",
+          });
+        }
+        const drift = findReferenceDrift(c.claim, c.excerpt);
+        if (drift) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [i, "claim"],
+            message: `reference drift: ${drift}`,
           });
         }
       });
