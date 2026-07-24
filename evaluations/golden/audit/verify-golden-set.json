@@ -167,6 +167,24 @@
       "expected_verdict": "partially_supported",
       "expected_evidence": "Revenue $190 $100 90%",
       "expected_note": "190 / 100 = 1.9x — directionally correct (revenue did grow substantially, 90% is a large increase) and close to the claimed 2.0x ('more than doubled'), but short of it. Per D018 §2.3's spirit (arithmetic happens in code): a ratio within 90% of the claimed multiple (1.9x >= 2.0x * 0.9 = 1.8x) is partially_supported, not contradicted outright — reserve contradicted for the materially-wrong case (verify-016's 1.166x, well under the 1.8x floor). Synthetic numbers, not from the real source filing (unlike every other case in this file) — constructed specifically to land exactly at this boundary, which no real filing excerpt happens to hit."
+    },
+    {
+      "id": "verify-018-inference-entailment-negative-claim",
+      "trap_type": "negative claim verified via logically necessary entailment, not a literal restatement — real incident (2026-07-23, app.gc.ai audit run): a claim asserting an agreement 'does not use arbitration' was marked unsupported because the word 'arbitration' never appeared in the passages, even though the passages established an exclusive alternative dispute-resolution mechanism that necessarily precludes it",
+      "claim": "Apple's iPhone net sales did not decline in the second quarter of 2026.",
+      "passages": [{ "location": "iphone-narrative", "text": "iPhone net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 due to higher net sales of Pro models." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "iPhone net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 due to higher net sales of Pro models.",
+      "expected_note": "the passage never uses the word 'decline' or 'did not decline' — it states net sales increased. An increase logically precludes a decline for the same period/measure/scope, so this is a necessary entailment, not a guess or an inference beyond the evidence. Contrast with verify-019: entailment applies only when the passage establishes something that makes the claim's negation impossible, not merely likely."
+    },
+    {
+      "id": "verify-019-inference-partial-counterfactual",
+      "trap_type": "plausible-but-unstated inference should be partially_supported, not supported — real incident (2026-07-23, app.gc.ai audit run): a claim that 'closing conditions can be waived' was marked supported on a passage that only described a discuss-then-cancel procedure, never waiver; the adjacent fact was real, the specific claimed mechanism was not established",
+      "claim": "Apple's Japan segment net sales would have grown faster in the first six months of 2026 if not for yen weakness.",
+      "passages": [{ "location": "japan-narrative", "text": "Japan net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 primarily due to higher net sales of iPhone. The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026." }],
+      "expected_verdict": "partially_supported",
+      "expected_evidence": "The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026.",
+      "expected_note": "the passage directly supports that yen weakness had an unfavorable impact — that part is grounded. But it never states or quantifies the counterfactual ('would have grown faster'); that specific conclusion is plausible given the adjacent fact but not established as necessarily following from it (unlike verify-018, where growth logically rules out decline). Granting 'supported' here would be the same error as the real waiver incident: treating a related, real passage as if it covered the claim's actual specific assertion."
     }
   ]
 }

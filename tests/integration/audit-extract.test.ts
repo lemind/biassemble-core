@@ -8,7 +8,7 @@ import { ExtractService } from "../../src/orchestrators/audit/extract.service.js
 import type { LlmCallStore } from "../../src/persistence/ports.js";
 
 /**
- * T011 — tests the EXTRACT service's plumbing against all 11 golden
+ * T011 — tests the EXTRACT service's plumbing against all 12 golden
  * scenarios: claim_id assignment, excerpt-verbatim validation, maxClaims
  * enforcement, truncated persistence. MockProvider is seeded with the
  * response a *correct* model call would produce (constructed directly from
@@ -63,7 +63,7 @@ function buildService() {
 
 describe("EXTRACT service against extract-golden-set.json (T011)", () => {
   it(`covers all ${goldenSet.scenarios.length} scenarios`, () => {
-    expect(goldenSet.scenarios.length).toBe(11);
+    expect(goldenSet.scenarios.length).toBe(12);
   });
 
   for (const scenario of goldenSet.scenarios) {

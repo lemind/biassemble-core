@@ -462,6 +462,37 @@
         }
       ],
       "notes": "Tests the EXTRACT dedup rule explicitly (spec.md edge case: 'the same fact stated twice = one claim, record both locations'). The second sentence restates the first quarter's total net sales figure in different wording ('the company's overall revenue' vs 'total net sales') \u2014 must resolve to ONE claim (c1) with two locations, not a second claim c2. Added on review (speckit-analyze finding E4) \u2014 this edge case had zero coverage across the original 10 scenarios."
+    },
+    {
+      "id": "extract-012-adjacent-sub-reference",
+      "title": "Adjacent sub-numbered references in one sentence \u2014 claim must retain the specific sub-reference, not collapse to the base number",
+      "output_text": "Greater China was the fastest-growing segment, with net sales rising 28% year-over-year to $20,497 million. Note 5 covers segment reporting broadly, while Note 5.2 specifically discloses this regional breakdown and its year-over-year comparison basis.",
+      "expected_claims": [
+        {
+          "id": "c1",
+          "type": "numeric",
+          "claim": "Greater China net sales rose 28% year-over-year to $20,497 million, the fastest growth of any segment",
+          "excerpt": "Greater China was the fastest-growing segment, with net sales rising 28% year-over-year to $20,497 million",
+          "locations": [
+            "p1s1"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        },
+        {
+          "id": "c2",
+          "type": "entity",
+          "claim": "Note 5.2 discloses the Greater China regional breakdown and its year-over-year comparison basis",
+          "excerpt": "Note 5.2 specifically discloses this regional breakdown and its year-over-year comparison basis",
+          "locations": [
+            "p1s2"
+          ],
+          "period": "Q2 2026",
+          "derived": false
+        }
+      ],
+      "excluded_content": [],
+      "notes": "Real production incident (2026-07-23, app.gc.ai audit run): EXTRACT paraphrased an excerpt reading 'Article 19-2 provides a special indemnity...' into a claim reading 'Article 19 provides...' \u2014 dropping the sub-reference because a bare 'Article 19' also appeared earlier in the same sentence. VERIFY then correctly rejected the mangled claim as unsupported (bare Article 19 doesn't cover it), producing a confident, false 'the audited output got this wrong' reading of a claim the audited output stated correctly. c2 here is the finance-domain equivalent trap: 'Note 5' (bare) and 'Note 5.2' (specific) both appear in one sentence: c2's claim field must retain '5.2', not collapse to '5'. Also the first case in this file to exercise the 'entity' claim type, closing a gap this README's own 'What's still missing' section flagged as uncovered. Guarded in code by findReferenceDrift() in src/orchestrators/audit/extract.service.ts, unit-tested directly in tests/unit/orchestrators/audit/reference-drift.test.ts \u2014 this scenario is the tracked labeled-corpus record of the same incident, per this file's own labeling discipline."
     }
   ]
 }
