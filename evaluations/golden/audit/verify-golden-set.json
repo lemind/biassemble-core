@@ -185,6 +185,15 @@
       "expected_verdict": "partially_supported",
       "expected_evidence": "The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026.",
       "expected_note": "the passage directly supports that yen weakness had an unfavorable impact — that part is grounded. But it never states or quantifies the counterfactual ('would have grown faster'); that specific conclusion is plausible given the adjacent fact but not established as necessarily following from it (unlike verify-018, where growth logically rules out decline). Granting 'supported' here would be the same error as the real waiver incident: treating a related, real passage as if it covered the claim's actual specific assertion."
+    },
+    {
+      "id": "verify-020-compound-negative-contradicted-miss",
+      "trap_type": "compound claim (positive assertion + explicit negation of a specific alternative) wrongly marked contradicted, with a note that itself argues for support — real incident (2026-07-26, app.openbb.co audit run), a more severe recurrence of verify-018's failure family: that run's claim 'disputes are subject to court litigation, not arbitration' was marked contradicted, confidence 1.0, against the same exclusive-jurisdiction passage that separately verified as supported for a differently-worded claim in the same run, and the note ('implying litigation rather than arbitration') argued for agreement while the verdict field disagreed",
+      "claim": "Net sales grew across every geographic segment in the quarter, not just in Greater China.",
+      "passages": [{ "location": "segment-table", "text": "Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%" }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21%",
+      "expected_note": "every listed segment (Americas 12%, Europe 15%, Greater China 28%, Japan 15%, Rest of Asia 25%) shows positive growth — this entails both halves of the compound claim: growth was general across segments, AND it was not confined to Greater China alone. Naming Greater China specifically (the segment the claim explicitly excludes) does not make this contradicted merely because the claim uses a comparative/negative phrasing the passage doesn't literally echo — same rule as verify-018, applied to a compound claim structure and to the more severe 'contradicted' miscategorization this real incident produced instead of 'unsupported'. A model whose own reasoning would describe why the table supports this claim must not then emit contradicted (VERDICT/NOTE CONSISTENCY, v2.3.0)."
     }
   ]
 }
