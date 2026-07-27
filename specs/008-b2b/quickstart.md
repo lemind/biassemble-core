@@ -5,12 +5,12 @@
 ```bash
 pnpm vitest run tests/unit/numbers/                # numbers-golden-set.json, 20 cases
 pnpm vitest run tests/integration/audit-extract.test.ts    # extract-golden-set.json, 12 cases
-pnpm vitest run tests/integration/audit-verify.test.ts     # verify-golden-set.json, 20 cases
+pnpm vitest run tests/integration/audit-verify.test.ts     # verify-golden-set.json, 29 cases
 ```
 
 Pass bars (from `evaluations/golden/audit/README.md`, restated here so this quickstart doesn't drift from it — cites, doesn't restate the definitions):
 - EXTRACT: recall ≥ 0.90, precision ≥ 0.85, zero `excluded_content` leaks.
-- VERIFY: ≥ 19/20 expected verdicts matched, zero false "contradicted" on period/scale/scope-only mismatches, zero false "supported" on a derived claim whose own stated magnitude is wrong (verify-016), correct partial credit at the magnitude boundary (verify-017), correct entailment on a necessarily-precluding negative claim (verify-018), correct partial credit on an adjacent-but-unstated inference (verify-019), correct entailment on a compound negative claim without over-reaching to "contradicted" (verify-020).
+- VERIFY: ≥ 28/29 expected verdicts matched, zero false "contradicted" on period/scale/scope-only mismatches, zero false "supported" on a derived claim whose own stated magnitude is wrong (verify-016), correct partial credit at the magnitude boundary (verify-017), correct entailment on a necessarily-precluding negative claim (verify-018), correct partial credit on an adjacent-but-unstated inference (verify-019), correct entailment on a compound negative claim without over-reaching to "contradicted" (verify-020), verbatim repros of both real arbitration incidents (verify-021/022), consistent verdicts across four synonym-paraphrased claims sharing one clause (verify-023–026), consistent "supported" across three redacted-placeholder claims (verify-027–029).
 - Numbers: zero false "not comparable = contradicted" — every `comparable: false` case in the golden set must never surface as a contradiction downstream.
 
 ## Run one audit end to end (once the endpoint is wired)

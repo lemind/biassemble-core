@@ -98,7 +98,12 @@ export class ExtractService {
     const providerId = this.provider.mode;
 
     const { result: raw, llmCallId } = await executeAndRecordLlmCall(
-      () => this.provider.completeJson<unknown>({ system, user }),
+      // temperature: 0 — audit-mode output must be reproducible run-to-run on
+      // identical input (a customer re-running an audit and getting a
+      // different claim set/score each time is a trust-destroying bug for a
+      // paid product, found in production 2026-07-26). The reflection flow's
+      // default temperature is untouched; this is an explicit per-call override.
+      () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0 } }),
       // sessionId is auditId here, not null (T040) — audit mode has no
       // "session" concept, but llm_calls.session_id is a plain UUID with no
       // FK (schema.ts), so it doubles as the correlation key that lets

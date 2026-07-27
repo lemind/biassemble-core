@@ -194,6 +194,87 @@
       "expected_verdict": "supported",
       "expected_evidence": "Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21%",
       "expected_note": "every listed segment (Americas 12%, Europe 15%, Greater China 28%, Japan 15%, Rest of Asia 25%) shows positive growth — this entails both halves of the compound claim: growth was general across segments, AND it was not confined to Greater China alone. Naming Greater China specifically (the segment the claim explicitly excludes) does not make this contradicted merely because the claim uses a comparative/negative phrasing the passage doesn't literally echo — same rule as verify-018, applied to a compound claim structure and to the more severe 'contradicted' miscategorization this real incident produced instead of 'unsupported'. A model whose own reasoning would describe why the table supports this claim must not then emit contradicted (VERDICT/NOTE CONSISTENCY, v2.3.0)."
+    },
+    {
+      "id": "verify-021-arbitration-repro-verbatim-gcai",
+      "trap_type": "verbatim repro of a real production incident (2026-07-23, app.gc.ai) — pinned directly to the actual claim/passage pair, not a finance-domain analog, per the review that this file's golden-set convention exists precisely to let a fix be checked deterministically without re-rolling the live pipeline. Deliberate exception to this file's stated 'one real SEC filing' scope (see evaluations/golden/audit/README.md) — source is the real Stock Transfer Agreement (Yukitoshi Nakagawa / Leifras Co., Ltd. re: SWIFT JAPAN Co., Ltd.) used in that real audit run, not fabricated",
+      "claim": "The agreement does not use arbitration.",
+      "passages": [{ "location": "article-26-jurisdiction", "text": "Article 26. Exclusive jurisdiction of the district court having jurisdiction over the defendant domicile or head office location as court of first instance." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Article 26. Exclusive jurisdiction of the district court having jurisdiction over the defendant domicile or head office location as court of first instance.",
+      "expected_note": "the passage never uses the word 'arbitration', but it establishes exclusive court jurisdiction as the dispute-resolution mechanism — an exclusive mechanism necessarily rules out arbitration as an alternative. Production run (pre-fix) marked this unsupported at confidence 1.0."
+    },
+    {
+      "id": "verify-022-arbitration-repro-verbatim-openbb",
+      "trap_type": "verbatim repro of a second, more severe real production incident (2026-07-26, app.openbb.co) against the identical real passage as verify-021 — the compound phrasing this time was marked contradicted (not just unsupported), confidence 1.0, with a note ('implying litigation rather than arbitration') that itself argued for support",
+      "claim": "Disputes are subject to court litigation, not arbitration.",
+      "passages": [{ "location": "article-26-jurisdiction", "text": "Article 26. Exclusive jurisdiction of the district court having jurisdiction over the defendant domicile or head office location as court of first instance." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Article 26. Exclusive jurisdiction of the district court having jurisdiction over the defendant domicile or head office location as court of first instance.",
+      "expected_note": "same entailment as verify-021, different surface wording — 'court litigation, not arbitration' and 'does not use arbitration' are the same underlying claim about the same Article 26 passage; both must resolve to supported, and identically-reasoned claims against identical evidence must not diverge (this is also the paired case for VERDICT/NOTE CONSISTENCY, v2.3.0 — the real run's own note agreed with this claim while its verdict field said contradicted)."
+    },
+    {
+      "id": "verify-023-solicitation-synonym-officers-resign",
+      "trap_type": "one of four claims from a real production run (2026-07-26, app.openbb.co) reconstructed from the reviewer's description (literal OpenBB claim text unavailable) built off one real clause — three of the four got unsupported, one got supported, all against identical evidence; this case plus verify-024/025/026 force all four to the same verdict",
+      "claim": "The Seller shall not encourage the Target Company's officers to resign.",
+      "passages": [{ "location": "article-14-non-solicitation", "text": "After execution of the share transfer, the seller shall not conduct, support, or invest in any business that competes with the target company, nor cause any third party to do so, for a period of five years from the date of transfer. After execution, the seller shall not encourage any officers or employees of the target company to resign or solicit any third party to be employed by the seller or a third party." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "the seller shall not encourage any officers or employees of the target company to resign",
+      "expected_note": "direct restatement — 'officers' is one of the two nouns ('officers or employees') the clause explicitly names for the resign restriction."
+    },
+    {
+      "id": "verify-024-solicitation-synonym-employees-resign",
+      "trap_type": "companion to verify-023 — same clause, same restriction, other named noun",
+      "claim": "The Seller shall not encourage the Target Company's employees to resign.",
+      "passages": [{ "location": "article-14-non-solicitation", "text": "After execution of the share transfer, the seller shall not conduct, support, or invest in any business that competes with the target company, nor cause any third party to do so, for a period of five years from the date of transfer. After execution, the seller shall not encourage any officers or employees of the target company to resign or solicit any third party to be employed by the seller or a third party." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "the seller shall not encourage any officers or employees of the target company to resign",
+      "expected_note": "direct restatement, identical reasoning to verify-023 with 'employees' in place of 'officers' — must get the identical verdict; the real run gave this exact pairing opposite verdicts (unsupported here, supported for the parallel 'join' variant) despite both resting on the same clause."
+    },
+    {
+      "id": "verify-025-solicitation-synonym-officers-join",
+      "trap_type": "the 'encourage'/'solicit' synonym case — real run accepted this exact synonym for one variant and rejected it for the other three, an internally inconsistent application of the same rule",
+      "claim": "The Seller shall not solicit the Target Company's officers to be employed by the Seller or a third party.",
+      "passages": [{ "location": "article-14-non-solicitation", "text": "After execution of the share transfer, the seller shall not conduct, support, or invest in any business that competes with the target company, nor cause any third party to do so, for a period of five years from the date of transfer. After execution, the seller shall not encourage any officers or employees of the target company to resign or solicit any third party to be employed by the seller or a third party." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "solicit any third party to be employed by the seller or a third party",
+      "expected_note": "the clause's 'solicit any third party to be employed by the seller or a third party' covers officers once they are the target of solicitation — 'officers' is a same-register synonym-scope substitution for 'any third party' in this context, per PARAPHRASE CONFIDENCE (v2.4.0). Must match verify-026's verdict exactly (same clause, 'employees' in place of 'officers')."
+    },
+    {
+      "id": "verify-026-solicitation-synonym-employees-join",
+      "trap_type": "companion to verify-025 — the real run's only 'supported' verdict among these four; the other three (verify-023/024/025's real counterparts) were wrongly unsupported despite resting on the same clause",
+      "claim": "The Seller shall not solicit the Target Company's employees to be employed by the Seller or a third party.",
+      "passages": [{ "location": "article-14-non-solicitation", "text": "After execution of the share transfer, the seller shall not conduct, support, or invest in any business that competes with the target company, nor cause any third party to do so, for a period of five years from the date of transfer. After execution, the seller shall not encourage any officers or employees of the target company to resign or solicit any third party to be employed by the seller or a third party." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "solicit any third party to be employed by the seller or a third party",
+      "expected_note": "identical reasoning to verify-025 with 'employees' substituted for 'officers' — must resolve identically to verify-023/024/025, all four resting on one clause."
+    },
+    {
+      "id": "verify-027-redacted-total-transfer-price",
+      "trap_type": "redacted-value claim — the same underlying claim got three different verdicts across three real runs of this document (unverifiable/gated, then unsupported, per the reviewer's tracking); this and verify-028/029 pin the policy so it stops drifting",
+      "claim": "Total transfer price is left blank.",
+      "passages": [{ "location": "article-4-consideration", "text": "Article 4. The Buyer shall acquire all 60 shares of the Target Company common stock held by the Seller and in exchange, pay the Seller * yen (*yen per share) as consideration for the Target Shares." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "pay the Seller * yen (*yen per share) as consideration for the Target Shares",
+      "expected_note": "the passage shows '* yen' — a placeholder in the exact position a dollar figure would occupy — which is itself affirmative evidence the value is redacted, per REDACTED VALUES (v2.4.0). Not unsupported (the passage is not silent) and not unverifiable (there's no ambiguity that the value is withheld, only about its content)."
+    },
+    {
+      "id": "verify-028-redacted-price-per-share",
+      "trap_type": "companion to verify-027 — same passage, the per-share half of the same placeholder",
+      "claim": "Price per share is left blank.",
+      "passages": [{ "location": "article-4-consideration", "text": "Article 4. The Buyer shall acquire all 60 shares of the Target Company common stock held by the Seller and in exchange, pay the Seller * yen (*yen per share) as consideration for the Target Shares." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "*yen per share",
+      "expected_note": "same REDACTED VALUES reasoning as verify-027 — '*yen per share' is a shown placeholder, not silence."
+    },
+    {
+      "id": "verify-029-redacted-retirement-allowance",
+      "trap_type": "third redaction variant, different clause and different placeholder count (two blanks in one passage) — confirms the policy generalizes beyond a single-placeholder passage",
+      "claim": "Specific yen amounts for retirement allowances are left blank.",
+      "passages": [{ "location": "article-15-retirement-allowance", "text": "Article 15 Paragraph 3. Payment of retirement allowance: The Buyer shall promptly have the Target Company pay the retirement allowance as follows — Representative Director: * yen; Director *: * yen." }],
+      "expected_verdict": "supported",
+      "expected_evidence": "Representative Director: * yen; Director *: * yen",
+      "expected_note": "both amounts show '* yen' placeholders — same REDACTED VALUES policy as verify-027/028, applied where two values are redacted in one passage rather than one."
     }
   ]
 }

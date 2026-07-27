@@ -320,7 +320,12 @@ export class VerifyService {
     const user = "Return the JSON now.";
 
     const { result: raw, llmCallId } = await executeAndRecordLlmCall(
-      () => this.provider.completeJson<unknown>({ system, user }),
+      // temperature: 0 — see extract.service.ts's matching comment. Same
+      // production incident (2026-07-26) showed the same audit re-run
+      // producing three different claim sets/verdict patterns on identical
+      // input_ref; reproducibility is required to trust a fix ever actually
+      // landed, not just that a re-run happened not to hit the bug this time.
+      () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0 } }),
       // sessionId is auditId here, not null (T040) — see extract.service.ts's
       // matching comment.
       { sessionId: auditId, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
