@@ -275,6 +275,54 @@
       "expected_verdict": "supported",
       "expected_evidence": "Representative Director: * yen; Director *: * yen",
       "expected_note": "both amounts show '* yen' placeholders — same REDACTED VALUES policy as verify-027/028, applied where two values are redacted in one passage rather than one."
+    },
+    {
+      "id": "verify-030-parallel-claims-expense-discipline",
+      "trap_type": "one of four structurally-parallel causal claims from a real production run (2026-07-28, app.openbb.co, Allogene Therapeutics 10-K/8-K) — real run gave these four unverifiable@0/unverifiable@0/unsupported@0.7/supported@0.7. First-pass diagnosis of this incident wrongly assumed all four must resolve identically (corrected on review): this claim and verify-031 have ZERO topical overlap with either retrieved passage — the correct fix is a consistent per-item standard, not a forced identical verdict across genuinely different evidence",
+      "claim": "The outlook for initial ALLO-329 first-cohort data depends on expense discipline.",
+      "passages": [
+        { "location": "allo-329-data-timeline", "text": "We plan to announce initial proof-of-concept data from the first patients treated in the first dosing cohorts of ALLO-329 in June 2026." },
+        { "location": "financing-needs-risk-factor", "text": "Management expects to incur additional losses in the future to fund its operations and conduct product research and development and recognizes the need to raise additional capital to fully implement its business plan. We will need substantial additional financing to develop our products and implement our operating plans." }
+      ],
+      "expected_verdict": "unsupported",
+      "expected_evidence": null,
+      "expected_note": "neither passage is about expense discipline / cost control specifically — one is a data-timeline date, the other is about the need for financing (a distinct concept from disciplined spending). Zero topical overlap for this specific item means a confident unsupported, not a low-confidence unverifiable and not partially_supported (there is no supporting part to quote)."
+    },
+    {
+      "id": "verify-031-parallel-claims-regulatory-outcomes",
+      "trap_type": "companion to verify-030 — the other zero-overlap item; real run marked this unverifiable@0",
+      "claim": "The outlook for initial ALLO-329 first-cohort data depends on regulatory outcomes.",
+      "passages": [
+        { "location": "allo-329-data-timeline", "text": "We plan to announce initial proof-of-concept data from the first patients treated in the first dosing cohorts of ALLO-329 in June 2026." },
+        { "location": "financing-needs-risk-factor", "text": "Management expects to incur additional losses in the future to fund its operations and conduct product research and development and recognizes the need to raise additional capital to fully implement its business plan. We will need substantial additional financing to develop our products and implement our operating plans." }
+      ],
+      "expected_verdict": "unsupported",
+      "expected_evidence": null,
+      "expected_note": "neither passage mentions regulatory approval or any regulatory process — same zero-overlap situation as verify-030, must land on the same verdict as verify-030 because both items genuinely have no supporting content, not because all four claims must match regardless of evidence."
+    },
+    {
+      "id": "verify-032-parallel-claims-financing-resource-assumptions",
+      "trap_type": "companion to verify-030/031 but with real topical overlap — real run marked this unsupported@0.7, should be partially_supported since a passage IS about financing",
+      "claim": "The outlook for initial ALLO-329 first-cohort data depends on financing/resource assumptions.",
+      "passages": [
+        { "location": "allo-329-data-timeline", "text": "We plan to announce initial proof-of-concept data from the first patients treated in the first dosing cohorts of ALLO-329 in June 2026." },
+        { "location": "financing-needs-risk-factor", "text": "Management expects to incur additional losses in the future to fund its operations and conduct product research and development and recognizes the need to raise additional capital to fully implement its business plan. We will need substantial additional financing to develop our products and implement our operating plans." }
+      ],
+      "expected_verdict": "partially_supported",
+      "expected_evidence": "We will need substantial additional financing to develop our products and implement our operating plans.",
+      "expected_note": "unlike verify-030/031, this item has real topical overlap — the financing-need passage is literally about financing/resources. It never explicitly ties that need to THIS outlook specifically, so partially_supported (rule 3), not supported and not unsupported (there is a supporting part to quote, unlike verify-030/031)."
+    },
+    {
+      "id": "verify-033-parallel-claims-clinical-progress-not-oversupported",
+      "trap_type": "companion to verify-032 — the other item with real topical overlap; real run rounded this UP to supported@0.7, which is the over-granting direction and the most important of the four to get right",
+      "claim": "The outlook for initial ALLO-329 first-cohort data depends on clinical progress.",
+      "passages": [
+        { "location": "allo-329-data-timeline", "text": "We plan to announce initial proof-of-concept data from the first patients treated in the first dosing cohorts of ALLO-329 in June 2026." },
+        { "location": "financing-needs-risk-factor", "text": "Management expects to incur additional losses in the future to fund its operations and conduct product research and development and recognizes the need to raise additional capital to fully implement its business plan. We will need substantial additional financing to develop our products and implement our operating plans." }
+      ],
+      "expected_verdict": "partially_supported",
+      "expected_evidence": "We plan to announce initial proof-of-concept data from the first patients treated in the first dosing cohorts of ALLO-329 in June 2026.",
+      "expected_note": "the real run marked this 'supported' with the note 'the data itself is a result of clinical progress' — that is rule-3 reasoning (adjacent, not stated) mislabeled as rule-1 (direct restatement). The data-timeline passage doesn't state a dependency relationship, it states a date; partially_supported like verify-032 (both have real topical overlap), not supported, and not the same verdict as verify-030/031 (which have none)."
     }
   ]
 }
