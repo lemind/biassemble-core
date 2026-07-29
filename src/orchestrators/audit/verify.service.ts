@@ -13,7 +13,21 @@ import type { RetrievedPassage } from "../../rag/corpus-client.js";
 
 const MODULE = "verify-service";
 const BATCH_MIN = 5;
-const BATCH_MAX = 10;
+/**
+ * Lowered from 10 to 8 (2026-07-29): a real audit run with ~10-claim batches
+ * showed VERDICT/NOTE CONSISTENCY (v2.6.0) reliably ignored — VERIFY's own
+ * note identified the exact conflicting figure and still returned
+ * unsupported/unverifiable at confidence 0, evidence empty. The identical
+ * claims, resubmitted as smaller stories that naturally batch at 5 and 8,
+ * resolved correctly every time — contradicted, high confidence, real
+ * evidence and source_refs populated. Not a prompt bug: the same instruction
+ * followed reliably at batch size 1 (isolated test) and 5/8, and stopped
+ * being followed reliably at ~10 sharing one call. Batch size, not verdict
+ * logic, was the actual lever. Revisit with a wider sweep (5/6/7/8/9) if a
+ * cheaper number than 8 turns out to be just as reliable — this is the value
+ * confirmed by direct comparison, not a tuned optimum.
+ */
+const BATCH_MAX = 8;
 
 export interface ClaimWithPassages {
   claim: Claim;

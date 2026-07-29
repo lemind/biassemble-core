@@ -62,7 +62,7 @@ src/
 ├── orchestrators/
 │   └── audit/                    # NEW — parallel to orchestrators/reflection/
 │       ├── extract.service.ts    # EXTRACT prompt call + claim_id assignment
-│       ├── verify.service.ts     # VERIFY prompt call only, batched 5–10/call — does NOT call retrieval itself (corrected on review: an earlier draft described this file as owning "RETRIEVE (stubbed) + VERIFY," which blurs the boundary the separate rag/corpus-client.ts module exists to keep clean, and would make swapping the stub for the real engine call more invasive than it needs to be)
+│       ├── verify.service.ts     # VERIFY prompt call only, batched 5–8/call — does NOT call retrieval itself (corrected on review: an earlier draft described this file as owning "RETRIEVE (stubbed) + VERIFY," which blurs the boundary the separate rag/corpus-client.ts module exists to keep clean, and would make swapping the stub for the real engine call more invasive than it needs to be)
 │       ├── gate.service.ts       # threshold gating, rates, score summary (D018 §4)
 │       └── audit.service.ts      # orchestrates extract→retrieve(rag/corpus-client.ts)→verify→gate, assigns audit_id — RETRIEVE is a step audit.service.ts calls between extract and verify, not a responsibility of either service
 ├── prompts/
