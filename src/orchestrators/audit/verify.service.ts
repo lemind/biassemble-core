@@ -115,166 +115,44 @@ export function extractNumericFact(text: string): ExtractedNumericFact | null {
  * passed identically to both sides, so a period difference can never be
  * what `compare()` reports).
  */
-const MEASURE_STOPWORDS = new Set([
-  "the", "a", "an", "was", "were", "is", "are", "of", "to", "in", "at", "on",
-  "for", "and", "or", "that", "this", "stood", "narrowed", "totaled",
-  "reported", "reached", "represented", "representing", "against", "per",
-]);
-
 /**
- * Words from the claim, minus its own numeric figure (including any scale
- * word like "million" — a generic unit, not a subject) — the "subject" a
- * matching passage number must sit near. Scans the WHOLE claim text, not
- * just the text before the number: qualifiers like "per diluted share" often
- * trail the figure ("$(0.62) per diluted share"), and that trailing
- * qualifier is exactly what disambiguates it from an unrelated figure (e.g.
- * a net-loss dollar amount) sitting closer to a word like "net loss" earlier
- * in the same sentence.
- */
-function measureKeywords(claimText: string): string[] {
-  const numberMatch = claimText.match(CURRENCY_RE) ?? claimText.match(PERCENT_RE);
-  const withoutNumber =
-    numberMatch?.index !== undefined
-      ? claimText.slice(0, numberMatch.index) + claimText.slice(numberMatch.index + numberMatch[0].length)
-      : claimText;
-  return withoutNumber
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !MEASURE_STOPWORDS.has(w));
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Derived from CURRENCY_RE/PERCENT_RE (not re-typed) so the two can never
-// drift apart — findNearestPassageFact scanning for a pattern
-// extractNumericFact can't parse identically would silently break the
-// fallback path with no error.
-const CURRENCY_RE_GLOBAL = new RegExp(CURRENCY_RE.source, "gi");
-const PERCENT_RE_GLOBAL = new RegExp(PERCENT_RE.source, "g");
-
-/** A number candidate found for one keyword-anchored search pass. */
-interface NumberCandidate {
-  text: string;
-  distance: number;
-}
-
-/**
- * A second candidate number within this ratio of the best one's distance
- * means two different figures are both plausibly "the one" — decline rather
- * than guess. Calibrated against the real incident this fixes: the
- * total-liabilities case (a genuine match) lands at ratio ~2.08; the EPS
- * case (genuinely ambiguous — "net loss" sits closer to the wrong,
- * aggregate figure than "per share" sits to the right one) lands at ~1.5.
- */
-const AMBIGUITY_RATIO = 1.75;
-
-/**
- * Finds the currency/percent figure in `passages` positioned nearest to the
- * claim's own measure keywords (e.g. "total assets", "net loss", "per
- * diluted share") — a fallback for when VERIFY quoted no evidence at all (an
- * "unsupported" verdict, which legitimately has no quote by the prompt's own
- * spec). Real production incident (2026-07-29): VERIFY calling several
- * same-period numeric conflicts "unsupported" meant reconcileNumericVerdict
- * never even ran, since it only ever read VERIFY's own (empty) evidence.
+ * Reverted 2026-07-29 (was: a keyword-proximity fallback that searched
+ * retrieved passages directly when VERIFY quoted no evidence for an
+ * "unsupported" verdict). Real production run against a denser, real
+ * filing text than the one this was unit-tested against: "liabilities"
+ * occurred twice in the actual source ("Total liabilities" / "lease
+ * liabilities" — the test fixture only had one occurrence), which
+ * disqualified it from the "prefer unique keywords" safety pass and fell
+ * through to the looser, unsafe pass. Result: a total-liabilities claim
+ * was upgraded to "contradicted" citing "$210 million" (GAAP operating
+ * expense guidance, a completely different measure) as evidence — a
+ * confident, wrong accusation backed by fabricated-looking justification,
+ * strictly worse than the original miss it was meant to fix. Same failure
+ * hit an ALLO-647 cost claim (matched against unrelated R&D expense).
  *
- * Proximity to the keyword match, not "first number in the passage", is what
- * makes this safe on this pipeline's coarse, stub-lexical retrieval — a
- * passage here is often a whole filing section with a dozen unrelated dollar
- * figures in it, sometimes several in one sentence (e.g. net loss, EPS, and
- * cash all in "net loss of $190.9 million or $(0.87) per share... $258.3
- * million cash"). Grabbing the wrong one would manufacture a false
- * contradiction, the single worst failure mode this numeric layer exists to
- * prevent (see evaluations/golden/audit/README.md's numbers-layer pass bar).
- * Returns ONLY the matched number's own substring (never a wider window) so
- * extractNumericFact's first-match parsing can't grab a *different* number
- * sitting nearby in whatever text is returned.
- *
- * Two safety passes, in order:
- * 1. Anchor using only keywords that appear EXACTLY ONCE in the passage — a
- *    repeated word like "total" (shared by both "Total assets" and "Total
- *    liabilities") is non-discriminative and will pull toward whichever
- *    figure it happens to sit closer to, which isn't necessarily the right
- *    one. "assets"/"liabilities" themselves are the actually-discriminative
- *    words here, and this pass isolates them.
- * 2. Only if pass 1 finds no candidate at all, retry with every keyword
- *    (including repeated ones) — better than nothing when nothing unique
- *    matched.
- *
- * Within whichever pass produces a candidate, if a second, DIFFERENT number
- * is within AMBIGUITY_RATIO of the best one's distance, decline (return
- * null) rather than guess — this is what correctly refuses to pick a side
- * in the EPS-vs-aggregate-net-loss case, a real, accepted limitation: this
- * heuristic cannot always tell which of two nearby figures in one dense
- * sentence a claim like "per diluted share" refers to, and staying silent
- * is safer than manufacturing a false contradiction.
+ * Proximity/keyword matching cannot establish "same measure" — it can only
+ * ever establish "these words are near each other," which is a different
+ * and weaker claim. There is no version of this heuristic that's safe on
+ * real, dense filing text without also being able to recognize which
+ * specific labeled figure a claim refers to — that requires actual
+ * structured/entity-aware retrieval (the real fix is finer-grained
+ * retrieval, not a better proximity heuristic on top of coarse retrieval —
+ * see the ADR-002 embedding-retrieval gap already flagged elsewhere).
+ * Per D018 §2.3, "contradicted" requires established same-measure
+ * comparability; this can't establish that, so it must never emit
+ * "contradicted". Prefer the false negative (stays "unsupported") over a
+ * false accusation. Not rebuilding this without a real design for the
+ * comparability problem specifically, not just a smarter proximity search.
  */
-export function findNearestPassageFact(claimText: string, passages: Array<{ text: string }>): string | null {
-  const keywords = measureKeywords(claimText);
-  if (keywords.length < 2) return null;
-
-  for (const uniqueOnly of [true, false]) {
-    const bestByNumber = new Map<string, NumberCandidate>();
-    for (const passage of passages) {
-      const numberMatches = [...passage.text.matchAll(CURRENCY_RE_GLOBAL), ...passage.text.matchAll(PERCENT_RE_GLOBAL)];
-      if (numberMatches.length === 0) continue;
-
-      for (const kw of keywords) {
-        // Word-boundary match, not substring — a plain indexOf("end") would
-        // wrongly hit inside "ends"/"extends" and anchor to whatever number
-        // happens to sit nearest that unrelated word instead.
-        const kwRe = new RegExp(`\\b${escapeRegExp(kw)}\\b`, "gi");
-        const kwMatches = [...passage.text.matchAll(kwRe)];
-        if (uniqueOnly && kwMatches.length !== 1) continue;
-
-        for (const kwMatch of kwMatches) {
-          const idx = kwMatch.index ?? 0;
-          for (const numberMatch of numberMatches) {
-            const distance = Math.abs((numberMatch.index ?? 0) - idx);
-            const key = `${numberMatch.index}:${numberMatch[0]}`;
-            const existing = bestByNumber.get(key);
-            if (!existing || distance < existing.distance) {
-              bestByNumber.set(key, { text: numberMatch[0], distance });
-            }
-          }
-        }
-      }
-    }
-
-    if (bestByNumber.size === 0) continue; // this pass matched nothing — try the looser pass
-
-    const sorted = [...bestByNumber.values()].sort((a, b) => a.distance - b.distance);
-    const best = sorted[0]!;
-    const secondDistinct = sorted.find((c) => c.text !== best.text);
-    // <=, not < — an exact tie between two different numbers is the
-    // clearest case of ambiguity, not a reason to confidently pick whichever
-    // one Array.sort happened to order first.
-    const ambiguous = secondDistinct !== undefined && secondDistinct.distance <= best.distance * AMBIGUITY_RATIO;
-    return ambiguous ? null : best.text;
-  }
-  return null;
-}
-
 export function reconcileNumericVerdict(
   claim: Claim,
-  result: { verdict: string; evidence: string[] | null; note: string | null },
-  passages: Array<{ text: string }> = []
-): { verdict: string; note: string | null; evidence?: string[] } {
-  let firstEvidence = result.evidence?.[0];
-  let usedFallback = false;
-  if (!firstEvidence && result.verdict === "unsupported") {
-    const fallback = findNearestPassageFact(claim.claimText, passages);
-    if (fallback) {
-      firstEvidence = fallback;
-      usedFallback = true;
-    }
-  }
+  result: { verdict: string; evidence: string[] | null; note: string | null }
+): { verdict: string; note: string | null } {
+  const firstEvidence = result.evidence?.[0];
   if (!firstEvidence) {
     return { verdict: result.verdict, note: result.note };
   }
-  if (result.verdict !== "supported" && result.verdict !== "contradicted" && !usedFallback) {
+  if (result.verdict !== "supported" && result.verdict !== "contradicted") {
     return { verdict: result.verdict, note: result.note };
   }
 
@@ -305,16 +183,6 @@ export function reconcileNumericVerdict(
     return {
       verdict: "contradicted",
       note: `${result.note ?? ""} [upgraded from supported on review: ${claimFact.value} and ${evidenceFact.value} disagree beyond tolerance — compare.ts, D018 §2.3]`.trim(),
-    };
-  }
-  if (!comparison.equal && result.verdict === "unsupported" && usedFallback) {
-    return {
-      verdict: "contradicted",
-      note: `${result.note ?? ""} [upgraded from unsupported on review: a same-period, same-measure passage figure (${evidenceFact.value}) disagrees with the claimed ${claimFact.value} beyond tolerance — found via keyword-proximity search since VERIFY quoted no evidence, compare.ts, D018 §2.3]`.trim(),
-      // "contradicted" must never persist with empty evidence (data-model.md
-      // Verdict validation) — this is the one path that can reach here with
-      // result.evidence still empty, since VERIFY itself quoted nothing.
-      evidence: [firstEvidence],
     };
   }
   return { verdict: result.verdict, note: result.note };
@@ -537,12 +405,11 @@ export class VerifyService {
       throw err;
     }
 
-    const byClaimId = new Map(batch.map((b) => [b.claim.claimId, b]));
+    const byClaimId = new Map(batch.map((b) => [b.claim.claimId, b.claim]));
     const answeredClaimIds = new Set<string>();
     for (const result of parsed.results) {
-      const claimWithPassages = byClaimId.get(result.claim_id);
-      if (!claimWithPassages) continue; // model echoed an id we didn't send — ignore, don't persist
-      const { claim, passages } = claimWithPassages;
+      const claim = byClaimId.get(result.claim_id);
+      if (!claim) continue; // model echoed an id we didn't send — ignore, don't persist
       answeredClaimIds.add(claim.claimId);
 
       // Retrieval-failure gate rule (data-model.md): a claim whose retrieval
@@ -550,20 +417,14 @@ export class VerifyService {
       // present an infrastructure failure as "sources checked, found silent."
       let verdict = result.verdict;
       let note = result.note;
-      let evidence = result.evidence;
       if (claim.retrievalStatus === "error" && verdict === "unsupported") {
         verdict = "unverifiable";
         note = `${note ?? ""} [forced to unverifiable: retrieval_status=error, not a genuine absence-of-evidence signal]`.trim();
       } else {
-        const numericReconciled = reconcileNumericVerdict(claim, { verdict, evidence: result.evidence, note }, passages);
-        // Carries the keyword-proximity-found passage snippet forward when
-        // reconcileNumericVerdict upgraded unsupported->contradicted using
-        // it — "contradicted" must never persist with empty evidence
-        // (data-model.md), and VERIFY itself quoted none for this claim.
-        if (numericReconciled.evidence) evidence = numericReconciled.evidence;
+        const numericReconciled = reconcileNumericVerdict(claim, { verdict, evidence: result.evidence, note });
         const magnitudeReconciled = reconcileMagnitudeClaim(claim, {
           verdict: numericReconciled.verdict,
-          evidence,
+          evidence: result.evidence,
           note: numericReconciled.note,
         });
         verdict = magnitudeReconciled.verdict as typeof verdict;
@@ -575,7 +436,7 @@ export class VerifyService {
       // is used as-is; retrieval_score is never read here at all.
       await this.auditStore.updateClaimVerdict(claim.claimId, {
         verdict: verdict as "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable",
-        evidence,
+        evidence: result.evidence,
         sourceRefs: result.source_refs,
         synthesized: result.synthesized,
         confidence: result.confidence,
