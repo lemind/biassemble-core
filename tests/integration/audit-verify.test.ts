@@ -92,7 +92,7 @@ const evidenceArray = (e: string | string[] | null): string[] | null => (e === n
 
 describe("VERIFY service against verify-golden-set.json (T012)", () => {
   it(`covers all ${goldenSet.scenarios.length} scenarios`, () => {
-    expect(goldenSet.scenarios.length).toBe(35);
+    expect(goldenSet.scenarios.length).toBe(37);
   });
 
   let matched = 0;
@@ -141,9 +141,9 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     });
   }
 
-  it("meets the ≥34/35 pass bar in aggregate", () => {
-    expect(matched).toBeGreaterThanOrEqual(34);
-    expect(total).toBe(35);
+  it("meets the ≥36/37 pass bar in aggregate", () => {
+    expect(matched).toBeGreaterThanOrEqual(36);
+    expect(total).toBe(37);
   });
 
   it("retrieval-failure gate rule: a claim with retrieval_status=error never resolves to unsupported, even if VERIFY said so", async () => {
@@ -163,6 +163,42 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     await service.run(auditId, [{ claim, passages: [] }], 0.6);
     const updated = auditStore.claims.get(claim.claimId)!;
     expect(updated.verdict).toBe("unverifiable");
+  });
+
+  it("bug found on review (2026-07-29): a numeric downgrade must not be reversed by the verdict/note consistency check reading the pre-correction note text it inherited", async () => {
+    // reconcileVerdictNoteConsistency used to run LAST in the reconciliation chain, seeing
+    // whatever reconcileNumericVerdict had already produced — including the ORIGINAL LLM note
+    // text, which can itself use contradiction language ("differs from") to justify the verdict
+    // being corrected away from. Running the consistency check last meant it could see that
+    // leftover language and flip a just-fixed verdict right back to wrong. This claim's raw
+    // verdict is "contradicted" with a note that says "differs from", but the actual values
+    // (16.99% vs claimed 17%) are within compare.ts's tolerance — the numeric check must
+    // downgrade this to "supported" and it must STAY "supported".
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const claim = toClaim(auditId, randomUUID(), "iPhone net sales rose 17% year-over-year");
+    auditStore.claims.set(claim.claimId, claim);
+    const passages = toPassages([{ location: "products-table", text: "iPhone grew 16.99% year-over-year" }]);
+
+    provider.setDefault({
+      results: [
+        {
+          claim_id: claim.claimId,
+          verdict: "contradicted",
+          evidence: ["iPhone grew 16.99% year-over-year"],
+          source_refs: passages.map((p) => p.passageId),
+          synthesized: false,
+          note: "The evidence states 16.99%, which differs from the claimed 17% growth rate.",
+          confidence: 0.9,
+        },
+      ],
+      trace: {},
+    });
+
+    await service.run(auditId, [{ claim, passages }], 0.6);
+    const updated = auditStore.claims.get(claim.claimId)!;
+    expect(updated.verdict).toBe("supported");
   });
 
   it("rejects a response whose results array fails schema validation (e.g. confidence out of 0-1 range), not a crash on null (found on review)", async () => {

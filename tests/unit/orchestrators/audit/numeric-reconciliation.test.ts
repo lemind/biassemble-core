@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   extractNumericFact,
   reconcileNumericVerdict,
+  reconcileVerdictNoteConsistency,
   detectMagnitudeClaim,
   extractCurrentPriorPair,
   reconcileMagnitudeClaim,
@@ -69,6 +70,107 @@ describe("reconcileNumericVerdict — accounting-negative parens (2026-07-29 EPS
       note: "the cited evidence states $(0.87), which is different from the claimed $(0.62).",
     });
     expect(result.verdict).toBe("contradicted");
+  });
+
+  it("real production incident (2026-07-29): picks the EPS figure, not the net-loss figure, out of a multi-number evidence sentence", () => {
+    // The original single-number test fixture above didn't exercise this shape — the real
+    // audit run's evidence had both figures in one sentence, and a plain .match() always took
+    // the first ($190.9 million, the aggregate net loss), not the $(0.87) EPS figure the claim
+    // is actually comparable to. That wrong pick hit the scale-ambiguity guard and left the
+    // LLM's wrong "supported" verdict unreconciled.
+    const claim = makeClaim("Net loss was $(0.62) per diluted share.");
+    const result = reconcileNumericVerdict(claim, {
+      verdict: "supported",
+      evidence: ["Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share"],
+      note: "the passage states the net loss per share for 2025 was $(0.87)",
+    });
+    expect(result.verdict).toBe("contradicted");
+    expect(result.note).toContain("-0.62");
+    expect(result.note).toContain("-0.87");
+  });
+
+  it("stays unchanged when a multi-number evidence sentence has two candidates with the same scale-presence as the claim (genuinely ambiguous)", () => {
+    // Both evidence numbers are scale-less, same as the claim — cannot disambiguate which is
+    // "the" comparable figure, so must not guess.
+    const claim = makeClaim("Net loss was $(0.62) per diluted share.");
+    const result = reconcileNumericVerdict(claim, {
+      verdict: "supported",
+      evidence: ["EPS was $(0.87) under GAAP or $(0.91) non-GAAP"],
+      note: "matches",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+});
+
+describe("reconcileVerdictNoteConsistency — Fix 3 (2026-07-29, generalizes VERDICT/NOTE CONSISTENCY beyond numeric claims)", () => {
+  const evidence = ["The Company operates and manages its business as one reportable segment."];
+
+  it("downgrades 'supported' to 'contradicted' when the note itself says the evidence contradicts the claim (entity claim, e.g. two-segments)", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence,
+      note: "The passages state that the company operates as a single reportable segment, which contradicts the claim of two reportable segments.",
+    });
+    expect(result.verdict).toBe("contradicted");
+    expect(result.note).toContain("verdict overridden by code");
+  });
+
+  it("downgrades 'supported' to 'contradicted' when the note uses 'differs from' instead of 'contradicts'", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence,
+      note: "The cited figure differs from the value stated in the claim.",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("does NOT downgrade when the note uses negated contradiction language ('does not contradict')", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence,
+      note: "The passage confirms the claim and does not contradict it.",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("real bug found on review (2026-07-29): a real English contraction ('doesn't contradict') must be recognized as negated, not trigger a false downgrade", () => {
+    // The negation regex's original "n't" alternative had a leading \b, which can never match
+    // inside a real contraction — the 'n' in "doesn't" is preceded by a letter ('s'), not a word
+    // boundary, so `\bn't` never matched and every standard negated contraction slipped through
+    // as if it weren't negated at all.
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence,
+      note: "The passage doesn't contradict the claim, it merely restates it.",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("real bug found on review (2026-07-29): does not downgrade to 'contradicted' when evidence is null — never assign contradicted without evidence", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: null,
+      note: "which contradicts the claim",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("does not touch verdicts other than 'supported'", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "unsupported",
+      evidence,
+      note: "which contradicts the claim",
+    });
+    expect(result.verdict).toBe("unsupported");
+  });
+
+  it("leaves 'supported' unchanged when the note contains no contradiction language", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence,
+      note: "the passage states the same figure as the claim",
+    });
+    expect(result.verdict).toBe("supported");
   });
 });
 

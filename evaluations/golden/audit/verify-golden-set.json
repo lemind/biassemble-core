@@ -346,6 +346,30 @@
       "expected_evidence": "Total liabilities $123,363 thousand.",
       "expected_note": "the passage states total liabilities were $123,363 thousand ($123.363 million), not $97.8 million as claimed — same subject, measure, and period, beyond tolerance. High confidence: this is a clean, identified same-measure conflict, not a hedge case.",
       "expected_synthesized": false
+    },
+    {
+      "id": "verify-036-multi-number-evidence-sentence-eps",
+      "trap_type": "real production incident (2026-07-29, app.openbb.co, Allogene Therapeutics), companion to verify-035 — VERIFY quoted a single evidence sentence containing two different figures (aggregate net loss and per-share loss) for an EPS claim; the code-side numeric reconciliation's plain first-match extraction took the aggregate figure, hit a scale mismatch against the claim's scale-less EPS value, and bailed rather than compare the actually-relevant $(0.87) figure, leaving the LLM's wrong 'supported' verdict unreconciled",
+      "claim": "Net loss was $(0.62) per diluted share.",
+      "passages": [
+        { "location": "allogene-income-statement", "text": "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, compared to a 2024 net loss of $180.1 million or $(0.85) per share." }
+      ],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, compared to a 2024 net loss of $180.1 million or $(0.85) per share.",
+      "expected_note": "the passage states the 2025 net loss per share was $(0.87), not $(0.62) as claimed — same subject, measure, and period, beyond tolerance. The evidence sentence also states an aggregate net loss figure ($190.9 million) for the same period; the correct comparison is against the per-share figure, not the aggregate.",
+      "expected_synthesized": false
+    },
+    {
+      "id": "verify-037-supported-verdict-invalid-when-note-contradicts-entity-claim",
+      "trap_type": "real production incident (2026-07-29, app.openbb.co, Allogene Therapeutics) — a two-segments entity claim, no numeric fact to reconcile, so the code-side numeric checks (verify-035/036) can't touch it; VERIFY's own note named the conflicting fact ('the company operates as a single reportable segment') and the run still returned a self-contradicting verdict. Two real runs of the identical claim/passage pair diverged: one returned unsupported (still wrong — note said 'contradicts', not 'insufficient evidence'), a later run returned supported outright (the shape pinned here). This is the generalized VERDICT/NOTE CONSISTENCY rule (v2.6.0, verify-035) extended past numeric claims: a note that itself concludes 'contradicts' invalidates a 'supported' verdict regardless of claim type.",
+      "claim": "The company operates in two reportable segments.",
+      "passages": [
+        { "location": "allogene-segment-note", "text": "The Company operates and manages its business as one reportable segment, which is the business of developing and commercializing allogeneic cell therapies." }
+      ],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "The Company operates and manages its business as one reportable segment, which is the business of developing and commercializing allogeneic cell therapies.",
+      "expected_note": "the passage states the company operates as a single reportable segment, which contradicts the claim of two reportable segments — same subject and period, unambiguous same-measure conflict, not a hedge case.",
+      "expected_synthesized": false
     }
   ]
 }

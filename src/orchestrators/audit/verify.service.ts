@@ -37,12 +37,15 @@ export interface ClaimWithPassages {
 /**
  * If a third numeric-claim-shape bug shows up after this one (percentage-
  * point claims, date-arithmetic claims, ...), stop writing a fourth bespoke
- * comparator here — that's the signal to build a generic "does VERIFY's own
- * stated reasoning in `note` match the verdict it emitted" check instead of
- * per-type patches. Not built now (T041b/tasks.md's own note) — this file
- * would just be guessing at how to parse arbitrary reasoning prose, which is
- * exactly the kind of free-text parsing this module has always refused to
- * do without a real design for it.
+ * comparator here — that's the signal to generalize further instead of
+ * per-type patches. A narrower version of "does VERIFY's own stated
+ * reasoning in `note` match the verdict it emitted" now exists —
+ * `reconcileVerdictNoteConsistency` below, added for an entity-claim
+ * incident, not a numeric one — but it only catches one direction
+ * (a "supported" verdict whose own note admits a conflict) via two fixed
+ * regexes, not a real parse of arbitrary reasoning prose. Guessing at
+ * reasoning prose beyond that narrow, text-only check is still exactly what
+ * this module has always refused to do without a real design for it.
  */
 
 type CurrencyOrPercentUnit = "USD" | "percent";
@@ -91,6 +94,66 @@ export function extractNumericFact(text: string): ExtractedNumericFact | null {
     return { value, unit: "percent", scale: null };
   }
   return null;
+}
+
+/**
+ * Every currency/percent match in `text`, not just the first — a single
+ * evidence sentence quoted by VERIFY routinely carries more than one figure
+ * for different measures (e.g. "net loss of $190.9 million or $(0.87) per
+ * share"). `extractNumericFact`'s plain `.match()` always took the first one,
+ * which silently compared the wrong measure when evidence text was dense
+ * (2026-07-29 EPS incident: claim's $(0.62) got compared against the $190.9M
+ * net-loss figure, not the $(0.87) EPS figure, and the resulting scale
+ * mismatch caused reconcileNumericVerdict to bail rather than catch the real
+ * disagreement). Used by pickEvidenceFact below to disambiguate; never used
+ * to trust an arbitrary pick.
+ */
+function extractAllNumericFacts(text: string): ExtractedNumericFact[] {
+  const facts: ExtractedNumericFact[] = [];
+  for (const m of text.matchAll(new RegExp(CURRENCY_RE.source, "gi"))) {
+    if (!m[2]) continue;
+    let value = parseFloat(m[2].replace(/,/g, ""));
+    if (Number.isNaN(value)) continue;
+    if (m[1] === "(" || m[3] === ")") value = -Math.abs(value);
+    facts.push({ value, unit: "USD", scale: m[4]?.toLowerCase() ?? null });
+  }
+  for (const m of text.matchAll(new RegExp(PERCENT_RE.source, "g"))) {
+    if (!m[1]) continue;
+    const value = parseFloat(m[1].replace(/,/g, ""));
+    if (Number.isNaN(value)) continue;
+    facts.push({ value, unit: "percent", scale: null });
+  }
+  return facts;
+}
+
+/**
+ * Picks the one evidence-text figure comparable to `claimFact`, when more
+ * than one of the same unit is present. There is no way to know from text
+ * alone which quoted figure is "the EPS one" vs "the net-loss one" — that
+ * would require structured/entity-aware retrieval this module doesn't have
+ * (same limitation documented on the reverted keyword-proximity fallback
+ * above). The one signal available without guessing: scale-presence. Only
+ * trust a pick when exactly one candidate's scale-presence (has a scale word
+ * / doesn't) matches the claim's — if zero or several match, stay silent,
+ * same "don't guess" discipline as the scale-ambiguity guard below.
+ */
+function pickEvidenceFact(claimFact: ExtractedNumericFact, evidenceText: string): ExtractedNumericFact | null {
+  // Scoped to USD only, deliberately. The real incident (and this golden set) has never
+  // shown a percent claim compared against multi-percent-figure evidence — extending this
+  // search to percent broke verify-003 (a hedged "~16%" claim vs an evidence table that
+  // contains both dollar figures AND a "17%" figure): the OLD single-match extractNumericFact
+  // tried currency first on evidence text, found a dollar figure, and bailed on a unit
+  // mismatch against the claim's percent — an accidental but load-bearing protection this
+  // golden set already depends on. For percent claims, keep that exact original behavior.
+  if (claimFact.unit !== "USD") {
+    const fact = extractNumericFact(evidenceText);
+    return fact && fact.unit === claimFact.unit ? fact : null;
+  }
+  const candidates = extractAllNumericFacts(evidenceText).filter((f) => f.unit === "USD");
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0] ?? null;
+  const sameScalePresence = candidates.filter((f) => (f.scale === null) === (claimFact.scale === null));
+  return sameScalePresence.length === 1 ? (sameScalePresence[0] ?? null) : null;
 }
 
 /**
@@ -171,7 +234,7 @@ export function reconcileNumericVerdict(
   }
 
   const claimFact = extractNumericFact(claim.claimText);
-  const evidenceFact = extractNumericFact(firstEvidence);
+  const evidenceFact = claimFact ? pickEvidenceFact(claimFact, firstEvidence) : null;
   if (!claimFact || !evidenceFact || claimFact.unit !== evidenceFact.unit) {
     return { verdict: result.verdict, note: result.note }; // can't check — trust the LLM
   }
@@ -200,6 +263,72 @@ export function reconcileNumericVerdict(
     };
   }
   return { verdict: result.verdict, note: result.note };
+}
+
+/**
+ * Fix 3 (2026-07-29, real production incident): the two reconciliations
+ * above only fire when a number is extractable from both claim and evidence,
+ * so neither touches entity-type claims — e.g. a two-segments claim where
+ * VERIFY's own note says "the passages state...a single reportable segment,
+ * which contradicts the claim" and the structured verdict still says
+ * "unsupported" (or, in the EPS case, "supported"). This is a plain string
+ * check, not a new comparator: a verdict of "supported" is invalid if its
+ * own note asserts a contradiction — reject at validation, don't ship it.
+ *
+ * Runs FIRST in runBatch's reconciliation chain, on VERIFY's raw note — not
+ * last, over whatever the numeric/magnitude reconcilers already produced.
+ * Running it last meant it saw a concatenated note (original LLM text + a
+ * code-appended correction tag): the ORIGINAL note's own contradiction
+ * language could still match after a numeric fix had already run, flipping
+ * a just-corrected verdict right back to wrong (found on review). Running
+ * it first means the deterministic, more trustworthy numeric/magnitude
+ * checks always get the final say when they have a number to check; this
+ * text check only has the last word for claims neither of those can touch.
+ *
+ * Requires non-empty evidence before downgrading to "contradicted", exactly
+ * like reconcileNumericVerdict/reconcileMagnitudeClaim's `firstEvidence`
+ * guards — found on review: without this, a schema-valid VERIFY response
+ * with verdict="supported", evidence=null, and a self-contradicting note
+ * would persist "contradicted" with no evidence, violating data-model.md's
+ * documented invariant that nothing else in the schema or DB layer enforces.
+ *
+ * Deliberately one-directional: only "supported + contradicting note" is
+ * corrected. A mirrored "contradicted + agreeing note" check isn't added
+ * here — no real incident has shown that failure shape yet, and guessing at
+ * a second direction without one is exactly the kind of ungrounded
+ * heuristic that broke the keyword-proximity fallback above. Also does NOT
+ * catch a verdict/note pair that agree with each other but are both simply
+ * wrong (e.g. a note reasoning "extends into Q1 2028, which supports the
+ * claim of Q3 2026" — internally consistent, wrong on the merits; a genuine
+ * temporal comparator is the actual fix for that, not a text check).
+ */
+const CONTRADICTION_LANGUAGE_RE = /\b(contradicts?|conflicts?\s+with|differs?\s+from|is\s+inconsistent\s+with)\b/i;
+// Clause-scoped, not a fixed character count: a negation must share the same clause as the
+// contradiction word to count (stops at ,;. so it can't reach across an unrelated clause).
+// Found on review: "no numeric specificity to contradict" (verify-010, a correct "supported"
+// case) needs ~24 chars between "no" and "contradict" to be recognized as negated — a short
+// fixed window missed it. The "n't" alternative deliberately has no leading \b — in a real
+// contraction ("doesn't", "isn't", "wasn't") the 'n' is preceded by a letter, not a word
+// boundary, so `\bn't` can never match; found on review that this made the whole negation guard
+// dead for every standard English contraction, turning "doesn't contradict" into a false
+// downgrade instead of a recognized negation.
+const NEGATED_CONTRADICTION_RE = /(?:\bnot\b|n't|\bno\b|\bnever\b)[^.,;]{0,40}\b(contradicts?|conflicts?|differ|inconsistent)\b/i;
+
+export function reconcileVerdictNoteConsistency(result: {
+  verdict: string;
+  evidence: string[] | null;
+  note: string | null;
+}): { verdict: string; note: string | null } {
+  if (result.verdict !== "supported" || !result.note || !result.evidence?.length) {
+    return { verdict: result.verdict, note: result.note };
+  }
+  if (!CONTRADICTION_LANGUAGE_RE.test(result.note) || NEGATED_CONTRADICTION_RE.test(result.note)) {
+    return { verdict: result.verdict, note: result.note };
+  }
+  return {
+    verdict: "contradicted",
+    note: `${result.note} [verdict overridden by code: 'supported' is invalid when its own note asserts a contradiction — D018 §2.3 VERDICT/NOTE CONSISTENCY]`.trim(),
+  };
 }
 
 /** Multiple thresholds this checks for — expand only when a real case justifies it (T041b). */
@@ -435,7 +564,22 @@ export class VerifyService {
         verdict = "unverifiable";
         note = `${note ?? ""} [forced to unverifiable: retrieval_status=error, not a genuine absence-of-evidence signal]`.trim();
       } else {
-        const numericReconciled = reconcileNumericVerdict(claim, { verdict, evidence: result.evidence, note });
+        // reconcileVerdictNoteConsistency runs FIRST, on VERIFY's raw note — not last, over
+        // whatever the numeric/magnitude reconcilers already produced. Running it last meant it
+        // saw the concatenated string (original LLM note + a code-appended correction tag), and
+        // the ORIGINAL LLM note's own contradiction language (e.g. "differs from") could trigger
+        // it and flip a verdict the numeric check had just correctly fixed right back to wrong
+        // (found on review: a numeric downgrade contradicted->supported, immediately reversed by
+        // this check reading the pre-correction note text it inherited). Running it first means
+        // reconcileNumericVerdict/reconcileMagnitudeClaim — deterministic, more trustworthy than
+        // free-text parsing — always get the final say when they have a number to check; this
+        // check only has the last word for claims neither of those can touch (e.g. entity claims).
+        const consistencyReconciled = reconcileVerdictNoteConsistency({ verdict, evidence: result.evidence, note });
+        const numericReconciled = reconcileNumericVerdict(claim, {
+          verdict: consistencyReconciled.verdict,
+          evidence: result.evidence,
+          note: consistencyReconciled.note,
+        });
         const magnitudeReconciled = reconcileMagnitudeClaim(claim, {
           verdict: numericReconciled.verdict,
           evidence: result.evidence,
