@@ -62,10 +62,9 @@ function buildService() {
 }
 
 describe("EXTRACT service against extract-golden-set.json (T011)", () => {
-  it(`covers all ${goldenSet.scenarios.length} scenarios`, () => {
-    expect(goldenSet.scenarios.length).toBe(12);
-  });
-
+  // Scenario count is stated in evaluations/golden/audit/README.md, not asserted here — a
+  // standalone length check never calls ExtractService and doesn't prove anything about the
+  // code (removed on review; see the same fix in audit-verify.test.ts).
   for (const scenario of goldenSet.scenarios) {
     it(`${scenario.id} — correct response is persisted with recall ≥0.90, precision ≥0.85, zero excluded_content leaks`, async () => {
       const { provider, auditStore, service } = buildService();

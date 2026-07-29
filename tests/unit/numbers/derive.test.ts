@@ -23,10 +23,8 @@ const goldenSet: { cases: GoldenCase[] } = JSON.parse(
 const derivedCases = goldenSet.cases.filter((c) => "derived_op" in c.claim);
 
 describe("derive() against numbers-golden-set.json derived-arithmetic cases", () => {
-  it("covers exactly the 6 derived cases", () => {
-    expect(derivedCases).toHaveLength(6);
-  });
-
+  // Case count is stated in evaluations/golden/audit/README.md — a standalone length check
+  // never calls derive() and doesn't prove anything about the code (removed on review).
   for (const c of derivedCases) {
     it(`${c.id} — ${c.trap_type}`, () => {
       const result = derive(c.claim);

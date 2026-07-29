@@ -10,6 +10,14 @@ This is deliberately **synthetic-equivalent data**: the ten EXTRACT texts are ha
 
 If you need a new case: write the input and its expected answer together, commit them, *then* run the prompt. If a prompt run reveals a case was mislabeled, fix the label with a comment explaining why, don't silently adjust it to match what the model produced.
 
+## Test-count discipline (added 2026-07-29, after a review found 4 tests that proved nothing)
+
+Every golden case gets a pinned regression test — that policy stands. But **do not add a standalone test that only asserts a golden-set array's `.length` against a hardcoded number** (e.g. `it("covers all N scenarios", () => expect(set.length).toBe(N))`). Four of these existed across `audit-verify.test.ts`, `audit-extract.test.ts`, `compare.test.ts`, and `derive.test.ts` and were removed on review: none of them ever called the code under test (`VerifyService`, `ExtractService`, `compare()`, `derive()`) — they only checked that a JSON file's array length matched a number restated from this README's own table above. Their only real function was flagging when someone added/removed a case without updating the number, which:
+- an aggregate pass-bar test (where one exists, e.g. `audit-verify.test.ts`'s "meets the ≥36/37 pass bar in aggregate") already does for free as part of asserting something that actually matters, and
+- where no aggregate test exists, is just as well caught by this table (**Cases** column) and doesn't need its own test slot.
+
+The rule going forward: the case **count** lives in this README's table (and the quickstart pass bar, where applicable) — not in a dedicated assertion. A new golden case still needs its own `it(...)` exercising real behavior; it does not also need the total to be re-asserted separately.
+
 ## The three sets
 
 | File | Cases | Tests |

@@ -91,10 +91,9 @@ function toPassages(passages: GoldenPassage[]): RetrievedPassage[] {
 const evidenceArray = (e: string | string[] | null): string[] | null => (e === null ? null : Array.isArray(e) ? e : [e]);
 
 describe("VERIFY service against verify-golden-set.json (T012)", () => {
-  it(`covers all ${goldenSet.scenarios.length} scenarios`, () => {
-    expect(goldenSet.scenarios.length).toBe(37);
-  });
-
+  // The scenario count itself is asserted by "meets the ≥36/37 pass bar in aggregate" below
+  // (expect(total).toBe(37)) — a standalone count-only test here would just duplicate that
+  // assertion in its own test slot without exercising VerifyService at all (removed on review).
   let matched = 0;
   const total = goldenSet.scenarios.length;
 

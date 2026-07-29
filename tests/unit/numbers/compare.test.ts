@@ -29,10 +29,8 @@ const comparabilityCases = goldenSet.cases.filter(
 );
 
 describe("compare() against numbers-golden-set.json comparability cases", () => {
-  it("covers exactly the 14 non-derived cases", () => {
-    expect(comparabilityCases).toHaveLength(14);
-  });
-
+  // Case count is stated in evaluations/golden/audit/README.md — a standalone length check
+  // never calls compare() and doesn't prove anything about the code (removed on review).
   for (const c of comparabilityCases) {
     it(`${c.id} — ${c.trap_type}`, () => {
       const result = compare(c.claim, c.source);

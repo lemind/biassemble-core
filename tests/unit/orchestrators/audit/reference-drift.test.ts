@@ -31,11 +31,9 @@ describe("findReferenceDrift", () => {
     const excerpt = "Paragraph 3.1 sets the retirement allowance.";
     expect(findReferenceDrift(claim, excerpt)).toMatch(/Paragraph 3\.1.*Paragraph 3/);
   });
-
-  it("does not flag a claim with no reference tokens at all", () => {
-    const claim = "The retirement allowance is capped.";
-    const excerpt = "Article 19 Paragraph 3. The retirement allowance is capped.";
-    // claim omits the reference entirely — fair paraphrase, no drift to detect
-    expect(findReferenceDrift(claim, excerpt)).toBeNull();
-  });
+  // "does not flag a claim with no reference tokens at all" removed on review (2026-07-29):
+  // duplicate of "does not flag when the claim omits the reference entirely" above — both hit
+  // the identical baseRe.test(claim)===false branch in findReferenceDrift's per-reference loop,
+  // which has no state shared across reference tokens, so a second reference type in the
+  // excerpt didn't exercise anything new.
 });
