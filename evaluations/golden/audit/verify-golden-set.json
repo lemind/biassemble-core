@@ -323,6 +323,17 @@
       "expected_verdict": "partially_supported",
       "expected_evidence": "We plan to announce initial proof-of-concept data from the first patients treated in the first dosing cohorts of ALLO-329 in June 2026.",
       "expected_note": "the real run marked this 'supported' with the note 'the data itself is a result of clinical progress' — that is rule-3 reasoning (adjacent, not stated) mislabeled as rule-1 (direct restatement). The data-timeline passage doesn't state a dependency relationship, it states a date; partially_supported like verify-032 (both have real topical overlap), not supported, and not the same verdict as verify-030/031 (which have none)."
+    },
+    {
+      "id": "verify-034-going-concern-inference-consistency",
+      "trap_type": "second real-world confirmation of the rule-3/confidence-calibration fix shipped in v2.5.0 for verify-030–033 — real run (2026-07-29, app.openbb.co, Allogene Therapeutics) flipped this specific claim from supported@0.9 (an earlier run) to unsupported@0.7 (this run) on identical topical evidence — neither extreme is right; the specific accounting term isn't stated, but the passage is squarely on-topic (risk-factor language), which is the rule-3 pattern, not silence and not entailment",
+      "claim": "Management flagged substantial doubt about the Company's ability to continue as a going concern.",
+      "passages": [
+        { "location": "financing-needs-risk-factor", "text": "Management expects to incur additional losses in the future to fund its operations and conduct product research and development and recognizes the need to raise additional capital to fully implement its business plan. We will need substantial additional financing to develop our products and implement our operating plans. The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future." }
+      ],
+      "expected_verdict": "partially_supported",
+      "expected_evidence": "The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future. We will need substantial additional financing to develop our products and implement our operating plans.",
+      "expected_note": "\"substantial doubt about going concern\" is a specific, defined accounting/audit term the passage never uses — but the passage is squarely about the same underlying financial distress (sustained losses, need for more financing), so this is rule 3 (plausible-but-unstated), confidently partially_supported. Not supported (the specific term/formal conclusion isn't stated) and not unsupported (this isn't silence — the passage is precisely on-topic, unlike verify-030/031's zero-overlap items)."
     }
   ]
 }

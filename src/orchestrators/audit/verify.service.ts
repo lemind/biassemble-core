@@ -40,7 +40,18 @@ interface ExtractedNumericFact {
   scale: string | null;
 }
 
-const CURRENCY_RE = /\$\s?([\d,]+(?:\.\d+)?)\s*(billion|million|thousand)?/i;
+// Optional parens around the digits capture accounting-negative notation
+// (e.g. "$(0.62)" = -0.62 per-share loss) — same "(1)" -> -1 convention
+// normalize.ts already parses (num-015), but that module only ever sees an
+// already-isolated value token; this regex is what extracts a number out of
+// free claim/evidence text in the first place, and previously couldn't match
+// the parenthesized form at all, so it silently returned null instead of the
+// negative value. Found in production 2026-07-29: an EPS claim "$(0.62)" vs
+// cited evidence "$(0.87)" both failed to parse, so this check never ran and
+// the LLM's raw, wrong "supported" verdict passed through unreconciled.
+// Group order matches real usage: the close-paren lands right after the
+// digits ("$(190.9) million"), not after the scale word ("$(190.9 million)").
+const CURRENCY_RE = /\$\s?(\()?\s*([\d,]+(?:\.\d+)?)\s*(\))?\s*(billion|million|thousand)?/i;
 const PERCENT_RE = /(-?[\d,]+(?:\.\d+)?)\s*%/;
 
 /**
@@ -51,10 +62,13 @@ const PERCENT_RE = /(-?[\d,]+(?:\.\d+)?)\s*%/;
  */
 export function extractNumericFact(text: string): ExtractedNumericFact | null {
   const currencyMatch = text.match(CURRENCY_RE);
-  if (currencyMatch?.[1]) {
-    const value = parseFloat(currencyMatch[1].replace(/,/g, ""));
+  if (currencyMatch?.[2]) {
+    let value = parseFloat(currencyMatch[2].replace(/,/g, ""));
     if (Number.isNaN(value)) return null;
-    return { value, unit: "USD", scale: currencyMatch[2]?.toLowerCase() ?? null };
+    if (currencyMatch[1] === "(" || currencyMatch[3] === ")") {
+      value = -Math.abs(value);
+    }
+    return { value, unit: "USD", scale: currencyMatch[4]?.toLowerCase() ?? null };
   }
   const percentMatch = text.match(PERCENT_RE);
   if (percentMatch?.[1]) {

@@ -50,6 +50,26 @@ describe("extractNumericFact", () => {
   it("returns null when neither pattern matches", () => {
     expect(extractNumericFact("revenue grew nicely this quarter")).toBeNull();
   });
+
+  it("real production incident (2026-07-29): parses accounting-negative parens as a negative value", () => {
+    expect(extractNumericFact("Net loss was $(0.62) per diluted share")).toEqual({ value: -0.62, unit: "USD", scale: null });
+  });
+
+  it("parses accounting-negative parens with a scale word", () => {
+    expect(extractNumericFact("Net loss was $(190.9) million")).toEqual({ value: -190.9, unit: "USD", scale: "million" });
+  });
+});
+
+describe("reconcileNumericVerdict — accounting-negative parens (2026-07-29 EPS incident)", () => {
+  it("upgrades a false 'supported' to 'contradicted' when claimed and cited EPS disagree under parens notation", () => {
+    const claim = makeClaim("Net loss was $(0.62) per diluted share");
+    const result = reconcileNumericVerdict(claim, {
+      verdict: "supported",
+      evidence: ["Diluted EPS was $(0.87) for the quarter"],
+      note: "the cited evidence states $(0.87), which is different from the claimed $(0.62).",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
 });
 
 describe("reconcileNumericVerdict — Fix 1 (bidirectional currency/percent check)", () => {
