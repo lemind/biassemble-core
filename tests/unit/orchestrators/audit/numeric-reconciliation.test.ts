@@ -6,6 +6,7 @@ import {
   detectMagnitudeClaim,
   extractCurrentPriorPair,
   reconcileMagnitudeClaim,
+  findNearestPassageFact,
 } from "../../../../src/orchestrators/audit/verify.service.js";
 import type { Claim } from "../../../../src/db/schema.js";
 
@@ -202,5 +203,123 @@ describe("reconcileMagnitudeClaim — Fix 2 (T041b, ratio vs magnitude-phrase th
     const claim = makeClaim("Revenue grew 22% year-over-year");
     const result = reconcileMagnitudeClaim(claim, { verdict: "supported", evidence, note: "matches" });
     expect(result.verdict).toBe("supported");
+  });
+});
+
+describe("findNearestPassageFact — real production incident (2026-07-29, Allogene Therapeutics)", () => {
+  // The actual submitted 8-K passage: one dense sentence with three dollar
+  // figures for three different measures (net loss, EPS, cash), plus two
+  // more sentences each with exactly one figure (assets, liabilities).
+  const passages = [
+    {
+      text: "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028. Total assets $415,905 thousand. Total liabilities $123,363 thousand.",
+    },
+  ];
+
+  it("finds the net loss figure, not the nearer-in-string EPS or cash figures, via keyword proximity", () => {
+    const snippet = findNearestPassageFact("Net loss narrowed to $143.2 million.", passages);
+    expect(snippet).toContain("$190.9 million");
+  });
+
+  it("declines rather than guesses on the EPS-vs-aggregate-net-loss case — a genuine, accepted lexical ambiguity", () => {
+    // "net"/"loss" sit closer to the wrong (aggregate) figure than "share"
+    // sits to the right one — none of them are repeated words, so the
+    // unique-keyword safety pass can't disambiguate this one either. Staying
+    // silent here is the correct, safe outcome, not a bug: this is the one
+    // real-incident case this heuristic knowingly cannot resolve.
+    const snippet = findNearestPassageFact("Net loss was $(0.62) per diluted share.", passages);
+    expect(snippet).toBeNull();
+  });
+
+  it("finds total assets in its own short sentence", () => {
+    const snippet = findNearestPassageFact("Total assets stood at $389.5 million at year-end.", passages);
+    expect(snippet).toContain("$415,905");
+  });
+
+  it("finds total liabilities in its own short sentence", () => {
+    const snippet = findNearestPassageFact("Total liabilities stood at $97.8 million at year-end.", passages);
+    expect(snippet).toContain("$123,363");
+  });
+
+  it("returns null for a claim with fewer than 2 measure keywords (too generic to anchor safely)", () => {
+    expect(findNearestPassageFact("It was $5 million.", passages)).toBeNull();
+  });
+
+  it("returns null when no keyword appears in any passage", () => {
+    expect(findNearestPassageFact("Marketing spend was $5 million.", passages)).toBeNull();
+  });
+});
+
+describe("reconcileNumericVerdict — unsupported-to-contradicted fallback (2026-07-29 incident)", () => {
+  const passages = [
+    {
+      text: "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028. Total assets $415,905 thousand. Total liabilities $123,363 thousand.",
+    },
+  ];
+
+  it("upgrades a same-period net loss conflict from unsupported to contradicted, with real evidence attached", () => {
+    const claim = makeClaim("Net loss narrowed to $143.2 million.");
+    const result = reconcileNumericVerdict(
+      claim,
+      { verdict: "unsupported", evidence: [], note: "The provided passages do not state the net loss as $143.2 million." },
+      passages
+    );
+    expect(result.verdict).toBe("contradicted");
+    expect(result.evidence).toBeTruthy();
+    expect(result.evidence?.[0]).toContain("$190.9 million");
+  });
+
+  it("leaves the EPS claim unchanged (known, accepted limitation — ambiguous against the aggregate net loss figure in the same sentence)", () => {
+    const claim = makeClaim("Net loss was $(0.62) per diluted share.");
+    const result = reconcileNumericVerdict(
+      claim,
+      { verdict: "unsupported", evidence: [], note: "does not state $(0.62) per diluted share" },
+      passages
+    );
+    expect(result.verdict).toBe("unsupported");
+  });
+
+  it("upgrades total assets and total liabilities conflicts", () => {
+    const assetsClaim = makeClaim("Total assets stood at $389.5 million at year-end.");
+    const assetsResult = reconcileNumericVerdict(
+      assetsClaim,
+      { verdict: "unsupported", evidence: [], note: "does not state total assets as $389.5 million" },
+      passages
+    );
+    expect(assetsResult.verdict).toBe("contradicted");
+
+    const liabilitiesClaim = makeClaim("Total liabilities stood at $97.8 million at year-end.");
+    const liabilitiesResult = reconcileNumericVerdict(
+      liabilitiesClaim,
+      { verdict: "unsupported", evidence: [], note: "does not state total liabilities as $97.8 million" },
+      passages
+    );
+    expect(liabilitiesResult.verdict).toBe("contradicted");
+  });
+
+  it("leaves unsupported unchanged when the fallback-found figure actually agrees (within tolerance)", () => {
+    const claim = makeClaim("Total assets stood at $415.9 million at year-end.");
+    const result = reconcileNumericVerdict(
+      claim,
+      { verdict: "unsupported", evidence: [], note: "does not state total assets as $415.9 million" },
+      passages
+    );
+    expect(result.verdict).not.toBe("contradicted");
+  });
+
+  it("leaves unsupported unchanged when no passages are provided (existing behavior, no regression)", () => {
+    const claim = makeClaim("Net loss narrowed to $143.2 million.");
+    const result = reconcileNumericVerdict(claim, { verdict: "unsupported", evidence: [], note: "no evidence" });
+    expect(result.verdict).toBe("unsupported");
+  });
+
+  it("leaves unsupported unchanged when the claim has no numeric figure to anchor on", () => {
+    const claim = makeClaim("Management flagged substantial doubt about going concern.");
+    const result = reconcileNumericVerdict(
+      claim,
+      { verdict: "unsupported", evidence: [], note: "does not mention going concern" },
+      passages
+    );
+    expect(result.verdict).toBe("unsupported");
   });
 });
