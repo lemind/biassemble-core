@@ -334,6 +334,18 @@
       "expected_verdict": "partially_supported",
       "expected_evidence": "The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future. We will need substantial additional financing to develop our products and implement our operating plans.",
       "expected_note": "\"substantial doubt about going concern\" is a specific, defined accounting/audit term the passage never uses — but the passage is squarely about the same underlying financial distress (sustained losses, need for more financing), so this is rule 3 (plausible-but-unstated), confidently partially_supported. Not supported (the specific term/formal conclusion isn't stated) and not unsupported (this isn't silence — the passage is precisely on-topic, unlike verify-030/031's zero-overlap items)."
+    },
+    {
+      "id": "verify-035-identified-conflict-must-be-contradicted",
+      "trap_type": "real production incident (2026-07-29, app.openbb.co, Allogene Therapeutics), found after reverting the unsafe keyword-proximity fallback — VERIFY's own note named the exact same-measure, same-period conflicting figure and still returned unsupported/unverifiable at confidence 0 instead of contradicted; this pins the corrected VERDICT/NOTE CONSISTENCY rule (v2.6.0) requiring the structured fields to match what the note already concluded",
+      "claim": "Total liabilities stood at $97.8 million at year-end.",
+      "passages": [
+        { "location": "allogene-balance-sheet", "text": "Total assets $415,905 thousand. Total liabilities $123,363 thousand." }
+      ],
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Total liabilities $123,363 thousand.",
+      "expected_note": "the passage states total liabilities were $123,363 thousand ($123.363 million), not $97.8 million as claimed — same subject, measure, and period, beyond tolerance. High confidence: this is a clean, identified same-measure conflict, not a hedge case.",
+      "expected_synthesized": false
     }
   ]
 }
