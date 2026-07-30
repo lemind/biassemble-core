@@ -84,39 +84,104 @@ function buildOverrideNote(tag: string, originalNote: string | null): string {
 const MEASURE_STOPWORDS = new Set([
   "the", "a", "an", "of", "at", "in", "on", "for", "to", "and", "or", "with", "its", "it", "as", "by", "from", "that",
   "this", "was", "were", "is", "are", "be", "been", "has", "have", "had", "reports", "reported", "we", "our",
+  // Scale words are units, not measure names — keeping them out lets a prose figure whose own row is
+  // only "million or" fall back to the row that actually names the measure. D018 §5.2.
+  "million", "billion", "thousand",
 ]);
-/** How many content words before a figure count as its label — "Total liabilities $123,363" needs 2, dense table rows need a little slack. */
-const LABEL_WINDOW = 5;
 
-/** The measure label attached to a figure: adjacent bigrams of the content words right before it ("total liabilities", "net loss"). D018 §5.2. */
-function labelBigramsBefore(text: string, index: number): Set<string> {
-  const words = (text.slice(0, index).toLowerCase().match(/[a-z]+/g) ?? [])
-    .filter((w) => w.length > 1 && !MEASURE_STOPWORDS.has(w))
-    .slice(-LABEL_WINDOW);
-  const out = new Set<string>();
-  for (let i = 0; i + 1 < words.length; i++) out.add(`${words[i]} ${words[i + 1]}`);
-  return out;
+const TOKEN_RE = /[A-Za-z]+|\d[\d,]*(?:\.\d+)?/g;
+/** Fraction of a row's own label the claim must account for before that row's figures are comparable. */
+const LABEL_COVERAGE_MIN = 0.5;
+
+interface PassageRow {
+  start: number;
+  labelWords: string[];
 }
 
-/** Same as extractAllNumericFacts, but each fact keeps the measure label it sits behind. D018 §5.2. */
-function extractNumericFactsWithLabels(text: string): Array<{ fact: ExtractedNumericFact; labels: Set<string> }> {
-  const out: Array<{ fact: ExtractedNumericFact; labels: Set<string>; index: number }> = [];
+/** Row starts wherever a word follows a number — in a table that is the next row's label, in prose the next clause. D018 §5.2. */
+function segmentRows(text: string): PassageRow[] {
+  const starts = [0];
+  let prevWasNumber = false;
+  for (const m of text.matchAll(TOKEN_RE)) {
+    const isNumber = /\d/.test(m[0]!.charAt(0));
+    if (!isNumber && prevWasNumber) starts.push(m.index ?? 0);
+    prevWasNumber = isNumber;
+  }
+  const rows: PassageRow[] = [];
+  for (let i = 0; i < starts.length; i++) {
+    const slice = text.slice(starts[i]!, starts[i + 1] ?? text.length);
+    const words = (slice.toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => w.length > 1 && !MEASURE_STOPWORDS.has(w));
+    // A row with no content word of its own (prose: "million or $(0.87)") inherits the last row that
+    // had one, so the measure named upstream still identifies the figure.
+    rows.push({ start: starts[i]!, labelWords: words.length > 0 ? words : (rows[i - 1]?.labelWords ?? []) });
+  }
+  return rows;
+}
+
+function rowIndexFor(rows: PassageRow[], index: number): number {
+  let found = 0;
+  for (let i = 0; i < rows.length; i++) if (rows[i]!.start <= index) found = i;
+  return found;
+}
+
+/** Same as extractAllNumericFacts, but each fact keeps its position so it can be tied to a row. D018 §5.2. */
+function extractNumericFactsWithIndex(text: string): Array<{ fact: ExtractedNumericFact; index: number }> {
+  const out: Array<{ fact: ExtractedNumericFact; index: number }> = [];
   for (const m of text.matchAll(new RegExp(CURRENCY_RE.source, "gi"))) {
     if (!m[2]) continue;
     let value = parseFloat(m[2].replace(/,/g, ""));
     if (Number.isNaN(value)) continue;
     if (m[1] === "(" || m[3] === ")") value = -Math.abs(value);
-    const index = m.index ?? 0;
-    out.push({ fact: { value, unit: "USD", scale: m[4]?.toLowerCase() ?? null }, labels: labelBigramsBefore(text, index), index });
+    out.push({ fact: { value, unit: "USD", scale: m[4]?.toLowerCase() ?? null }, index: m.index ?? 0 });
   }
   for (const m of text.matchAll(new RegExp(PERCENT_RE.source, "g"))) {
     if (!m[1]) continue;
     const value = parseFloat(m[1].replace(/,/g, ""));
     if (Number.isNaN(value)) continue;
-    const index = m.index ?? 0;
-    out.push({ fact: { value, unit: "percent", scale: null }, labels: labelBigramsBefore(text, index), index });
+    out.push({ fact: { value, unit: "percent", scale: null }, index: m.index ?? 0 });
   }
-  return out.sort((a, b) => a.index - b.index).map(({ fact, labels }) => ({ fact, labels }));
+  return out.sort((a, b) => a.index - b.index);
+}
+
+function contentWords(text: string): string[] {
+  return (text.toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => w.length > 1 && !MEASURE_STOPWORDS.has(w));
+}
+
+/**
+ * Picks the one row whose label identifies the claim's subject. Rarity-weighted: "americas" (one row)
+ * beats "net sales" (header + total row), which is why a segment claim no longer matches the Total
+ * row. Ties on rarity break on label coverage; a genuine tie declines. D018 §5.2.
+ */
+function pickBestRow(
+  rows: Array<{ labelWords: string[] }>,
+  claimWords: Set<string>,
+  allRows: Array<{ labelWords: string[] }>
+): number | null {
+  // Frequency counts EVERY row, not just the ones holding comparable figures — otherwise a table's
+  // header row ("...shows net sales by segment...") goes uncounted and "net sales" scores as rare as
+  // "americas", which is exactly how the Americas false accusation survived the first fix. D018 §5.2.
+  const rowFreq = new Map<string, number>();
+  for (const row of allRows) for (const w of new Set(row.labelWords)) rowFreq.set(w, (rowFreq.get(w) ?? 0) + 1);
+
+  let best: { idx: number; rarity: number; coverage: number } | null = null;
+  let tied = false;
+  for (let idx = 0; idx < rows.length; idx++) {
+    const label = new Set(rows[idx]!.labelWords);
+    const matched = [...label].filter((w) => claimWords.has(w));
+    if (matched.length === 0) continue;
+    // Most of the row's own label must be what the claim is about. Without this, a net-income-margin
+    // claim matched the "Total net sales" row on the single shared word "net" (verify-011).
+    const coverage = matched.length / label.size;
+    if (coverage < LABEL_COVERAGE_MIN) continue;
+    const rarity = Math.max(...matched.map((w) => 1 / (rowFreq.get(w) ?? 1)));
+    if (!best || rarity > best.rarity || (rarity === best.rarity && coverage > best.coverage)) {
+      best = { idx, rarity, coverage };
+      tied = false;
+    } else if (rarity === best.rarity && coverage === best.coverage) {
+      tied = true;
+    }
+  }
+  return best && !tied ? best.idx : null;
 }
 
 /** Claim period naming a year the passage never mentions = different period, not a conflicting figure. D018 §5.2. */
@@ -128,27 +193,50 @@ function passagePeriodConflicts(claimPeriod: string | null, passageText: string)
   return !claimYears.some((y) => passageYears.includes(y));
 }
 
-/** Same-unit figures sharing the claim's measure label, from passages of the claim's own period. Callers decide by unanimity, never by picking one. D018 §5.2. */
+/**
+ * Same-unit figures from the ONE row whose label names the claim's subject, in passages of the claim's
+ * own period. Callers decide by unanimity, never by picking one. Row scoping replaced bigram matching
+ * after a true claim ("Americas net sales grew 12%") was contradicted against the Total row. D018 §5.2.
+ */
 function collectPassageFacts(
   claim: Claim,
   claimFact: ExtractedNumericFact,
   passages: RetrievedPassage[]
 ): Array<{ fact: ExtractedNumericFact; passageId: string; passageText: string }> {
-  const claimLabels = extractNumericFactsWithLabels(claim.claimText).find(
+  // Only the words leading up to the claim's OWN figure name its subject. Using the whole sentence
+  // matched "net income margin ... of total net sales" to the net-sales row (verify-011). D018 §5.2.
+  const claimFigure = extractNumericFactsWithIndex(claim.claimText).find(
     (c) => c.fact.unit === claimFact.unit && c.fact.value === claimFact.value
-  )?.labels;
-  if (!claimLabels?.size) return [];
+  );
+  if (!claimFigure) return [];
+  const claimWords = new Set(contentWords(claim.claimText.slice(0, claimFigure.index)));
+  if (claimWords.size === 0) return [];
 
-  const candidates: Array<{ fact: ExtractedNumericFact; passageId: string; passageText: string }> = [];
+  // Rows are pooled across passages and scored once, so the row naming the claim's subject wins even
+  // when a different passage also holds a generic "Total ..." row. D018 §5.2.
+  const pool: Array<{ labelWords: string[]; passage: RetrievedPassage; facts: ExtractedNumericFact[] }> = [];
+  const allRows: Array<{ labelWords: string[] }> = [];
   for (const passage of passages) {
     if (passagePeriodConflicts(claim.period, passage.text)) continue;
-    for (const { fact, labels } of extractNumericFactsWithLabels(passage.text)) {
+    const rows = segmentRows(passage.text);
+    allRows.push(...rows);
+    const byRow = new Map<number, ExtractedNumericFact[]>();
+    for (const { fact, index } of extractNumericFactsWithIndex(passage.text)) {
       if (!isUsableNumericFact(claimFact, fact)) continue;
-      if (![...labels].some((l) => claimLabels.has(l))) continue;
-      candidates.push({ fact, passageId: passage.passageId, passageText: passage.text });
+      const idx = rowIndexFor(rows, index);
+      byRow.set(idx, [...(byRow.get(idx) ?? []), fact]);
     }
+    for (const [idx, facts] of byRow) pool.push({ labelWords: rows[idx]!.labelWords, passage, facts });
   }
-  return candidates;
+  if (pool.length === 0) return [];
+
+  const best = pickBestRow(pool, claimWords, allRows);
+  if (best === null) return []; // nothing identifies this claim's subject, or a genuine tie — don't guess
+  return pool[best]!.facts.map((fact) => ({
+    fact,
+    passageId: pool[best]!.passage.passageId,
+    passageText: pool[best]!.passage.text,
+  }));
 }
 
 /** Override notes must carry the scale word — a bare "123363" next to "97.8" reads as a 1000x gap when it's $123.4M vs $97.8M. D018 §5.2. */
@@ -360,9 +448,16 @@ export function reconcileTemporalVerdict(
 }
 
 /** "supported" is invalid if its own note asserts a contradiction; runs FIRST in the chain (D018 §5.5) so later checks get final say. */
-const CONTRADICTION_LANGUAGE_RE = /\b(contradicts?|conflicts?\s+with|differs?\s+from|is\s+inconsistent\s+with)\b/i;
+// "the claim is contradicted" shipped as supported — \b after "contradict" can never match inside
+// "contradicted" (Apple probe 2026-07-30). Past tense is only accepted in the passive ("is/was
+// contradicted"), which asserts a contradiction; a bare "said contradicted" merely mentions one. D018 §5.5.
+const CONTRADICTION_LANGUAGE_RE =
+  /\b(contradict(?:s|ing)?|(?:is|are|was|were|be|being|been)\s+contradicted|conflict(?:s|ed|ing)?\s+with|differ(?:s|ed|ing)?\s+from|is\s+inconsistent\s+with)\b/i;
 // Clause-scoped negation, not fixed char count; "n't" has no leading \b (contractions have no word boundary before 'n'). D018 §5.5.
-const NEGATED_CONTRADICTION_RE = /(?:\bnot\b|n't|\bno\b|\bnever\b)[^.,;]{0,40}\b(contradicts?|conflicts?|differ|inconsistent)\b/i;
+// Widened in lockstep with CONTRADICTION_LANGUAGE_RE — widening only the positive side would let
+// "does not contradicted"-shaped negations through as real contradictions. D018 §5.5.
+const NEGATED_CONTRADICTION_RE =
+  /(?:\bnot\b|n't|\bno\b|\bnever\b)[^.,;]{0,40}\b(contradict(?:s|ed|ing)?|conflict(?:s|ed|ing)?|differ(?:s|ed|ing)?|inconsistent)\b/i;
 
 export function reconcileVerdictNoteConsistency(result: {
   verdict: string;
@@ -390,8 +485,18 @@ export function reconcileVerdictNoteConsistency(result: {
   };
 }
 
-/** Curated defined-term list (one entry per confirmed incident); requires both phrases nearby to avoid off-topic matches. D018 §5.4. */
-const DEFINED_TERMS: RegExp[] = [/substantial doubt[^.]{0,80}going concern|going concern[^.]{0,80}substantial doubt/i];
+/**
+ * Curated defined terms (one entry per confirmed incident). `topic` gates the downgrade: rule 3 means
+ * "on-topic but not stated verbatim", so a passage set that never touches the subject must yield
+ * unsupported, not half credit — a fabricated going-concern claim about Apple was granted
+ * partially_supported against iPhone/Mac sales narratives. D018 §5.4.
+ */
+const DEFINED_TERMS: Array<{ term: RegExp; topic: RegExp }> = [
+  {
+    term: /substantial doubt[^.]{0,80}going concern|going concern[^.]{0,80}substantial doubt/i,
+    topic: /going concern|substantial doubt|ability to continue|operating losses|net losses|additional (?:capital|financing)|raise additional|liquidity/i,
+  },
+];
 
 // No 'g'/'y' flags on DEFINED_TERMS entries — this function reuses the same RegExp object repeatedly; a global flag would carry lastIndex state across calls.
 function isDefinedTermNegatedInClaim(claimText: string, term: RegExp): boolean {
@@ -418,10 +523,11 @@ export function reconcileDefinedTermVerdict(
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
-  const term = DEFINED_TERMS.find((re) => re.test(claim.claimText));
-  if (!term) {
+  const entry = DEFINED_TERMS.find((d) => d.term.test(claim.claimText));
+  if (!entry) {
     return { verdict: result.verdict, note: result.note, confidence };
   }
+  const { term, topic } = entry;
   if (isDefinedTermNegatedInClaim(claim.claimText, term)) {
     return { verdict: result.verdict, note: result.note, confidence }; // claim asserts the term's ABSENCE, not its presence
   }
@@ -430,11 +536,18 @@ export function reconcileDefinedTermVerdict(
     return { verdict: result.verdict, note: result.note, confidence }; // term present verbatim — direct restatement, leave as-is
   }
 
+  // Rule 3 is "on-topic but not verbatim" — with nothing on-topic there is no partial support to give.
+  const onTopicEvidence = evidence?.filter((e) => topic.test(e)) ?? [];
+  const onTopicPassages = passages.filter((p) => topic.test(p.text));
+  if (onTopicEvidence.length === 0 && onTopicPassages.length === 0) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+
   // A partially_supported verdict the report can't back up is unusable — when the model cited
-  // nothing, cite the passages this decision was actually made against. D018 §5.4.
+  // nothing, cite the on-topic passages this decision was actually made against. D018 §5.4.
   const evidenceOverride =
-    !evidence?.length && passages.length > 0
-      ? { evidence: passages.map((p) => p.text), sourceRefs: passages.map((p) => p.passageId) }
+    !evidence?.length && onTopicPassages.length > 0
+      ? { evidence: onTopicPassages.map((p) => p.text), sourceRefs: onTopicPassages.map((p) => p.passageId) }
       : {};
 
   return {
@@ -465,11 +578,15 @@ export function detectMagnitudeClaim(claimText: string): { multiple: number } | 
   return null;
 }
 
-/** [current, prior] from a "$current $prior ..." table shape — narrow by design, not a general table parser. */
+/**
+ * [current, prior] from a "$current $prior ..." table shape — narrow by design, not a general table
+ * parser. Currency-only: matching bare numbers made a full-passage evidence blob yield the header's
+ * "March 28, 2026" as the pair (ratio 2026/2025). D018 §5.9.
+ */
 export function extractCurrentPriorPair(evidenceText: string): [number, number] | null {
-  const values = [...evidenceText.matchAll(/\$?([\d,]+(?:\.\d+)?)/g)]
-    .map((m) => (m[1] ? parseFloat(m[1].replace(/,/g, "")) : NaN))
-    .filter((n) => !Number.isNaN(n));
+  const values = extractAllNumericFacts(evidenceText)
+    .filter((f) => f.unit === "USD")
+    .map((f) => f.value);
   if (values.length < 2 || values[0] === undefined || values[1] === undefined) return null;
   return [values[0], values[1]];
 }

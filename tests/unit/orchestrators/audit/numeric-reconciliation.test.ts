@@ -421,6 +421,77 @@ describe("CANONICAL NUMERIC-CONFLICT GATE (2026-07-30) — the four real Allogen
   }
 });
 
+describe("MULTI-ENTITY TABLE GATE (2026-07-30, Apple probe) — a row's figures belong to that row's subject", () => {
+  // Live probe: "Americas net sales grew 12%" — verbatim correct — was returned `contradicted` at
+  // confidence 1, cited against (17%, 16%) from the Total net sales row. Bigram labels could not form
+  // for a single-word row name followed by digits, so only the generic "net sales" matched. D018 §5.2.
+  const SEGMENTS = makePassage(
+    "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+  );
+
+  it("does NOT contradict a true single-word-segment claim by comparing it to the Total row", () => {
+    const claim = makeClaim("Americas net sales grew 12% year over year.");
+    claim.period = "Q2 2026";
+    const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "matches", confidence: 0.9 }, [SEGMENTS]);
+    expect(result.verdict).toBe("supported");
+    expect(result.note).not.toContain("verdict set by code");
+  });
+
+  it("contradicts a false segment claim against that segment's OWN row, not the Total row", () => {
+    const claim = makeClaim("Europe net sales grew 22% year over year.");
+    claim.period = "Q2 2026";
+    const result = reconcileNumericVerdict(claim, { verdict: "unverifiable", evidence: [], note: "n", confidence: 0 }, [SEGMENTS]);
+    expect(result.verdict).toBe("contradicted");
+    expect(result.note).toContain("15%"); // Europe's real figure
+    expect(result.note).not.toContain("17%"); // Total's figure must not be what it argues from
+  });
+});
+
+describe("reconcileVerdictNoteConsistency — verb inflections (2026-07-30, Apple probe)", () => {
+  const evidence = ["Total operating expenses 18,896 15,278 37,275 30,721."];
+
+  it("catches the passive past tense — 'the claim is contradicted' shipped as supported before this", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence,
+      note: "The passage states $18,896 for the quarter. Therefore, the claim is contradicted.",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("does NOT fire when the note merely mentions the word rather than asserting a contradiction", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence,
+      note: "the real run's own note agreed with this claim while its verdict field said contradicted",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+});
+
+describe("reconcileDefinedTermVerdict — topicality gate (2026-07-30, Apple probe)", () => {
+  const goingConcern = () => makeClaim("Management flagged substantial doubt about the ability of the company to continue as a going concern.");
+
+  it("does NOT grant partial support when no retrieved passage is even on-topic", () => {
+    // Live probe: a fabricated going-concern claim about Apple came back partially_supported,
+    // "evidenced" by five iPhone/Mac/iPad sales narratives. D018 §5.4.
+    const passages = [
+      makePassage("iPhone net sales increased during the second quarter due to higher net sales of Pro models."),
+      makePassage("Mac net sales increased during the second quarter of 2026 due to higher net sales of laptops."),
+    ];
+    const result = reconcileDefinedTermVerdict(goingConcern(), { verdict: "unsupported", evidence: [], note: "n", confidence: 1 }, passages);
+    expect(result.verdict).toBe("unsupported");
+    expect(result.evidence).toBeUndefined();
+  });
+
+  it("still downgrades when a passage IS on-topic but never uses the term verbatim (Allogene shape)", () => {
+    const passages = [makePassage("The Company has sustained operating losses and recognizes the need to raise additional capital.")];
+    const result = reconcileDefinedTermVerdict(goingConcern(), { verdict: "unverifiable", evidence: [], note: "n", confidence: 0 }, passages);
+    expect(result.verdict).toBe("partially_supported");
+    expect(result.evidence).toEqual([passages[0]!.text]);
+  });
+});
+
 describe("reconcileDefinedTermVerdict — passage fallback (2026-07-30, third A/B run confirmation)", () => {
   it("real production incident: resolves a going-concern claim by scanning retrieved passages directly when VERIFY's evidence is empty", () => {
     const claim = makeClaim("Management flagged substantial doubt about the Company's ability to continue as a going concern.");
