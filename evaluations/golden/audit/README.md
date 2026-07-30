@@ -59,6 +59,23 @@ VERIFY doesn't need an equivalent rule — its output is an enum (`supported | p
 
 There is no dedicated numeric-claim-verification spec document in this repo — `context-prompt-biassemble-overview.md` (~/Downloads) §8 references one under the name `prompt-plan-grounding-numbers.md`, but the file that actually exists under a similar name (`grounding-numbers-plan.md`) is about excerpt-verification/calibration/canary discipline, not unit/currency/period normalization. `numbers-golden-set.json` above is built directly from the one-line principle in `b2b-change-plan.md` and D018 §2.3, not from a fuller spec — because no fuller spec exists on disk anywhere. Worth writing one before this golden set is treated as complete/final rather than a reasonable first draft.
 
+## Known uncovered class — column/period discrimination
+
+These golden sets do **not** cover a claim that quotes a real figure from the **wrong column** of the
+right row. `Total operating expenses were $15,278 for the quarter` (`period: fiscal Q2 2026`) is the Q2
+**2025** column of `Total operating expenses 18,896 15,278 37,275 30,721.`; Q2 2026 is `18,896`. Because
+`15,278` genuinely appears in the correct row, the comparator's unanimity rule splits and declines, and
+the claim resolved `supported` in two consecutive live runs. A second shape hides inside the same gap:
+an all-bare (no `$`) table row is invisible to `CURRENCY_RE` entirely, so `Provision for income taxes was
+$4,530` was compared against the unrelated Net income row and was only "right" because the values
+differed.
+
+Until the structural-reconstruction work in D018 §5 ships, this class is guarded solely by the model's own
+period reasoning, which is not reliable. **Do not read a green run of these golden sets as coverage of
+it.** One caution when the fix lands: a column-transposed parse — real values, real row labels, periods
+swapped between columns — passes verbatim-only validation, so it needs its own explicit golden case
+rather than being assumed covered by value reconstruction.
+
 ## Source filing provenance
 
 Apple Inc. Form 10-Q, quarterly period ended March 28, 2026, filed 2026-05-01. Public EDGAR filing, fetched 2026-07-20 via `curl` with an SEC-compliant User-Agent header (SEC requires a declared contact identifier, not a login — no ToS issue). Full excerpt and location-tag index: `source-filing.md`.
