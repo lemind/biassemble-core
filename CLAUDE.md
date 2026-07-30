@@ -15,3 +15,5 @@ Supporting artifacts:
 ## Conventions
 
 **Commit messages**: one line, `feat|fix|chore(T0XX): <short desc>`. Never commit without explicit user request.
+
+**Code comments**: max ~200 chars per comment. State what/why in one line; point to the decision doc (`docs/decisions/0NN-*.md` §X) for rationale, incident history, or design tradeoffs — never restate them inline. If a comment needs more than one line to justify itself, that justification belongs in the ADR, not the code.

@@ -1,14 +1,4 @@
-/**
- * Injection-suspected detection — research.md §7 / FR-021 / D018 A8. A small,
- * concrete, first-pass heuristic set (research.md is explicit that this needs
- * a fixture set, mirroring evaluations/golden/audit/'s own discipline, before
- * it can be trusted — that fixture set is follow-up work, not built here).
- *
- * A match here means: reject outright, log the flagged content, surface as a
- * gated/failed claim. Never route through the D004 repair pipeline — repair's
- * job is fixing a well-intentioned but broken response, and a response that
- * trips these heuristics isn't well-intentioned by assumption.
- */
+/** Injection-suspected detection (research.md §7, FR-021). A match = hard reject, never routed through the D004 repair pipeline. */
 
 const INSTRUCTION_MARKERS: RegExp[] = [
   /\bignore\s+(all\s+|the\s+)?(previous|prior|above)\s+instructions?\b/i,
@@ -18,20 +8,12 @@ const INSTRUCTION_MARKERS: RegExp[] = [
   /^\s*(user|assistant|system)\s*:/im,
 ];
 
-/**
- * Heuristic 1+2 (research.md §7): response text contains an instruction- or
- * role-marker pattern that a well-intentioned malformed response wouldn't.
- */
+/** Heuristic 1+2: instruction/role-marker pattern a well-intentioned malformed response wouldn't have. */
 export function containsInjectionMarker(rawText: string): boolean {
   return INSTRUCTION_MARKERS.some((pattern) => pattern.test(rawText));
 }
 
-/**
- * Heuristic 3 (research.md §7): the text parses as valid JSON but its key
- * set has essentially nothing in common with what was asked for — a typo,
- * truncation, or missing-field pattern (ordinary malformation) still shares
- * most expected keys; an entirely different key set doesn't.
- */
+/** Heuristic 3: valid JSON but its key set shares essentially nothing with what was asked for (unlike ordinary malformation). */
 export function hasUnrelatedKeySet(rawText: string, expectedKeys: string[]): boolean {
   let parsed: unknown;
   try {

@@ -19,18 +19,7 @@ function extractReferences(text: string): string[] {
   return [...text.matchAll(REFERENCE_RE)].map((m) => m[0].replace(/\s+/g, " ").trim());
 }
 
-/**
- * Catches EXTRACT paraphrasing a legal/financial reference down to a bare
- * base number when its own excerpt cites a more specific sub-reference —
- * e.g. excerpt "Article 19-2 provides a special indemnity..." paraphrased
- * as claim "Article 19 provides...". Found in production 2026-07-23: the
- * mangled claim was then correctly rejected by VERIFY as unsupported (bare
- * Article 19 is just the damages-period article), producing a confident,
- * false "the audited output got this wrong" reading of a claim the audited
- * output actually stated correctly. Only fires when the claim keeps a bare
- * form of the same base number — a claim that drops the reference entirely
- * (fair paraphrasing) is not flagged.
- */
+/** Catches a claim dropping a sub-reference its own excerpt cites (e.g. "Article 19-2" -> "Article 19"). Incident: extract-golden-set.json case 12. */
 export function findReferenceDrift(claim: string, excerpt: string): string | null {
   for (const ref of extractReferences(excerpt)) {
     if (claim.includes(ref)) continue;

@@ -101,8 +101,8 @@ function toPassages(passages: GoldenPassage[]): RetrievedPassage[] {
 const evidenceArray = (e: string | string[] | null): string[] | null => (e === null ? null : Array.isArray(e) ? e : [e]);
 
 describe("VERIFY service against verify-golden-set.json (T012)", () => {
-  // The scenario count itself is asserted by "meets the ≥39/40 pass bar in aggregate" below
-  // (expect(total).toBe(40)) — a standalone count-only test here would just duplicate that
+  // The scenario count itself is asserted by "meets the ≥40/41 pass bar in aggregate" below
+  // (expect(total).toBe(41)) — a standalone count-only test here would just duplicate that
   // assertion in its own test slot without exercising VerifyService at all (removed on review).
   let matched = 0;
   const total = goldenSet.scenarios.length;
@@ -150,9 +150,9 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     });
   }
 
-  it("meets the ≥39/40 pass bar in aggregate", () => {
-    expect(matched).toBeGreaterThanOrEqual(39);
-    expect(total).toBe(40);
+  it("meets the ≥40/41 pass bar in aggregate", () => {
+    expect(matched).toBeGreaterThanOrEqual(40);
+    expect(total).toBe(41);
   });
 
   it("retrieval-failure gate rule: a claim with retrieval_status=error never resolves to unsupported, even if VERIFY said so", async () => {

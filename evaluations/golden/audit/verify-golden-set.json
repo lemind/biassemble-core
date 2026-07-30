@@ -411,6 +411,21 @@
       "expected_verdict": "partially_supported",
       "expected_evidence": "The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future. We will need substantial additional financing to develop our products and implement our operating plans.",
       "expected_note": "\"substantial doubt\" is a specific, defined accounting/audit term the passage never uses — the passage is on-topic (sustained losses, financing need) but doesn't state the formal conclusion, so this is deterministically partially_supported regardless of what the model itself guesses."
+    },
+    {
+      "id": "verify-041-passage-fallback-eps-evidence-field-empty",
+      "trap_type": "real production incident (run 10/11 A/B comparison, 2026-07-30, live deployed pipeline_code_version 54acd729) — same claim as verify-036, but this time VERIFY's evidence field itself came back empty even though retrieval succeeded and the model's own note named the right figure; the model simply never copied it into the evidence JSON field. Confirmed reproducible: net-loss-shaped claims sharing a sentence with a second number reliably hit this gap. Fixed not by another prompt revision (six-plus have each fixed one shape while regressing another) or by trusting note text (unconstrained LLM prose, same risk class as the reverted keyword-proximity fallback), but by scanning the claim's own retrieved passages directly — the same text the model already read, independent of what it echoed into evidence.",
+      "claim": "Net loss was $(0.62) per diluted share.",
+      "passages": [
+        { "location": "allogene-income-statement", "text": "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028." }
+      ],
+      "seed_verdict": "unsupported",
+      "seed_evidence": [],
+      "seed_confidence": 1,
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028.",
+      "expected_note": "the passage states the 2025 net loss per share was $(0.87), not $(0.62) as claimed — recovered from the claim's own retrieved passage, not from VERIFY's (empty) evidence field.",
+      "expected_synthesized": false
     }
   ]
 }

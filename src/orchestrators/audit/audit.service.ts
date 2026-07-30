@@ -22,12 +22,7 @@ export interface AuditRunRequest {
 
 type Stage = "extract" | "retrieve" | "verify" | "gate";
 
-/**
- * Orchestrates EXTRACT → RETRIEVE → VERIFY → GATE (T020). The `audits` row
- * (status="running") must already exist before `run()` is called — created
- * synchronously by the route handler before returning 202 (schema.ts's
- * ordering note) — this method only ever transitions it to complete/failed.
- */
+/** Orchestrates EXTRACT->RETRIEVE->VERIFY->GATE (T020). `audits` row must already exist (status=running) before run() is called. */
 export class AuditService {
   constructor(
     private extractService: ExtractService,
@@ -35,10 +30,7 @@ export class AuditService {
     private gateService: GateService,
     private auditStore: AuditStore,
     private pipelineCodeVersion: string,
-    // Optional (T040, nice-to-have): when provided, a per-audit token/call
-    // cost summary is logged once the pipeline completes. Optional so
-    // existing callers/tests that don't care about cost telemetry aren't
-    // forced to wire it up.
+    // Optional (T040) — per-audit cost telemetry; existing callers/tests don't need to wire it up.
     private llmCallStore?: LlmCallStore
   ) {}
 
@@ -84,8 +76,7 @@ export class AuditService {
       try {
         await this.auditStore.updateClaimRetrieval(claim.claimId, { passagesRetrievedCount: retrieved.length, retrievalStatus: status });
         if (retrieved.length > 0) {
-          // All retrieved passages are passed to VERIFY in this version — no
-          // separate "retrieve more than we verify" narrowing step.
+          // All retrieved passages go to VERIFY — no separate narrowing step.
           await this.auditStore.createClaimPassages(
             retrieved.map((p) => ({
               claimId: claim.claimId,
@@ -130,22 +121,7 @@ export class AuditService {
     await this.logCostSummary(auditId);
   }
 
-  /**
-   * Writes a terminal-state transition (complete or failed) to the audits
-   * row — shared by the success path and markFailed, since both are
-   * subject to the same T035 immutability guard (db/queries.ts).
-   *
-   * If the audit is already terminal (AuditImmutableError — a
-   * redelivered/racing invocation lost the race to another run of the same
-   * auditId), that's benign: logged at info level, not an error, and
-   * swallowed — there's nothing left to do. Any OTHER failure here is a
-   * genuine, unexpected problem (e.g. a transient DB error) and is
-   * rethrown so it reaches the caller (run(), and beyond it
-   * jobs/audit-run.ts's outer catch and Inngest's own retry/alerting)
-   * instead of being silently swallowed and leaving the audit stuck
-   * without ever surfacing why (found on review — the original version
-   * of this catch never rethrew for any reason).
-   */
+  /** Terminal transition, shared by success + markFailed (T035 immutability guard). AuditImmutableError = benign race, swallowed; anything else rethrows. */
   private async commitTerminalUpdate(auditId: string, data: Parameters<AuditStore["updateAudit"]>[1]): Promise<void> {
     try {
       await this.auditStore.updateAudit(auditId, data);
@@ -162,13 +138,7 @@ export class AuditService {
     }
   }
 
-  /**
-   * T040 (change-plan gap #4, D018 §2 Consequences) — per-audit token/call
-   * cost telemetry, logged (not persisted as a new response field — no
-   * governing document specifies one) once the pipeline completes. Best
-   * effort: a failure here must never affect the audit's own outcome, which
-   * has already been committed by the time this runs.
-   */
+  /** T040 — per-audit cost telemetry, logged only. Best effort: a failure here must never affect the already-committed audit outcome. */
   private async logCostSummary(auditId: string): Promise<void> {
     if (!this.llmCallStore) return;
     try {

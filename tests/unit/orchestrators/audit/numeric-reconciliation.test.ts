@@ -9,8 +9,9 @@ import {
   detectMagnitudeClaim,
   extractCurrentPriorPair,
   reconcileMagnitudeClaim,
-} from "../../../../src/orchestrators/audit/verify.service.js";
+} from "../../../../src/orchestrators/audit/verify-reconcilers.js";
 import type { Claim } from "../../../../src/db/schema.js";
+import type { RetrievedPassage } from "../../../../src/rag/corpus-client.js";
 
 function makeClaim(claimText: string): Claim {
   return {
@@ -287,6 +288,54 @@ describe("reconcileNumericVerdict — Fix 1 (bidirectional currency/percent chec
   });
 });
 
+function makePassage(text: string, passageId = randomUUID()): RetrievedPassage {
+  return { passageId, docId: "doc1", location: null, text, rank: 1, score: 1 };
+}
+
+describe("reconcileNumericVerdict — passage fallback (2026-07-30, found on review of real A/B run data)", () => {
+  it("real production shape: resolves an EPS claim by scanning retrieved passages directly when VERIFY's evidence is empty", () => {
+    const claim = makeClaim("Net loss was $(0.62) per diluted share.");
+    const passages = [
+      makePassage("Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028."),
+    ];
+    const result = reconcileNumericVerdict(claim, { verdict: "unsupported", evidence: [], note: "no evidence", confidence: 1 }, passages);
+    expect(result.verdict).toBe("contradicted");
+    expect(result.evidence).toEqual([passages[0]!.text]);
+    expect(result.sourceRefs).toEqual([passages[0]!.passageId]);
+    expect(result.confidence).toBe(1);
+  });
+
+  it("real regression found on review (verify-009 scope trap): does NOT fire when a passage contains two percent values for different scopes — must not credit a segment's growth rate as if it were the consolidated total's", () => {
+    // "Greater China ... 28% ..." (segment growth) vs "Total net sales ... 17%" (consolidated) —
+    // both retrieved for a claim about the consolidated total. Percent has no scale-word signal
+    // to disambiguate, so a passage with 2+ percent values must be skipped, not guessed at.
+    const claim = makeClaim("Apple's total net sales grew 28% year-over-year this quarter.");
+    const passages = [
+      makePassage("Greater China 20,497 16,002 28% 46,023 34,515 33%"),
+      makePassage("Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"),
+    ];
+    const result = reconcileNumericVerdict(claim, { verdict: "contradicted", evidence: [], note: "no evidence", confidence: 1 }, passages);
+    expect(result.verdict).toBe("contradicted"); // unchanged — must not flip to 'supported'
+  });
+
+  it("known, accepted limitation: does NOT resolve a claim when its own passage contains a second same-scale figure with no disambiguating signal (net loss vs. adjacent cash-on-hand, both scale=million)", () => {
+    const claim = makeClaim("Net loss narrowed to $143.2 million.");
+    const passages = [
+      makePassage("Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028."),
+    ];
+    const result = reconcileNumericVerdict(claim, { verdict: "unsupported", evidence: [], note: "no evidence", confidence: 1 }, passages);
+    // 190.9 (net loss) and 258.3 (cash) are both scale=million — scale-presence can't tell them
+    // apart, so this must stay unresolved rather than guess. This is the real, remaining gap.
+    expect(result.verdict).toBe("unsupported");
+  });
+
+  it("does not engage when no passages are provided (default empty array, backward compatible)", () => {
+    const claim = makeClaim("Net loss narrowed to $143.2 million.");
+    const result = reconcileNumericVerdict(claim, { verdict: "unsupported", evidence: [], note: "no evidence", confidence: 1 });
+    expect(result.verdict).toBe("unsupported");
+  });
+});
+
 describe("detectMagnitudeClaim", () => {
   it("matches 'more than doubling'", () => {
     expect(detectMagnitudeClaim("Revenue more than doubling year-over-year")).toEqual({ multiple: 2.0 });
@@ -370,6 +419,23 @@ describe("reconcileTemporalVerdict — date comparator (2026-07-29, reproduced a
     expect(result.note).toContain("Q3 2026");
     expect(result.note).toContain("Q1 2028");
     expect(result.confidence).toBe(1);
+  });
+
+  it("real bug found on review (2026-07-30, real A/B run comparison): the corrected note must LEAD with the code's conclusion, not bury it after the model's original (conflicting) wording", () => {
+    // A real run showed verdict='contradicted' persisted next to a note ending "...which supports
+    // the claim that cash runway extends into Q3 2026" — the override appended its tag AFTER the
+    // model's own sentence instead of leading with the correction, so a reader saw "CONTRADICTED"
+    // next to text arguing the opposite. The corrected conclusion must come first; the model's
+    // original wording, if kept at all, must be clearly marked as superseded context.
+    const claim = makeClaim("Cash runway extends into Q3 2026.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "supported",
+      evidence: ["extends runway into Q1 2028"],
+      note: "The passage states runway extends into Q1 2028, which supports the claim that cash runway extends into Q3 2026.",
+    });
+    expect(result.verdict).toBe("contradicted");
+    expect(result.note?.indexOf("verdict set by code")).toBeLessThan(result.note?.indexOf("which supports the claim") ?? -1);
+    expect(result.note).toContain("superseded");
   });
 
   it("does not get confused by a bare quarter mention with no attached year (e.g. 'ends Q4 with $258.3 million cash') — only one unambiguous quarter+year pair exists in that evidence", () => {

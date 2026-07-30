@@ -111,4 +111,24 @@ The pipeline is **append-only**: each stage consumes the immutable output of the
 
 ---
 
+## §5. VERIFY reconciliation chain — code-side hardening (2026-07-29/30)
+
+**Decision**: five deterministic reconcilers run after every VERIFY call, each correcting one narrow, named failure shape found in real production runs. None of them parse arbitrary reasoning prose as ground truth; each is scoped to a specific, testable signal.
+
+1. **Numeric** (`reconcileNumericVerdict`) — runs `compare.ts` on any claim with an extractable number, regardless of VERIFY's raw verdict (not gated to `supported`/`contradicted`). Sets `confidence: 1` on override so `GateService`'s threshold re-gate doesn't silently undo it.
+2. **Passage fallback** — when VERIFY's `evidence` is empty, scans the claim's own retrieved passages directly instead of trusting `note` text. Reuses the same scale-presence disambiguation as the evidence path; a passage with 2+ same-unit, non-disambiguable figures is skipped, not guessed at. Known gap: a claim whose passage has two same-scale companion figures (e.g. net loss and cash-on-hand both in millions) still won't resolve — accepted, not silently dropped.
+3. **Temporal** (`reconcileTemporalVerdict`) — quarter/year comparator for date-shaped claims. Scoped to `supported`/`contradicted` inputs only (unlike #1): no scale-presence-equivalent signal exists for bare dates, so it doesn't extend into `unsupported`/`unverifiable` territory.
+4. **Defined-term policy** (`reconcileDefinedTermVerdict`) — a claim asserting a formally-defined term (e.g. "substantial doubt") absent verbatim from evidence is deterministically set to `partially_supported`. Curated term list, one entry per confirmed incident. Requires a negation guard and a co-occurrence anchor (e.g. "going concern") to avoid misfiring on unrelated uses of the same phrase.
+5. **Verdict/note consistency** (`reconcileVerdictNoteConsistency`) — a `supported` verdict is invalid if its own note asserts a contradiction (regex-detected, negation-aware).
+6. **Chain-reversal guard** — the five reconcilers run in sequence; each checks a shared `CODE_OVERRIDE_TAG_RE` tag first and defers to any prior stage's already-tagged decision, so a later, unrelated-dimension check can't silently undo an earlier correct one.
+7. **Override note ordering** — every override note leads with the code's conclusion; the model's original note (if any) is kept but marked superseded, never left to read as the current explanation.
+8. **Confidence-forcing scope**: only the deterministic reconcilers (1, 3) force `confidence: 1` on override. The two text-heuristic reconcilers (4, 5) do not — they stay behind `GateService`'s confidence gate as a real safety net, since a regex misfire is less trustworthy than proven arithmetic.
+9. **Magnitude** (`reconcileMagnitudeClaim`, T041b, earlier session) — comparative-magnitude claims ("more than doubled") checked against a ratio computed from the cited evidence's own current/prior pair: ratio ≥ claimed multiple = `supported`; ≥90% = `partially_supported`; below = `contradicted`.
+
+**Rejected**: a sixth VERIFY prompt revision to fix evidence-population reliability directly — six-plus prior revisions have each fixed one shape while regressing another (going-concern alone flipped seven times across runs); betting on prompt-following reliability for a new shape inherits that track record instead of removing the dependency.
+
+**Also rejected, reverted after shipping**: a keyword-proximity fallback that searched retrieved passages by nearby words when evidence was empty. On real dense filing text it matched a claim to a same-keyword, wrong-measure figure (e.g. a liabilities claim matched to unrelated GAAP opex guidance) — a confident, wrong accusation. Proximity can only establish "these words are close," never "same measure." The passage fallback in #2 above replaces it with typed numeric extraction only, no proximity.
+
+---
+
 **Source**: ADR-000-b2b-audit-path.md (top-level docs/, §4 step 2/4, §6, §7); b2b-change-plan.md §0, §2, §6 (gaps #1, #3, #4); `context-prompt-b2b-transformation.md` (`docs/b2b/`, moved in from ~/Downloads) §2, §3.1, §5, §8 step 6, §9 ADR seeds 1/2/4/5; `audit-output-spec.md` (`docs/b2b/`, moved in from ~/Downloads) — `findings[].verification` schema, `kb_entries_retrieved` precedent, single-audit/batch schema (superseded on top-level shape per §2's schema-reconciliation note); `context-prompt-biassemble-overview.md` (~/Downloads, not yet moved in) §5 step 3 confirms numeric normalization is code-not-LLM; `context-prompt-self-corpus-triage.md` (~/Downloads, not yet moved in) — "no composite score in consumer view" ruling, §4.4.

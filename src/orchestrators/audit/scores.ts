@@ -1,23 +1,6 @@
 import type { Claim } from "../../db/schema.js";
 
-/**
- * Business metrics — D018 §4.1/§4.2, formulas fully pinned down there.
- *
- * Brought forward from Phase 4/US2 into Phase 3 (documented deviation): T019
- * said "score-summary computation is US2's addition, not built here," but
- * research.md §5 (written the same session) already assigned this
- * unconditionally to gate.service.ts, and the Zod contract
- * (AuditCompleteResponseSchema) requires `scores` on every complete response
- * — without it, GET /audit/:id can never return a valid result, which fails
- * the loop's own end-to-end usability check. The formulas here don't depend
- * on derive.ts (T026, still deferred to Phase 4 — that module is for
- * per-claim derived-value arithmetic inside VERIFY, a different concern from
- * aggregate business metrics over already-decided verdicts). What's still
- * genuinely deferred: persisting this to the `score_summaries` table
- * (research.md's "compute once, persist, immutable" reproducibility
- * guarantee) — this computes on read instead, an interim step, not the
- * final design.
- */
+/** Business metrics, computed on read (not yet persisted to score_summaries — interim, not final design). Formulas: D018 §4.1/§4.2. */
 
 export interface ScoreSummaryResult {
   grounded_rate: number | null;
