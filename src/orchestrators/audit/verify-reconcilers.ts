@@ -81,30 +81,80 @@ function buildOverrideNote(tag: string, originalNote: string | null): string {
   return `${tag} (model's original note, superseded by the above: "${originalNote}")`;
 }
 
-/** Scans retrieved passages directly when evidence is empty; NOT pickEvidenceFact reuse (percent needs 2+-match rejection here). D018 §5.2. */
-function pickPassageFact(
+const MEASURE_STOPWORDS = new Set([
+  "the", "a", "an", "of", "at", "in", "on", "for", "to", "and", "or", "with", "its", "it", "as", "by", "from", "that",
+  "this", "was", "were", "is", "are", "be", "been", "has", "have", "had", "reports", "reported", "we", "our",
+]);
+/** How many content words before a figure count as its label — "Total liabilities $123,363" needs 2, dense table rows need a little slack. */
+const LABEL_WINDOW = 5;
+
+/** The measure label attached to a figure: adjacent bigrams of the content words right before it ("total liabilities", "net loss"). D018 §5.2. */
+function labelBigramsBefore(text: string, index: number): Set<string> {
+  const words = (text.slice(0, index).toLowerCase().match(/[a-z]+/g) ?? [])
+    .filter((w) => w.length > 1 && !MEASURE_STOPWORDS.has(w))
+    .slice(-LABEL_WINDOW);
+  const out = new Set<string>();
+  for (let i = 0; i + 1 < words.length; i++) out.add(`${words[i]} ${words[i + 1]}`);
+  return out;
+}
+
+/** Same as extractAllNumericFacts, but each fact keeps the measure label it sits behind. D018 §5.2. */
+function extractNumericFactsWithLabels(text: string): Array<{ fact: ExtractedNumericFact; labels: Set<string> }> {
+  const out: Array<{ fact: ExtractedNumericFact; labels: Set<string>; index: number }> = [];
+  for (const m of text.matchAll(new RegExp(CURRENCY_RE.source, "gi"))) {
+    if (!m[2]) continue;
+    let value = parseFloat(m[2].replace(/,/g, ""));
+    if (Number.isNaN(value)) continue;
+    if (m[1] === "(" || m[3] === ")") value = -Math.abs(value);
+    const index = m.index ?? 0;
+    out.push({ fact: { value, unit: "USD", scale: m[4]?.toLowerCase() ?? null }, labels: labelBigramsBefore(text, index), index });
+  }
+  for (const m of text.matchAll(new RegExp(PERCENT_RE.source, "g"))) {
+    if (!m[1]) continue;
+    const value = parseFloat(m[1].replace(/,/g, ""));
+    if (Number.isNaN(value)) continue;
+    const index = m.index ?? 0;
+    out.push({ fact: { value, unit: "percent", scale: null }, labels: labelBigramsBefore(text, index), index });
+  }
+  return out.sort((a, b) => a.index - b.index).map(({ fact, labels }) => ({ fact, labels }));
+}
+
+/** Claim period naming a year the passage never mentions = different period, not a conflicting figure. D018 §5.2. */
+function passagePeriodConflicts(claimPeriod: string | null, passageText: string): boolean {
+  const claimYears = claimPeriod?.match(/(?<![\d.])(?:19|20)\d{2}(?![\d.])/g);
+  if (!claimYears?.length) return false;
+  const passageYears = passageText.match(/(?<![\d.])(?:19|20)\d{2}(?![\d.])/g);
+  if (!passageYears?.length) return false;
+  return !claimYears.some((y) => passageYears.includes(y));
+}
+
+/** Same-unit figures sharing the claim's measure label, from passages of the claim's own period. Callers decide by unanimity, never by picking one. D018 §5.2. */
+function collectPassageFacts(
+  claim: Claim,
   claimFact: ExtractedNumericFact,
   passages: RetrievedPassage[]
-): { fact: ExtractedNumericFact; passageId: string; passageText: string } | null {
+): Array<{ fact: ExtractedNumericFact; passageId: string; passageText: string }> {
+  const claimLabels = extractNumericFactsWithLabels(claim.claimText).find(
+    (c) => c.fact.unit === claimFact.unit && c.fact.value === claimFact.value
+  )?.labels;
+  if (!claimLabels?.size) return [];
+
   const candidates: Array<{ fact: ExtractedNumericFact; passageId: string; passageText: string }> = [];
   for (const passage of passages) {
-    const matches = extractAllNumericFacts(passage.text).filter((f) => f.unit === claimFact.unit);
-    let fact: ExtractedNumericFact | null = null;
-    if (matches.length === 1) {
-      fact = matches[0] ?? null;
-    } else if (matches.length > 1 && claimFact.unit === "USD") {
-      const sameScale = matches.filter((f) => (f.scale === null) === (claimFact.scale === null));
-      fact = sameScale.length === 1 ? (sameScale[0] ?? null) : null;
+    if (passagePeriodConflicts(claim.period, passage.text)) continue;
+    for (const { fact, labels } of extractNumericFactsWithLabels(passage.text)) {
+      if (!isUsableNumericFact(claimFact, fact)) continue;
+      if (![...labels].some((l) => claimLabels.has(l))) continue;
+      candidates.push({ fact, passageId: passage.passageId, passageText: passage.text });
     }
-    if (!fact) continue;
-    if (claimFact.unit === "USD" && (claimFact.scale === null) !== (fact.scale === null)) continue;
-    candidates.push({ fact, passageId: passage.passageId, passageText: passage.text });
   }
-  if (candidates.length === 0) return null;
-  if (candidates.length === 1) return candidates[0] ?? null;
-  const firstValue = candidates[0]?.fact.value;
-  const allAgree = candidates.every((c) => c.fact.value === firstValue);
-  return allAgree ? (candidates[0] ?? null) : null;
+  return candidates;
+}
+
+/** Override notes must carry the scale word — a bare "123363" next to "97.8" reads as a 1000x gap when it's $123.4M vs $97.8M. D018 §5.2. */
+function formatFact(fact: ExtractedNumericFact): string {
+  if (fact.unit === "percent") return `${fact.value}%`;
+  return fact.scale ? `${fact.value} ${fact.scale}` : `${fact.value}`;
 }
 
 /** A fact only counts as usable when its unit matches AND (for USD) scale-presence agrees — a same-unit fact that fails this must not block the passage fallback below. D018 §5.2. */
@@ -129,53 +179,70 @@ export function reconcileNumericVerdict(
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
+  const compareTo = (fact: ExtractedNumericFact) =>
+    compare(
+      { value: claimFact.value, unit: claimFact.unit, scale: claimFact.scale, period: claim.period },
+      { value: fact.value, unit: fact.unit, scale: fact.scale, period: claim.period }
+    );
+
   // Primary path: VERIFY's own quoted evidence, if it yields an unambiguous comparable fact.
   const firstEvidence = result.evidence?.[0];
   const evidenceFactCandidate = firstEvidence ? pickEvidenceFact(claimFact, firstEvidence) : null;
-  let evidenceFact = isUsableNumericFact(claimFact, evidenceFactCandidate) ? evidenceFactCandidate : null;
+  const evidenceFact = isUsableNumericFact(claimFact, evidenceFactCandidate) ? evidenceFactCandidate : null;
+
+  let equal: boolean;
+  let citedFacts: ExtractedNumericFact[];
   let evidenceOverride: { evidence: string[]; sourceRefs: string[] } | null = null;
 
-  // Fallback: evidence was empty, OR it "found" a fact that isn't actually usable (e.g. a lone,
-  // wrong-measure number the LLM happened to quote) — scan this claim's own retrieved passages
-  // directly, independent of what the LLM echoed (see pickPassageFact above). Real regression
-  // (2026-07-30): a single truncated evidence snippet naming the wrong figure used to be trusted
-  // blindly, which blocked this fallback from ever running. D018 §5.2.
-  if (!evidenceFact) {
-    const passageMatch = pickPassageFact(claimFact, passages);
-    if (passageMatch && isUsableNumericFact(claimFact, passageMatch.fact)) {
-      evidenceFact = passageMatch.fact;
-      evidenceOverride = { evidence: [passageMatch.passageText], sourceRefs: [passageMatch.passageId] };
+  if (evidenceFact) {
+    const comparison = compareTo(evidenceFact);
+    if (!comparison.comparable || comparison.equal === null) {
+      return { verdict: result.verdict, note: result.note, confidence };
     }
+    equal = comparison.equal;
+    citedFacts = [evidenceFact];
+  } else {
+    // Fallback when evidence is empty or not comparable: decide by unanimity across every
+    // same-measure figure in the passages, never by picking one. D018 §5.2.
+    const passageFacts = collectPassageFacts(claim, claimFact, passages);
+    if (passageFacts.length === 0) {
+      return { verdict: result.verdict, note: result.note, confidence }; // nothing usable anywhere — trust the LLM
+    }
+    const comparisons = passageFacts.map((c) => compareTo(c.fact));
+    if (comparisons.some((c) => !c.comparable || c.equal === null)) {
+      return { verdict: result.verdict, note: result.note, confidence };
+    }
+    const allEqual = comparisons.every((c) => c.equal === true);
+    const allDiffer = comparisons.every((c) => c.equal === false);
+    if (!allEqual && !allDiffer) {
+      return { verdict: result.verdict, note: result.note, confidence }; // split — can't decide without knowing which figure is the measure
+    }
+    equal = allEqual;
+    citedFacts = passageFacts.map((c) => c.fact);
+    // Cite EVERY passage the quoted figures came from — citing only the first leaves numbers in the
+    // note that a reviewer can't find in the evidence. D018 §5.2.
+    const byPassage = new Map(passageFacts.map((c) => [c.passageId, c.passageText]));
+    evidenceOverride = { evidence: [...byPassage.values()], sourceRefs: [...byPassage.keys()] };
   }
 
-  if (!evidenceFact) {
-    return { verdict: result.verdict, note: result.note, confidence }; // nothing usable anywhere — trust the LLM
-  }
+  const citedLabel = citedFacts.map(formatFact).join(", ");
 
-  const comparison = compare(
-    { value: claimFact.value, unit: claimFact.unit, scale: claimFact.scale, period: claim.period },
-    { value: evidenceFact.value, unit: evidenceFact.unit, scale: evidenceFact.scale, period: claim.period }
-  );
-  if (!comparison.comparable) {
-    return { verdict: result.verdict, note: result.note, confidence };
-  }
-
-  if (comparison.equal && result.verdict !== "supported") {
+  if (equal && result.verdict !== "supported") {
     return {
       verdict: "supported",
       note: buildOverrideNote(
-        `[verdict set by code: ${claimFact.value} and ${evidenceFact.value} are within tolerance — compare.ts, D018 §2.3]`,
+        `[verdict set by code: ${formatFact(claimFact)} and ${citedLabel} are within tolerance — compare.ts, D018 §2.3]`,
         result.note
       ),
       confidence: 1,
       ...(evidenceOverride ?? {}),
     };
   }
-  if (!comparison.equal && result.verdict !== "contradicted") {
+  if (!equal && result.verdict !== "contradicted") {
     return {
       verdict: "contradicted",
       note: buildOverrideNote(
-        `[verdict set by code: ${claimFact.value} and ${evidenceFact.value} disagree beyond tolerance — compare.ts, D018 §2.3]`,
+        `[verdict set by code: ${formatFact(claimFact)} disagrees beyond tolerance with every same-measure figure cited (${citedLabel}) — compare.ts, D018 §2.3]`,
         result.note
       ),
       confidence: 1,
@@ -251,9 +318,8 @@ export function reconcileTemporalVerdict(
   let evidenceQuarter = firstEvidence ? pickEvidenceQuarter(firstEvidence) : null;
   let evidenceOverride: { evidence: string[]; sourceRefs: string[] } | null = null;
 
-  // Fallback: evidence was empty or ambiguous — scan retrieved passages directly, same shape as
-  // reconcileNumericVerdict's fix (D018 §5.2), added preemptively rather than waiting for this
-  // reconciler to also misfire on an evidence-empty run.
+  // Fallback when evidence is empty or ambiguous: scan passages, same shape as the numeric
+  // reconciler's. Added preemptively, not after an incident. D018 §5.3.
   if (!evidenceQuarter) {
     const passageMatch = pickPassageQuarter(passages);
     if (passageMatch) {
@@ -370,7 +436,10 @@ export function reconcileDefinedTermVerdict(
       "[verdict set by code: claim asserts a defined term not present verbatim in the cited evidence or retrieved passages — rule 3, D018 §2.3]",
       result.note
     ),
-    confidence, // not forced to 1 — text heuristic, stays behind GateService's gate. D018 §5.8.
+    // Forced to 1: this is a deterministic presence/negation check over fixed text, and passing the
+    // model's confidence through meant GateService silently dropped the override whenever the model
+    // happened to return 0 — which is what buried going-concern claims. D018 §5.8.
+    confidence: 1,
   };
 }
 

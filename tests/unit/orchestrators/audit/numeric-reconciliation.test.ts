@@ -318,15 +318,19 @@ describe("reconcileNumericVerdict — passage fallback (2026-07-30, found on rev
     expect(result.verdict).toBe("contradicted"); // unchanged — must not flip to 'supported'
   });
 
-  it("known, accepted limitation: does NOT resolve a claim when its own passage contains a second same-scale figure with no disambiguating signal (net loss vs. adjacent cash-on-hand, both scale=million)", () => {
+  it("previously-accepted limitation, now CLOSED (2026-07-30): resolves a claim whose passage holds a second same-scale figure, via the measure label attached to each figure", () => {
+    // Was pinned as a permanent gap: 190.9 (net loss) and 258.3 (cash) are both scale=million, so
+    // scale-presence alone couldn't tell them apart and the whole passage was skipped — which is why
+    // net loss/total assets/total liabilities all went silent across four consecutive real runs.
+    // Now each figure carries the content-word label it sits behind, so "net loss" selects 190.9 and
+    // excludes the cash figure. D018 §5.2.
     const claim = makeClaim("Net loss narrowed to $143.2 million.");
     const passages = [
       makePassage("Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028."),
     ];
     const result = reconcileNumericVerdict(claim, { verdict: "unsupported", evidence: [], note: "no evidence", confidence: 1 }, passages);
-    // 190.9 (net loss) and 258.3 (cash) are both scale=million — scale-presence can't tell them
-    // apart, so this must stay unresolved rather than guess. This is the real, remaining gap.
-    expect(result.verdict).toBe("unsupported");
+    expect(result.verdict).toBe("contradicted");
+    expect(result.confidence).toBe(1);
   });
 
   it("does not engage when no passages are provided (default empty array, backward compatible)", () => {
@@ -362,6 +366,61 @@ describe("reconcileNumericVerdict — real regression (2026-07-30, third A/B run
   });
 });
 
+describe("CANONICAL NUMERIC-CONFLICT GATE (2026-07-30) — the four real Allogene claims, asserted every run", () => {
+  // Ten consecutive live runs disagreed with each other on these four. They are structurally
+  // identical (claimed figure vs. a conflicting same-measure figure sitting in a retrieved passage),
+  // so all four MUST be resolved deterministically by code, never left to whatever the LLM guessed.
+  // Seeded with the worst raw shape a real run produced: evidence empty, confidence 0.
+  // If any of these regress to silence, the numeric comparator is broken again. D018 §5.2.
+  const BALANCE = "Total assets $415,905 thousand. Total liabilities $123,363 thousand.";
+  const LIQUIDITY =
+    "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028.";
+
+  const canonical = [
+    { claim: "Total assets stood at $389.5 million at year-end.", period: "FY2025 year-end" },
+    { claim: "Total liabilities stood at $97.8 million at year-end.", period: "FY2025 year-end" },
+    { claim: "Net loss narrowed to $143.2 million.", period: "FY2025" },
+    { claim: "Net loss was $(0.62) per diluted share.", period: "FY2025" },
+  ];
+
+  for (const { claim: claimText, period } of canonical) {
+    it(`resolves to contradicted, tagged and at confidence 1: "${claimText}"`, () => {
+      const claim = makeClaim(claimText);
+      claim.period = period;
+      const passages = [makePassage(BALANCE), makePassage(LIQUIDITY)];
+      const result = reconcileNumericVerdict(claim, { verdict: "unverifiable", evidence: [], note: "n", confidence: 0 }, passages);
+
+      expect(result.verdict).toBe("contradicted");
+      expect(result.note).toContain("verdict set by code");
+      // Confidence must clear GateService's threshold, or the override is wiped one stage later.
+      expect(result.confidence).toBe(1);
+      // "contradicted" is never allowed without evidence (data-model.md Verdict validation).
+      expect(result.evidence?.length).toBeGreaterThan(0);
+      expect(result.sourceRefs?.length).toBeGreaterThan(0);
+    });
+  }
+
+  // The other half of the gate: claims whose measure appears in NO retrieved passage must stay
+  // silent. Without these, the four assertions above could be "passed" by firing on everything.
+  const mustStaySilent = [
+    { claim: "Capital expenditures were $14.2 million.", period: "FY2025" },
+    { claim: "Allogene Therapeutics closed FY2025 with total revenue of $12.4 million.", period: "FY2025" },
+    { claim: "Net loss was $257.6 million in FY2024.", period: "FY2024" }, // passage covers FY2025 only
+  ];
+
+  for (const { claim: claimText, period } of mustStaySilent) {
+    it(`stays silent (no false accusation): "${claimText}"`, () => {
+      const claim = makeClaim(claimText);
+      claim.period = period;
+      const passages = [makePassage(BALANCE), makePassage(LIQUIDITY)];
+      const result = reconcileNumericVerdict(claim, { verdict: "unverifiable", evidence: [], note: "n", confidence: 0 }, passages);
+
+      expect(result.verdict).toBe("unverifiable");
+      expect(result.note).not.toContain("verdict set by code");
+    });
+  }
+});
+
 describe("reconcileDefinedTermVerdict — passage fallback (2026-07-30, third A/B run confirmation)", () => {
   it("real production incident: resolves a going-concern claim by scanning retrieved passages directly when VERIFY's evidence is empty", () => {
     const claim = makeClaim("Management flagged substantial doubt about the Company's ability to continue as a going concern.");
@@ -374,7 +433,10 @@ describe("reconcileDefinedTermVerdict — passage fallback (2026-07-30, third A/
       passages
     );
     expect(result.verdict).toBe("partially_supported");
-    expect(result.confidence).toBe(0); // still not forced to 1 — text heuristic, stays behind GateService's gate
+    // Forced to 1 (2026-07-30): passing the model's confidence through meant a raw 0 let GateService
+    // re-gate this straight back to unverifiable, which is why going-concern claims kept vanishing
+    // from Eligible between runs on identical code.
+    expect(result.confidence).toBe(1);
   });
 
   it("leaves the verdict unchanged when the term IS present verbatim in a retrieved passage, even with no LLM evidence", () => {
@@ -589,11 +651,9 @@ describe("reconcileDefinedTermVerdict — going-concern-style rule-3 policy (202
       confidence: 0.9,
     });
     expect(result.verdict).toBe("partially_supported");
-    // Deliberately does NOT force confidence to 1, unlike the deterministic reconcilers — this is
-    // a text presence/negation heuristic, not proven arithmetic, so GateService's confidence gate
-    // stays a real safety net rather than being permanently bypassed. The model's own confidence
-    // (already above any realistic threshold in the real incident this fixes) passes through.
-    expect(result.confidence).toBe(0.9);
+    // Forced to 1 — the presence/negation check is deterministic given claim+evidence, and the old
+    // passthrough let GateService discard the override on a low model confidence. D018 §5.8.
+    expect(result.confidence).toBe(1);
   });
 
   it("real production incident: raises a false 'unsupported'/'unverifiable' to 'partially_supported' when on-topic evidence exists but the term is absent", () => {
@@ -604,7 +664,7 @@ describe("reconcileDefinedTermVerdict — going-concern-style rule-3 policy (202
       confidence: 0.7,
     });
     expect(result.verdict).toBe("partially_supported");
-    expect(result.confidence).toBe(0.7); // passes through unchanged — see comment above
+    expect(result.confidence).toBe(1); // forced, not passed through — see comment above
   });
 
   it("leaves 'supported' unchanged when the defined term IS present verbatim somewhere in evidence (direct restatement)", () => {
