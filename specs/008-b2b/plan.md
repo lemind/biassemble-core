@@ -26,7 +26,7 @@ Wire a second orchestration mode (`mode: "audit"`) into biassemble-core alongsid
 
 **Constraints**: Everything in D018 applies as a hard constraint, not a suggestion — mode-branching confined to the orchestration layer (routes → orchestrators → prompt selection) with all lower layers mode-agnostic; append-only pipeline (no stage rewrites a prior stage's output); claim/passage/audit identifiers stable and never inferred from array position; all numeric comparison and derivation in code, never in a prompt; retrieval score never combined with VERIFY confidence.
 
-**Scale/Scope**: Matches the golden sets built for it — 11 EXTRACT scenarios (10 original + 1 dedup case added on review), 15 VERIFY pairs, 20 numeric-normalization pairs (`evaluations/golden/audit/`). Not scoped or tested against a real 40-output customer engagement in this feature; that's the Fintool run, explicitly out of scope per the spec.
+**Scale/Scope**: Matches the golden sets built for it — 11 EXTRACT scenarios (10 original + 1 dedup case added on review), 15 VERIFY pairs, 20 numeric-normalization pairs (`evaluations/golden/audit/`). Not scoped or tested against a real 40-output customer engagement in this feature; that's the pilot-target run, explicitly out of scope per the spec.
 
 ## Constitution Check
 

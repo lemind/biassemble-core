@@ -4,7 +4,7 @@
 
 ---
 
-You are helping me (solo developer) transform **Biassemble** — a consumer app that detects cognitive biases in personal stories — into a **B2B AI-output groundedness audit** system, while keeping the consumer flow working. Your role: technical co-designer, ADR/spec co-author, honest critic. Fight scope creep; every feature must sit on the path to the first paid audit ($3,000 fixed-fee engagement).
+You are helping me (solo developer) transform **Biassemble** — a consumer app that detects cognitive biases in personal stories — into a **B2B AI-output groundedness audit** system, while keeping the consumer flow working. Your role: technical co-designer, ADR/spec co-author, honest critic. Fight scope creep; every feature must sit on the path to the first paid audit (fixed-fee engagement — see private pricing doc).
 
 ## 1. Current system (what exists)
 
@@ -187,16 +187,14 @@ Alongside each report, generate a standalone **review-prompt** file: a self-cont
 
 ## 8. Business flow — operational runbook
 
-Targets (verified mid-2026; small/mid, founder-reachable; giants excluded):
-1. **Fintool** (SEC-filings copilot) — START: outputs check against public EDGAR filings; every finding independently verifiable by them.
-2. **GC AI** (in-house legal; eval-literate buyer) 3. Hudson Labs (equity research) 4. Brightwave (private-markets memos) 5. Spellbook (contract review) 6. Finster AI 7. ProSights 8. AgentSmyth 9. ModelML 10. Rogo (stretch).
+Targets (verified mid-2026; small/mid, founder-reachable; giants excluded): **see private target list** — the pilot target is a SEC-filings copilot whose outputs check against public EDGAR filings, so every finding is independently verifiable; the rest span in-house legal, equity/private-markets research, contract review, and deal/investment-research workflows.
 
 Per-company loop:
 1. Collect PUBLIC outputs only (demo pages, published samples, free tier) + the public sources they reference (EDGAR, public contracts). Never breach logins/ToS.
 2. Open private /internal/audit page → company, product, domain, task/date → paste output, add sources → Run.
 3. Manual review pass on every finding (approve/override; overrides stored).
 4. Export report + review-prompt → run review-prompt through ≥2 external AIs → drop anything not unanimously VALID.
-5. Pick the 3 strongest findings → teaser cold email ("Found 3 ungrounded claims in [Product]'s sample outputs"; method one-liner: verbatim evidence binding, measured FP<10%, silent-on-clean; offer: $3k, ~40 production outputs, 10 days; 20-min call CTA). Findings go privately, never published as pressure.
+5. Pick the 3 strongest findings → teaser cold email ("Found 3 ungrounded claims in [Product]'s sample outputs"; method one-liner: verbatim evidence binding, measured FP<10%, silent-on-clean; offer: fixed fee, ~40 production outputs, 10 days; 20-min call CTA). Findings go privately, never published as pressure.
 6. Paid engagement: NDA, their real outputs + sources → corpus ingestion → batch audit → report. Data retention: delete corpus post-engagement; keep anonymized labels/overrides (the moat dataset).
 
 Kill criterion (hold me to it): 10+ teaser attempts, zero paid audits → capability is a feature, not a company; fall back to career/OSS paths without regret.
@@ -205,7 +203,7 @@ Kill criterion (hold me to it): 10+ teaser attempts, zero paid audits → capabi
 
 1. **Mode flag vs separate service** — audit mode inside core vs new service. Lean: flag in core, shared Zod schemas, separate prompt files; revisit if audit flow diverges further.
 2. **Corpus handling in engine** — multi-corpus support (corpus_id) vs new table per engagement; embedding model for long passages (MiniLM's 256-token limit is inadequate for filings → swap via EmbeddingProvider; which model; dimension migration plan).
-3. **Claim batching & cost envelope** — batch size for verify calls; target cost per 40-output audit ≤ ~10% of $3k fee.
+3. **Claim batching & cost envelope** — batch size for verify calls; target cost per 40-output audit ≤ ~10% of the fixed fee.
 4. **Verdict taxonomy** — the 5 verdicts + strict-comparability contradiction rule (this doc §5) as the canonical definition.
 5. **Customer data lifecycle** — NDA terms, corpus deletion, what's retained (anonymized labels), where stored.
 6. **Prompt versioning & reproducibility** — extract/verify prompt versions + corpus_version in every audit; reports must be re-runnable.
@@ -220,7 +218,7 @@ Kill criterion (hold me to it): 10+ teaser attempts, zero paid audits → capabi
 4. Core: /audit endpoint wiring extract→retrieve→verify→gate.
 5. Private audit page (form + table + overrides + exports).
 6. Report generator + review-prompt generator.
-7. First real run: one Fintool public sample vs its EDGAR filing = integration test AND first teaser material.
+7. First real run: one pilot-target public sample vs its EDGAR filing = integration test AND first teaser material.
 
 ## 11. How to help me
 

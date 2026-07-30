@@ -59,5 +59,5 @@
 
 1. Manual quorum tracking in v1 (Flow 1 step 7) is clunky — fine for audit #1, worth a lighter UI by audit #3 or so.
 2. The skeptical-reply branch (Flow 2 step 2) has no written response templates — worth drafting 2-3 before the first teaser goes out, not after the first objection arrives.
-3. Payment terms and the SOW template are named as blockers here for the second time (first in b2b-change-plan gap #2) and still don't exist. This is now blocking a described human step, not an abstract gap — write it before Fintool.
+3. Payment terms and the SOW template are named as blockers here for the second time (first in b2b-change-plan gap #2) and still don't exist. This is now blocking a described human step, not an abstract gap — write it before the pilot-target run.
 4. Follow-up cadence (Flow 2 step 2) and reference/testimonial-use policy (Flow 2 step 7) are new proposals introduced by this document, not decisions carried over from anywhere else — flagged inline above, listed again here so they don't get mistaken for settled later.
