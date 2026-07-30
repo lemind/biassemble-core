@@ -18,8 +18,7 @@ import type { Claim } from "../../db/schema.js";
 import type { RetrievedPassage } from "../../rag/corpus-client.js";
 
 const MODULE = "verify-service";
-const BATCH_MIN = 5;
-/** Lowered 10->8: batch size, not verdict logic, was why VERDICT/NOTE CONSISTENCY got ignored at ~10 claims/call. See D018 §2.3. */
+/** Upper bound only — a small audit's last batch may be smaller. Lowered 10->8: batch size, not verdict logic, was why VERDICT/NOTE CONSISTENCY got ignored at ~10 claims/call. D018 §2.3. */
 const BATCH_MAX = 8;
 
 export interface ClaimWithPassages {
@@ -27,7 +26,7 @@ export interface ClaimWithPassages {
   passages: RetrievedPassage[];
 }
 
-/** Groups claims into 5–10-sized batches, grouping by the doc_id their passages share (research.md §6). */
+/** Groups claims into batches of at most BATCH_MAX, grouping by the doc_id their passages share (research.md §6). */
 export function batchClaims(items: ClaimWithPassages[]): ClaimWithPassages[][] {
   const byDoc = new Map<string, ClaimWithPassages[]>();
   const noPassages: ClaimWithPassages[] = [];
@@ -73,7 +72,6 @@ export class VerifyService {
     for (const batch of batches) {
       await this.runBatch(auditId, batch, threshold, promptVersion, providerId);
     }
-    void BATCH_MIN; // target size, not a hard floor — a small audit's last batch may be smaller.
   }
 
   private async runBatch(
@@ -198,6 +196,8 @@ export class VerifyService {
           },
           passagesByClaimId.get(claim.claimId) ?? []
         );
+        if (definedTermReconciled.evidence) evidence = definedTermReconciled.evidence;
+        if (definedTermReconciled.sourceRefs) sourceRefs = definedTermReconciled.sourceRefs;
         verdict = definedTermReconciled.verdict as typeof verdict;
         note = definedTermReconciled.note;
         confidence = definedTermReconciled.confidence;

@@ -403,7 +403,7 @@ export function reconcileDefinedTermVerdict(
   claim: Claim,
   result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number },
   passages: RetrievedPassage[] = []
-): { verdict: string; note: string | null; confidence: number } {
+): { verdict: string; note: string | null; confidence: number; evidence?: string[]; sourceRefs?: string[] } {
   const confidence = result.confidence ?? 1;
   if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
     return { verdict: result.verdict, note: result.note, confidence };
@@ -430,6 +430,13 @@ export function reconcileDefinedTermVerdict(
     return { verdict: result.verdict, note: result.note, confidence }; // term present verbatim — direct restatement, leave as-is
   }
 
+  // A partially_supported verdict the report can't back up is unusable — when the model cited
+  // nothing, cite the passages this decision was actually made against. D018 §5.4.
+  const evidenceOverride =
+    !evidence?.length && passages.length > 0
+      ? { evidence: passages.map((p) => p.text), sourceRefs: passages.map((p) => p.passageId) }
+      : {};
+
   return {
     verdict: "partially_supported",
     note: buildOverrideNote(
@@ -440,6 +447,7 @@ export function reconcileDefinedTermVerdict(
     // model's confidence through meant GateService silently dropped the override whenever the model
     // happened to return 0 — which is what buried going-concern claims. D018 §5.8.
     confidence: 1,
+    ...evidenceOverride,
   };
 }
 

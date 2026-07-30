@@ -437,6 +437,22 @@ describe("reconcileDefinedTermVerdict — passage fallback (2026-07-30, third A/
     // re-gate this straight back to unverifiable, which is why going-concern claims kept vanishing
     // from Eligible between runs on identical code.
     expect(result.confidence).toBe(1);
+    // A partially_supported verdict with an empty evidence array is unbackable in the report —
+    // observed in two real runs (2026-07-30) before this. Cite what the decision was made against.
+    expect(result.evidence).toEqual([passages[0]!.text]);
+    expect(result.sourceRefs).toEqual([passages[0]!.passageId]);
+  });
+
+  it("does not overwrite evidence the model did supply — only fills the gap when it supplied none", () => {
+    const claim = makeClaim("Management flagged substantial doubt about the Company's ability to continue as a going concern.");
+    const modelEvidence = ["The Company has sustained operating losses."];
+    const result = reconcileDefinedTermVerdict(
+      claim,
+      { verdict: "unverifiable", evidence: modelEvidence, note: "n", confidence: 0 },
+      [makePassage("An unrelated retrieved passage about manufacturing capacity.")]
+    );
+    expect(result.verdict).toBe("partially_supported");
+    expect(result.evidence).toBeUndefined(); // caller keeps the model's own evidence
   });
 
   it("leaves the verdict unchanged when the term IS present verbatim in a retrieved passage, even with no LLM evidence", () => {
