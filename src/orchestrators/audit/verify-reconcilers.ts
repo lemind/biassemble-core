@@ -107,6 +107,13 @@ function pickPassageFact(
   return allAgree ? (candidates[0] ?? null) : null;
 }
 
+/** A fact only counts as usable when its unit matches AND (for USD) scale-presence agrees — a same-unit fact that fails this must not block the passage fallback below. D018 §5.2. */
+function isUsableNumericFact(claimFact: ExtractedNumericFact, fact: ExtractedNumericFact | null): fact is ExtractedNumericFact {
+  if (!fact || claimFact.unit !== fact.unit) return false;
+  if (claimFact.unit === "USD" && (claimFact.scale === null) !== (fact.scale === null)) return false;
+  return true;
+}
+
 export function reconcileNumericVerdict(
   claim: Claim,
   result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number },
@@ -124,24 +131,25 @@ export function reconcileNumericVerdict(
 
   // Primary path: VERIFY's own quoted evidence, if it yields an unambiguous comparable fact.
   const firstEvidence = result.evidence?.[0];
-  let evidenceFact = firstEvidence ? pickEvidenceFact(claimFact, firstEvidence) : null;
+  const evidenceFactCandidate = firstEvidence ? pickEvidenceFact(claimFact, firstEvidence) : null;
+  let evidenceFact = isUsableNumericFact(claimFact, evidenceFactCandidate) ? evidenceFactCandidate : null;
   let evidenceOverride: { evidence: string[]; sourceRefs: string[] } | null = null;
 
-  // Fallback: evidence was empty, or didn't yield a usable same-unit fact — scan this claim's own
-  // retrieved passages directly, independent of what the LLM echoed (see pickPassageFact above).
-  if (!evidenceFact || claimFact.unit !== evidenceFact.unit) {
+  // Fallback: evidence was empty, OR it "found" a fact that isn't actually usable (e.g. a lone,
+  // wrong-measure number the LLM happened to quote) — scan this claim's own retrieved passages
+  // directly, independent of what the LLM echoed (see pickPassageFact above). Real regression
+  // (2026-07-30): a single truncated evidence snippet naming the wrong figure used to be trusted
+  // blindly, which blocked this fallback from ever running. D018 §5.2.
+  if (!evidenceFact) {
     const passageMatch = pickPassageFact(claimFact, passages);
-    if (passageMatch && passageMatch.fact.unit === claimFact.unit) {
+    if (passageMatch && isUsableNumericFact(claimFact, passageMatch.fact)) {
       evidenceFact = passageMatch.fact;
       evidenceOverride = { evidence: [passageMatch.passageText], sourceRefs: [passageMatch.passageId] };
     }
   }
 
-  if (!evidenceFact || claimFact.unit !== evidenceFact.unit) {
+  if (!evidenceFact) {
     return { verdict: result.verdict, note: result.note, confidence }; // nothing usable anywhere — trust the LLM
-  }
-  if (claimFact.unit === "USD" && (claimFact.scale === null) !== (evidenceFact.scale === null)) {
-    return { verdict: result.verdict, note: result.note, confidence }; // ambiguous scale — don't guess
   }
 
   const comparison = compare(
@@ -206,11 +214,27 @@ function pickEvidenceQuarter(evidenceText: string): ExtractedQuarter | null {
   return candidates.length === 1 ? (candidates[0] ?? null) : null;
 }
 
+/** Passage-fallback mirror of pickPassageFact, for when VERIFY's evidence is empty or ambiguous — same per-passage, exactly-one-candidate discipline. D018 §5.3. */
+function pickPassageQuarter(passages: RetrievedPassage[]): { quarter: ExtractedQuarter; passageId: string; passageText: string } | null {
+  const candidates: Array<{ quarter: ExtractedQuarter; passageId: string; passageText: string }> = [];
+  for (const passage of passages) {
+    const matches = extractAllQuarters(passage.text);
+    if (matches.length !== 1) continue;
+    candidates.push({ quarter: matches[0]!, passageId: passage.passageId, passageText: passage.text });
+  }
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0] ?? null;
+  const first = candidates[0]!.quarter;
+  const allAgree = candidates.every((c) => c.quarter.year === first.year && c.quarter.quarter === first.quarter);
+  return allAgree ? (candidates[0] ?? null) : null;
+}
+
 /** Date comparator for quarter-shaped claims. Scoped to supported/contradicted inputs only (no same-measure signal for dates). D018 §5.3. */
 export function reconcileTemporalVerdict(
   claim: Claim,
-  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number }
-): { verdict: string; note: string | null; confidence: number } {
+  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number },
+  passages: RetrievedPassage[] = []
+): { verdict: string; note: string | null; confidence: number; evidence?: string[]; sourceRefs?: string[] } {
   const confidence = result.confidence ?? 1;
   if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
     return { verdict: result.verdict, note: result.note, confidence };
@@ -218,14 +242,27 @@ export function reconcileTemporalVerdict(
   if (result.verdict !== "supported" && result.verdict !== "contradicted") {
     return { verdict: result.verdict, note: result.note, confidence };
   }
-  const firstEvidence = result.evidence?.[0];
-  if (!firstEvidence) {
+  const claimQuarter = extractQuarter(claim.claimText);
+  if (!claimQuarter) {
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
-  const claimQuarter = extractQuarter(claim.claimText);
-  const evidenceQuarter = claimQuarter ? pickEvidenceQuarter(firstEvidence) : null;
-  if (!claimQuarter || !evidenceQuarter) {
+  const firstEvidence = result.evidence?.[0];
+  let evidenceQuarter = firstEvidence ? pickEvidenceQuarter(firstEvidence) : null;
+  let evidenceOverride: { evidence: string[]; sourceRefs: string[] } | null = null;
+
+  // Fallback: evidence was empty or ambiguous — scan retrieved passages directly, same shape as
+  // reconcileNumericVerdict's fix (D018 §5.2), added preemptively rather than waiting for this
+  // reconciler to also misfire on an evidence-empty run.
+  if (!evidenceQuarter) {
+    const passageMatch = pickPassageQuarter(passages);
+    if (passageMatch) {
+      evidenceQuarter = passageMatch.quarter;
+      evidenceOverride = { evidence: [passageMatch.passageText], sourceRefs: [passageMatch.passageId] };
+    }
+  }
+
+  if (!evidenceQuarter) {
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
@@ -239,6 +276,7 @@ export function reconcileTemporalVerdict(
         result.note
       ),
       confidence: 1,
+      ...(evidenceOverride ?? {}),
     };
   }
   if (!equal && result.verdict !== "contradicted") {
@@ -249,6 +287,7 @@ export function reconcileTemporalVerdict(
         result.note
       ),
       confidence: 1,
+      ...(evidenceOverride ?? {}),
     };
   }
   return { verdict: result.verdict, note: result.note, confidence };
@@ -296,7 +335,8 @@ function isDefinedTermNegatedInClaim(claimText: string, term: RegExp): boolean {
 
 export function reconcileDefinedTermVerdict(
   claim: Claim,
-  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number }
+  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number },
+  passages: RetrievedPassage[] = []
 ): { verdict: string; note: string | null; confidence: number } {
   const confidence = result.confidence ?? 1;
   if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
@@ -306,7 +346,9 @@ export function reconcileDefinedTermVerdict(
     return { verdict: result.verdict, note: result.note, confidence };
   }
   const evidence = result.evidence;
-  if (!evidence?.length) {
+  // Real regression (2026-07-30): this used to bail out unconditionally when evidence was empty,
+  // unlike reconcileNumericVerdict — added the same passages fallback here. D018 §5.4.
+  if (!evidence?.length && passages.length === 0) {
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
@@ -317,14 +359,15 @@ export function reconcileDefinedTermVerdict(
   if (isDefinedTermNegatedInClaim(claim.claimText, term)) {
     return { verdict: result.verdict, note: result.note, confidence }; // claim asserts the term's ABSENCE, not its presence
   }
-  if (evidence.some((e) => term.test(e))) {
+  const termPresentVerbatim = Boolean(evidence?.some((e) => term.test(e))) || passages.some((p) => term.test(p.text));
+  if (termPresentVerbatim) {
     return { verdict: result.verdict, note: result.note, confidence }; // term present verbatim — direct restatement, leave as-is
   }
 
   return {
     verdict: "partially_supported",
     note: buildOverrideNote(
-      "[verdict set by code: claim asserts a defined term not present verbatim in the cited evidence — rule 3, D018 §2.3]",
+      "[verdict set by code: claim asserts a defined term not present verbatim in the cited evidence or retrieved passages — rule 3, D018 §2.3]",
       result.note
     ),
     confidence, // not forced to 1 — text heuristic, stays behind GateService's gate. D018 §5.8.

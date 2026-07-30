@@ -170,24 +170,34 @@ export class VerifyService {
         );
         if (numericReconciled.evidence) evidence = numericReconciled.evidence;
         if (numericReconciled.sourceRefs) sourceRefs = numericReconciled.sourceRefs;
-        const temporalReconciled = reconcileTemporalVerdict(claim, {
-          verdict: numericReconciled.verdict,
-          evidence: result.evidence,
-          note: numericReconciled.note,
-          confidence: numericReconciled.confidence,
-        });
+        const temporalReconciled = reconcileTemporalVerdict(
+          claim,
+          {
+            verdict: numericReconciled.verdict,
+            evidence: result.evidence,
+            note: numericReconciled.note,
+            confidence: numericReconciled.confidence,
+          },
+          passagesByClaimId.get(claim.claimId) ?? []
+        );
+        if (temporalReconciled.evidence) evidence = temporalReconciled.evidence;
+        if (temporalReconciled.sourceRefs) sourceRefs = temporalReconciled.sourceRefs;
         const magnitudeReconciled = reconcileMagnitudeClaim(claim, {
           verdict: temporalReconciled.verdict,
           evidence: result.evidence,
           note: temporalReconciled.note,
           confidence: temporalReconciled.confidence,
         });
-        const definedTermReconciled = reconcileDefinedTermVerdict(claim, {
-          verdict: magnitudeReconciled.verdict,
-          evidence: result.evidence,
-          note: magnitudeReconciled.note,
-          confidence: magnitudeReconciled.confidence,
-        });
+        const definedTermReconciled = reconcileDefinedTermVerdict(
+          claim,
+          {
+            verdict: magnitudeReconciled.verdict,
+            evidence: result.evidence,
+            note: magnitudeReconciled.note,
+            confidence: magnitudeReconciled.confidence,
+          },
+          passagesByClaimId.get(claim.claimId) ?? []
+        );
         verdict = definedTermReconciled.verdict as typeof verdict;
         note = definedTermReconciled.note;
         confidence = definedTermReconciled.confidence;

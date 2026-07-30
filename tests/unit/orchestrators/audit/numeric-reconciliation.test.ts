@@ -336,6 +336,55 @@ describe("reconcileNumericVerdict — passage fallback (2026-07-30, found on rev
   });
 });
 
+describe("reconcileNumericVerdict — real regression (2026-07-30, third A/B run confirmation): a truncated single-number evidence snippet blocks the passage fallback from ever running", () => {
+  it("a lone, wrong-measure evidence snippet no longer short-circuits the passage scan that finds the right figure", () => {
+    // Real A/B pair, same code, same claim, same passages: one run corrected this EPS claim to
+    // `contradicted` (raw evidence was empty, so pickPassageFact ran and found the unambiguous
+    // scale-null $(0.87) figure). The other run left it `unverifiable`, gated at confidence 0.
+    // The only variable between runs is what the LLM chose to put in `evidence` — this reproduces
+    // the losing shape: a single, truncated, WRONG-measure number ("$190.9 million", the net-loss
+    // aggregate, not the per-share figure this claim is actually comparable to). pickEvidenceFact's
+    // one-candidate branch trusts it without checking whether it's the right measure at all, then
+    // the scale-mismatch guard bails out — and because an evidenceFact was "found" (unit matches),
+    // the passage fallback below it is never even attempted, even though the same passages that
+    // would have resolved this correctly are sitting right there, unused.
+    const claim = makeClaim("Net loss was $(0.62) per diluted share.");
+    const passages = [
+      makePassage("Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028."),
+    ];
+    const result = reconcileNumericVerdict(
+      claim,
+      { verdict: "unverifiable", evidence: ["net loss of $190.9 million"], note: "no comparable figure found", confidence: 0 },
+      passages
+    );
+    expect(result.verdict).toBe("contradicted");
+    expect(result.confidence).toBe(1);
+  });
+});
+
+describe("reconcileDefinedTermVerdict — passage fallback (2026-07-30, third A/B run confirmation)", () => {
+  it("real production incident: resolves a going-concern claim by scanning retrieved passages directly when VERIFY's evidence is empty", () => {
+    const claim = makeClaim("Management flagged substantial doubt about the Company's ability to continue as a going concern.");
+    const passages = [
+      makePassage("The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future."),
+    ];
+    const result = reconcileDefinedTermVerdict(
+      claim,
+      { verdict: "unverifiable", evidence: null, note: "the passage does not mention going concern", confidence: 0 },
+      passages
+    );
+    expect(result.verdict).toBe("partially_supported");
+    expect(result.confidence).toBe(0); // still not forced to 1 — text heuristic, stays behind GateService's gate
+  });
+
+  it("leaves the verdict unchanged when the term IS present verbatim in a retrieved passage, even with no LLM evidence", () => {
+    const claim = makeClaim("Management flagged substantial doubt about the Company's ability to continue as a going concern.");
+    const passages = [makePassage("Management has concluded there is substantial doubt about the Company's ability to continue as a going concern.")];
+    const result = reconcileDefinedTermVerdict(claim, { verdict: "supported", evidence: null, note: "no evidence field populated", confidence: 0.9 }, passages);
+    expect(result.verdict).toBe("supported");
+  });
+});
+
 describe("detectMagnitudeClaim", () => {
   it("matches 'more than doubling'", () => {
     expect(detectMagnitudeClaim("Revenue more than doubling year-over-year")).toEqual({ multiple: 2.0 });
@@ -511,6 +560,18 @@ describe("reconcileTemporalVerdict — date comparator (2026-07-29, reproduced a
     // The quarters DO match (both Q3 2026), which would normally force "supported" — but the
     // note already carries an earlier stage's code-override tag, so this must defer, not overwrite.
     expect(result.verdict).toBe("contradicted");
+  });
+
+  it("passage fallback (2026-07-30, added preemptively): resolves the quarter comparison from retrieved passages when VERIFY's evidence is empty", () => {
+    const claim = makeClaim("Cash runway extends into Q3 2026.");
+    const passages = [
+      makePassage("Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028."),
+    ];
+    const result = reconcileTemporalVerdict(claim, { verdict: "supported", evidence: [], note: "no evidence field populated", confidence: 1 }, passages);
+    expect(result.verdict).toBe("contradicted");
+    expect(result.evidence).toEqual([passages[0]!.text]);
+    expect(result.sourceRefs).toEqual([passages[0]!.passageId]);
+    expect(result.confidence).toBe(1);
   });
 });
 
