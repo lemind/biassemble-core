@@ -35,17 +35,21 @@ export interface ClaimWithPassages {
 }
 
 /**
- * If a third numeric-claim-shape bug shows up after this one (percentage-
- * point claims, date-arithmetic claims, ...), stop writing a fourth bespoke
- * comparator here — that's the signal to generalize further instead of
- * per-type patches. A narrower version of "does VERIFY's own stated
- * reasoning in `note` match the verdict it emitted" now exists —
- * `reconcileVerdictNoteConsistency` below, added for an entity-claim
- * incident, not a numeric one — but it only catches one direction
- * (a "supported" verdict whose own note admits a conflict) via two fixed
- * regexes, not a real parse of arbitrary reasoning prose. Guessing at
- * reasoning prose beyond that narrow, text-only check is still exactly what
- * this module has always refused to do without a real design for it.
+ * STALE WARNING, updated 2026-07-29: the threshold this comment used to warn about ("stop at a
+ * fourth bespoke comparator, generalize instead") has already been crossed. This file now has
+ * FIVE: reconcileNumericVerdict (currency/percent), reconcileTemporalVerdict (quarter/date),
+ * reconcileMagnitudeClaim (ratio phrases), reconcileVerdictNoteConsistency and
+ * reconcileDefinedTermVerdict (both text-heuristic, not arithmetic). Each addition was justified
+ * by one specific, named real production incident (see each function's own header) — the
+ * generalization question this comment raised has been repeatedly deferred, not resolved. The
+ * closest thing to a real generalization that exists is the CODE_OVERRIDE_TAG_RE guard each
+ * reconciler now checks first (added the same day, after a live chain-reversal bug was found):
+ * every override tags its note the same way, and every reconciler defers to a tag a prior stage
+ * already set, which is a real, shared mechanism, not per-type duplication. A genuine "extract a
+ * comparable token of any type from claim+evidence and compare" abstraction is still available
+ * and still not built — reconcileNumericVerdict and reconcileTemporalVerdict are now structurally
+ * near-identical (same guard order, same equal/not-equal branching, same note template shape) and
+ * are the strongest candidate for it, should a sixth comparator make the duplication cost real.
  */
 
 type CurrencyOrPercentUnit = "USD" | "percent";
@@ -221,25 +225,69 @@ function pickEvidenceFact(claimFact: ExtractedNumericFact, evidenceText: string)
  * false accusation. Not rebuilding this without a real design for the
  * comparability problem specifically, not just a smarter proximity search.
  */
+/**
+ * Unconditional (2026-07-29, real production run 9): the "must already be
+ * supported/contradicted" gate this function used to have meant a claim the
+ * model marked "unsupported" or "unverifiable" — even with a real, quoted,
+ * same-measure evidence figure sitting right there in `evidence[0]` — was
+ * never checked at all. A live run showed exactly this: four numeric claims
+ * (net loss, EPS, total assets, total liabilities) whose own `note` named the
+ * real conflicting figure landed on `unverifiable` at confidence 0, never
+ * reaching this function because the gate only let "supported"/"contradicted"
+ * through. compare.ts is deterministic and cheaper to trust than the model's
+ * verdict *string* whenever it has a real number to check — so now it runs
+ * for every verdict shape, not just two of five, as long as evidence exists
+ * and a comparable fact can be extracted from both sides.
+ *
+ * Confidence: GateService (gate.service.ts) runs after VerifyService and
+ * force-resets ANY claim with confidence below threshold to "unverifiable",
+ * wiping evidence/source_refs back to null/[] — a reconciler that flips a
+ * verdict without also raising confidence past the threshold gets silently
+ * undone one stage later. Every override here sets confidence to 1, matching
+ * what the VERIFY prompt itself already asks for ("identifying a conflict is
+ * a confident act, not a low-confidence guess, even though the claim itself
+ * turned out wrong") — this makes that prompt instruction a code guarantee
+ * instead of hoping the model applies it, same relationship this whole file
+ * already has with every other numeric rule.
+ */
+
+/**
+ * Chain-reversal guard (2026-07-29, found on review): five reconcilers now run in sequence in
+ * runBatch, each one's output feeding the next as its "raw" input. Without this guard, a LATER
+ * reconciler can silently undo an EARLIER one's correct, deterministic override for a completely
+ * unrelated reason — e.g. claim "R&D investment totaled $640 million in Q3 2026" vs evidence "...
+ * $64 million in Q3 2026": reconcileNumericVerdict correctly flips supported->contradicted (640 vs
+ * 64 disagree), then reconcileTemporalVerdict runs next, sees that "contradicted" as its own
+ * input, finds the quarters DO match, and flips it straight back to "supported" — erasing a
+ * confirmed numeric contradiction because an unrelated date happened to agree. Every override
+ * below tags its note with this exact string; every reconciler checks for the tag FIRST and
+ * refuses to touch a verdict a prior stage in this same chain already deterministically decided,
+ * no matter what its own, different-dimension check would otherwise conclude. Only the ORIGINAL
+ * raw LLM verdict may ever be overridden, and only by whichever single reconciler actually has a
+ * comparable fact to check for it.
+ */
+const CODE_OVERRIDE_TAG_RE = /\[verdict (?:set|overridden) by code:/;
+
 export function reconcileNumericVerdict(
   claim: Claim,
-  result: { verdict: string; evidence: string[] | null; note: string | null }
-): { verdict: string; note: string | null } {
+  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number }
+): { verdict: string; note: string | null; confidence: number } {
+  const confidence = result.confidence ?? 1;
+  if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
   const firstEvidence = result.evidence?.[0];
   if (!firstEvidence) {
-    return { verdict: result.verdict, note: result.note };
-  }
-  if (result.verdict !== "supported" && result.verdict !== "contradicted") {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
 
   const claimFact = extractNumericFact(claim.claimText);
   const evidenceFact = claimFact ? pickEvidenceFact(claimFact, firstEvidence) : null;
   if (!claimFact || !evidenceFact || claimFact.unit !== evidenceFact.unit) {
-    return { verdict: result.verdict, note: result.note }; // can't check — trust the LLM
+    return { verdict: result.verdict, note: result.note, confidence }; // can't check — trust the LLM
   }
   if (claimFact.unit === "USD" && (claimFact.scale === null) !== (evidenceFact.scale === null)) {
-    return { verdict: result.verdict, note: result.note }; // ambiguous scale — don't guess
+    return { verdict: result.verdict, note: result.note, confidence }; // ambiguous scale — don't guess
   }
 
   const comparison = compare(
@@ -247,22 +295,119 @@ export function reconcileNumericVerdict(
     { value: evidenceFact.value, unit: evidenceFact.unit, scale: evidenceFact.scale, period: claim.period }
   );
   if (!comparison.comparable) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
 
-  if (comparison.equal && result.verdict === "contradicted") {
+  if (comparison.equal && result.verdict !== "supported") {
     return {
       verdict: "supported",
-      note: `${result.note ?? ""} [downgraded from contradicted on review: ${claimFact.value} and ${evidenceFact.value} are within tolerance — compare.ts, D018 §2.3]`.trim(),
+      note: `${result.note ?? ""} [verdict set by code: ${claimFact.value} and ${evidenceFact.value} are within tolerance — compare.ts, D018 §2.3]`.trim(),
+      confidence: 1,
     };
   }
-  if (!comparison.equal && result.verdict === "supported") {
+  if (!comparison.equal && result.verdict !== "contradicted") {
     return {
       verdict: "contradicted",
-      note: `${result.note ?? ""} [upgraded from supported on review: ${claimFact.value} and ${evidenceFact.value} disagree beyond tolerance — compare.ts, D018 §2.3]`.trim(),
+      note: `${result.note ?? ""} [verdict set by code: ${claimFact.value} and ${evidenceFact.value} disagree beyond tolerance — compare.ts, D018 §2.3]`.trim(),
+      confidence: 1,
     };
   }
-  return { verdict: result.verdict, note: result.note };
+  return { verdict: result.verdict, note: result.note, confidence };
+}
+
+interface ExtractedQuarter {
+  year: number;
+  quarter: number;
+}
+
+// Requires a 4-digit year immediately after "Q[1-4]" — a bare "Q4" with no year attached (e.g.
+// "ends Q4 with $258.3 million cash") deliberately does NOT match; guessing which year a bare
+// quarter mention belongs to from surrounding context is exactly the kind of inference this file
+// avoids doing in code (same discipline as the scale-ambiguity guard above).
+const QUARTER_RE = /\bQ([1-4])\s+(\d{4})\b/i;
+
+function extractQuarter(text: string): ExtractedQuarter | null {
+  const m = text.match(QUARTER_RE);
+  if (!m || !m[1] || !m[2]) return null;
+  return { quarter: parseInt(m[1], 10), year: parseInt(m[2], 10) };
+}
+
+function extractAllQuarters(text: string): ExtractedQuarter[] {
+  const out: ExtractedQuarter[] = [];
+  for (const m of text.matchAll(new RegExp(QUARTER_RE.source, "gi"))) {
+    if (!m[1] || !m[2]) continue;
+    out.push({ quarter: parseInt(m[1], 10), year: parseInt(m[2], 10) });
+  }
+  return out;
+}
+
+// Same "don't guess" discipline as pickEvidenceFact: there's no scale-presence-equivalent signal
+// to disambiguate multiple quarter+year mentions in one evidence string, so stay silent rather
+// than pick one arbitrarily.
+function pickEvidenceQuarter(evidenceText: string): ExtractedQuarter | null {
+  const candidates = extractAllQuarters(evidenceText);
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
+}
+
+/**
+ * Temporal comparator (2026-07-29, reproduced across three consecutive real production runs on
+ * identical code): a cash-runway claim naming a specific quarter ("extends into Q3 2026") was
+ * marked "supported" against evidence naming a materially different, later quarter ("extends
+ * runway into Q1 2028") — the model's own reasoning treated "reaches a later date" as satisfying
+ * "extends into this specific date," which is not what a claim naming a specific runway endpoint
+ * asserts. No prompt revision fixed this across three runs; same category as the numeric checks
+ * above — a deterministic date comparison in code, not left to model judgment. Bidirectional,
+ * same shape as reconcileNumericVerdict: same quarter = supported, different quarter =
+ * contradicted.
+ *
+ * Deliberately NOT unconditional, unlike reconcileNumericVerdict — found on review: unlike
+ * currency (unit-typed as USD vs percent, plus a scale-presence guard), a bare "QX YYYY" token has
+ * no signal at all distinguishing "the date this claim is about" from "an unrelated date the
+ * passage also happens to mention." Every real incident behind this fix had raw verdict
+ * "supported"/"contradicted" already, so scoping to just those two — same as reconcileNumericVerdict's
+ * original, pre-widening scope — fixes the actual bug without extending an unvetted heuristic into
+ * "unsupported"/"unverifiable" territory, where the model hasn't even vouched the evidence is about
+ * this claim's subject at all.
+ */
+export function reconcileTemporalVerdict(
+  claim: Claim,
+  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number }
+): { verdict: string; note: string | null; confidence: number } {
+  const confidence = result.confidence ?? 1;
+  if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+  if (result.verdict !== "supported" && result.verdict !== "contradicted") {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+  const firstEvidence = result.evidence?.[0];
+  if (!firstEvidence) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+
+  const claimQuarter = extractQuarter(claim.claimText);
+  const evidenceQuarter = claimQuarter ? pickEvidenceQuarter(firstEvidence) : null;
+  if (!claimQuarter || !evidenceQuarter) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+
+  const equal = claimQuarter.year === evidenceQuarter.year && claimQuarter.quarter === evidenceQuarter.quarter;
+
+  if (equal && result.verdict !== "supported") {
+    return {
+      verdict: "supported",
+      note: `${result.note ?? ""} [verdict set by code: both state Q${claimQuarter.quarter} ${claimQuarter.year} — date comparator, D018 §2.3]`.trim(),
+      confidence: 1,
+    };
+  }
+  if (!equal && result.verdict !== "contradicted") {
+    return {
+      verdict: "contradicted",
+      note: `${result.note ?? ""} [verdict set by code: claim states Q${claimQuarter.quarter} ${claimQuarter.year}, evidence states Q${evidenceQuarter.quarter} ${evidenceQuarter.year} — different quarters, date comparator, D018 §2.3]`.trim(),
+      confidence: 1,
+    };
+  }
+  return { verdict: result.verdict, note: result.note, confidence };
 }
 
 /**
@@ -318,16 +463,106 @@ export function reconcileVerdictNoteConsistency(result: {
   verdict: string;
   evidence: string[] | null;
   note: string | null;
-}): { verdict: string; note: string | null } {
+  confidence?: number;
+}): { verdict: string; note: string | null; confidence: number } {
+  const confidence = result.confidence ?? 1;
+  if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
   if (result.verdict !== "supported" || !result.note || !result.evidence?.length) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
   if (!CONTRADICTION_LANGUAGE_RE.test(result.note) || NEGATED_CONTRADICTION_RE.test(result.note)) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
   return {
     verdict: "contradicted",
     note: `${result.note} [verdict overridden by code: 'supported' is invalid when its own note asserts a contradiction — D018 §2.3 VERDICT/NOTE CONSISTENCY]`.trim(),
+    // Deliberately does NOT force confidence to 1, unlike the deterministic numeric/temporal/
+    // magnitude reconcilers below — found on review: this is a regex-based text heuristic, not a
+    // proven arithmetic/date computation, and forcing confidence past GateService's threshold
+    // would permanently disable that safety net for the one check most likely to misfire on an
+    // unusual phrasing. If the model's own confidence already clears the threshold, this override
+    // stands; if not, GateService's re-gate is a reasonable backstop for a heuristic, not a bug.
+    confidence,
+  };
+}
+
+/**
+ * Defined-term cap (2026-07-29, per the amended plan's inference-tolerance policy, D018 §2.3
+ * rule 3): a claim asserting a specific formally-defined term or conclusion (e.g. "substantial
+ * doubt about going concern," a defined accounting/audit term) that never appears verbatim in
+ * the cited evidence has bounced between supported/unsupported/unverifiable across repeated real
+ * runs on identical code (see evaluations/golden/audit/README.md's verify-034 note) — an
+ * inference-class judgment call the model doesn't stabilize on no matter how the prompt is
+ * worded. This makes rule 3's own stated standard ("not explicitly stated is not a reason for
+ * near-zero confidence... that recognition is confident partially_supported") a code-level
+ * guarantee: whenever a defined term is claimed but absent, verbatim, from every cited evidence
+ * string, the verdict is deterministically set to "partially_supported" — whether the model
+ * over-granted "supported" or under-granted "unsupported"/"unverifiable".
+ *
+ * Deliberately narrow — a short, curated term list (same discipline as MAGNITUDE_PHRASES),
+ * expand only when a new real incident names a new term. Does not touch "contradicted" (a
+ * stronger finding — an explicit opposing statement — this presence-check has no basis to
+ * override) or "partially_supported" (already correct) or claims with no evidence at all
+ * (nothing to check presence against).
+ *
+ * Anchored to require BOTH "substantial doubt" and "going concern" nearby, not "substantial
+ * doubt" alone — found on review: the bare phrase is plausible boilerplate in non-accounting
+ * contexts too (litigation, analyst commentary) that this pipeline's own source filings can
+ * contain, and an unanchored match would force a wrong "partially_supported" on a claim that was
+ * never about going-concern at all.
+ *
+ * DEFINED_TERMS entries must never carry the 'g'/'y' flag — this function tests the same RegExp
+ * object repeatedly (claim text, then each evidence string in a loop); a global/sticky flag would
+ * carry `lastIndex` state across those calls and cause order-dependent false negatives.
+ */
+const DEFINED_TERMS: RegExp[] = [/substantial doubt[^.]{0,80}going concern|going concern[^.]{0,80}substantial doubt/i];
+
+// Same "clause-scoped negation" discipline as NEGATED_CONTRADICTION_RE above — a claim asserting
+// the term's ABSENCE ("does not believe there is substantial doubt...") must not be treated as
+// asserting its presence, or a correct claim gets force-downgraded for the exact opposite of what
+// it actually says. Builds the negation check against the caller's own term dynamically rather
+// than hardcoding "substantial doubt", so it generalizes to future DEFINED_TERMS entries too.
+function isDefinedTermNegatedInClaim(claimText: string, term: RegExp): boolean {
+  const negated = new RegExp(`(?:\\bnot\\b|n't|\\bno\\b|\\bnever\\b)[^.,;]{0,40}(?:${term.source})`, term.flags.includes("i") ? "i" : "");
+  return negated.test(claimText);
+}
+
+export function reconcileDefinedTermVerdict(
+  claim: Claim,
+  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number }
+): { verdict: string; note: string | null; confidence: number } {
+  const confidence = result.confidence ?? 1;
+  if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+  if (result.verdict === "contradicted" || result.verdict === "partially_supported") {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+  const evidence = result.evidence;
+  if (!evidence?.length) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+
+  const term = DEFINED_TERMS.find((re) => re.test(claim.claimText));
+  if (!term) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+  if (isDefinedTermNegatedInClaim(claim.claimText, term)) {
+    return { verdict: result.verdict, note: result.note, confidence }; // claim asserts the term's ABSENCE, not its presence
+  }
+  if (evidence.some((e) => term.test(e))) {
+    return { verdict: result.verdict, note: result.note, confidence }; // term present verbatim — direct restatement, leave as-is
+  }
+
+  return {
+    verdict: "partially_supported",
+    note: `${result.note ?? ""} [verdict set by code: claim asserts a defined term not present verbatim in the cited evidence — rule 3, D018 §2.3]`.trim(),
+    // Deliberately does NOT force confidence to 1 — same reasoning as reconcileVerdictNoteConsistency
+    // above: this is a regex presence/negation heuristic, not proven arithmetic, so it stays behind
+    // GateService's confidence gate rather than permanently disabling that safety net.
+    confidence,
   };
 }
 
@@ -378,27 +613,31 @@ export function extractCurrentPriorPair(evidenceText: string): [number, number] 
  */
 export function reconcileMagnitudeClaim(
   claim: Claim,
-  result: { verdict: string; evidence: string[] | null; note: string | null }
-): { verdict: string; note: string | null } {
+  result: { verdict: string; evidence: string[] | null; note: string | null; confidence?: number }
+): { verdict: string; note: string | null; confidence: number } {
+  const confidence = result.confidence ?? 1;
+  if (result.note && CODE_OVERRIDE_TAG_RE.test(result.note)) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
   const firstEvidence = result.evidence?.[0];
   if (!firstEvidence) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
   if (result.verdict !== "supported" && result.verdict !== "partially_supported" && result.verdict !== "contradicted") {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
 
   const magnitude = detectMagnitudeClaim(claim.claimText);
   if (!magnitude) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
   const pair = extractCurrentPriorPair(firstEvidence);
   if (!pair) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
   const [current, prior] = pair;
   if (prior === 0) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
   const ratio = current / prior;
 
@@ -412,11 +651,14 @@ export function reconcileMagnitudeClaim(
   }
 
   if (forcedVerdict === result.verdict) {
-    return { verdict: result.verdict, note: result.note };
+    return { verdict: result.verdict, note: result.note, confidence };
   }
   return {
     verdict: forcedVerdict,
     note: `${result.note ?? ""} [verdict set by code: computed ratio ${current}/${prior} = ${ratio.toFixed(3)}x vs claimed ${magnitude.multiple}x — compare.ts/D018 §2.3]`.trim(),
+    // Same GateService interaction as reconcileNumericVerdict above — a forced verdict change
+    // must also clear the confidence threshold or it gets silently re-gated to unverifiable.
+    confidence: 1,
   };
 }
 
@@ -560,6 +802,7 @@ export class VerifyService {
       // present an infrastructure failure as "sources checked, found silent."
       let verdict = result.verdict;
       let note = result.note;
+      let confidence = result.confidence;
       if (claim.retrievalStatus === "error" && verdict === "unsupported") {
         verdict = "unverifiable";
         note = `${note ?? ""} [forced to unverifiable: retrieval_status=error, not a genuine absence-of-evidence signal]`.trim();
@@ -571,33 +814,55 @@ export class VerifyService {
         // it and flip a verdict the numeric check had just correctly fixed right back to wrong
         // (found on review: a numeric downgrade contradicted->supported, immediately reversed by
         // this check reading the pre-correction note text it inherited). Running it first means
-        // reconcileNumericVerdict/reconcileMagnitudeClaim — deterministic, more trustworthy than
-        // free-text parsing — always get the final say when they have a number to check; this
-        // check only has the last word for claims neither of those can touch (e.g. entity claims).
-        const consistencyReconciled = reconcileVerdictNoteConsistency({ verdict, evidence: result.evidence, note });
+        // the deterministic checks below — more trustworthy than free-text parsing — always get
+        // the final say when they have something concrete to check; this text check only has the
+        // last word for claims none of those can touch (e.g. entity claims).
+        //
+        // confidence threads through every stage now (2026-07-29): GateService runs after
+        // VerifyService and force-resets any claim with confidence below threshold back to
+        // "unverifiable", wiping evidence/source_refs to null/[] regardless of what reconciliation
+        // decided — a verdict override that didn't also clear the confidence bar would get
+        // silently undone one pipeline stage later (found on review against a live run where four
+        // claims with real, quotable contradicting evidence stayed at confidence 0).
+        const consistencyReconciled = reconcileVerdictNoteConsistency({ verdict, evidence: result.evidence, note, confidence });
         const numericReconciled = reconcileNumericVerdict(claim, {
           verdict: consistencyReconciled.verdict,
           evidence: result.evidence,
           note: consistencyReconciled.note,
+          confidence: consistencyReconciled.confidence,
         });
-        const magnitudeReconciled = reconcileMagnitudeClaim(claim, {
+        const temporalReconciled = reconcileTemporalVerdict(claim, {
           verdict: numericReconciled.verdict,
           evidence: result.evidence,
           note: numericReconciled.note,
+          confidence: numericReconciled.confidence,
         });
-        verdict = magnitudeReconciled.verdict as typeof verdict;
-        note = magnitudeReconciled.note;
+        const magnitudeReconciled = reconcileMagnitudeClaim(claim, {
+          verdict: temporalReconciled.verdict,
+          evidence: result.evidence,
+          note: temporalReconciled.note,
+          confidence: temporalReconciled.confidence,
+        });
+        const definedTermReconciled = reconcileDefinedTermVerdict(claim, {
+          verdict: magnitudeReconciled.verdict,
+          evidence: result.evidence,
+          note: magnitudeReconciled.note,
+          confidence: magnitudeReconciled.confidence,
+        });
+        verdict = definedTermReconciled.verdict as typeof verdict;
+        note = definedTermReconciled.note;
+        confidence = definedTermReconciled.confidence;
       }
 
-      // FR-020 / A6: confidence comes exclusively from VERIFY's own output —
-      // never computed from or blended with retrieval_score. result.confidence
-      // is used as-is; retrieval_score is never read here at all.
+      // FR-020 / A6: confidence comes exclusively from VERIFY's own output or a deterministic
+      // code-side override above — never computed from or blended with retrieval_score, which is
+      // never read here at all.
       await this.auditStore.updateClaimVerdict(claim.claimId, {
         verdict: verdict as "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable",
         evidence: result.evidence,
         sourceRefs: result.source_refs,
         synthesized: result.synthesized,
-        confidence: result.confidence,
+        confidence,
         note,
       });
     }

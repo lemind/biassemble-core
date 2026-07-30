@@ -4,6 +4,8 @@ import {
   extractNumericFact,
   reconcileNumericVerdict,
   reconcileVerdictNoteConsistency,
+  reconcileTemporalVerdict,
+  reconcileDefinedTermVerdict,
   detectMagnitudeClaim,
   extractCurrentPriorPair,
   reconcileMagnitudeClaim,
@@ -183,7 +185,8 @@ describe("reconcileNumericVerdict — Fix 1 (bidirectional currency/percent chec
       note: "$64 million actual vs $640 million claimed — scale mismatch",
     });
     expect(result.verdict).toBe("contradicted");
-    expect(result.note).toContain("upgraded from supported");
+    expect(result.note).toContain("verdict set by code");
+    expect(result.confidence).toBe(1);
   });
 
   it("does NOT false-flag the same value written with two different scale words ($640M == $0.64B)", () => {
@@ -229,14 +232,58 @@ describe("reconcileNumericVerdict — Fix 1 (bidirectional currency/percent chec
     expect(result.verdict).toBe("contradicted"); // real mismatch, correctly left alone
   });
 
-  it("leaves partially_supported/unsupported/unverifiable untouched even with a numeric disagreement present", () => {
+  it("real production incident (run 9, 2026-07-29): upgrades 'unverifiable' at confidence 0 to 'contradicted' at confidence 1 when a real, quoted, same-measure figure disagrees — compare.ts must run regardless of the model's raw verdict", () => {
+    // A live deployed run showed four numeric claims (net loss, EPS, total assets, total
+    // liabilities) whose own note named the real conflicting figure, but the raw verdict was
+    // "unverifiable" at confidence 0 — never reaching this function under the old
+    // supported/contradicted-only gate. This reproduces the total-assets shape verbatim.
+    const claim = makeClaim("Total assets stood at $389.5 million at year-end.");
+    const result = reconcileNumericVerdict(claim, {
+      verdict: "unverifiable",
+      evidence: ["Total assets stood at $415,905 thousand at year-end."],
+      note: "the passages do not state that total assets stood at $389.5 million; they state $415,905 thousand",
+      confidence: 0,
+    });
+    expect(result.verdict).toBe("contradicted");
+    // Confidence must clear the gate threshold, or GateService (gate.service.ts) re-gates this
+    // straight back to "unverifiable" and wipes evidence to null one pipeline stage later.
+    expect(result.confidence).toBe(1);
+  });
+
+  it("also upgrades 'unsupported' (not just 'unverifiable') to 'contradicted' when evidence disagrees", () => {
+    const claim = makeClaim("Total liabilities stood at $97.8 million at year-end.");
+    const result = reconcileNumericVerdict(claim, {
+      verdict: "unsupported",
+      evidence: ["Total liabilities were $123,363 thousand at year-end."],
+      note: "the passages state total liabilities were $123,363 thousand, not $97.8 million",
+      confidence: 0.4,
+    });
+    expect(result.verdict).toBe("contradicted");
+    expect(result.confidence).toBe(1);
+  });
+
+  it("also upgrades 'partially_supported' to 'supported' when the numbers actually agree", () => {
     const claim = makeClaim("R&D investment totaled $640 million");
     const result = reconcileNumericVerdict(claim, {
       verdict: "partially_supported",
-      evidence: ["Research and development expense was $64 million"],
-      note: "partial credit given for some other reason",
+      evidence: ["Research and development expense was $640 million"],
+      note: "hedged for an unrelated reason",
+      confidence: 0.5,
     });
-    expect(result.verdict).toBe("partially_supported");
+    expect(result.verdict).toBe("supported");
+    expect(result.confidence).toBe(1);
+  });
+
+  it("does not touch confidence or verdict when no comparable evidence is extractable (still trusts the LLM)", () => {
+    const claim = makeClaim("R&D investment totaled $640 million");
+    const result = reconcileNumericVerdict(claim, {
+      verdict: "unsupported",
+      evidence: null,
+      note: "no evidence found",
+      confidence: 0,
+    });
+    expect(result.verdict).toBe("unsupported");
+    expect(result.confidence).toBe(0);
   });
 });
 
@@ -304,6 +351,225 @@ describe("reconcileMagnitudeClaim — Fix 2 (T041b, ratio vs magnitude-phrase th
     const claim = makeClaim("Revenue grew 22% year-over-year");
     const result = reconcileMagnitudeClaim(claim, { verdict: "supported", evidence, note: "matches" });
     expect(result.verdict).toBe("supported");
+  });
+});
+
+describe("reconcileTemporalVerdict — date comparator (2026-07-29, reproduced across 3 consecutive real runs)", () => {
+  it("real production incident: upgrades a false 'supported' to 'contradicted' when the claim's quarter and the evidence's quarter differ", () => {
+    // Verbatim repro: claim asserts the runway extends into Q3 2026; the real filing's own
+    // passage states it extends into Q1 2028 — a materially later, different quarter. The model
+    // reasoned "Q1 2028 is later than Q3 2026, so it supports the claim" three runs in a row.
+    const claim = makeClaim("Cash runway extends into Q3 2026.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "supported",
+      evidence: ["Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028."],
+      note: "the passage states runway extends into Q1 2028, which supports the claim of Q3 2026",
+      confidence: 1,
+    });
+    expect(result.verdict).toBe("contradicted");
+    expect(result.note).toContain("Q3 2026");
+    expect(result.note).toContain("Q1 2028");
+    expect(result.confidence).toBe(1);
+  });
+
+  it("does not get confused by a bare quarter mention with no attached year (e.g. 'ends Q4 with $258.3 million cash') — only one unambiguous quarter+year pair exists in that evidence", () => {
+    // Confirms the disambiguation: "Q4" alone (no 4-digit year immediately after) must not parse
+    // as a quarter fact at all, leaving exactly one real candidate (Q1 2028) to compare against.
+    const claim = makeClaim("Cash runway extends into Q3 2026.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "supported",
+      evidence: ["ends Q4 with $258.3 million cash and extends runway into Q1 2028"],
+      note: "matches",
+    });
+    expect(result.verdict).toBe("contradicted"); // still resolves — only one real quarter+year candidate
+  });
+
+  it("stays unchanged when evidence names two full quarter+year pairs (genuinely ambiguous, no signal to pick one)", () => {
+    const claim = makeClaim("Cash runway extends into Q3 2026.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "supported",
+      evidence: ["runway extends into Q1 2028 under the base case or Q3 2027 under the downside case"],
+      note: "matches",
+    });
+    expect(result.verdict).toBe("supported"); // ambiguous — don't guess, trust the LLM
+  });
+
+  it("upgrades a false 'contradicted' to 'supported' when both state the identical quarter", () => {
+    const claim = makeClaim("Cash runway extends into Q1 2028.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "contradicted",
+      evidence: ["extends runway into Q1 2028"],
+      note: "should be supported",
+    });
+    expect(result.verdict).toBe("supported");
+    expect(result.confidence).toBe(1);
+  });
+
+  it("does not engage for claims with no quarter+year reference at all", () => {
+    const claim = makeClaim("Cash runway extends into 2028.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "supported",
+      evidence: ["extends runway into Q1 2028"],
+      note: "matches",
+    });
+    expect(result.verdict).toBe("supported"); // no quarter token in the claim itself — out of scope
+  });
+
+  it("found on review: does NOT engage when raw verdict is 'unsupported' or 'unverifiable' — unlike reconcileNumericVerdict, there is no same-measure safety signal for a bare quarter+year token, so this stays scoped to supported/contradicted only", () => {
+    // Unlike currency (typed as USD vs percent, plus a scale-presence guard), a date has no
+    // secondary signal distinguishing "the date this claim is about" from an unrelated date the
+    // passage also happens to mention. Restricting to supported/contradicted-only avoids trusting
+    // that signal on retrieval the model hasn't even vouched is about the same subject.
+    const claim = makeClaim("Cash runway extends into Q3 2026.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "unverifiable",
+      evidence: ["Management expects the Q2 2026 patent-litigation ruling to have no material impact on operations."],
+      note: "the passage does not mention cash runway",
+      confidence: 0,
+    });
+    expect(result.verdict).toBe("unverifiable"); // unchanged — an unrelated Q2 2026 mention must not force a verdict
+  });
+
+  it("does not touch a verdict already carrying a code-override tag from an earlier reconciler in the chain (chain-reversal guard)", () => {
+    // Regression test for a real bug found on review: chaining reconcilers sequentially, each
+    // fed the previous one's output, let a later reconciler silently undo an earlier one's
+    // correct override for an unrelated reason (e.g. a numeric contradiction reversed back to
+    // "supported" because an unrelated quarter mention happened to match).
+    const claim = makeClaim("R&D investment totaled $640 million in Q3 2026.");
+    const result = reconcileTemporalVerdict(claim, {
+      verdict: "contradicted",
+      evidence: ["R&D investment totaled $64 million in Q3 2026."],
+      note: "[verdict set by code: 640 and 64 disagree beyond tolerance — compare.ts, D018 §2.3]",
+      confidence: 1,
+    });
+    // The quarters DO match (both Q3 2026), which would normally force "supported" — but the
+    // note already carries an earlier stage's code-override tag, so this must defer, not overwrite.
+    expect(result.verdict).toBe("contradicted");
+  });
+});
+
+describe("reconcileDefinedTermVerdict — going-concern-style rule-3 policy (2026-07-29)", () => {
+  const goingConcernClaim = () => makeClaim("Management flagged substantial doubt about the Company's ability to continue as a going concern.");
+
+  it("caps a false 'supported' down to 'partially_supported' when the defined term is absent from evidence (verify-034 shape)", () => {
+    const result = reconcileDefinedTermVerdict(goingConcernClaim(), {
+      verdict: "supported",
+      evidence: [
+        "The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future.",
+        "We will need substantial additional financing to develop our products and implement our operating plans.",
+      ],
+      note: "the passages discuss sustained losses and financing need",
+      confidence: 0.9,
+    });
+    expect(result.verdict).toBe("partially_supported");
+    // Deliberately does NOT force confidence to 1, unlike the deterministic reconcilers — this is
+    // a text presence/negation heuristic, not proven arithmetic, so GateService's confidence gate
+    // stays a real safety net rather than being permanently bypassed. The model's own confidence
+    // (already above any realistic threshold in the real incident this fixes) passes through.
+    expect(result.confidence).toBe(0.9);
+  });
+
+  it("real production incident: raises a false 'unsupported'/'unverifiable' to 'partially_supported' when on-topic evidence exists but the term is absent", () => {
+    const result = reconcileDefinedTermVerdict(goingConcernClaim(), {
+      verdict: "unverifiable",
+      evidence: ["The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future."],
+      note: "the passage does not use the term going concern",
+      confidence: 0.7,
+    });
+    expect(result.verdict).toBe("partially_supported");
+    expect(result.confidence).toBe(0.7); // passes through unchanged — see comment above
+  });
+
+  it("leaves 'supported' unchanged when the defined term IS present verbatim somewhere in evidence (direct restatement)", () => {
+    const result = reconcileDefinedTermVerdict(goingConcernClaim(), {
+      verdict: "supported",
+      evidence: ["Management has concluded there is substantial doubt about the Company's ability to continue as a going concern."],
+      note: "direct statement",
+      confidence: 0.95,
+    });
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("does not touch 'contradicted' — a stronger finding this presence-check has no basis to override", () => {
+    const result = reconcileDefinedTermVerdict(goingConcernClaim(), {
+      verdict: "contradicted",
+      evidence: ["Management has no substantial doubt about the Company's ability to continue as a going concern."],
+      note: "explicit denial",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("does not engage when the claim has no evidence at all", () => {
+    const result = reconcileDefinedTermVerdict(goingConcernClaim(), {
+      verdict: "unverifiable",
+      evidence: null,
+      note: "no evidence found",
+      confidence: 0,
+    });
+    expect(result.verdict).toBe("unverifiable");
+  });
+
+  it("does not engage for claims that don't assert a curated defined term", () => {
+    const result = reconcileDefinedTermVerdict(makeClaim("Revenue grew 22% year-over-year"), {
+      verdict: "supported",
+      evidence: ["Revenue grew 22%"],
+      note: "matches",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("found on review: does not misfire on a claim that NEGATES the defined term instead of asserting it", () => {
+    // "does not believe there is substantial doubt" contains the raw phrase but asserts its
+    // ABSENCE — must not be treated as an assertion of the term needing verbatim confirmation.
+    const claim = makeClaim("Management does not believe there is substantial doubt about the Company's ability to continue as a going concern.");
+    const result = reconcileDefinedTermVerdict(claim, {
+      verdict: "supported",
+      evidence: ["The Company expects to continue generating profits and has no need for additional financing."],
+      note: "the passage supports a healthy financial position",
+    });
+    expect(result.verdict).toBe("supported"); // unchanged — this claim asserts absence, not presence
+  });
+
+  it("found on review: requires 'going concern' to co-occur near 'substantial doubt' — a bare match in an unrelated (e.g. litigation) context must not engage", () => {
+    const claim = makeClaim("The court expressed substantial doubt about the validity of the patent claims in the infringement suit.");
+    const result = reconcileDefinedTermVerdict(claim, {
+      verdict: "supported",
+      evidence: ["The judge questioned whether the asserted claims met the novelty requirement."],
+      note: "paraphrase of the court's skepticism",
+    });
+    expect(result.verdict).toBe("supported"); // unchanged — not a going-concern claim at all
+  });
+
+  it("does not touch a verdict already carrying a code-override tag from an earlier reconciler in the chain (chain-reversal guard)", () => {
+    const result = reconcileDefinedTermVerdict(goingConcernClaim(), {
+      verdict: "contradicted",
+      evidence: ["Management has no substantial doubt about the Company's ability to continue as a going concern."],
+      note: "[verdict overridden by code: 'supported' is invalid when its own note asserts a contradiction — D018 §2.3 VERDICT/NOTE CONSISTENCY]",
+    });
+    expect(result.verdict).toBe("contradicted"); // deferred to the earlier stage's decision, not re-evaluated
+  });
+});
+
+describe("chain-reversal guard — CODE_OVERRIDE_TAG_RE (2026-07-29, found on review)", () => {
+  it("reconcileNumericVerdict defers to a verdict reconcileVerdictNoteConsistency already deterministically set, even when its own numeric check would otherwise disagree", () => {
+    // Compound claim: entity assertion (segments) the note already flagged as contradicted, PLUS
+    // a dollar figure that happens to match evidence. Without the guard, the numeric check would
+    // silently flip the already-correct "contradicted" back to "supported" because $100M == $100M.
+    const claim = makeClaim("The company operates two reportable segments and revenue was $100 million.");
+    const consistencyOutput = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: ["The company operates as a single reportable segment; revenue was $100 million."],
+      note: "The passage states the company operates as a single reportable segment, which contradicts the claim of two reportable segments; revenue figure of $100 million matches.",
+    });
+    expect(consistencyOutput.verdict).toBe("contradicted"); // sanity check: stage 1 behaves as expected
+
+    const numericOutput = reconcileNumericVerdict(claim, {
+      verdict: consistencyOutput.verdict,
+      evidence: ["The company operates as a single reportable segment; revenue was $100 million."],
+      note: consistencyOutput.note,
+      confidence: consistencyOutput.confidence,
+    });
+    expect(numericOutput.verdict).toBe("contradicted"); // must NOT be flipped back to "supported" by the $100M match
   });
 });
 

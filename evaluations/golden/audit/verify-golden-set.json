@@ -370,6 +370,47 @@
       "expected_evidence": "The Company operates and manages its business as one reportable segment, which is the business of developing and commercializing allogeneic cell therapies.",
       "expected_note": "the passage states the company operates as a single reportable segment, which contradicts the claim of two reportable segments — same subject and period, unambiguous same-measure conflict, not a hedge case.",
       "expected_synthesized": false
+    },
+    {
+      "id": "verify-038-numeric-reconciliation-unconditional-on-raw-verdict",
+      "trap_type": "real production incident (run 9, 2026-07-29, live deployed pipeline_code_version 9c416a13...) — reconcileNumericVerdict previously only ran when the raw verdict was already 'supported' or 'contradicted'; a live run showed four numeric claims (net loss, EPS, total assets, total liabilities) land on 'unverifiable' at confidence 0 with real, quoted, same-measure disagreeing evidence, never reaching the reconciler at all under that gate. Fixed by removing the gate entirely — compare.ts now runs whenever evidence is present, for any raw verdict shape, and bumps confidence to 1 on override so GateService's later confidence-threshold regate doesn't silently undo it.",
+      "claim": "Total assets stood at $389.5 million at year-end.",
+      "passages": [
+        { "location": "allogene-balance-sheet", "text": "Total assets $415,905 thousand. Total liabilities $123,363 thousand." }
+      ],
+      "seed_verdict": "unverifiable",
+      "seed_confidence": 0,
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Total assets $415,905 thousand.",
+      "expected_note": "the passage states total assets were $415,905 thousand ($415.905 million), not $389.5 million as claimed — same subject, measure, and period, beyond tolerance.",
+      "expected_synthesized": false
+    },
+    {
+      "id": "verify-039-temporal-comparator-cash-runway-quarter-mismatch",
+      "trap_type": "real production incident, reproduced across 3 consecutive runs (7, 8, 9) on identical code (2026-07-29) — a cash-runway claim naming a specific quarter was marked 'supported' against evidence naming a materially later, different quarter, on the reasoning that a later date 'supports' an earlier-dated claim. No prompt revision fixed this across three runs. Fixed with a code-side date comparator (reconcileTemporalVerdict): same quarter+year = supported, different quarter+year = contradicted — scoped to supported/contradicted raw verdicts only (found on review: unlike currency, a bare quarter+year token has no same-measure safety signal, so this deliberately does NOT extend to unsupported/unverifiable the way the numeric check does).",
+      "claim": "Cash runway extends into Q3 2026.",
+      "passages": [
+        { "location": "allogene-liquidity-note", "text": "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028." }
+      ],
+      "seed_verdict": "supported",
+      "seed_confidence": 1,
+      "expected_verdict": "contradicted",
+      "expected_evidence": "Allogene Therapeutics reports 2025 net loss of $190.9 million or $(0.87) per share, ends Q4 with $258.3 million cash and extends runway into Q1 2028.",
+      "expected_note": "the passage states the runway extends into Q1 2028, not Q3 2026 as claimed — a materially different, later quarter; a claim naming a specific runway endpoint asserts that date, not merely 'reaches at least this date'.",
+      "expected_synthesized": false
+    },
+    {
+      "id": "verify-040-defined-term-cap-going-concern-code-side-policy",
+      "trap_type": "companion to verify-034 (same underlying going-concern claim/evidence), added after this exact claim/passage pair bounced between supported@0.8-0.9 and unverifiable@0.7 across multiple real runs on identical code — an inference-class judgment the model does not stabilize on regardless of prompt wording. Fixed with a code-side defined-term policy (reconcileDefinedTermVerdict): a claim asserting a specific formally-defined term ('substantial doubt' about going concern) that never appears verbatim in the cited evidence is deterministically set to partially_supported, whichever direction the model guessed. Does not force confidence past GateService's threshold (found on review: this is a text presence/negation heuristic, not proven arithmetic, so it stays behind that safety net) — the model's own confidence in the real incident (0.7-0.9) already clears a typical threshold.",
+      "claim": "Management flagged substantial doubt about the Company's ability to continue as a going concern.",
+      "passages": [
+        { "location": "financing-needs-risk-factor", "text": "Management expects to incur additional losses in the future to fund its operations and conduct product research and development and recognizes the need to raise additional capital to fully implement its business plan. We will need substantial additional financing to develop our products and implement our operating plans. The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future." }
+      ],
+      "seed_verdict": "supported",
+      "seed_confidence": 0.85,
+      "expected_verdict": "partially_supported",
+      "expected_evidence": "The Company has sustained operating losses and expects to continue to generate operating losses for the foreseeable future. We will need substantial additional financing to develop our products and implement our operating plans.",
+      "expected_note": "\"substantial doubt\" is a specific, defined accounting/audit term the passage never uses — the passage is on-topic (sustained losses, financing need) but doesn't state the formal conclusion, so this is deterministically partially_supported regardless of what the model itself guesses."
     }
   ]
 }

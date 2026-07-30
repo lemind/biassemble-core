@@ -31,6 +31,16 @@ interface GoldenScenario {
   expected_evidence: string | string[] | null;
   expected_note: string;
   expected_synthesized?: boolean;
+  // Optional: what the mock LLM's RAW output actually was, when it differs from expected_verdict —
+  // added on review after finding that seeding every case with verdict=expected_verdict (the
+  // established convention below) meant a golden case for a code-side reconciliation fix could
+  // never actually exercise the "wrong raw verdict gets corrected" path; it could only prove an
+  // already-correct verdict survives untouched, which would pass identically before and after the
+  // fix it claims to pin. When present, these seed the mock's raw response instead of the
+  // expected_* fields; the assertions below always still check against expected_verdict/evidence.
+  seed_verdict?: string;
+  seed_evidence?: string | string[] | null;
+  seed_confidence?: number;
 }
 
 const goldenSet: { scenarios: GoldenScenario[] } = JSON.parse(
@@ -91,8 +101,8 @@ function toPassages(passages: GoldenPassage[]): RetrievedPassage[] {
 const evidenceArray = (e: string | string[] | null): string[] | null => (e === null ? null : Array.isArray(e) ? e : [e]);
 
 describe("VERIFY service against verify-golden-set.json (T012)", () => {
-  // The scenario count itself is asserted by "meets the ≥36/37 pass bar in aggregate" below
-  // (expect(total).toBe(37)) — a standalone count-only test here would just duplicate that
+  // The scenario count itself is asserted by "meets the ≥39/40 pass bar in aggregate" below
+  // (expect(total).toBe(40)) — a standalone count-only test here would just duplicate that
   // assertion in its own test slot without exercising VerifyService at all (removed on review).
   let matched = 0;
   const total = goldenSet.scenarios.length;
@@ -110,12 +120,12 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
         results: [
           {
             claim_id: claim.claimId,
-            verdict: scenario.expected_verdict,
-            evidence: evidenceArray(scenario.expected_evidence),
+            verdict: scenario.seed_verdict ?? scenario.expected_verdict,
+            evidence: evidenceArray(scenario.seed_evidence ?? scenario.expected_evidence),
             source_refs: passages.map((p) => p.passageId),
             synthesized: scenario.expected_synthesized ?? false,
             note: scenario.expected_note,
-            confidence: 0.9,
+            confidence: scenario.seed_confidence ?? 0.9,
           },
         ],
         trace: {},
@@ -140,9 +150,9 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     });
   }
 
-  it("meets the ≥36/37 pass bar in aggregate", () => {
-    expect(matched).toBeGreaterThanOrEqual(36);
-    expect(total).toBe(37);
+  it("meets the ≥39/40 pass bar in aggregate", () => {
+    expect(matched).toBeGreaterThanOrEqual(39);
+    expect(total).toBe(40);
   });
 
   it("retrieval-failure gate rule: a claim with retrieval_status=error never resolves to unsupported, even if VERIFY said so", async () => {
