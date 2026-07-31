@@ -1,0 +1,184 @@
+{
+  "specs": [
+    {
+      "id": "apple-mixed",
+      "minCorrectRate": 0.8,
+      "runs": [
+        "apple-run-a.json",
+        "apple-run-b.json"
+      ],
+      "claims": [
+        {
+          "match": "total net sales growth of 17%",
+          "kind": "true"
+        },
+        {
+          "match": "Services net sales grew 16%",
+          "kind": "true"
+        },
+        {
+          "match": "Greater China net sales grew 28%",
+          "kind": "true"
+        },
+        {
+          "match": "Americas net sales grew 12%",
+          "kind": "true"
+        },
+        {
+          "match": "Basic earnings per share was $2.02",
+          "kind": "true"
+        },
+        {
+          "match": "Research and development expense was $11,419",
+          "kind": "true"
+        },
+        {
+          "match": "higher net sales of Pro models",
+          "kind": "true"
+        },
+        {
+          "match": "higher net sales of laptops",
+          "kind": "true"
+        },
+        {
+          "match": "first six months were relatively flat",
+          "kind": "true"
+        },
+        {
+          "match": "weakness in the yen",
+          "kind": "true"
+        },
+        {
+          "match": "Greater China net sales declined 8%",
+          "kind": "false"
+        },
+        {
+          "match": "Europe net sales grew 22%",
+          "kind": "false"
+        },
+        {
+          "match": "Diluted earnings per share was $2.45",
+          "kind": "false"
+        },
+        {
+          "match": "Net income for the quarter was $35,885",
+          "kind": "false"
+        },
+        {
+          "match": "Provision for income taxes was $4,530",
+          "kind": "false"
+        },
+        {
+          "match": "41 million new iPhone units",
+          "kind": "silence"
+        },
+        {
+          "match": "App Store revenue",
+          "kind": "silence"
+        },
+        {
+          "match": "repurchased $25 billion",
+          "kind": "silence"
+        }
+      ]
+    },
+    {
+      "id": "narrative",
+      "minCorrectRate": 0.9,
+      "runs": [
+        "narrative-run.json"
+      ],
+      "claims": [
+        {
+          "match": "higher net sales of Pro models",
+          "kind": "true"
+        },
+        {
+          "match": "higher net sales of laptops",
+          "kind": "true"
+        },
+        {
+          "match": "first six months were relatively flat",
+          "kind": "true"
+        },
+        {
+          "match": "weakness in the yen",
+          "kind": "true"
+        },
+        {
+          "match": "strength in foreign currencies",
+          "kind": "true"
+        },
+        {
+          "match": "iPad net sales decreased",
+          "kind": "false"
+        },
+        {
+          "match": "Mac net sales declined",
+          "kind": "false"
+        },
+        {
+          "match": "strength in the yen",
+          "kind": "false"
+        },
+        {
+          "match": "entry-level models",
+          "kind": "false"
+        },
+        {
+          "match": "12 new retail stores",
+          "kind": "silence"
+        },
+        {
+          "match": "Services gross margin expanded",
+          "kind": "silence"
+        }
+      ]
+    },
+    {
+      "id": "tables-wrong-column",
+      "minCorrectRate": 0.5,
+      "runs": [
+        "tables-run.json"
+      ],
+      "claims": [
+        {
+          "match": "Europe net sales were $28,055",
+          "kind": "true"
+        },
+        {
+          "match": "Greater China net sales were $20,497",
+          "kind": "true"
+        },
+        {
+          "match": "iPhone net sales were $56,994",
+          "kind": "true"
+        },
+        {
+          "match": "Total net sales were $111,184",
+          "kind": "true"
+        },
+        {
+          "match": "Europe net sales were $24,454",
+          "kind": "false"
+        },
+        {
+          "match": "iPhone net sales were $46,841",
+          "kind": "false"
+        },
+        {
+          "match": "Japan net sales were $7,298",
+          "kind": "false"
+        },
+        {
+          "match": "Americas net sales grew 25%",
+          "kind": "false"
+        },
+        {
+          "match": "gross margin percentage was 49.3%",
+          "kind": "silence"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "audit_id": "0805bee2-7f16-4662-a914-ce5e083f9269",
+  "claims": [
+    {
+      "claim": "iPhone net sales were $56,994 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "iPhone $56,994 $46,841 22% $142,263 $115,979 23%"
+      ],
+      "source_refs": [
+        "29b8ddc2-29a7-4f2c-9306-1c4a59ce17c4"
+      ],
+      "note": "The passage states iPhone net sales were $56,994 million for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026."
+    },
+    {
+      "claim": "Japan net sales were $7,298 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Japan 8,401 7,298 15% 17,814 16,285 9%"
+      ],
+      "source_refs": [
+        "e50df598-c1d8-48d9-be2e-5b6b09bbb1d9"
+      ],
+      "note": "The passage states that Japan net sales were $7,298 million for the three months ended March 29, 2025, which corresponds to fiscal Q2 2025. The claim is for fiscal Q2 2026, for which the sales were $8,401 million."
+    },
+    {
+      "claim": "Apple gross margin percentage was 49.3% in the second quarter.",
+      "verdict": "unverifiable",
+      "evidence": null,
+      "source_refs": [],
+      "note": "No passage mentions Apple's gross margin percentage. [gated: confidence 0 below threshold 0.6]"
+    },
+    {
+      "claim": "Europe net sales were $28,055 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Europe 28,055 24,454 15% 66,201 58,315 14%"
+      ],
+      "source_refs": [
+        "e50df598-c1d8-48d9-be2e-5b6b09bbb1d9"
+      ],
+      "note": "The passage states that Europe net sales were $28,055 million for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026."
+    },
+    {
+      "claim": "Greater China net sales were $20,497 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Greater China 20,497 16,002 28% 46,023 34,515 33%"
+      ],
+      "source_refs": [
+        "e50df598-c1d8-48d9-be2e-5b6b09bbb1d9"
+      ],
+      "note": "The passage states that Greater China net sales were $20,497 million for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026."
+    },
+    {
+      "claim": "Total net sales were $111,184 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+      ],
+      "source_refs": [
+        "e50df598-c1d8-48d9-be2e-5b6b09bbb1d9",
+        "29b8ddc2-29a7-4f2c-9306-1c4a59ce17c4"
+      ],
+      "note": "The passage states that total net sales were $111,184 million for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026."
+    },
+    {
+      "claim": "Europe net sales were $24,454 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Europe 28,055 24,454 15% 66,201 58,315 14%"
+      ],
+      "source_refs": [
+        "e50df598-c1d8-48d9-be2e-5b6b09bbb1d9"
+      ],
+      "note": "The passage states that Europe net sales were $24,454 million for the three months ended March 29, 2025, which corresponds to fiscal Q2 2025. The claim is for fiscal Q2 2026, for which the sales were $28,055 million."
+    },
+    {
+      "claim": "Americas net sales grew 25% year over year.",
+      "verdict": "contradicted",
+      "evidence": [
+        "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+      ],
+      "source_refs": [
+        "e50df598-c1d8-48d9-be2e-5b6b09bbb1d9"
+      ],
+      "note": "[verdict set by code: 25% disagrees beyond tolerance with every same-measure figure cited (12%, 11%) — compare.ts, D018 §2.3] (model's original note, superseded by the above: \"The passage states that Americas net sales grew 12% year over year for the three months ended March 28, 2026. The claim states a 25% growth.\")"
+    },
+    {
+      "claim": "Mac net sales were $9,138 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21%"
+      ],
+      "source_refs": [
+        "e50df598-c1d8-48d9-be2e-5b6b09bbb1d9"
+      ],
+      "note": "The passage states that Rest of Asia Pacific net sales were $9,138 million for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026. The claim refers to 'Mac' net sales, which are listed separately in another passage as $8,399 million for the same period."
+    },
+    {
+      "claim": "Services net sales grew 16% in the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Services 30,976 26,645 16% 60,989 52,985 15%"
+      ],
+      "source_refs": [
+        "29b8ddc2-29a7-4f2c-9306-1c4a59ce17c4"
+      ],
+      "note": "The passage states Services net sales were $30,976 million for the three months ended March 28, 2026, and $26,645 million for the three months ended March 29, 2025. The change is listed as 16%, which supports the claim of 16% growth in the second quarter."
+    },
+    {
+      "claim": "iPhone net sales were $46,841 million for the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "iPhone $56,994 $46,841 22% $142,263 $115,979 23%"
+      ],
+      "source_refs": [
+        "29b8ddc2-29a7-4f2c-9306-1c4a59ce17c4"
+      ],
+      "note": "The passage states iPhone net sales were $46,841 million for the three months ended March 29, 2025. The claim specifies fiscal Q2 2026, and the passage shows $56,994 million for the three months ended March 28, 2026. Therefore, the claim is supported by the prior year's figure, but the claim is for fiscal Q2 2026, which is $56,994 million."
+    }
+  ]
+}
