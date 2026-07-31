@@ -20,6 +20,8 @@ import type { RetrievedPassage } from "../../rag/corpus-client.js";
 const MODULE = "verify-service";
 /** Upper bound only — a small audit's last batch may be smaller. Lowered 10->8: batch size, not verdict logic, was why VERDICT/NOTE CONSISTENCY got ignored at ~10 claims/call. D018 §2.3. */
 const BATCH_MAX = 8;
+/** VERIFY responses are intermittently unparseable (~1 live run in 5); retry before degrading. D018 §5.10. */
+const VERIFY_SCHEMA_ATTEMPTS = 3;
 
 export interface ClaimWithPassages {
   claim: Claim;
@@ -104,36 +106,62 @@ export class VerifyService {
     });
     const user = "Return the JSON now.";
 
-    const { result: raw, llmCallId } = await executeAndRecordLlmCall(
-      // temperature:0 for reproducibility — see extract.service.ts's matching comment.
-      () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0 } }),
-      // sessionId is auditId, not null (T040) — see extract.service.ts.
-      { sessionId: auditId, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
-      this.llmCallStore
-    );
+    // A malformed VERIFY response used to fail the whole audit — observed ~1 run in 5 live, and only a
+    // human relaunch recovered it. Retried here, then degraded per claim. D018 §5.10.
+    let parsed: VerifyResponse | null = null;
+    let lastSchemaError: string | null = null;
+    for (let attempt = 1; attempt <= VERIFY_SCHEMA_ATTEMPTS; attempt++) {
+      const { result: raw, llmCallId } = await executeAndRecordLlmCall(
+        // temperature:0 for reproducibility — see extract.service.ts's matching comment.
+        () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0 } }),
+        // sessionId is auditId, not null (T040) — see extract.service.ts.
+        { sessionId: auditId, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
+        this.llmCallStore
+      );
 
-    if (isSuspectedInjection(JSON.stringify(raw), VERIFY_RESPONSE_KEYS)) {
-      logger.error({ module: MODULE, operation: "runBatch", auditId, raw }, "VERIFY response flagged as injection-suspected — hard stop, not repaired");
-      if (llmCallId) {
-        await this.llmCallStore.updateFailure(llmCallId, "schema_validation", "injection-suspected response").catch(() => {});
+      // Injection stays a hard stop and is never retried (D018 §2.3) — this is why the shared
+      // withRetry helper, which retries everything but rate limits, is not used here.
+      if (isSuspectedInjection(JSON.stringify(raw), VERIFY_RESPONSE_KEYS)) {
+        logger.error({ module: MODULE, operation: "runBatch", auditId, raw }, "VERIFY response flagged as injection-suspected — hard stop, not repaired");
+        if (llmCallId) {
+          await this.llmCallStore.updateFailure(llmCallId, "schema_validation", "injection-suspected response").catch(() => {});
+        }
+        throw new InjectionSuspectedError("verify");
       }
-      throw new InjectionSuspectedError("verify");
+
+      try {
+        const { result } = await repairWithFallback(JSON.stringify(raw), VerifyResponseSchema, null);
+        // repair.ts nulls `results` as a whole unit on partial validation failure — must fail cleanly here, not crash on `for...of null`.
+        if (result.results === null || result.results === undefined) {
+          throw new Error("VERIFY response failed schema validation: results could not be parsed (see repair warnings)");
+        }
+        if (llmCallId) await this.llmCallStore.updateParsedOutput(llmCallId, result).catch(() => {});
+        parsed = result;
+        break;
+      } catch (err) {
+        lastSchemaError = (err as Error).message;
+        if (llmCallId) {
+          await this.llmCallStore.updateFailure(llmCallId, "schema_validation", lastSchemaError).catch(() => {});
+        }
+        logger.warn({ module: MODULE, operation: "runBatch", auditId, attempt, err }, "VERIFY response unparseable — retrying batch");
+      }
     }
 
-    let parsed: VerifyResponse;
-    try {
-      const { result } = await repairWithFallback(JSON.stringify(raw), VerifyResponseSchema, null);
-      parsed = result;
-      // repair.ts nulls `results` as a whole unit on partial validation failure — must fail cleanly here, not crash on `for...of null`.
-      if (parsed.results === null || parsed.results === undefined) {
-        throw new Error("VERIFY response failed schema validation: results could not be parsed (see repair warnings)");
+    // Still unparseable: degrade this batch to unverifiable rather than failing the whole audit, so the
+    // customer gets a report naming the gap instead of a hard error. D018 §5.10.
+    if (!parsed) {
+      logger.error({ module: MODULE, operation: "runBatch", auditId, attempts: VERIFY_SCHEMA_ATTEMPTS }, "VERIFY batch unparseable after retries — degrading to unverifiable");
+      for (const { claim } of batch) {
+        await this.auditStore.updateClaimVerdict(claim.claimId, {
+          verdict: "unverifiable",
+          evidence: null,
+          sourceRefs: [],
+          synthesized: false,
+          confidence: 0,
+          note: `[forced to unverifiable: VERIFY's response could not be parsed after ${VERIFY_SCHEMA_ATTEMPTS} attempts — ${lastSchemaError ?? "unknown"}]`,
+        });
       }
-      if (llmCallId) await this.llmCallStore.updateParsedOutput(llmCallId, parsed).catch(() => {});
-    } catch (err) {
-      if (llmCallId) {
-        await this.llmCallStore.updateFailure(llmCallId, "schema_validation", (err as Error).message).catch(() => {});
-      }
-      throw err;
+      return;
     }
 
     const byClaimId = new Map(batch.map((b) => [b.claim.claimId, b.claim]));

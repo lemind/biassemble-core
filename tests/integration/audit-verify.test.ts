@@ -210,22 +210,43 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     expect(updated.verdict).toBe("supported");
   });
 
-  it("rejects a response whose results array fails schema validation (e.g. confidence out of 0-1 range), not a crash on null (found on review)", async () => {
+  it("degrades an unparseable VERIFY response to unverifiable instead of failing the whole audit (2026-07-31)", async () => {
     const { provider, auditStore, service } = buildService();
     const auditId = randomUUID();
     await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
     const claim = toClaim(auditId, randomUUID(), "Some claim");
     auditStore.claims.set(claim.claimId, claim);
 
-    // confidence: 1.5 fails VerifyResultSchema's z.number().min(0).max(1) —
-    // repair.ts's partial-field-recovery step nulls out the whole `results`
-    // array as a unit rather than throwing; runBatch must fail cleanly, not
-    // crash on `for...of null`.
+    // confidence: 1.5 fails VerifyResultSchema's z.number().min(0).max(1); repair.ts nulls the whole
+    // `results` array. Live, this hard-failed ~1 audit in 5 and only a human relaunch recovered it.
     provider.setDefault({
       results: [{ claim_id: claim.claimId, verdict: "supported", evidence: null, source_refs: [], synthesized: false, note: null, confidence: 1.5 }],
       trace: {},
     });
 
-    await expect(service.run(auditId, [{ claim, passages: [] }], 0.6)).rejects.toThrow(/results could not be parsed/);
+    await expect(service.run(auditId, [{ claim, passages: [] }], 0.6)).resolves.toBeUndefined();
+    const updated = auditStore.claims.get(claim.claimId)!;
+    expect(updated.verdict).toBe("unverifiable");
+    expect(updated.confidence).toBe(0);
+    expect(updated.note).toContain("could not be parsed after");
+  });
+
+  it("retries an unparseable VERIFY response and keeps the verdict when a later attempt parses", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const claim = toClaim(auditId, randomUUID(), "Some claim");
+    auditStore.claims.set(claim.claimId, claim);
+
+    let call = 0;
+    provider.setResponseFn("You are a verification engine", () => {
+      call++;
+      const confidence = call === 1 ? 1.5 : 0.9; // first response unparseable, second valid
+      return { results: [{ claim_id: claim.claimId, verdict: "supported", evidence: ["e"], source_refs: [], synthesized: false, note: null, confidence }], trace: {} };
+    });
+
+    await service.run(auditId, [{ claim, passages: [] }], 0.6);
+    expect(call).toBeGreaterThan(1);
+    expect(auditStore.claims.get(claim.claimId)!.verdict).toBe("supported");
   });
 });
