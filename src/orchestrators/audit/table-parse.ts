@@ -42,7 +42,7 @@ export type ValidationResult = { ok: true } | { ok: false; reason: ParseRejectio
 /** Duration and date tokens a filing table uses to identify its columns. */
 const DURATION_RE = /(?:Three|Six|Nine|Twelve)\s+Months\s+Ended/gi;
 const DATE_RE =
-  /(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}|Q[1-4]\s+\d{4}/gi;
+  /(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}|Q[1-4]\s+\d{4}/gi;
 /** A run of consecutive numeric cells — the shape a table row makes. */
 const NUMERIC_RUN_RE = /(?:[$(]?-?[\d,]+(?:\.\d+)?\)?%?[\s.]*){2,}/g;
 const NUMERIC_CELL_RE = /-?[\d,]+(?:\.\d+)?/g;
@@ -63,8 +63,11 @@ export function detectTableCandidate(blockText: string): TableCandidate | null {
   const periodTokens = blockText.match(DATE_RE) ?? [];
   if (periodTokens.length < 2) return null;
 
+  // Date tokens ("March 28, 2026") are numeric runs of their own and outvoted real data rows, so a
+  // 4-row table reported columnCount 2. Strip them before measuring row width. D018 §5.
+  const withoutDates = blockText.replace(DATE_RE, " ");
   const widths = new Map<number, number>();
-  for (const run of blockText.match(NUMERIC_RUN_RE) ?? []) {
+  for (const run of withoutDates.match(NUMERIC_RUN_RE) ?? []) {
     const cells = run.match(NUMERIC_CELL_RE)?.length ?? 0;
     if (cells >= 2) widths.set(cells, (widths.get(cells) ?? 0) + 1);
   }
@@ -150,6 +153,79 @@ export function validateTableParse(parse: ParsedTable, blockText: string, detect
   }
 
   return { ok: true };
+}
+
+/** Currency | percent | bare, in column order. Bare last so "22%" is a percent; bare years are dates, not figures. D018 §5. */
+const ROW_CELL_RE =
+  /\$\s?(\()?\s*([\d,]+(?:\.\d+)?)\s*(\))?|\((-?[\d,]+(?:\.\d+)?)\)\s*%|(-?[\d,]+(?:\.\d+)?)\s*%|(?<![A-Za-z0-9.\-])([\d,]+(?:\.\d+)?)(?![A-Za-z])/g;
+
+export interface RowCell {
+  value: number;
+  unit: "USD" | "percent";
+}
+
+/** Every cell of a row including the bare columns a `$`-anchored regex cannot see — SEC tables mark only the first and total rows. D018 §5. */
+export function rowCells(rowText: string): RowCell[] {
+  const out: RowCell[] = [];
+  for (const m of rowText.matchAll(new RegExp(ROW_CELL_RE.source, "g"))) {
+    if (m[2]) {
+      let value = parseFloat(m[2].replace(/,/g, ""));
+      if (Number.isNaN(value)) continue;
+      if (m[1] === "(" || m[3] === ")") value = -Math.abs(value);
+      out.push({ value, unit: "USD" });
+    } else if (m[4]) {
+      const value = parseFloat(m[4].replace(/,/g, ""));
+      if (!Number.isNaN(value)) out.push({ value: -Math.abs(value), unit: "percent" });
+    } else if (m[5]) {
+      const value = parseFloat(m[5].replace(/,/g, ""));
+      if (!Number.isNaN(value)) out.push({ value, unit: "percent" });
+    } else if (m[6]) {
+      if (/^(?:19|20)\d{2}$/.test(m[6])) continue;
+      const value = parseFloat(m[6].replace(/,/g, ""));
+      if (!Number.isNaN(value)) out.push({ value, unit: "USD" });
+    }
+  }
+  return out;
+}
+
+/** Table-wide scale from the header ("dollars in millions") — real filing text, so bare cells get their unit. D018 §5. */
+export function tableScaleOf(blockText: string): string | null {
+  const m = blockText.match(/\b(?:dollars\s+in|amounts\s+in|in)\s+(million|billion|thousand)s?\b/i);
+  const word = m?.[1]?.toLowerCase();
+  return word === "million" || word === "billion" || word === "thousand" ? word : null;
+}
+
+/**
+ * Maps a row's cells to columns using the block's own header. USD cells consume the header's trailing
+ * date run in order; a percent ("Change") cell belongs to the period its group compares FROM, so it
+ * inherits the first USD column of its run. Returns null when the header cannot cover the row — no
+ * guessing. D018 §5.
+ */
+export function columnsForCells(blockText: string, cellUnits: Array<"USD" | "percent">): ParsedColumn[] | null {
+  const dates = blockText.match(DATE_RE) ?? [];
+  const durations = blockText.match(DURATION_RE) ?? [];
+  const usdCount = cellUnits.filter((u) => u === "USD").length;
+  if (usdCount === 0) return null;
+  const headerDates = dates.slice(-usdCount);
+  if (headerDates.length !== usdCount) return null;
+
+  const perDuration = durations.length > 0 ? usdCount / durations.length : usdCount;
+  const columns: ParsedColumn[] = [];
+  let usdSeen = 0;
+  let runStart = -1;
+  for (const unit of cellUnits) {
+    if (unit === "USD") {
+      if (runStart === -1) runStart = columns.length;
+      const duration = durations.length > 0 ? durations[Math.min(Math.floor(usdSeen / perDuration), durations.length - 1)] ?? null : null;
+      columns.push({ duration, period: headerDates[usdSeen]! });
+      usdSeen++;
+    } else {
+      const anchor = runStart === -1 ? null : columns[runStart];
+      columns.push(anchor ? { ...anchor } : { duration: null, period: headerDates[0]! });
+      runStart = -1;
+    }
+  }
+  return columns;
 }
 
 /** The column satisfying a claim's period, or null. Deterministic: the transcriber never decides this. D018 §5. */

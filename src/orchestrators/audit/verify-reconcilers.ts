@@ -1,4 +1,5 @@
 import { compare } from "../../numbers/compare.js";
+import { detectTableCandidate, columnsForCells, selectColumnForPeriod, tableScaleOf, rowCells } from "./table-parse.js";
 import type { Claim } from "../../db/schema.js";
 import type { RetrievedPassage } from "../../rag/corpus-client.js";
 
@@ -96,6 +97,8 @@ const LABEL_COVERAGE_MIN = 0.5;
 interface PassageRow {
   start: number;
   labelWords: string[];
+  /** False when labelWords were inherited from the previous row rather than named by this one. */
+  ownLabel: boolean;
 }
 
 /** Row starts wherever a word follows a number — in a table that is the next row's label, in prose the next clause. D018 §5.2. */
@@ -113,10 +116,15 @@ function segmentRows(text: string): PassageRow[] {
     const words = (slice.toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => w.length > 1 && !MEASURE_STOPWORDS.has(w));
     // A row with no content word of its own (prose: "million or $(0.87)") inherits the last row that
     // had one, so the measure named upstream still identifies the figure.
-    rows.push({ start: starts[i]!, labelWords: words.length > 0 ? words : (rows[i - 1]?.labelWords ?? []) });
+    rows.push({
+      start: starts[i]!,
+      labelWords: words.length > 0 ? words : (rows[i - 1]?.labelWords ?? []),
+      ownLabel: words.length > 0,
+    });
   }
   return rows;
 }
+
 
 function rowIndexFor(rows: PassageRow[], index: number): number {
   let found = 0;
@@ -212,31 +220,71 @@ function collectPassageFacts(
   const claimWords = new Set(contentWords(claim.claimText.slice(0, claimFigure.index)));
   if (claimWords.size === 0) return [];
 
-  // Rows are pooled across passages and scored once, so the row naming the claim's subject wins even
-  // when a different passage also holds a generic "Total ..." row. D018 §5.2.
-  const pool: Array<{ labelWords: string[]; passage: RetrievedPassage; facts: ExtractedNumericFact[] }> = [];
+  // Pooled across passages so the row naming the subject wins; bare ($-less) rows included, since SEC
+  // tables mark only the first and total row. D018 §5.2.
+  const pool: Array<{ labelWords: string[]; passage: RetrievedPassage; rowText: string; facts: ExtractedNumericFact[] }> = [];
   const allRows: Array<{ labelWords: string[] }> = [];
   for (const passage of passages) {
     if (passagePeriodConflicts(claim.period, passage.text)) continue;
     const rows = segmentRows(passage.text);
     allRows.push(...rows);
+    // Facts are still extracted over the WHOLE passage and assigned by position: segmentRows can split a
+    // figure from its scale word ("$190.9" | "million"), and re-extracting per row would drop the scale.
     const byRow = new Map<number, ExtractedNumericFact[]>();
     for (const { fact, index } of extractNumericFactsWithIndex(passage.text)) {
       if (!isUsableNumericFact(claimFact, fact)) continue;
       const idx = rowIndexFor(rows, index);
       byRow.set(idx, [...(byRow.get(idx) ?? []), fact]);
     }
-    for (const [idx, facts] of byRow) pool.push({ labelWords: rows[idx]!.labelWords, passage, facts });
+    // Bare rows are admitted only inside an actual table, and only when they name themselves: in prose a
+    // fact-less row would tie with the row it inherited its label from, and both would decline. D018 §5.2.
+    const isTable = detectTableCandidate(passage.text) !== null;
+    for (let i = 0; i < rows.length; i++) {
+      const rowText = passage.text.slice(rows[i]!.start, rows[i + 1]?.start ?? passage.text.length);
+      const facts = byRow.get(i) ?? [];
+      if (facts.length === 0 && (!isTable || !rows[i]!.ownLabel || rowCells(rowText).length === 0)) continue;
+      pool.push({ labelWords: rows[i]!.labelWords, passage, rowText, facts });
+    }
   }
   if (pool.length === 0) return [];
 
   const best = pickBestRow(pool, claimWords, allRows);
   if (best === null) return []; // nothing identifies this claim's subject, or a genuine tie — don't guess
-  return pool[best]!.facts.map((fact) => ({
-    fact,
-    passageId: pool[best]!.passage.passageId,
-    passageText: pool[best]!.passage.text,
-  }));
+  const chosen = pool[best]!;
+
+  // Subject settled, so the claim's period picks ONE column. Null unless the block's header resolves it. D018 §5.2.
+  const columnFact = tableColumnFact(claim, claimFact, chosen.rowText, chosen.passage.text);
+  const facts = columnFact ? [columnFact] : chosen.facts;
+  return facts.map((fact) => ({ fact, passageId: chosen.passage.passageId, passageText: chosen.passage.text }));
+}
+
+/** One cell of the chosen row: the column whose period is the claim's. Declines on any ambiguity. D018 §5.2. */
+function tableColumnFact(
+  claim: Claim,
+  claimFact: ExtractedNumericFact,
+  rowText: string,
+  passageText: string
+): ExtractedNumericFact | null {
+  const detected = detectTableCandidate(passageText);
+  if (!detected) return null;
+  const cells = rowCells(rowText);
+  // The block's own column count is authoritative; a row that disagrees is not a clean table row.
+  if (cells.length < 2 || cells.length !== detected.columnCount) return null;
+  const columns = columnsForCells(passageText, cells.map((c) => c.unit));
+  if (!columns) return null;
+
+  // With row and column pinned, the table's stated scale governs its bare cells, so a claim carrying a
+  // different scale word (or one the table never states) is not comparable.
+  const tableScale = tableScaleOf(passageText);
+  if (claimFact.unit === "USD" && claimFact.scale && claimFact.scale !== tableScale) return null;
+
+  const sameUnit = cells.map((cell, i) => ({ cell, column: columns[i]! })).filter(({ cell }) => cell.unit === claimFact.unit);
+  if (sameUnit.length === 0) return null;
+  const pick = selectColumnForPeriod(sameUnit.map((s) => s.column), claim.period);
+  if (pick === null) return null;
+
+  // Scale is carried over from the claim: both sides are already in the table's units.
+  return { value: sameUnit[pick]!.cell.value, unit: claimFact.unit, scale: claimFact.scale };
 }
 
 /** Override notes must carry the scale word — a bare "123363" next to "97.8" reads as a 1000x gap when it's $123.4M vs $97.8M. D018 §5.2. */

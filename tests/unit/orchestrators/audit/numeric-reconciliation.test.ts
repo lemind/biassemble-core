@@ -447,6 +447,74 @@ describe("MULTI-ENTITY TABLE GATE (2026-07-30, Apple probe) — a row's figures 
   });
 });
 
+describe("COLUMN/PERIOD GATE (2026-07-31) — a row's figures belong to a specific column", () => {
+  // Both claims quote a REAL figure from the right row, in the prior-year column. Unanimity can never
+  // catch that: the value genuinely appears in the row. Locked in together because the tax row is bare
+  // (no `$`), so CURRENCY_RE never saw it and it was compared against the Net income row instead —
+  // "correct by accident". D018 §5.2.
+  const INCOME = makePassage(
+    "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Total operating expenses 18,896 15,278 37,275 30,721. Operating income 35,885 29,589 86,737 72,421. Provision for income taxes 6,255 4,530 15,160 10,784. Net income $29,578 $24,780 $71,675 $61,110. Column order throughout this section: Three Months Ended March 28 2026, Three Months Ended March 29 2025, Six Months Ended March 28 2026, Six Months Ended March 29 2025, dollars in millions."
+  );
+  const SEGMENTS = makePassage(
+    "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+  );
+
+  const wrongColumn = [
+    { claim: "Total operating expenses were $15,278 for the quarter.", passage: INCOME, cites: "18896", never: "15278" },
+    { claim: "Provision for income taxes was $4,530 for the quarter.", passage: INCOME, cites: "6255", never: "4530" },
+    { claim: "Europe net sales were $24,454 million for the second quarter.", passage: SEGMENTS, cites: "28055", never: "24454" },
+    { claim: "Japan net sales were $7,298 million for the second quarter.", passage: SEGMENTS, cites: "8401", never: "7298" },
+  ];
+
+  for (const { claim: text, passage, cites, never } of wrongColumn) {
+    it(`contradicts a prior-year-column figure using its own row's current column: "${text.slice(0, 46)}"`, () => {
+      const claim = makeClaim(text);
+      claim.period = "fiscal Q2 2026";
+      const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "matches", confidence: 0.9 }, [passage]);
+      expect(result.verdict).toBe("contradicted");
+      // Assert on the CITED figures, not the whole note — the claim's own value legitimately appears
+      // there as the subject ("15278 disagrees with ...").
+      const cited = result.note?.match(/cited \(([^)]*)\)/)?.[1] ?? "";
+      expect(cited).toContain(cites);
+      expect(cited).not.toContain(never); // the prior-year cell it quoted must not be the justification
+    });
+  }
+
+  it("reads bare (non-$) rows at all — SEC tables mark only the first and total row", () => {
+    const claim = makeClaim("Mac net sales were $9,138 million for the second quarter.");
+    claim.period = "fiscal Q2 2026";
+    const products = makePassage(
+      "The following table shows net sales by category for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change iPhone $56,994 $46,841 22% $142,263 $115,979 23% Mac 8,399 7,949 6% 16,785 16,936 (1)% iPad 6,914 6,402 8% 15,509 14,490 7% Services 30,976 26,645 16% 60,989 52,985 15% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+    );
+    const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "matches", confidence: 0.9 }, [products]);
+    expect(result.verdict).toBe("contradicted"); // 9,138 is Rest of Asia Pacific, not Mac
+    expect(result.note).toContain("8399");
+  });
+
+  const trueClaims = [
+    "Europe net sales were $28,055 million for the second quarter.",
+    "Greater China net sales were $20,497 million for the second quarter.",
+    "Total net sales were $111,184 million for the second quarter.",
+    "Americas net sales grew 12% year over year.",
+  ];
+  for (const text of trueClaims) {
+    it(`never contradicts a true current-column claim: "${text.slice(0, 46)}"`, () => {
+      const claim = makeClaim(text);
+      claim.period = "fiscal Q2 2026";
+      const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "matches", confidence: 0.9 }, [SEGMENTS]);
+      expect(result.verdict).toBe("supported");
+    });
+  }
+
+  it("declines when the block states no column header (headerless tables stay unresolvable)", () => {
+    const noHeader = makePassage("Total operating expenses 18,896 15,278 37,275 30,721.");
+    const claim = makeClaim("Total operating expenses were $15,278 for the quarter.");
+    claim.period = "fiscal Q2 2026";
+    const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "n", confidence: 0.9 }, [noHeader]);
+    expect(result.verdict).toBe("supported");
+  });
+});
+
 describe("reconcileVerdictNoteConsistency — verb inflections (2026-07-30, Apple probe)", () => {
   const evidence = ["Total operating expenses 18,896 15,278 37,275 30,721."];
 
