@@ -471,12 +471,11 @@ describe("COLUMN/PERIOD GATE (2026-07-31) — a row's figures belong to a specif
       const claim = makeClaim(text);
       claim.period = "fiscal Q2 2026";
       const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "matches", confidence: 0.9 }, [passage]);
-      expect(result.verdict).toBe("contradicted");
-      // Assert on the CITED figures, not the whole note — the claim's own value legitimately appears
-      // there as the subject ("15278 disagrees with ...").
-      const cited = result.note?.match(/cited \(([^)]*)\)/)?.[1] ?? "";
-      expect(cited).toContain(cites);
-      expect(cited).not.toContain(never); // the prior-year cell it quoted must not be the justification
+      // A real figure from the wrong column is NOT a contradiction — the source states it, for another
+      // period. Only a figure absent from the whole row is contradicted. D018 §5.11.
+      expect(result.verdict).toBe("unsupported");
+      expect(result.note).toContain(cites); // the claimed period's actual figure
+      expect(result.note).toContain("not for the claimed period");
     });
   }
 
@@ -512,6 +511,94 @@ describe("COLUMN/PERIOD GATE (2026-07-31) — a row's figures belong to a specif
     claim.period = "fiscal Q2 2026";
     const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "n", confidence: 0.9 }, [noHeader]);
     expect(result.verdict).toBe("supported");
+  });
+});
+
+describe("WRONG-PERIOD GATE (2026-07-31) — an inferred claim.period must never select a cell", () => {
+  // Live stress run: EXTRACT tagged all 46 claims "Q3 2025" on a Q2 2026 filing, the comparator selected
+  // the prior-year column, and 9 verbatim-true income-statement claims were contradicted at confidence 1.
+  // Every claim here carries that WRONG period on purpose. D018 §5.11.
+  const INCOME = makePassage(
+    "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Total operating expenses 18,896 15,278 37,275 30,721. Operating income 35,885 29,589 86,737 72,421. Other income/(expense), net (52) (279) 98 (527). Provision for income taxes 6,255 4,530 15,160 10,784. Net income $29,578 $24,780 $71,675 $61,110. Column order throughout this section: Three Months Ended March 28 2026, Three Months Ended March 29 2025, Six Months Ended March 28 2026, Six Months Ended March 29 2025, dollars in millions."
+  );
+  const withBadPeriod = (text: string) => {
+    const claim = makeClaim(text);
+    claim.period = "Q3 2025"; // what EXTRACT actually produced
+    return claim;
+  };
+
+  const trueClaims = [
+    "Gross margin was $54,781 million during the quarter.",
+    "Research and development expense was $11,419 million during the quarter.",
+    "Total operating expenses were $18,896 million during the quarter.",
+    "Net income was $29,578 million during the quarter.",
+    "Provision for income taxes was $6,255 million during the quarter.",
+    "Other income and expense, net, was negative $52 million during the quarter.",
+  ];
+  for (const text of trueClaims) {
+    it(`never contradicts a true claim when the inferred period is wrong: "${text.slice(0, 44)}"`, () => {
+      const result = reconcileNumericVerdict(withBadPeriod(text), { verdict: "supported", evidence: [], note: "m", confidence: 0.9 }, [INCOME]);
+      expect(result.verdict).toBe("supported");
+    });
+  }
+
+  const falseClaims = [
+    { text: "Total operating expenses were $15,278 million during the quarter.", cites: "18896" },
+    { text: "Provision for income taxes was $4,530 million during the quarter.", cites: "6255" },
+  ];
+  for (const { text, cites } of falseClaims) {
+    it(`marks a prior-year-column claim unsupported despite the wrong period: "${text.slice(0, 44)}"`, () => {
+      const result = reconcileNumericVerdict(withBadPeriod(text), { verdict: "supported", evidence: [], note: "m", confidence: 0.9 }, [INCOME]);
+      expect(result.verdict).toBe("unsupported");
+      expect(result.note).toContain(cites);
+    });
+  }
+
+  it("parses an accounting-negative bare cell and the prose form of the same sign", () => {
+    expect(extractNumericFact("Other income was negative $52 million")).toEqual({ value: -52, unit: "USD", scale: "million" });
+  });
+});
+
+describe("COMPARATIVE-ASIDE GATE (2026-07-31) — a year after the figure must not retarget the column", () => {
+  // A bare year in a comparative aside ("versus 2025 levels") was narrowing the table to the prior-year
+  // column, so verbatim-true figures were contradicted. Phrase-dependent, which made it unpredictable:
+  // "up from 2025" survived while "from the 2025 figure" did not. D018 §5.11.
+  const INCOME = makePassage(
+    "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Total operating expenses 18,896 15,278 37,275 30,721. Operating income 35,885 29,589 86,737 72,421. Provision for income taxes 6,255 4,530 15,160 10,784. Net income $29,578 $24,780 $71,675 $61,110. Column order throughout this section: Three Months Ended March 28 2026, Three Months Ended March 29 2025, Six Months Ended March 28 2026, Six Months Ended March 29 2025, dollars in millions."
+  );
+  const run = (text: string) =>
+    reconcileNumericVerdict(makeClaim(text), { verdict: "supported", evidence: [], note: "m", confidence: 0.9 }, [INCOME]);
+
+  const trueWithAside = [
+    "Gross margin was $54,781 million, versus 2025 levels.",
+    "Net income of $29,578 million in the quarter compares with the 2025 result.",
+    "Operating income grew to $35,885 million from the 2025 figure.",
+    "Research and development expense was $11,419 million, up from 2025.",
+    "Net income of $29,578 million compared with $24,780 million a year earlier.",
+  ];
+  for (const text of trueWithAside) {
+    it(`never contradicts a true figure because of a comparative aside: "${text.slice(0, 46)}"`, () => {
+      expect(run(text).verdict).toBe("supported");
+    });
+  }
+
+  it("still honours a period the claim genuinely states about its own figure", () => {
+    expect(run("Operating income reached $35,885 million in Q2 2026.").verdict).toBe("supported");
+    expect(run("Total operating expenses were $18,896 million for the three months ended March 28, 2026.").verdict).toBe("supported");
+  });
+
+  it("marks a prior-year-column figure unsupported, not contradicted", () => {
+    expect(run("Total operating expenses were $15,278 million during the quarter.").verdict).toBe("unsupported");
+    expect(run("Provision for income taxes was $4,530 million during the quarter.").verdict).toBe("unsupported");
+  });
+
+  it("still contradicts a figure that appears nowhere in the measure's row", () => {
+    expect(run("Net income was $35,885 million during the quarter.").verdict).toBe("contradicted");
+  });
+
+  it("declines rather than picks when the claim names two different periods", () => {
+    // Two period signals and no way to tell which governs the figure — must not narrow to one column.
+    expect(run("Revenue rose from $95,359 million in 2025 to $111,184 million in 2026.").verdict).toBe("supported");
   });
 });
 

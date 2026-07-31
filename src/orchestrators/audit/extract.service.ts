@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { logger } from "../../observability/logger.js";
+import { env } from "../../lib/env.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
@@ -92,7 +93,7 @@ export class ExtractService {
       // different claim set/score each time is a trust-destroying bug for a
       // paid product, found in production 2026-07-26). The reflection flow's
       // default temperature is untouched; this is an explicit per-call override.
-      () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0 } }),
+      () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0, timeoutMs: env.AUDIT_LLM_TIMEOUT_MS } }),
       // sessionId is auditId here, not null (T040) — audit mode has no
       // "session" concept, but llm_calls.session_id is a plain UUID with no
       // FK (schema.ts), so it doubles as the correlation key that lets

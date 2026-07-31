@@ -1,5 +1,5 @@
 import { compare } from "../../numbers/compare.js";
-import { detectTableCandidate, columnsForCells, selectColumnForPeriod, tableScaleOf, rowCells } from "./table-parse.js";
+import { detectTableCandidate, columnsForCells, narrowByPeriod, tableScaleOf, rowCells } from "./table-parse.js";
 import type { Claim } from "../../db/schema.js";
 import type { RetrievedPassage } from "../../rag/corpus-client.js";
 
@@ -18,6 +18,8 @@ interface ExtractedNumericFact {
 // real usage ("$(190.9) million", not "$(190.9 million)"). D018 §5.
 const CURRENCY_RE = /\$\s?(\()?\s*([\d,]+(?:\.\d+)?)\s*(\))?\s*(billion|million|thousand)?/i;
 const PERCENT_RE = /(-?[\d,]+(?:\.\d+)?)\s*%/;
+/** "negative $52 million" is the prose form of the accounting parens already handled above. D018 §5. */
+const NEGATIVE_PREFIX_RE = /\b(?:negative|minus)\s+$/i;
 
 /** One currency-or-percent fact from free text; currency tried first. D018 §5. */
 export function extractNumericFact(text: string): ExtractedNumericFact | null {
@@ -28,6 +30,7 @@ export function extractNumericFact(text: string): ExtractedNumericFact | null {
     if (currencyMatch[1] === "(" || currencyMatch[3] === ")") {
       value = -Math.abs(value);
     }
+    if (NEGATIVE_PREFIX_RE.test(text.slice(0, currencyMatch.index ?? 0))) value = -Math.abs(value);
     return { value, unit: "USD", scale: currencyMatch[4]?.toLowerCase() ?? null };
   }
   const percentMatch = text.match(PERCENT_RE);
@@ -139,7 +142,7 @@ function extractNumericFactsWithIndex(text: string): Array<{ fact: ExtractedNume
     if (!m[2]) continue;
     let value = parseFloat(m[2].replace(/,/g, ""));
     if (Number.isNaN(value)) continue;
-    if (m[1] === "(" || m[3] === ")") value = -Math.abs(value);
+    if (m[1] === "(" || m[3] === ")" || NEGATIVE_PREFIX_RE.test(text.slice(0, m.index ?? 0))) value = -Math.abs(value);
     out.push({ fact: { value, unit: "USD", scale: m[4]?.toLowerCase() ?? null }, index: m.index ?? 0 });
   }
   for (const m of text.matchAll(new RegExp(PERCENT_RE.source, "g"))) {
@@ -210,15 +213,16 @@ function collectPassageFacts(
   claim: Claim,
   claimFact: ExtractedNumericFact,
   passages: RetrievedPassage[]
-): Array<{ fact: ExtractedNumericFact; passageId: string; passageText: string }> {
+): { candidates: Array<{ fact: ExtractedNumericFact; passageId: string; passageText: string }>; rowSiblings: ExtractedNumericFact[] } {
   // Only the words leading up to the claim's OWN figure name its subject. Using the whole sentence
   // matched "net income margin ... of total net sales" to the net-sales row (verify-011). D018 §5.2.
   const claimFigure = extractNumericFactsWithIndex(claim.claimText).find(
     (c) => c.fact.unit === claimFact.unit && c.fact.value === claimFact.value
   );
-  if (!claimFigure) return [];
+  const none = { candidates: [], rowSiblings: [] };
+  if (!claimFigure) return none;
   const claimWords = new Set(contentWords(claim.claimText.slice(0, claimFigure.index)));
-  if (claimWords.size === 0) return [];
+  if (claimWords.size === 0) return none;
 
   // Pooled across passages so the row naming the subject wins; bare ($-less) rows included, since SEC
   // tables mark only the first and total row. D018 §5.2.
@@ -246,25 +250,28 @@ function collectPassageFacts(
       pool.push({ labelWords: rows[i]!.labelWords, passage, rowText, facts });
     }
   }
-  if (pool.length === 0) return [];
+  if (pool.length === 0) return none;
 
   const best = pickBestRow(pool, claimWords, allRows);
-  if (best === null) return []; // nothing identifies this claim's subject, or a genuine tie — don't guess
+  if (best === null) return none; // nothing identifies this claim's subject, or a genuine tie — don't guess
   const chosen = pool[best]!;
 
-  // Subject settled, so the claim's period picks ONE column. Null unless the block's header resolves it. D018 §5.2.
-  const columnFact = tableColumnFact(claim, claimFact, chosen.rowText, chosen.passage.text);
-  const facts = columnFact ? [columnFact] : chosen.facts;
-  return facts.map((fact) => ({ fact, passageId: chosen.passage.passageId, passageText: chosen.passage.text }));
+  // Subject settled, so the row is read as a table and narrowed to the claim's period. D018 §5.2/§5.11.
+  const table = tableRowFacts(claim, claimFact, chosen.rowText, chosen.passage.text);
+  const facts = table && table.periodCells.length > 0 ? table.periodCells : chosen.facts;
+  return {
+    candidates: facts.map((fact) => ({ fact, passageId: chosen.passage.passageId, passageText: chosen.passage.text })),
+    rowSiblings: table?.allCells ?? [],
+  };
 }
 
-/** One cell of the chosen row: the column whose period is the claim's. Declines on any ambiguity. D018 §5.2. */
-function tableColumnFact(
+/** The metric row's cells: those matching the claim's period, and all of them. D018 §5.11. */
+function tableRowFacts(
   claim: Claim,
   claimFact: ExtractedNumericFact,
   rowText: string,
   passageText: string
-): ExtractedNumericFact | null {
+): { periodCells: ExtractedNumericFact[]; allCells: ExtractedNumericFact[] } | null {
   const detected = detectTableCandidate(passageText);
   if (!detected) return null;
   const cells = rowCells(rowText);
@@ -280,11 +287,13 @@ function tableColumnFact(
 
   const sameUnit = cells.map((cell, i) => ({ cell, column: columns[i]! })).filter(({ cell }) => cell.unit === claimFact.unit);
   if (sameUnit.length === 0) return null;
-  const pick = selectColumnForPeriod(sameUnit.map((s) => s.column), claim.period);
-  if (pick === null) return null;
 
-  // Scale is carried over from the claim: both sides are already in the table's units.
-  return { value: sameUnit[pick]!.cell.value, unit: claimFact.unit, scale: claimFact.scale };
+  // Narrowing reads the claim's own text — `claim.period` is an inferred field and a wrong value used to
+  // select the prior-year column and contradict true claims wholesale. D018 §5.11.
+  const narrowed = narrowByPeriod(sameUnit, claim.claimText);
+  // Scale carried from the claim: both sides are already in the table's units.
+  const toFact = ({ cell }: { cell: { value: number } }) => ({ value: cell.value, unit: claimFact.unit, scale: claimFact.scale });
+  return { periodCells: narrowed.map(toFact), allCells: sameUnit.map(toFact) };
 }
 
 /** Override notes must carry the scale word — a bare "123363" next to "97.8" reads as a 1000x gap when it's $123.4M vs $97.8M. D018 §5.2. */
@@ -340,7 +349,7 @@ export function reconcileNumericVerdict(
   } else {
     // Fallback when evidence is empty or not comparable: decide by unanimity across every
     // same-measure figure in the passages, never by picking one. D018 §5.2.
-    const passageFacts = collectPassageFacts(claim, claimFact, passages);
+    const { candidates: passageFacts, rowSiblings } = collectPassageFacts(claim, claimFact, passages);
     if (passageFacts.length === 0) {
       return { verdict: result.verdict, note: result.note, confidence }; // nothing usable anywhere — trust the LLM
     }
@@ -352,6 +361,22 @@ export function reconcileNumericVerdict(
     const allDiffer = comparisons.every((c) => c.equal === false);
     if (!allEqual && !allDiffer) {
       return { verdict: result.verdict, note: result.note, confidence }; // split — can't decide without knowing which figure is the measure
+    }
+    // A figure that IS in the metric's row, just not in the claim's period column, is not a
+    // contradiction — the source states it, for another period. Only a figure absent from the whole row
+    // is contradicted, which is why period matching can never produce a false accusation. D018 §5.11.
+    if (!allEqual && rowSiblings.some((sibling) => compareTo(sibling).equal === true)) {
+      const byPassage = new Map(passageFacts.map((c) => [c.passageId, c.passageText]));
+      return {
+        verdict: "unsupported",
+        note: buildOverrideNote(
+          `[verdict set by code: ${formatFact(claimFact)} appears in this measure's row but not for the claimed period (that column holds ${passageFacts.map((c) => formatFact(c.fact)).join(", ")}) — D018 §2.3]`,
+          result.note
+        ),
+        confidence: 1,
+        evidence: [...byPassage.values()],
+        sourceRefs: [...byPassage.keys()],
+      };
     }
     equal = allEqual;
     citedFacts = passageFacts.map((c) => c.fact);

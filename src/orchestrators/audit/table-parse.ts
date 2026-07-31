@@ -157,7 +157,7 @@ export function validateTableParse(parse: ParsedTable, blockText: string, detect
 
 /** Currency | percent | bare, in column order. Bare last so "22%" is a percent; bare years are dates, not figures. D018 §5. */
 const ROW_CELL_RE =
-  /\$\s?(\()?\s*([\d,]+(?:\.\d+)?)\s*(\))?|\((-?[\d,]+(?:\.\d+)?)\)\s*%|(-?[\d,]+(?:\.\d+)?)\s*%|(?<![A-Za-z0-9.\-])([\d,]+(?:\.\d+)?)(?![A-Za-z])/g;
+  /\$\s?(\()?\s*([\d,]+(?:\.\d+)?)\s*(\))?|\((-?[\d,]+(?:\.\d+)?)\)\s*%|(-?[\d,]+(?:\.\d+)?)\s*%|\(([\d,]+(?:\.\d+)?)\)|(?<![A-Za-z0-9.\-])([\d,]+(?:\.\d+)?)(?![A-Za-z])/g;
 
 export interface RowCell {
   value: number;
@@ -167,7 +167,12 @@ export interface RowCell {
 /** Every cell of a row including the bare columns a `$`-anchored regex cannot see — SEC tables mark only the first and total rows. D018 §5. */
 export function rowCells(rowText: string): RowCell[] {
   const out: RowCell[] = [];
-  for (const m of rowText.matchAll(new RegExp(ROW_CELL_RE.source, "g"))) {
+  // "(1)" leading a row is a footnote marker, not a -1 cell: it shifts every column by one. Told apart
+  // from a real accounting negative like "(52)" by the row's own shape — markers are 1-2 bare digits
+  // sitting beside comma-formatted figures. D018 §5.11.
+  const looksFootnoted = /^[^\d(]*\(\d{1,2}\)\s*(?=[$\d])/.test(rowText) && /\d,\d{3}/.test(rowText);
+  const text = looksFootnoted ? rowText.replace(/\(\d{1,2}\)\s*/, " ") : rowText;
+  for (const m of text.matchAll(new RegExp(ROW_CELL_RE.source, "g"))) {
     if (m[2]) {
       let value = parseFloat(m[2].replace(/,/g, ""));
       if (Number.isNaN(value)) continue;
@@ -180,8 +185,11 @@ export function rowCells(rowText: string): RowCell[] {
       const value = parseFloat(m[5].replace(/,/g, ""));
       if (!Number.isNaN(value)) out.push({ value, unit: "percent" });
     } else if (m[6]) {
-      if (/^(?:19|20)\d{2}$/.test(m[6])) continue;
       const value = parseFloat(m[6].replace(/,/g, ""));
+      if (!Number.isNaN(value)) out.push({ value: -Math.abs(value), unit: "USD" });
+    } else if (m[7]) {
+      if (/^(?:19|20)\d{2}$/.test(m[7])) continue;
+      const value = parseFloat(m[7].replace(/,/g, ""));
       if (!Number.isNaN(value)) out.push({ value, unit: "USD" });
     }
   }
@@ -228,25 +236,48 @@ export function columnsForCells(blockText: string, cellUnits: Array<"USD" | "per
   return columns;
 }
 
-/** The column satisfying a claim's period, or null. Deterministic: the transcriber never decides this. D018 §5. */
-export function selectColumnForPeriod(columns: ParsedColumn[], claimPeriod: string | null): number | null {
-  if (!claimPeriod) return null;
-  const claimYear = claimPeriod.match(/(?<![\d.])(?:19|20)\d{2}(?![\d.])/)?.[0];
-  if (!claimYear) return null;
-  // Only filter on duration when the claim actually states one. "FY2026" names neither a quarter nor a
-  // half, so it must not be read as "the six-month column" — it stays ambiguous and declines. D018 §5.
-  const wantsQuarter = /\bQ[1-4]\b|quarterly|\bquarter\b/i.test(claimPeriod);
-  const wantsHalf = /six[-\s]month|first six months|\bhalf\b/i.test(claimPeriod);
+/**
+ * Narrows candidates to the claim's period. It can only REMOVE candidates, never pick one: a wrong period
+ * then degrades to a decline instead of asserting the wrong cell. Reads the claim's own words, never the
+ * inferred `claim.period` field. Unstated year = the table's most recent column (the current period). D018 §5.11.
+ */
+/** Comparative clauses name a period the claim is measured AGAINST, not the period of its own figure. */
+const COMPARATIVE_RE =
+  /\b(?:versus|vs\.?|compared\s+(?:with|to)|compares?\s+with|relative\s+to|against|than|up\s+from|down\s+from|from\s+the|a\s+year\s+earlier|year[-\s]over[-\s]year|prior[-\s]year)\b/i;
 
-  const matches: number[] = [];
-  for (let i = 0; i < columns.length; i++) {
-    const column = columns[i]!;
-    if (!column.period.includes(claimYear)) continue;
-    if (column.duration && (wantsQuarter || wantsHalf)) {
-      const isQuarter = /Three\s+Months/i.test(column.duration);
-      if (wantsQuarter !== isQuarter) continue;
-    }
-    matches.push(i);
+/**
+ * Narrows candidates to the claim's own period; it must always leave the decision to unanimity. Reads the
+ * claim's words, never the inferred `claim.period`. Declines to narrow by year when the claim names more
+ * than one, so a single surviving candidate always reflects an unambiguous period. D018 §5.11.
+ */
+export function narrowByPeriod<T extends { column: ParsedColumn }>(items: T[], claimText: string): T[] {
+  if (items.length <= 1) return items;
+  // Everything from the first comparative marker on describes the baseline, not this figure's period:
+  // "versus 2025 levels" was retargeting true 2026 figures to the prior-year column. D018 §5.11.
+  const own = claimText.split(COMPARATIVE_RE)[0] ?? claimText;
+
+  const wantsHalf = /six\s+months|first\s+half|year[-\s]to[-\s]date/i.test(own);
+  const wantsQuarter = !wantsHalf && /\bquarter(?:ly)?\b|\bQ[1-4]\b|three\s+months/i.test(own);
+
+  let out = items;
+  if (wantsHalf || wantsQuarter) {
+    const byDuration = out.filter((i) => {
+      if (!i.column.duration) return true;
+      const isQuarter = /Three\s+Months/i.test(i.column.duration);
+      return wantsQuarter ? isQuarter : !isQuarter;
+    });
+    if (byDuration.length > 0) out = byDuration;
   }
-  return matches.length === 1 ? matches[0]! : null;
+
+  const years = out.map((i) => i.column.period.match(/(?:19|20)\d{2}/)?.[0]).filter((y): y is string => Boolean(y));
+  if (years.length === 0) return out;
+  const stated = [...new Set(claimText.match(/(?<![\d.])(?:19|20)\d{2}(?![\d.])/g) ?? [])];
+  // Two periods named and no way to tell which governs the figure — leave every candidate standing so
+  // unanimity decides, rather than narrowing to one and asserting it. D018 §5.11.
+  if (stated.length > 1) return out;
+  const ownStated = own.match(/(?<![\d.])(?:19|20)\d{2}(?![\d.])/g) ?? [];
+  const target = ownStated.find((y) => years.includes(y)) ?? [...years].sort().at(-1)!;
+  const byYear = out.filter((i) => i.column.period.includes(target));
+  return byYear.length > 0 ? byYear : out;
 }
+

@@ -1,4 +1,5 @@
 import { logger } from "../../observability/logger.js";
+import { env } from "../../lib/env.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
@@ -113,7 +114,7 @@ export class VerifyService {
     for (let attempt = 1; attempt <= VERIFY_SCHEMA_ATTEMPTS; attempt++) {
       const { result: raw, llmCallId } = await executeAndRecordLlmCall(
         // temperature:0 for reproducibility — see extract.service.ts's matching comment.
-        () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0 } }),
+        () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0, timeoutMs: env.AUDIT_LLM_TIMEOUT_MS } }),
         // sessionId is auditId, not null (T040) — see extract.service.ts.
         { sessionId: auditId, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
         this.llmCallStore

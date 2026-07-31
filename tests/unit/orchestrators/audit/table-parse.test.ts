@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import {
   detectTableCandidate,
   validateTableParse,
-  selectColumnForPeriod,
   type ParsedTable,
   type ParseRejection,
 } from "../../../../src/orchestrators/audit/table-parse.js";
@@ -64,35 +63,5 @@ describe("table-parse contract against table-parse-golden-set.json", () => {
   it("column count comes from the block, not from the transcriber", () => {
     const seg = goldenSet.scenarios.find((s) => s.id === "table-001-segment-valid")!;
     expect(detectTableCandidate(seg.block)!.columnCount).toBe(6);
-  });
-});
-
-describe("selectColumnForPeriod — period matching stays in code (D018 §5)", () => {
-  const columns = [
-    { duration: "Three Months Ended", period: "March 28, 2026" },
-    { duration: "Three Months Ended", period: "March 29, 2025" },
-    { duration: "Six Months Ended", period: "March 28, 2026" },
-    { duration: "Six Months Ended", period: "March 29, 2025" },
-  ];
-
-  it("a quarterly claim selects the three-month column, never the six-month one of the same year", () => {
-    // Year alone is ambiguous here — both index 0 and index 2 are 2026.
-    expect(selectColumnForPeriod(columns, "fiscal Q2 2026")).toBe(0);
-  });
-
-  it("resolves the prior-year quarterly column when the claim names it", () => {
-    expect(selectColumnForPeriod(columns, "fiscal Q2 2025")).toBe(1);
-  });
-
-  it("declines when the claim carries no period", () => {
-    expect(selectColumnForPeriod(columns, null)).toBeNull();
-  });
-
-  it("declines when the claim's year is not among the columns", () => {
-    expect(selectColumnForPeriod(columns, "fiscal Q2 2024")).toBeNull();
-  });
-
-  it("declines rather than guess when the claim names no duration and the year is ambiguous", () => {
-    expect(selectColumnForPeriod(columns, "FY2026")).toBeNull();
   });
 });
