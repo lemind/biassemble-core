@@ -3,6 +3,7 @@ import { env } from "../../lib/env.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
+import { RateLimitError } from "../../providers/gemini.js";
 import { VERIFY_RESPONSE_KEYS, VerifyResponseSchema, type VerifyResponse } from "../../contracts/audit-internal.schemas.js";
 import {
   reconcileNumericVerdict,
@@ -109,16 +110,30 @@ export class VerifyService {
 
     // A malformed VERIFY response used to fail the whole audit — observed ~1 run in 5 live, and only a
     // human relaunch recovered it. Retried here, then degraded per claim. D018 §5.10.
+    // Found on review (2026-08-02): the provider CALL itself was outside this try/catch, so the actual
+    // live failures (a timeout abort, a malformed-JSON throw from the provider) never reached the retry
+    // at all — they propagated straight past it and failed the whole audit. The call is now inside.
     let parsed: VerifyResponse | null = null;
     let lastSchemaError: string | null = null;
     for (let attempt = 1; attempt <= VERIFY_SCHEMA_ATTEMPTS; attempt++) {
-      const { result: raw, llmCallId } = await executeAndRecordLlmCall(
-        // temperature:0 for reproducibility — see extract.service.ts's matching comment.
-        () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0, timeoutMs: env.AUDIT_LLM_TIMEOUT_MS } }),
-        // sessionId is auditId, not null (T040) — see extract.service.ts.
-        { sessionId: auditId, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
-        this.llmCallStore
-      );
+      let raw: unknown;
+      let llmCallId: string | null = null;
+      try {
+        ({ result: raw, llmCallId } = await executeAndRecordLlmCall(
+          // temperature:0 for reproducibility — see extract.service.ts's matching comment.
+          () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0, timeoutMs: env.AUDIT_LLM_TIMEOUT_MS } }),
+          // sessionId is auditId, not null (T040) — see extract.service.ts.
+          { sessionId: auditId, stage: "verify", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
+          this.llmCallStore
+        ));
+      } catch (err) {
+        // Rate limits fail again immediately — retrying wastes the remaining attempts. Everything else
+        // (timeout, provider-side malformed JSON, network blips) is exactly what this loop is for.
+        if (err instanceof RateLimitError) throw err;
+        lastSchemaError = (err as Error).message;
+        logger.warn({ module: MODULE, operation: "runBatch", auditId, attempt, err }, "VERIFY provider call failed — retrying batch");
+        continue;
+      }
 
       // Injection stays a hard stop and is never retried (D018 §2.3) — this is why the shared
       // withRetry helper, which retries everything but rate limits, is not used here.
@@ -151,7 +166,7 @@ export class VerifyService {
     // Still unparseable: degrade this batch to unverifiable rather than failing the whole audit, so the
     // customer gets a report naming the gap instead of a hard error. D018 §5.10.
     if (!parsed) {
-      logger.error({ module: MODULE, operation: "runBatch", auditId, attempts: VERIFY_SCHEMA_ATTEMPTS }, "VERIFY batch unparseable after retries — degrading to unverifiable");
+      logger.error({ module: MODULE, operation: "runBatch", auditId, attempts: VERIFY_SCHEMA_ATTEMPTS, lastSchemaError }, "VERIFY batch failed after retries — degrading to unverifiable");
       for (const { claim } of batch) {
         await this.auditStore.updateClaimVerdict(claim.claimId, {
           verdict: "unverifiable",
@@ -159,7 +174,7 @@ export class VerifyService {
           sourceRefs: [],
           synthesized: false,
           confidence: 0,
-          note: `[forced to unverifiable: VERIFY's response could not be parsed after ${VERIFY_SCHEMA_ATTEMPTS} attempts — ${lastSchemaError ?? "unknown"}]`,
+          note: `[forced to unverifiable: VERIFY failed after ${VERIFY_SCHEMA_ATTEMPTS} attempts — ${lastSchemaError ?? "unknown"}]`,
         });
       }
       return;

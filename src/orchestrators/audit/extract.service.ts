@@ -4,6 +4,7 @@ import { env } from "../../lib/env.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
+import { RateLimitError } from "../../providers/gemini.js";
 import { EXTRACT_RESPONSE_KEYS, ExtractedClaimSchema } from "../../contracts/audit-internal.schemas.js";
 import { generateClaimId } from "../../lib/audit-identifiers.js";
 import type { Provider } from "../../providers/types.js";
@@ -13,6 +14,9 @@ import type { AuditStore } from "../../persistence/audit-store.js";
 import type { Claim } from "../../db/schema.js";
 
 const MODULE = "extract-service";
+/** EXTRACT had zero retry: any provider abort or schema failure hard-failed the whole audit, before any
+ * claim existed to degrade. Reproduced 3/3 live on an adversarial narrative payload. D018 §5.10. */
+const EXTRACT_ATTEMPTS = 3;
 
 const REFERENCE_RE = /\b(?:Article|Section|Paragraph|Item|§)\s*\d+(?:[-.]\d+)?\b/gi;
 
@@ -87,50 +91,71 @@ export class ExtractService {
     const promptVersion = this.prompts.getAuditVersion("extract");
     const providerId = this.provider.mode;
 
-    const { result: raw, llmCallId } = await executeAndRecordLlmCall(
-      // temperature: 0 — audit-mode output must be reproducible run-to-run on
-      // identical input (a customer re-running an audit and getting a
-      // different claim set/score each time is a trust-destroying bug for a
-      // paid product, found in production 2026-07-26). The reflection flow's
-      // default temperature is untouched; this is an explicit per-call override.
-      () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0, timeoutMs: env.AUDIT_LLM_TIMEOUT_MS } }),
-      // sessionId is auditId here, not null (T040) — audit mode has no
-      // "session" concept, but llm_calls.session_id is a plain UUID with no
-      // FK (schema.ts), so it doubles as the correlation key that lets
-      // getCallsBySession(auditId) attribute LLM calls/tokens back to a run.
-      { sessionId: auditId, stage: "extract", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
-      this.llmCallStore
-    );
-
-    if (isSuspectedInjection(JSON.stringify(raw), EXTRACT_RESPONSE_KEYS)) {
-      logger.error({ module: MODULE, operation: "run", auditId, raw }, "EXTRACT response flagged as injection-suspected — hard stop, not repaired");
-      if (llmCallId) {
-        await this.llmCallStore.updateFailure(llmCallId, "schema_validation", "injection-suspected response").catch(() => {});
-      }
-      throw new InjectionSuspectedError("extract");
-    }
-
+    // Unlike VERIFY there is no partial audit to degrade to on final failure — EXTRACT produces the claim
+    // set itself, so a failure here still ends the audit, but only after EXTRACT_ATTEMPTS tries instead
+    // of one. Reproduced live: a 21-claim adversarial narrative payload hard-failed 3/3 times with zero
+    // retry. D018 §5.10.
     const schema = buildExtractResponseSchema(outputText);
-    let parsed: z.infer<typeof schema>;
-    try {
-      const { result } = await repairWithFallback(JSON.stringify(raw), schema, null);
-      parsed = result;
-      // repair.ts's partial-field-recovery step (Stage 004) sets a whole
-      // top-level field to null rather than throwing when only that field
-      // fails validation — e.g. every claim's excerpt failing the
-      // verbatim-substring superRefine check nulls out `claims` entirely
-      // while `truncated` still parses fine. That's a legitimate partial
-      // parse, not an absent response — it must fail EXTRACT cleanly, not
-      // crash on `.length` a few lines below.
-      if (parsed.claims === null || parsed.claims === undefined) {
-        throw new Error("EXTRACT response failed schema validation: claims could not be parsed (see repair warnings)");
+    let parsed: z.infer<typeof schema> | null = null;
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= EXTRACT_ATTEMPTS; attempt++) {
+      let raw: unknown;
+      let llmCallId: string | null = null;
+      try {
+        ({ result: raw, llmCallId } = await executeAndRecordLlmCall(
+          // temperature: 0 — audit-mode output must be reproducible run-to-run on
+          // identical input (a customer re-running an audit and getting a
+          // different claim set/score each time is a trust-destroying bug for a
+          // paid product, found in production 2026-07-26). The reflection flow's
+          // default temperature is untouched; this is an explicit per-call override.
+          () => this.provider.completeJson<unknown>({ system, user, options: { temperature: 0, timeoutMs: env.AUDIT_LLM_TIMEOUT_MS } }),
+          // sessionId is auditId here, not null (T040) — audit mode has no
+          // "session" concept, but llm_calls.session_id is a plain UUID with no
+          // FK (schema.ts), so it doubles as the correlation key that lets
+          // getCallsBySession(auditId) attribute LLM calls/tokens back to a run.
+          { sessionId: auditId, stage: "extract", callType: "primary", provider: providerId, model: this.modelName, promptVersion },
+          this.llmCallStore
+        ));
+      } catch (err) {
+        if (err instanceof RateLimitError) throw err; // fails again immediately — retrying wastes attempts
+        lastError = err as Error;
+        logger.warn({ module: MODULE, operation: "run", auditId, attempt, err }, "EXTRACT provider call failed — retrying");
+        continue;
       }
-      if (llmCallId) await this.llmCallStore.updateParsedOutput(llmCallId, parsed).catch(() => {});
-    } catch (err) {
-      if (llmCallId) {
-        await this.llmCallStore.updateFailure(llmCallId, "schema_validation", (err as Error).message).catch(() => {});
+
+      if (isSuspectedInjection(JSON.stringify(raw), EXTRACT_RESPONSE_KEYS)) {
+        logger.error({ module: MODULE, operation: "run", auditId, raw }, "EXTRACT response flagged as injection-suspected — hard stop, not repaired");
+        if (llmCallId) {
+          await this.llmCallStore.updateFailure(llmCallId, "schema_validation", "injection-suspected response").catch(() => {});
+        }
+        throw new InjectionSuspectedError("extract");
       }
-      throw err;
+
+      try {
+        const { result } = await repairWithFallback(JSON.stringify(raw), schema, null);
+        // repair.ts's partial-field-recovery step (Stage 004) sets a whole
+        // top-level field to null rather than throwing when only that field
+        // fails validation — e.g. every claim's excerpt failing the
+        // verbatim-substring superRefine check nulls out `claims` entirely
+        // while `truncated` still parses fine. That's a legitimate partial
+        // parse, not an absent response — it must fail EXTRACT cleanly, not
+        // crash on `.length` a few lines below.
+        if (result.claims === null || result.claims === undefined) {
+          throw new Error("EXTRACT response failed schema validation: claims could not be parsed (see repair warnings)");
+        }
+        if (llmCallId) await this.llmCallStore.updateParsedOutput(llmCallId, result).catch(() => {});
+        parsed = result;
+        break;
+      } catch (err) {
+        lastError = err as Error;
+        if (llmCallId) {
+          await this.llmCallStore.updateFailure(llmCallId, "schema_validation", lastError.message).catch(() => {});
+        }
+        logger.warn({ module: MODULE, operation: "run", auditId, attempt, err }, "EXTRACT response unparseable — retrying");
+      }
+    }
+    if (!parsed) {
+      throw lastError ?? new Error("EXTRACT failed after retries with no captured error");
     }
 
     // Belt-and-suspenders cap enforcement (FR-019) — the prompt asks the model

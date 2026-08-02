@@ -113,11 +113,14 @@ export class GeminiProvider implements Provider {
         );
       }
 
-      // Detect timeout errors
+      // Detect timeout errors. The SDK's own timeout abort ("This operation was aborted") does not
+      // contain "timeout" at all — live audits (46 claims) hit exactly this message and, misclassified
+      // as a generic error, were neither retried at the call site nor logged as a timeout. D018 §5.10.
       if (
         message.toLowerCase().includes("timeout") ||
         message.toLowerCase().includes("timed out") ||
-        message.toLowerCase().includes("deadline exceeded")
+        message.toLowerCase().includes("deadline exceeded") ||
+        message.toLowerCase().includes("aborted")
       ) {
         logger.warn(
           { module: MODULE, operation: "completeJson", message },

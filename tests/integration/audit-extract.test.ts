@@ -136,6 +136,33 @@ describe("EXTRACT service against extract-golden-set.json (T011)", () => {
     );
   });
 
+  it("recovers when the provider call itself throws once, not just when it returns bad JSON (2026-08-02)", async () => {
+    // EXTRACT had zero retry at all before this: a provider abort or malformed-JSON throw hard-failed
+    // the whole audit on the first attempt. Reproduced live 3/3 times on an adversarial payload. D018 §5.10.
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+
+    provider.failOn(1, "This operation was aborted");
+    provider.setDefault({
+      claims: [{ id: "c1", type: "numeric", claim: "Revenue grew", excerpt: "Revenue grew", locations: ["p1s1"], period: "Q2 2026", derived: false }],
+      truncated: false,
+    });
+
+    const result = await service.run(auditId, "Revenue grew this quarter.", undefined, 50);
+    expect(result.claims).toHaveLength(1);
+  });
+
+  it("still fails the audit, after retrying, when the provider call keeps throwing every attempt", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+
+    provider.failAll("This operation was aborted");
+
+    await expect(service.run(auditId, "Revenue grew this quarter.", undefined, 50)).rejects.toThrow(/aborted/);
+  });
+
   it("enforces maxClaims as a code-level cap even if the model ignores it (FR-019, belt-and-suspenders)", async () => {
     const { provider, auditStore, service } = buildService();
     const auditId = randomUUID();

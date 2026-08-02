@@ -228,7 +228,43 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     const updated = auditStore.claims.get(claim.claimId)!;
     expect(updated.verdict).toBe("unverifiable");
     expect(updated.confidence).toBe(0);
-    expect(updated.note).toContain("could not be parsed after");
+    expect(updated.note).toContain("failed after");
+  });
+
+  it("recovers when the PROVIDER CALL ITSELF throws, not just when it returns unparseable JSON (2026-08-02)", async () => {
+    // Found on review: the provider call sat OUTSIDE the try/catch that triggers retry, so a real
+    // failure mode (a timeout abort, a malformed-JSON throw from the provider) never reached the retry
+    // loop at all and hard-failed the whole audit. The previous test only ever exercised a successful
+    // call returning schema-invalid JSON — a materially easier case that this bug slipped past entirely.
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const claim = toClaim(auditId, randomUUID(), "Some claim");
+    auditStore.claims.set(claim.claimId, claim);
+
+    provider.failOn(1, "This operation was aborted");
+    provider.setDefault({
+      results: [{ claim_id: claim.claimId, verdict: "supported", evidence: ["e"], source_refs: [], synthesized: false, note: null, confidence: 0.9 }],
+      trace: {},
+    });
+
+    await expect(service.run(auditId, [{ claim, passages: [] }], 0.6)).resolves.toBeUndefined();
+    expect(auditStore.claims.get(claim.claimId)!.verdict).toBe("supported");
+  });
+
+  it("degrades to unverifiable, not a thrown audit failure, when the provider call itself keeps throwing", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const claim = toClaim(auditId, randomUUID(), "Some claim");
+    auditStore.claims.set(claim.claimId, claim);
+
+    provider.failAll("This operation was aborted");
+
+    await expect(service.run(auditId, [{ claim, passages: [] }], 0.6)).resolves.toBeUndefined();
+    const updated = auditStore.claims.get(claim.claimId)!;
+    expect(updated.verdict).toBe("unverifiable");
+    expect(updated.note).toContain("aborted");
   });
 
   it("retries an unparseable VERIFY response and keeps the verdict when a later attempt parses", async () => {
