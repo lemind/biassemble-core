@@ -9,6 +9,8 @@ import {
   detectMagnitudeClaim,
   extractCurrentPriorPair,
   reconcileMagnitudeClaim,
+  extractComparisonClaim,
+  reconcileComparisonVerdict,
 } from "../../../../src/orchestrators/audit/verify-reconcilers.js";
 import type { Claim } from "../../../../src/db/schema.js";
 import type { RetrievedPassage } from "../../../../src/rag/corpus-client.js";
@@ -624,6 +626,53 @@ describe("reconcileVerdictNoteConsistency — verb inflections (2026-07-30, Appl
   });
 });
 
+describe("reconcileVerdictNoteConsistency — inequality vocabulary (2026-08-02, crossrow probe F6)", () => {
+  it("catches 'did not exceed' — a comparison claim's own note said false while verdict said supported", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: ["iPad net sales were $6,914 million and Wearables, Home and Accessories net sales were $7,901 million."],
+      note: "In the three months ended March 28, 2026, iPad net sales were $6,914 million and Wearables, Home and Accessories net sales were $7,901 million. Therefore, iPad net sales did not exceed Wearables, Home and Accessories net sales.",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("catches 'did not fall short of'", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: ["Revenue was $50 million against a $45 million target."],
+      note: "Revenue did not fall short of the target.",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("does NOT fire on an affirming note ('was higher than') even though it shares vocabulary with the negated form", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: ["iPhone net sales were $56,994 million; Services net sales were $30,976 million."],
+      note: "iPhone net sales were higher than Services net sales.",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("found on review (2026-08-03): does NOT fire on a bare affirmative 'was lower than' — the function has no claim param, so it cannot tell this apart from a note describing a TRUE lt-shaped claim; false-flagging it would be an uncorrectable false accusation", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: ["Japan net sales were $8,401 million; Greater China net sales were $20,497 million."],
+      note: "Japan net sales were $8,401 million, which was lower than Greater China's $20,497 million, confirming the claim.",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("found on review (2026-08-03): does NOT fire on a bare affirmative 'fell short of'", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: ["Revenue was $40 million against a $45 million target."],
+      note: "Revenue fell short of the target, as the claim states.",
+    });
+    expect(result.verdict).toBe("supported");
+  });
+});
+
 describe("reconcileDefinedTermVerdict — topicality gate (2026-07-30, Apple probe)", () => {
   const goingConcern = () => makeClaim("Management flagged substantial doubt about the ability of the company to continue as a going concern.");
 
@@ -999,6 +1048,117 @@ describe("chain-reversal guard — CODE_OVERRIDE_TAG_RE (2026-07-29, found on re
       confidence: consistencyOutput.confidence,
     });
     expect(numericOutput.verdict).toBe("contradicted"); // must NOT be flipped back to "supported" by the $100M match
+  });
+});
+
+describe("extractComparisonClaim (2026-08-02, D018 §5.14)", () => {
+  it("splits a claim into left subject, right subject, and operator", () => {
+    const result = extractComparisonClaim("iPhone net sales were higher than Services net sales");
+    expect(result).toEqual({ leftSubject: "iPhone net sales", rightSubject: "Services net sales", operator: "gt" });
+  });
+
+  it("recognizes lt and eq phrasing", () => {
+    expect(extractComparisonClaim("Japan net sales were lower than Greater China net sales")?.operator).toBe("lt");
+    expect(extractComparisonClaim("Alpha revenue matched Beta revenue")?.operator).toBe("eq");
+  });
+
+  it("declines when no comparator phrase is present", () => {
+    expect(extractComparisonClaim("Revenue grew this quarter.")).toBeNull();
+  });
+
+  it("declines on an ambiguous claim naming more than one comparator phrase", () => {
+    expect(
+      extractComparisonClaim("Americas net sales exceeded Europe net sales, which exceeded Japan net sales.")
+    ).toBeNull();
+  });
+});
+
+describe("reconcileComparisonVerdict — cross-row/cross-metric comparison claims (2026-08-02, D018 §5.14 / T045, crossrow probe F6)", () => {
+  const SEGMENTS = makePassage(
+    "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+  );
+  const EQUAL_PAIR = makePassage("Alpha revenue was $100 million for the quarter. Beta revenue was $100 million for the quarter.");
+  const AMBIGUOUS_PAIR = makePassage(
+    "Americas Digital revenue was $500 million. Americas Digital services revenue was $505 million. International revenue was $900 million."
+  );
+
+  it("overrides a wrong LLM verdict to supported when both sides resolve and the claimed direction genuinely holds (real Americas > Europe)", () => {
+    const claim = makeClaim("Americas net sales for the quarter were greater than Europe net sales.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [SEGMENTS]);
+    expect(result.verdict).toBe("supported");
+    expect(result.note).toContain("D018 §5.14");
+  });
+
+  it("overrides a wrong LLM verdict to contradicted when both sides resolve and the claimed direction is false (F6 shape: reversed Americas/Europe)", () => {
+    const claim = makeClaim("Europe net sales for the quarter were greater than Americas net sales.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: ["e"], note: "n", confidence: 0.9 }, [SEGMENTS]);
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("contradicts a strict-inequality claim ('exceeded') when both sides resolve to the SAME value", () => {
+    const claim = makeClaim("Alpha revenue exceeded Beta revenue.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [EQUAL_PAIR]);
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("supports an equality claim ('matched') when both sides resolve to the same value", () => {
+    const claim = makeClaim("Alpha revenue matched Beta revenue.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [EQUAL_PAIR]);
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("found on review (2026-08-03): resolves the SIX MONTHS column when the period phrase is stated AFTER the comparator word ('...than Europe net sales for the six months ended...'), not just before it", () => {
+    // Previously narrowByPeriod was fed the raw claim.claimText, whose own COMPARATIVE_RE treats "than"
+    // as a baseline-marker and truncates everything after it — silently dropping this exact period
+    // phrase and declining. periodText (leftSubject+rightSubject, comparator word removed) fixes it.
+    const claim = makeClaim("Americas net sales were greater than Europe net sales for the six months ended March 28, 2026.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [SEGMENTS]);
+    expect(result.verdict).toBe("supported"); // six-months Americas 103,622 > six-months Europe 66,201
+    expect(result.note).toContain("103622");
+  });
+
+  it("found on review (2026-08-03): declines rather than compares two sides whose scale-presence disagrees (one side scaled, other side scale-less) — same discipline as isUsableNumericFact", () => {
+    const mismatchedScale = makePassage("Alpha revenue was $100 million for the quarter. Beta revenue was $100 for the quarter.");
+    const claim = makeClaim("Alpha revenue exceeded Beta revenue.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [mismatchedScale]);
+    expect(result.verdict).toBe("supported"); // unchanged — must not confidently compare $100M against a bare, unscaled $100
+  });
+
+  it("never overrides when only the LEFT side resolves — decline, don't guess with one resolved side", () => {
+    const claim = makeClaim("Vibranium revenue exceeded International revenue.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [AMBIGUOUS_PAIR]);
+    expect(result.verdict).toBe("unverifiable"); // unchanged — left side ("Vibranium") never resolves anywhere
+  });
+
+  it("never overrides when only the RIGHT side resolves — decline, don't guess with one resolved side", () => {
+    const claim = makeClaim("International revenue exceeded Vibranium revenue.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [AMBIGUOUS_PAIR]);
+    expect(result.verdict).toBe("supported"); // unchanged — right side ("Vibranium") never resolves anywhere
+  });
+
+  it("declines on a near-tied row match (ambiguity margin), not just an exact tie — a close call must not silently pick the wrong row", () => {
+    // "Americas ... revenue" is genuinely ambiguous between the Digital and Digital-services rows here —
+    // close but not identical scores, unlike a pure tie. The reviewer's own example: 0.81 vs 0.80 must
+    // decline the same way 0.81 vs 0.81 would. D018 §5.14.
+    const claim = makeClaim("Americas revenue exceeded International revenue.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [AMBIGUOUS_PAIR]);
+    expect(result.verdict).toBe("unverifiable"); // unchanged — left side is ambiguous between two similarly-labeled rows
+  });
+
+  it("does not fire on a claim shape it can't parse (extractComparisonClaim declines) — no-op passthrough", () => {
+    const claim = makeClaim("Revenue grew this quarter.");
+    const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [SEGMENTS]);
+    expect(result.verdict).toBe("supported");
+  });
+
+  it("respects the chain-reversal guard — defers to an already-code-tagged verdict from an earlier reconciler", () => {
+    const claim = makeClaim("Americas net sales for the quarter were greater than Europe net sales.");
+    const result = reconcileComparisonVerdict(
+      claim,
+      { verdict: "unsupported", evidence: [], note: "[verdict set by code: some earlier reconciler already decided this]", confidence: 1 },
+      [SEGMENTS]
+    );
+    expect(result.verdict).toBe("unsupported");
   });
 });
 
