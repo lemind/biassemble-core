@@ -1202,6 +1202,31 @@ describe("reconcileComparisonVerdict — cross-row/cross-metric comparison claim
       const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [disagreeing]);
       expect(result.verdict).toBe("supported"); // unchanged — Q2 2026 column disagrees (10,000 < 18,896) while the other 3 agree
     });
+
+    it("found live (2026-08-03, second pass): the real income-statement excerpt has ZERO header dates — columnsForCells fails entirely, so the header-only unanimity above never engaged and the bug still reproduced live. Positional alignment (same passage, same validated column count) fixes it", () => {
+      // Verbatim shape of the real crossrow.json source passage — no "Three Months Ended.../March 28,
+      // 2026..." header text in this excerpt at all, exactly like the real SEC filing excerpt it's based
+      // on (D018's own "Input constraint" note). node -e confirmed DATE_RE matches zero dates in this text.
+      const HEADERLESS_INCOME_STATEMENT = makePassage(
+        "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Selling, general and administrative 7,477 6,728 14,969 13,903. Total operating expenses 18,896 15,278 37,275 30,721. Operating income 35,885 29,589 86,737 72,421. Other income/(expense), net (52) (279) 98 (527). Income before provision for income taxes 35,833 29,310 86,835 71,894. Provision for income taxes 6,255 4,530 15,160 10,784. Net income $29,578 $24,780 $71,675 $61,110."
+      );
+      const claim = makeClaim("Selling, general and administrative expense exceeded research and development expense in the quarter.");
+      const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [HEADERLESS_INCOME_STATEMENT]);
+      expect(result.verdict).toBe("contradicted");
+      expect(result.note).toContain("D018 §5.14");
+    });
+
+    it("positional alignment never matches across two DIFFERENT passages — a same-shaped but unrelated headerless table must not be paired against it", () => {
+      const claim = makeClaim("Selling, general and administrative expense exceeded research and development expense in the quarter.");
+      const rdTable = makePassage("Research and development 11,419 8,550 22,306 16,818. Gross margin 54,781 44,867 124,012 103,142.");
+      const sgaDifferentTable = makePassage("Selling, general and administrative 7,477 6,728 14,969 13,903. Marketing 1,000 2,000 3,000 4,000.");
+      const result = reconcileComparisonVerdict(
+        claim,
+        { verdict: "supported", evidence: [], note: null, confidence: 0.9 },
+        [rdTable, sgaDifferentTable]
+      );
+      expect(result.verdict).toBe("supported"); // unchanged — no shared passageId, positional keys can't match, must decline
+    });
   });
 
   it("never overrides when only the LEFT side resolves — decline, don't guess with one resolved side", () => {

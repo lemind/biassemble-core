@@ -1,5 +1,5 @@
 import { compare } from "../../numbers/compare.js";
-import { detectTableCandidate, columnsForCells, narrowByPeriod, tableScaleOf, rowCells } from "./table-parse.js";
+import { detectTableCandidate, detectColumnConsistency, columnsForCells, narrowByPeriod, tableScaleOf, rowCells } from "./table-parse.js";
 import type { RowCell, ParsedColumn, TableCandidate } from "./table-parse.js";
 import type { Claim } from "../../db/schema.js";
 import type { RetrievedPassage } from "../../rag/corpus-client.js";
@@ -225,11 +225,12 @@ interface RowPoolEntry {
   tableCandidate: TableCandidate | null;
 }
 
-/** Shared row-pooling scaffold for collectPassageFacts and resolveComparisonSide. `factFilter` is the one genuine divergence — see call sites. D018 §5.2/§5.14. */
+/** Shared row-pooling scaffold for collectPassageFacts/resolveComparisonSide. `factFilter` and `admitHeaderlessBareRows` are the two divergences — see call sites and D018 §5.14 addendum. */
 function buildRowPool(
   claim: Claim,
   passages: RetrievedPassage[],
-  factFilter: (fact: ExtractedNumericFact) => boolean = () => true
+  factFilter: (fact: ExtractedNumericFact) => boolean = () => true,
+  admitHeaderlessBareRows = false
 ): { pool: RowPoolEntry[]; allRows: PassageRow[] } {
   const pool: RowPoolEntry[] = [];
   const allRows: PassageRow[] = [];
@@ -244,10 +245,11 @@ function buildRowPool(
       byRow.set(idx, [...(byRow.get(idx) ?? []), fact]);
     }
     const tableCandidate = detectTableCandidate(passage.text);
+    const bareRowsAdmissible = tableCandidate !== null || (admitHeaderlessBareRows && detectColumnConsistency(passage.text) !== null);
     for (let i = 0; i < rows.length; i++) {
       const rowText = passage.text.slice(rows[i]!.start, rows[i + 1]?.start ?? passage.text.length);
       const facts = byRow.get(i) ?? [];
-      if (facts.length === 0 && (!tableCandidate || !rows[i]!.ownLabel || rowCells(rowText).length === 0)) continue;
+      if (facts.length === 0 && (!bareRowsAdmissible || !rows[i]!.ownLabel || rowCells(rowText).length === 0)) continue;
       pool.push({ labelWords: rows[i]!.labelWords, passage, rowText, facts, tableCandidate });
     }
   }
@@ -438,26 +440,44 @@ interface TableFactResolution {
   candidates: PeriodTaggedFact[];
 }
 
-/** Reads a clean table row's header/period columns, USD then percent. `periodText`, not `claim.claimText` — D018 §5.14 addendum. Null = not a clean table row at all. */
+/** Reads a table row's period columns, USD then percent; falls back to position-tagged candidates (namespaced by passageId) when there's no header. D018 §5.14 addendum. */
 function firstUsableTableFact(
   rowText: string,
   passageText: string,
   periodText: string,
+  passageId: string,
   tableCandidate?: TableCandidate | null
 ): TableFactResolution | null {
-  const clean = parseCleanTableRow(rowText, passageText, tableCandidate);
-  if (!clean) return null;
-  const { cells, columns, tableScale } = clean;
+  const detected = tableCandidate !== undefined ? tableCandidate : detectTableCandidate(passageText);
+  // detectTableCandidate requires 2+ header dates by design (D018 §5's "not a tunable" rule) — correct
+  // for named-period resolution, but positional alignment never claims a real period, only "same column
+  // structure, same passage." detectColumnConsistency is the weaker, date-free version of that same
+  // column-count check, used ONLY to gate positional candidates. Found live (2026-08-03): the real
+  // income-statement excerpt has zero header dates, so detectTableCandidate itself never fired at all —
+  // not just columnsForCells. D018 §5.14 addendum.
+  const columnCount = detected?.columnCount ?? detectColumnConsistency(passageText);
+  if (columnCount === null) return null;
+  const cells = rowCells(rowText);
+  if (cells.length < 2 || cells.length !== columnCount) return null;
+  const tableScale = tableScaleOf(passageText);
+  const columns = detected ? columnsForCells(passageText, cells.map((c) => c.unit)) : null;
 
   let fallback: PeriodTaggedFact[] | null = null;
   for (const unit of ["USD", "percent"] as const) {
-    const sameUnit = cells.map((cell, i) => ({ cell, column: columns[i]! })).filter(({ cell }) => cell.unit === unit);
-    if (sameUnit.length === 0) continue;
-    const toFact = ({ cell }: { cell: { value: number } }) => ({ value: cell.value, unit, scale: unit === "USD" ? tableScale : null });
-    const tagged = sameUnit.map((c) => ({ fact: toFact(c), periodKey: periodKeyOf(c.column) }));
-    const narrowed = narrowByPeriod(sameUnit, periodText);
-    if (narrowed.length === 1) return { resolved: toFact(narrowed[0]!), candidates: tagged };
-    if (!fallback) fallback = tagged; // remember USD's candidates even if percent narrows later
+    const sameUnitIdx = cells.map((cell, i) => ({ cell, i })).filter(({ cell }) => cell.unit === unit);
+    if (sameUnitIdx.length === 0) continue;
+    const toFact = (cell: RowCell) => ({ value: cell.value, unit, scale: unit === "USD" ? tableScale : null });
+
+    if (columns) {
+      const sameUnit = sameUnitIdx.map(({ cell, i }) => ({ cell, column: columns[i]! }));
+      const tagged = sameUnit.map((c) => ({ fact: toFact(c.cell), periodKey: periodKeyOf(c.column) }));
+      const narrowed = narrowByPeriod(sameUnit, periodText);
+      if (narrowed.length === 1) return { resolved: toFact(narrowed[0]!.cell), candidates: tagged };
+      if (!fallback) fallback = tagged; // remember USD's candidates even if percent narrows later
+    } else if (!fallback) {
+      // No header to name periods — positional alignment only, namespaced to this passage.
+      fallback = sameUnitIdx.map(({ cell, i }) => ({ fact: toFact(cell), periodKey: `pos:${passageId}:${i}` }));
+    }
   }
   return fallback ? { resolved: null, candidates: fallback } : null;
 }
@@ -485,7 +505,7 @@ function resolveComparisonSide(
   if (bestIdx === null) return null;
   const chosen = pool[bestIdx]!;
 
-  const table = firstUsableTableFact(chosen.rowText, chosen.passage.text, periodText, chosen.tableCandidate);
+  const table = firstUsableTableFact(chosen.rowText, chosen.passage.text, periodText, chosen.passage.passageId, chosen.tableCandidate);
   if (table) {
     return { fact: table.resolved, passageId: chosen.passage.passageId, passageText: chosen.passage.text, periodCandidates: table.candidates };
   }
@@ -549,7 +569,7 @@ export function reconcileComparisonVerdict(
   const periodText = `${comparison.leftSubject} ${comparison.rightSubject}`;
   // Built once, reused for both sides — the pool depends only on passages/claim.period, never on which
   // side is being resolved. D018 §5.14.
-  const { pool, allRows } = buildRowPool(claim, passages);
+  const { pool, allRows } = buildRowPool(claim, passages, undefined, true);
   const rowFreq = buildRowFreq(allRows);
   const left = resolveComparisonSide(new Set(contentWords(comparison.leftSubject)), pool, allRows, periodText, rowFreq);
   const right = resolveComparisonSide(new Set(contentWords(comparison.rightSubject)), pool, allRows, periodText, rowFreq);

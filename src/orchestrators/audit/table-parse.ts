@@ -84,6 +84,27 @@ export function detectTableCandidate(blockText: string): TableCandidate | null {
   return { columnCount, periodTokens, durationTokens: blockText.match(DURATION_RE) ?? [] };
 }
 
+/** Weaker sibling of detectTableCandidate, without the date requirement — column structure only, never period identity. D018 §5.14 addendum. */
+export function detectColumnConsistency(blockText: string): number | null {
+  // A caller only reaches this after detectTableCandidate found fewer than 2 date tokens, but a single
+  // stray date is still a numeric run of its own that would corrupt the width count. Strip defensively.
+  const withoutDates = blockText.replace(DATE_RE, " ");
+  const widths = new Map<number, number>();
+  for (const run of withoutDates.match(NUMERIC_RUN_RE) ?? []) {
+    const cells = run.match(NUMERIC_CELL_RE)?.length ?? 0;
+    if (cells >= 2) widths.set(cells, (widths.get(cells) ?? 0) + 1);
+  }
+  let columnCount = 0;
+  let best = 0;
+  for (const [width, count] of widths) {
+    if (count > best || (count === best && width > columnCount)) {
+      best = count;
+      columnCount = width;
+    }
+  }
+  return best >= MIN_TABLE_ROWS && columnCount >= 2 ? columnCount : null;
+}
+
 /** Finds `needle` at or after `from`, so repeated header tokens are matched by occurrence, not by first hit. */
 function indexOfFrom(haystack: string, needle: string, from: number): number {
   return needle.length === 0 ? -1 : haystack.indexOf(needle, from);
