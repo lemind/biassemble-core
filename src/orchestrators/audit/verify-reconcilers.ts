@@ -1,7 +1,6 @@
 import { compare } from "../../numbers/compare.js";
-import { normalize } from "../../numbers/normalize.js";
 import { detectTableCandidate, columnsForCells, narrowByPeriod, tableScaleOf, rowCells } from "./table-parse.js";
-import type { RowCell, ParsedColumn } from "./table-parse.js";
+import type { RowCell, ParsedColumn, TableCandidate } from "./table-parse.js";
 import type { Claim } from "../../db/schema.js";
 import type { RetrievedPassage } from "../../rag/corpus-client.js";
 
@@ -166,19 +165,20 @@ interface RowScore {
   coverage: number;
 }
 
-/**
- * Shared rarity+coverage scoring core for pickBestRow and pickBestRowWithMargin. Rarity-weighted:
- * "americas" (one row) beats "net sales" (header + total row), which is why a segment claim no longer
- * matches the Total row. Frequency counts EVERY row, not just the ones holding comparable figures —
- * otherwise a table's header row goes uncounted and "net sales" scores as rare as "americas", which is
- * exactly how the Americas false accusation survived the first fix. Most of a row's own label must be
- * what the search words are about (LABEL_COVERAGE_MIN) — without it, a net-income-margin claim matched
- * the "Total net sales" row on the single shared word "net" (verify-011). D018 §5.2/§5.14.
- */
-function scoreRows(rows: Array<{ labelWords: string[] }>, wordSet: Set<string>, allRows: Array<{ labelWords: string[] }>): RowScore[] {
+/** Word → row-count frequency map that scoreRows needs; split out so two scoreRows calls over the same allRows (both sides of one comparison claim) can share one computation. D018 §5.14. */
+function buildRowFreq(allRows: Array<{ labelWords: string[] }>): Map<string, number> {
   const rowFreq = new Map<string, number>();
   for (const row of allRows) for (const w of new Set(row.labelWords)) rowFreq.set(w, (rowFreq.get(w) ?? 0) + 1);
+  return rowFreq;
+}
 
+/** Shared rarity+coverage scoring core for pickBestRow and pickBestRowWithMargin. D018 §5.2/§5.14. */
+function scoreRows(
+  rows: Array<{ labelWords: string[] }>,
+  wordSet: Set<string>,
+  allRows: Array<{ labelWords: string[] }>,
+  rowFreq: Map<string, number> = buildRowFreq(allRows)
+): RowScore[] {
   const scored: RowScore[] = [];
   for (let idx = 0; idx < rows.length; idx++) {
     const label = new Set(rows[idx]!.labelWords);
@@ -192,12 +192,7 @@ function scoreRows(rows: Array<{ labelWords: string[] }>, wordSet: Set<string>, 
   return scored;
 }
 
-/**
- * Picks the one row whose label identifies the claim's subject. Ties on rarity break on label coverage;
- * a genuine tie declines (lexicographic decision — distinct from pickBestRowWithMargin's combined-score
- * margin decision, since a single-fact claim always has a target value it could fall back to comparing,
- * unlike a comparison claim). D018 §5.2.
- */
+/** Picks the one row whose label identifies the claim's subject; a genuine tie declines. Lexicographic decision, distinct from pickBestRowWithMargin's combined-score one. D018 §5.2. */
 function pickBestRow(rows: Array<{ labelWords: string[] }>, claimWords: Set<string>, allRows: Array<{ labelWords: string[] }>): number | null {
   let best: RowScore | null = null;
   let tied = false;
@@ -221,28 +216,16 @@ function passagePeriodConflicts(claimPeriod: string | null, passageText: string)
   return !claimYears.some((y) => passageYears.includes(y));
 }
 
-/**
- * Same-unit figures from the ONE row whose label names the claim's subject, in passages of the claim's
- * own period. Callers decide by unanimity, never by picking one. Row scoping replaced bigram matching
- * after a true claim ("Americas net sales grew 12%") was contradicted against the Total row. D018 §5.2.
- */
 interface RowPoolEntry {
   labelWords: string[];
   passage: RetrievedPassage;
   rowText: string;
   facts: ExtractedNumericFact[];
+  /** Computed once per passage here, reused by parseCleanTableRow's callers instead of re-detecting. */
+  tableCandidate: TableCandidate | null;
 }
 
-/**
- * Shared row-pooling scaffold for collectPassageFacts and resolveComparisonSide: segments every passage
- * into rows, assigns each numeric fact to its row by position (facts are extracted over the WHOLE
- * passage, not per-row text, since segmentRows can split a figure from its scale word — "$190.9" |
- * "million" — and re-extracting per row would drop the scale), and admits bare ($-less) rows only inside
- * an actual table and only when they name themselves (a fact-less prose row would tie with the row it
- * inherited its label from, and both would decline). `factFilter` is the one genuine divergence between
- * the two callers: a single-fact claim knows its target unit/scale ahead of time and filters to it
- * (isUsableNumericFact); a comparison claim has no target value yet and keeps every fact. D018 §5.2/§5.14.
- */
+/** Shared row-pooling scaffold for collectPassageFacts and resolveComparisonSide. `factFilter` is the one genuine divergence — see call sites. D018 §5.2/§5.14. */
 function buildRowPool(
   claim: Claim,
   passages: RetrievedPassage[],
@@ -260,17 +243,18 @@ function buildRowPool(
       const idx = rowIndexFor(rows, index);
       byRow.set(idx, [...(byRow.get(idx) ?? []), fact]);
     }
-    const isTable = detectTableCandidate(passage.text) !== null;
+    const tableCandidate = detectTableCandidate(passage.text);
     for (let i = 0; i < rows.length; i++) {
       const rowText = passage.text.slice(rows[i]!.start, rows[i + 1]?.start ?? passage.text.length);
       const facts = byRow.get(i) ?? [];
-      if (facts.length === 0 && (!isTable || !rows[i]!.ownLabel || rowCells(rowText).length === 0)) continue;
-      pool.push({ labelWords: rows[i]!.labelWords, passage, rowText, facts });
+      if (facts.length === 0 && (!tableCandidate || !rows[i]!.ownLabel || rowCells(rowText).length === 0)) continue;
+      pool.push({ labelWords: rows[i]!.labelWords, passage, rowText, facts, tableCandidate });
     }
   }
   return { pool, allRows };
 }
 
+/** Same-unit figures from the ONE row whose label names the claim's subject. Callers decide by unanimity, never by picking one. D018 §5.2. */
 function collectPassageFacts(
   claim: Claim,
   claimFact: ExtractedNumericFact,
@@ -296,7 +280,7 @@ function collectPassageFacts(
   const chosen = pool[best]!;
 
   // Subject settled, so the row is read as a table and narrowed to the claim's period. D018 §5.2/§5.11.
-  const table = tableRowFacts(claim, claimFact, chosen.rowText, chosen.passage.text);
+  const table = tableRowFacts(claim, claimFact, chosen.rowText, chosen.passage.text, chosen.tableCandidate);
   const facts = table && table.periodCells.length > 0 ? table.periodCells : chosen.facts;
   return {
     candidates: facts.map((fact) => ({ fact, passageId: chosen.passage.passageId, passageText: chosen.passage.text })),
@@ -304,15 +288,13 @@ function collectPassageFacts(
   };
 }
 
-/**
- * The shared "is this a clean, parseable table row" gate — the block's own column count is authoritative;
- * a row that disagrees is not a clean table row. Both the single-fact (tableRowFacts) and comparison
- * (firstUsableTableFact) paths need this before applying their own divergent unit-selection/narrowing
- * logic (a single-fact claim knows its target unit ahead of time and filters to it; a comparison claim
- * has no target value and tries units in preference order). D018 §5.2/§5.14.
- */
-function parseCleanTableRow(rowText: string, passageText: string): { cells: RowCell[]; columns: ParsedColumn[]; tableScale: string | null } | null {
-  const detected = detectTableCandidate(passageText);
+/** Shared "is this a clean, parseable table row" gate for tableRowFacts and firstUsableTableFact — the block's own column count is authoritative. `tableCandidate`, if the caller already has one (e.g. from a RowPoolEntry), skips redetection. D018 §5.2/§5.14. */
+function parseCleanTableRow(
+  rowText: string,
+  passageText: string,
+  tableCandidate?: TableCandidate | null
+): { cells: RowCell[]; columns: ParsedColumn[]; tableScale: string | null } | null {
+  const detected = tableCandidate !== undefined ? tableCandidate : detectTableCandidate(passageText);
   if (!detected) return null;
   const cells = rowCells(rowText);
   if (cells.length < 2 || cells.length !== detected.columnCount) return null;
@@ -326,9 +308,10 @@ function tableRowFacts(
   claim: Claim,
   claimFact: ExtractedNumericFact,
   rowText: string,
-  passageText: string
+  passageText: string,
+  tableCandidate?: TableCandidate | null
 ): { periodCells: ExtractedNumericFact[]; allCells: ExtractedNumericFact[] } | null {
-  const clean = parseCleanTableRow(rowText, passageText);
+  const clean = parseCleanTableRow(rowText, passageText, tableCandidate);
   if (!clean) return null;
   const { cells, columns, tableScale } = clean;
 
@@ -379,12 +362,18 @@ interface ComparisonClaim {
 const COMPARISON_PATTERNS: Array<{ re: RegExp; operator: ComparisonOperator }> = [
   { re: /\bexceeded\b/gi, operator: "gt" },
   { re: /\bsurpassed\b/gi, operator: "gt" },
+  { re: /\boutperformed\b/gi, operator: "gt" },
+  { re: /\btopped\b/gi, operator: "gt" },
   { re: /\b(?:was|were)\s+higher\s+than\b/gi, operator: "gt" },
   { re: /\b(?:was|were)\s+greater\s+than\b/gi, operator: "gt" },
   { re: /\b(?:was|were)\s+more\s+than\b/gi, operator: "gt" },
+  { re: /\b(?:was|were)\s+larger\s+than\b/gi, operator: "gt" },
+  { re: /\b(?:was|were)\s+bigger\s+than\b/gi, operator: "gt" },
   { re: /\boutpaced\b/gi, operator: "gt" },
   { re: /\b(?:was|were)\s+lower\s+than\b/gi, operator: "lt" },
   { re: /\b(?:was|were)\s+less\s+than\b/gi, operator: "lt" },
+  { re: /\b(?:was|were)\s+smaller\s+than\b/gi, operator: "lt" },
+  { re: /\b(?:was|were)\s+fewer\s+than\b/gi, operator: "lt" },
   { re: /\btrailed\b/gi, operator: "lt" },
   { re: /\bfell\s+short\s+of\b/gi, operator: "lt" },
   { re: /\bmatched\b/gi, operator: "eq" },
@@ -392,11 +381,7 @@ const COMPARISON_PATTERNS: Array<{ re: RegExp; operator: ComparisonOperator }> =
   { re: /\b(?:was|were)\s+equal\s+to\b/gi, operator: "eq" },
 ];
 
-/**
- * Splits a claim into its two compared subjects and the operator between them. Declines (null) on
- * zero or more than one comparator phrase, or a subject too short to be real — no guessing on an
- * ambiguous claim shape. D018 §5.14.
- */
+/** Splits a claim into its two compared subjects and the operator. Declines on zero or 2+ comparator phrases. D018 §5.14. */
 export function extractComparisonClaim(claimText: string): ComparisonClaim | null {
   const matches: Array<{ start: number; end: number; operator: ComparisonOperator }> = [];
   for (const { re, operator } of COMPARISON_PATTERNS) {
@@ -422,9 +407,10 @@ const MIN_ROW_SCORE = 0.3;
 function pickBestRowWithMargin(
   rows: Array<{ labelWords: string[] }>,
   subjectWords: Set<string>,
-  allRows: Array<{ labelWords: string[] }>
+  allRows: Array<{ labelWords: string[] }>,
+  rowFreq?: Map<string, number>
 ): number | null {
-  const scored = scoreRows(rows, subjectWords, allRows)
+  const scored = scoreRows(rows, subjectWords, allRows, rowFreq)
     .map(({ idx, rarity, coverage }) => ({ idx, score: rarity * coverage }))
     .sort((a, b) => b.score - a.score);
   if (scored.length === 0) return null;
@@ -436,8 +422,13 @@ function pickBestRowWithMargin(
 }
 
 /** Reads a clean table row's header/period columns, USD then percent. `periodText`, not `claim.claimText` — D018 §5.14 addendum. Null = not clean, or ambiguous. */
-function firstUsableTableFact(rowText: string, passageText: string, periodText: string): ExtractedNumericFact | null {
-  const clean = parseCleanTableRow(rowText, passageText);
+function firstUsableTableFact(
+  rowText: string,
+  passageText: string,
+  periodText: string,
+  tableCandidate?: TableCandidate | null
+): ExtractedNumericFact | null {
+  const clean = parseCleanTableRow(rowText, passageText, tableCandidate);
   if (!clean) return null;
   const { cells, columns, tableScale } = clean;
 
@@ -451,28 +442,25 @@ function firstUsableTableFact(rowText: string, passageText: string, periodText: 
   return null;
 }
 
-/**
- * Resolves one side of a comparison claim to a single unambiguous fact, or declines (null). Takes an
- * already-built `{pool, allRows}` (from buildRowPool) rather than `passages` directly — the pool depends
- * only on `passages`/`claim.period`, never on which side is being resolved, so building it once and
- * reusing it for both sides avoids re-segmenting and re-scanning every passage twice per comparison
- * claim. Found on review (2026-08-03). D018 §5.14.
- */
+/** Resolves one side of a comparison claim to a single unambiguous fact, or declines (null). Takes an already-built pool, not `passages` — see buildRowPool's caller. D018 §5.14. */
 function resolveComparisonSide(
   subjectWords: Set<string>,
   pool: RowPoolEntry[],
   allRows: PassageRow[],
-  periodText: string
+  periodText: string,
+  rowFreq?: Map<string, number>
 ): { fact: ExtractedNumericFact; passageId: string; passageText: string } | null {
   if (subjectWords.size === 0 || pool.length === 0) return null;
 
-  const bestIdx = pickBestRowWithMargin(pool, subjectWords, allRows);
+  const bestIdx = pickBestRowWithMargin(pool, subjectWords, allRows, rowFreq);
   if (bestIdx === null) return null;
   const chosen = pool[bestIdx]!;
 
   // Row settled: a clean table row is read via its own header/period columns; otherwise the row's own
   // (already position-assigned) facts must resolve to exactly one figure, or this side declines.
-  const fact = firstUsableTableFact(chosen.rowText, chosen.passage.text, periodText) ?? (chosen.facts.length === 1 ? chosen.facts[0]! : null);
+  const fact =
+    firstUsableTableFact(chosen.rowText, chosen.passage.text, periodText, chosen.tableCandidate) ??
+    (chosen.facts.length === 1 ? chosen.facts[0]! : null);
   if (!fact) return null;
 
   return { fact, passageId: chosen.passage.passageId, passageText: chosen.passage.text };
@@ -500,14 +488,16 @@ export function reconcileComparisonVerdict(
   // Built once, reused for both sides — the pool depends only on passages/claim.period, never on which
   // side is being resolved. D018 §5.14.
   const { pool, allRows } = buildRowPool(claim, passages);
-  const left = resolveComparisonSide(new Set(contentWords(comparison.leftSubject)), pool, allRows, periodText);
-  const right = resolveComparisonSide(new Set(contentWords(comparison.rightSubject)), pool, allRows, periodText);
+  const rowFreq = buildRowFreq(allRows);
+  const left = resolveComparisonSide(new Set(contentWords(comparison.leftSubject)), pool, allRows, periodText, rowFreq);
+  const right = resolveComparisonSide(new Set(contentWords(comparison.rightSubject)), pool, allRows, periodText, rowFreq);
   if (!left || !right) {
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
-  // Same scale-presence discipline as isUsableNumericFact, between the two independently-resolved sides. D018 §5.14 addendum.
-  if (left.fact.unit === "USD" && right.fact.unit === "USD" && (left.fact.scale === null) !== (right.fact.scale === null)) {
+  // isUsableNumericFact is already symmetric (compares its two args to each other) — reused directly
+  // rather than duplicated, between the two independently-resolved sides. D018 §5.14 addendum.
+  if (!isUsableNumericFact(left.fact, right.fact)) {
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
@@ -519,14 +509,13 @@ export function reconcileComparisonVerdict(
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
+  // direction reuses compare()'s own already-canonicalized (and, if ever needed, currency-converted)
+  // values — no separate normalize() call here, so this can never disagree with cmp.equal. D018 §5.14 addendum.
   let holds: boolean;
   if (cmp.equal) {
     holds = comparison.operator === "eq";
   } else {
-    const leftCanonical = normalize({ value: left.fact.value, unit: left.fact.unit, scale: left.fact.scale }).canonicalValue;
-    const rightCanonical = normalize({ value: right.fact.value, unit: right.fact.unit, scale: right.fact.scale }).canonicalValue;
-    holds =
-      comparison.operator === "gt" ? leftCanonical > rightCanonical : comparison.operator === "lt" ? leftCanonical < rightCanonical : false;
+    holds = comparison.operator === "gt" ? cmp.direction > 0 : comparison.operator === "lt" ? cmp.direction < 0 : false;
   }
 
   const targetVerdict = holds ? "supported" : "contradicted";
@@ -767,8 +756,11 @@ export function reconcileTemporalVerdict(
 // contradicted"), which asserts a contradiction; a bare "said contradicted" merely mentions one. D018 §5.5.
 // Inequality vocabulary for comparison claims — a cheap safety net, the real fix is the comparator.
 // Every added phrase MUST be a negated form (no `claim` param here to tell a direction apart). D018 §5.14.
+// Kept in sync with COMPARISON_PATTERNS' vocabulary (gt/lt/eq verbs below) — found on review
+// (2026-08-03): "match" was grouped with exceed/surpass (a gt concept) even though it's the eq verb
+// COMPARISON_PATTERNS itself uses; moved to its own eq-negation group. D018 §5.14.
 const CONTRADICTION_LANGUAGE_RE =
-  /\b(contradict(?:s|ing)?|(?:is|are|was|were|be|being|been)\s+contradicted|conflict(?:s|ed|ing)?\s+with|differ(?:s|ed|ing)?\s+from|is\s+inconsistent\s+with|(?:did|does)\s+not\s+(?:exceed|surpass|outpace|outperform|top|match)|(?:is|are|was|were)\s+not\s+(?:higher|greater|more|larger|bigger)\s+than|(?:is|are|was|were)\s+not\s+(?:lower|less|smaller|fewer)\s+than|(?:did|does)\s+not\s+fall\s+(?:short\s+of|below))\b/i;
+  /\b(contradict(?:s|ing)?|(?:is|are|was|were|be|being|been)\s+contradicted|conflict(?:s|ed|ing)?\s+with|differ(?:s|ed|ing)?\s+from|is\s+inconsistent\s+with|(?:did|does)\s+not\s+(?:exceed|surpass|outpace|outperform|top)|(?:is|are|was|were)\s+not\s+(?:higher|greater|more|larger|bigger)\s+than|(?:is|are|was|were)\s+not\s+(?:lower|less|smaller|fewer)\s+than|(?:did|does)\s+not\s+fall\s+(?:short\s+of|below)|(?:did|does)\s+not\s+(?:match|equal))\b/i;
 // Clause-scoped negation, not fixed char count; "n't" has no leading \b (contractions have no word boundary before 'n'). D018 §5.5.
 // Widened in lockstep with CONTRADICTION_LANGUAGE_RE — widening only the positive side would let
 // "does not contradicted"-shaped negations through as real contradictions. D018 §5.5.

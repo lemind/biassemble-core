@@ -13,6 +13,8 @@ import { normalize, type NumericFact, type NormalizedFact } from "./normalize.js
 export interface ComparisonResult {
   comparable: boolean;
   equal: boolean | null;
+  /** Sign of (claim - source) on the already-canonicalized, currency-converted values; 0 when equal or not comparable. Lets a caller ask "which is bigger" without re-normalizing. */
+  direction: -1 | 0 | 1;
   note: string;
 }
 
@@ -56,6 +58,7 @@ export function compare(claim: NumericFact, source: NumericFact): ComparisonResu
     return {
       comparable: false,
       equal: null,
+      direction: 0,
       note: "missing or ambiguous unit — cannot compare without disambiguation, not a guess",
     };
   }
@@ -64,6 +67,7 @@ export function compare(claim: NumericFact, source: NumericFact): ComparisonResu
     return {
       comparable: false,
       equal: null,
+      direction: 0,
       note: `unit families differ ("${a.unitFamily}" vs "${b.unitFamily}") — not directly comparable`,
     };
   }
@@ -72,6 +76,7 @@ export function compare(claim: NumericFact, source: NumericFact): ComparisonResu
     return {
       comparable: false,
       equal: null,
+      direction: 0,
       note: `periods differ ("${a.period}" vs "${b.period}") — not comparable without task-context resolution`,
     };
   }
@@ -80,6 +85,7 @@ export function compare(claim: NumericFact, source: NumericFact): ComparisonResu
     return {
       comparable: false,
       equal: null,
+      direction: 0,
       note: `scopes differ ("${a.scope}" vs "${b.scope}") — not directly comparable`,
     };
   }
@@ -94,6 +100,7 @@ export function compare(claim: NumericFact, source: NumericFact): ComparisonResu
       return {
         comparable: false,
         equal: null,
+        direction: 0,
         note: `different currency ("${a.currency}" vs "${b.currency}"), no FX rate provided — cannot compare`,
       };
     }
@@ -113,6 +120,7 @@ export function compare(claim: NumericFact, source: NumericFact): ComparisonResu
   return {
     comparable: true,
     equal,
+    direction: equal ? 0 : claimValue > sourceValue ? 1 : -1,
     note: equal ? "within tolerance" : "differs beyond tolerance",
   };
 }

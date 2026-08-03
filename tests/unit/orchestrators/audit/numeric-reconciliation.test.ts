@@ -449,6 +449,36 @@ describe("MULTI-ENTITY TABLE GATE (2026-07-30, Apple probe) — a row's figures 
   });
 });
 
+describe("pickBestRow — exact-tie decline path (2026-08-03, found on review: zero prior coverage, exercised indirectly via reconcileNumericVerdict)", () => {
+  // Three rows share identical matched-word rarity+coverage against "Alpha Revenue" — a genuine
+  // 3-way tie, not just no-match. None of the three should be picked; the verdict must decline (stay
+  // unchanged) rather than confidently citing one at random.
+  const THREE_WAY_TIE = makePassage(
+    "Alpha Revenue Foo was $100 million. Alpha Revenue Bar was $200 million. Alpha Revenue Baz was $300 million."
+  );
+
+  it("declines (leaves verdict unchanged) on a genuine 3-way tie", () => {
+    const claim = makeClaim("Alpha Revenue was $150 million.");
+    const result = reconcileNumericVerdict(claim, { verdict: "unverifiable", evidence: [], note: "n", confidence: 0 }, [THREE_WAY_TIE]);
+    expect(result.verdict).toBe("unverifiable");
+    expect(result.note).not.toContain("verdict set by code");
+  });
+
+  // A 4th row adds "Corp" — a third matched word unique to it — giving it strictly higher rarity than
+  // the three tied rows above, which only ever match on "alpha"/"revenue". The unique winner must still
+  // be selected correctly even though ties exist among the OTHER candidates.
+  const ONE_WINNER_PLUS_TIE = makePassage(
+    "Alpha Revenue Corp was $999 million. Alpha Revenue Foo was $100 million. Alpha Revenue Bar was $200 million."
+  );
+
+  it("still picks the unique winner when a tie exists only among the non-winning candidates", () => {
+    const claim = makeClaim("Alpha Revenue Corp was $1 million.");
+    const result = reconcileNumericVerdict(claim, { verdict: "supported", evidence: [], note: "n", confidence: 0.9 }, [ONE_WINNER_PLUS_TIE]);
+    expect(result.verdict).toBe("contradicted");
+    expect(result.note).toContain("999"); // Corp's own figure, not Foo's or Bar's
+  });
+});
+
 describe("COLUMN/PERIOD GATE (2026-07-31) — a row's figures belong to a specific column", () => {
   // Both claims quote a REAL figure from the right row, in the prior-year column. Unanimity can never
   // catch that: the value genuinely appears in the row. Locked in together because the tax row is bare
@@ -641,6 +671,15 @@ describe("reconcileVerdictNoteConsistency — inequality vocabulary (2026-08-02,
       verdict: "supported",
       evidence: ["Revenue was $50 million against a $45 million target."],
       note: "Revenue did not fall short of the target.",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
+
+  it("found on review (2026-08-03): catches 'did not match' as its own eq-negation, not grouped with the gt verbs it used to sit alongside", () => {
+    const result = reconcileVerdictNoteConsistency({
+      verdict: "supported",
+      evidence: ["Revenue was $50 million against a stated $45 million."],
+      note: "Revenue did not match the stated figure.",
     });
     expect(result.verdict).toBe("contradicted");
   });
@@ -1060,6 +1099,13 @@ describe("extractComparisonClaim (2026-08-02, D018 §5.14)", () => {
   it("recognizes lt and eq phrasing", () => {
     expect(extractComparisonClaim("Japan net sales were lower than Greater China net sales")?.operator).toBe("lt");
     expect(extractComparisonClaim("Alpha revenue matched Beta revenue")?.operator).toBe("eq");
+  });
+
+  it("found on review (2026-08-03): recognizes vocabulary CONTRADICTION_LANGUAGE_RE already had a negated form for, added here to keep the two lists in sync", () => {
+    expect(extractComparisonClaim("Alpha revenue outperformed Beta revenue")?.operator).toBe("gt");
+    expect(extractComparisonClaim("Alpha revenue topped Beta revenue")?.operator).toBe("gt");
+    expect(extractComparisonClaim("Alpha revenue was larger than Beta revenue")?.operator).toBe("gt");
+    expect(extractComparisonClaim("Alpha revenue was smaller than Beta revenue")?.operator).toBe("lt");
   });
 
   it("declines when no comparator phrase is present", () => {

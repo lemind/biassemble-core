@@ -53,3 +53,29 @@ describe("compare() against numbers-golden-set.json comparability cases", () => 
     }
   });
 });
+
+describe("compare() direction field (2026-08-03, D018 §5.14 addendum) — lets a caller ask 'which is bigger' without re-normalizing", () => {
+  it("is 0 whenever not comparable", () => {
+    for (const c of comparabilityCases) {
+      const result = compare(c.claim, c.source);
+      if (!result.comparable) expect(result.direction).toBe(0);
+    }
+  });
+
+  it("is 0 when equal, 1 when claim > source, -1 when claim < source", () => {
+    expect(compare({ value: 100, unit: "USD" }, { value: 100, unit: "USD" }).direction).toBe(0);
+    expect(compare({ value: 150, unit: "USD" }, { value: 100, unit: "USD" }).direction).toBe(1);
+    expect(compare({ value: 50, unit: "USD" }, { value: 100, unit: "USD" }).direction).toBe(-1);
+  });
+
+  it("uses the currency-converted value, not the raw one, when an FX rate is involved", () => {
+    // 100 EUR at fx_rate_to_usd 1.1 canonicalizes to 110 USD-equivalent — direction must reflect
+    // that conversion, not a naive raw-value comparison (100 vs 100 would wrongly say equal).
+    const result = compare(
+      { value: 100, unit: "EUR", fx_rate_to_usd: 1.1 },
+      { value: 100, unit: "USD" }
+    );
+    expect(result.comparable).toBe(true);
+    expect(result.direction).toBe(1);
+  });
+});
