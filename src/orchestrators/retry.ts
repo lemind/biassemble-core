@@ -14,6 +14,16 @@ interface RetryOptions {
 const MODULE = "retry";
 
 /**
+ * Shared wall-clock check for EXTRACT/VERIFY's deadline-scoped retry loops (D018 §5.13). Not folded into
+ * `withRetry` itself — VERIFY's injection-suspected hard-stop must never retry at all, which conflicts
+ * with `withRetry`'s "retry everything but rate limits" semantics, so those loops stay hand-rolled; this
+ * just removes the duplicated raw `Date.now()` comparison across all three call sites.
+ */
+export function isPastDeadline(deadlineAt: number): boolean {
+  return Date.now() >= deadlineAt;
+}
+
+/**
  * Retries an async function with exponential backoff.
  * 
  * Rate-limit errors (RateLimitError) are NOT retried — they will fail again immediately.

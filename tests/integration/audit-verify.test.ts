@@ -267,6 +267,64 @@ describe("VERIFY service against verify-golden-set.json (T012)", () => {
     expect(updated.note).toContain("aborted");
   });
 
+  it("degrades to unverifiable without calling the provider once the shared wall-clock deadline has already passed (D018 §5.13)", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const claim = toClaim(auditId, randomUUID(), "Some claim");
+    auditStore.claims.set(claim.claimId, claim);
+
+    provider.setDefault({
+      results: [{ claim_id: claim.claimId, verdict: "supported", evidence: ["e"], source_refs: [], synthesized: false, note: null, confidence: 0.9 }],
+      trace: {},
+    });
+
+    const alreadyPastDeadline = Date.now() - 1000;
+    await expect(service.run(auditId, [{ claim, passages: [] }], 0.6, alreadyPastDeadline)).resolves.toBeUndefined();
+    expect(provider.getCallCount()).toBe(0);
+    const updated = auditStore.claims.get(claim.claimId)!;
+    expect(updated.verdict).toBe("unverifiable");
+    expect(updated.note).toContain("deadline exceeded");
+  });
+
+  it("degrades every batch the per-batch loop reaches, without attempting them, once the shared deadline has passed (D018 §5.13)", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const claimA = toClaim(auditId, randomUUID(), "Claim A");
+    const claimB = toClaim(auditId, randomUUID(), "Claim B");
+    auditStore.claims.set(claimA.claimId, claimA);
+    auditStore.claims.set(claimB.claimId, claimB);
+    // Different docIds -> batchClaims groups them into two separate batches (verify.service.ts §batchClaims),
+    // so this exercises the between-batches deadline check in run()'s loop, not just runBatch's attempt loop.
+    const passagesA: RetrievedPassage[] = [{ passageId: "pA", docId: "docA", location: "p1", text: "t", rank: 1, score: 1 }];
+    const passagesB: RetrievedPassage[] = [{ passageId: "pB", docId: "docB", location: "p1", text: "t", rank: 1, score: 1 }];
+
+    provider.setDefault({
+      results: [{ claim_id: claimA.claimId, verdict: "supported", evidence: ["e"], source_refs: [], synthesized: false, note: null, confidence: 0.9 }],
+      trace: {},
+    });
+
+    const alreadyPastDeadline = Date.now() - 1000;
+    await expect(
+      service.run(
+        auditId,
+        [
+          { claim: claimA, passages: passagesA },
+          { claim: claimB, passages: passagesB },
+        ],
+        0.6,
+        alreadyPastDeadline
+      )
+    ).resolves.toBeUndefined();
+
+    expect(provider.getCallCount()).toBe(0);
+    for (const c of [auditStore.claims.get(claimA.claimId)!, auditStore.claims.get(claimB.claimId)!]) {
+      expect(c.verdict).toBe("unverifiable");
+      expect(c.note).toContain("deadline exceeded before this batch could run");
+    }
+  });
+
   it("retries an unparseable VERIFY response and keeps the verdict when a later attempt parses", async () => {
     const { provider, auditStore, service } = buildService();
     const auditId = randomUUID();

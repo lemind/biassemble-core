@@ -9,6 +9,9 @@ export const AUDIT_SCHEMA_VERSION = "1.0.0" as const;
 
 const DEFAULT_THRESHOLD = 0.6;
 const DEFAULT_MAX_CLAIMS = 50;
+// VERIFY batches by BATCH_MAX (verify.service.ts); an unbounded maxClaims makes worst-case batch
+// count — and wall-clock time against vercel.json's maxDuration — unbounded too. D018 §5.13.
+const MAX_CLAIMS_CAP = 100;
 
 // ─── Enums ──────────────────────────────────────────────────
 
@@ -46,7 +49,7 @@ export const AuditRequestSchema = z.object({
   options: z
     .object({
       threshold: z.number().min(0).max(1).default(DEFAULT_THRESHOLD),
-      maxClaims: z.number().int().positive().default(DEFAULT_MAX_CLAIMS),
+      maxClaims: z.number().int().positive().max(MAX_CLAIMS_CAP).default(DEFAULT_MAX_CLAIMS),
     })
     .default(() => ({ threshold: DEFAULT_THRESHOLD, maxClaims: DEFAULT_MAX_CLAIMS })),
 });

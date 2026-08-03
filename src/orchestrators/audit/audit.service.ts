@@ -1,4 +1,5 @@
 import { logger } from "../../observability/logger.js";
+import { env } from "../../lib/env.js";
 import { CorpusClient, type AuditSourceInput, type RetrievedPassage } from "../../rag/corpus-client.js";
 import { computeCorpusId } from "../../lib/hash.js";
 import type { ExtractService } from "./extract.service.js";
@@ -35,9 +36,14 @@ export class AuditService {
   ) {}
 
   async run(auditId: string, request: AuditRunRequest): Promise<void> {
+    // Single wall-clock budget spanning EXTRACT + all VERIFY batches (D018 §5.13) — vercel.json caps
+    // every route at maxDuration:300, and retry stacking across both stages could otherwise exceed it
+    // with no guard, leaving the audit stuck at "running" forever after a silent platform kill.
+    const deadlineAt = Date.now() + env.AUDIT_MAX_DURATION_MS;
+
     let claims: Claim[];
     try {
-      const extracted = await this.extractService.run(auditId, request.outputText, request.task, request.maxClaims);
+      const extracted = await this.extractService.run(auditId, request.outputText, request.task, request.maxClaims, deadlineAt);
       claims = extracted.claims;
     } catch (err) {
       await this.markFailed(auditId, "extract", err);
@@ -99,7 +105,7 @@ export class AuditService {
     }
 
     try {
-      await this.verifyService.run(auditId, itemsForVerify, request.threshold);
+      await this.verifyService.run(auditId, itemsForVerify, request.threshold, deadlineAt);
     } catch (err) {
       await this.markFailed(auditId, "verify", err);
       return;

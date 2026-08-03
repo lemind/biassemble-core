@@ -163,6 +163,40 @@ describe("EXTRACT service against extract-golden-set.json (T011)", () => {
     await expect(service.run(auditId, "Revenue grew this quarter.", undefined, 50)).rejects.toThrow(/aborted/);
   });
 
+  it("stops retrying and fails cleanly once the shared wall-clock deadline has passed, without calling the provider (D018 §5.13)", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+
+    provider.setDefault({
+      claims: [{ id: "c1", type: "numeric", claim: "Revenue grew", excerpt: "Revenue grew", locations: ["p1s1"], period: "Q2 2026", derived: false }],
+      truncated: false,
+    });
+
+    const alreadyPastDeadline = Date.now() - 1000;
+    await expect(service.run(auditId, "Revenue grew this quarter.", undefined, 50, alreadyPastDeadline)).rejects.toThrow(/deadline exceeded/);
+    expect(provider.getCallCount()).toBe(0);
+  });
+
+  it("salvages the good claims when only one claim's excerpt fails verbatim-match, instead of dropping all of them (2026-08-02, D018 §5.14 / T044)", async () => {
+    const { provider, auditStore, service } = buildService();
+    const auditId = randomUUID();
+    await auditStore.createAudit({ auditId, inputRef: "test", domain: "finance", threshold: 0.6 });
+    const outputText = "Revenue grew this quarter. Costs fell as a result.";
+
+    provider.setDefault({
+      claims: [
+        { id: "c1", type: "numeric", claim: "Revenue grew", excerpt: "Revenue grew", locations: ["p1s1"], period: "Q2 2026", derived: false },
+        { id: "c2", type: "numeric", claim: "bad claim", excerpt: "this text does not appear anywhere in the output", locations: ["p1s2"], period: "Q2 2026", derived: false },
+        { id: "c3", type: "numeric", claim: "Costs fell", excerpt: "Costs fell", locations: ["p1s3"], period: "Q2 2026", derived: false },
+      ],
+      truncated: false,
+    });
+
+    const { claims } = await service.run(auditId, outputText, undefined, 50);
+    expect(claims.map((c) => c.excerpt)).toEqual(["Revenue grew", "Costs fell"]);
+  });
+
   it("enforces maxClaims as a code-level cap even if the model ignores it (FR-019, belt-and-suspenders)", async () => {
     const { provider, auditStore, service } = buildService();
     const auditId = randomUUID();

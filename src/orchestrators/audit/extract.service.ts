@@ -5,6 +5,7 @@ import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
 import { RateLimitError } from "../../providers/gemini.js";
+import { isPastDeadline } from "../retry.js";
 import { EXTRACT_RESPONSE_KEYS, ExtractedClaimSchema } from "../../contracts/audit-internal.schemas.js";
 import { generateClaimId } from "../../lib/audit-identifiers.js";
 import type { Provider } from "../../providers/types.js";
@@ -81,7 +82,15 @@ export class ExtractService {
     private auditStore: AuditStore
   ) {}
 
-  async run(auditId: string, outputText: string, task: string | undefined, maxClaims: number): Promise<ExtractResult> {
+  // deadlineAt: wall-clock budget shared with VERIFY (D018 §5.13); default Infinity keeps existing
+  // callers/tests (no deadline) behaving exactly as before.
+  async run(
+    auditId: string,
+    outputText: string,
+    task: string | undefined,
+    maxClaims: number,
+    deadlineAt: number = Infinity
+  ): Promise<ExtractResult> {
     const system = this.prompts.render("audit-extract", {
       task: task ?? "",
       output_text: outputText,
@@ -99,6 +108,11 @@ export class ExtractService {
     let parsed: z.infer<typeof schema> | null = null;
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= EXTRACT_ATTEMPTS; attempt++) {
+      if (isPastDeadline(deadlineAt)) {
+        lastError = new Error(`EXTRACT deadline exceeded before attempt ${attempt}/${EXTRACT_ATTEMPTS}`);
+        logger.warn({ module: MODULE, operation: "run", auditId, attempt }, "EXTRACT deadline exceeded — not retrying further");
+        break;
+      }
       let raw: unknown;
       let llmCallId: string | null = null;
       try {
@@ -132,7 +146,10 @@ export class ExtractService {
       }
 
       try {
-        const { result } = await repairWithFallback(JSON.stringify(raw), schema, null);
+        // salvageArrays: true — only EXTRACT wants a bad claim dropped instead of nulling `claims`
+        // wholesale; other repairWithFallback callers (reflection's bias/question arrays) rely on
+        // the null-then-retry default and must not opt in. D018 §5.15.
+        const { result } = await repairWithFallback(JSON.stringify(raw), schema, null, { salvageArrays: true });
         // repair.ts's partial-field-recovery step (Stage 004) sets a whole
         // top-level field to null rather than throwing when only that field
         // fails validation — e.g. every claim's excerpt failing the

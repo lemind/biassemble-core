@@ -4,6 +4,7 @@ import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
 import { RateLimitError } from "../../providers/gemini.js";
+import { isPastDeadline } from "../retry.js";
 import { VERIFY_RESPONSE_KEYS, VerifyResponseSchema, type VerifyResponse } from "../../contracts/audit-internal.schemas.js";
 import {
   reconcileNumericVerdict,
@@ -11,6 +12,7 @@ import {
   reconcileVerdictNoteConsistency,
   reconcileDefinedTermVerdict,
   reconcileMagnitudeClaim,
+  reconcileComparisonVerdict,
 } from "./verify-reconcilers.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
@@ -62,7 +64,9 @@ export class VerifyService {
     private auditStore: AuditStore
   ) {}
 
-  async run(auditId: string, items: ClaimWithPassages[], threshold: number): Promise<void> {
+  // deadlineAt: wall-clock budget shared with EXTRACT (D018 §5.13); default Infinity keeps existing
+  // callers/tests (no deadline) behaving exactly as before.
+  async run(auditId: string, items: ClaimWithPassages[], threshold: number, deadlineAt: number = Infinity): Promise<void> {
     const batches = batchClaims(items);
     const promptVersion = this.prompts.getAuditVersion("verify");
     const providerId = this.provider.mode;
@@ -74,7 +78,28 @@ export class VerifyService {
     });
 
     for (const batch of batches) {
-      await this.runBatch(auditId, batch, threshold, promptVersion, providerId);
+      // Checked between batches, not just between attempts: retrying past the deadline mid-batch
+      // still degrades that batch cleanly (below), but a batch that hasn't started yet at all must
+      // not be attempted — it would only burn wall-clock the audit no longer has. D018 §5.13.
+      if (isPastDeadline(deadlineAt)) {
+        logger.warn({ module: MODULE, operation: "run", auditId }, "VERIFY deadline exceeded — degrading remaining batches without attempting them");
+        await this.degradeBatchToUnverifiable(batch, "[forced to unverifiable: audit deadline exceeded before this batch could run]");
+        continue;
+      }
+      await this.runBatch(auditId, batch, threshold, promptVersion, providerId, deadlineAt);
+    }
+  }
+
+  private async degradeBatchToUnverifiable(batch: ClaimWithPassages[], note: string): Promise<void> {
+    for (const { claim } of batch) {
+      await this.auditStore.updateClaimVerdict(claim.claimId, {
+        verdict: "unverifiable",
+        evidence: null,
+        sourceRefs: [],
+        synthesized: false,
+        confidence: 0,
+        note,
+      });
     }
   }
 
@@ -83,7 +108,8 @@ export class VerifyService {
     batch: ClaimWithPassages[],
     threshold: number,
     promptVersion: string,
-    providerId: string
+    providerId: string,
+    deadlineAt: number = Infinity
   ): Promise<void> {
     const claimsBatch = batch.map(({ claim, passages }) => ({
       claim_id: claim.claimId,
@@ -116,6 +142,11 @@ export class VerifyService {
     let parsed: VerifyResponse | null = null;
     let lastSchemaError: string | null = null;
     for (let attempt = 1; attempt <= VERIFY_SCHEMA_ATTEMPTS; attempt++) {
+      if (isPastDeadline(deadlineAt)) {
+        lastSchemaError = `deadline exceeded before attempt ${attempt}/${VERIFY_SCHEMA_ATTEMPTS}`;
+        logger.warn({ module: MODULE, operation: "runBatch", auditId, attempt }, "VERIFY deadline exceeded — not retrying further");
+        break;
+      }
       let raw: unknown;
       let llmCallId: string | null = null;
       try {
@@ -167,16 +198,10 @@ export class VerifyService {
     // customer gets a report naming the gap instead of a hard error. D018 §5.10.
     if (!parsed) {
       logger.error({ module: MODULE, operation: "runBatch", auditId, attempts: VERIFY_SCHEMA_ATTEMPTS, lastSchemaError }, "VERIFY batch failed after retries — degrading to unverifiable");
-      for (const { claim } of batch) {
-        await this.auditStore.updateClaimVerdict(claim.claimId, {
-          verdict: "unverifiable",
-          evidence: null,
-          sourceRefs: [],
-          synthesized: false,
-          confidence: 0,
-          note: `[forced to unverifiable: VERIFY failed after ${VERIFY_SCHEMA_ATTEMPTS} attempts — ${lastSchemaError ?? "unknown"}]`,
-        });
-      }
+      await this.degradeBatchToUnverifiable(
+        batch,
+        `[forced to unverifiable: VERIFY failed after ${VERIFY_SCHEMA_ATTEMPTS} attempts — ${lastSchemaError ?? "unknown"}]`
+      );
       return;
     }
 
@@ -242,9 +267,21 @@ export class VerifyService {
         );
         if (definedTermReconciled.evidence) evidence = definedTermReconciled.evidence;
         if (definedTermReconciled.sourceRefs) sourceRefs = definedTermReconciled.sourceRefs;
-        verdict = definedTermReconciled.verdict as typeof verdict;
-        note = definedTermReconciled.note;
-        confidence = definedTermReconciled.confidence;
+        const comparisonReconciled = reconcileComparisonVerdict(
+          claim,
+          {
+            verdict: definedTermReconciled.verdict,
+            evidence: result.evidence,
+            note: definedTermReconciled.note,
+            confidence: definedTermReconciled.confidence,
+          },
+          passagesByClaimId.get(claim.claimId) ?? []
+        );
+        if (comparisonReconciled.evidence) evidence = comparisonReconciled.evidence;
+        if (comparisonReconciled.sourceRefs) sourceRefs = comparisonReconciled.sourceRefs;
+        verdict = comparisonReconciled.verdict as typeof verdict;
+        note = comparisonReconciled.note;
+        confidence = comparisonReconciled.confidence;
       }
 
       // FR-020/A6: confidence never blended with retrieval_score.
@@ -259,20 +296,13 @@ export class VerifyService {
     }
 
     // Claim sent but absent from VERIFY's results (truncated response) — force unverifiable, don't leave verdict=null.
-    for (const { claim } of batch) {
-      if (answeredClaimIds.has(claim.claimId)) continue;
+    const unanswered = batch.filter(({ claim }) => !answeredClaimIds.has(claim.claimId));
+    for (const { claim } of unanswered) {
       logger.warn(
         { module: MODULE, operation: "runBatch", auditId, claimId: claim.claimId },
         "Claim sent to VERIFY but absent from its response — forcing unverifiable"
       );
-      await this.auditStore.updateClaimVerdict(claim.claimId, {
-        verdict: "unverifiable",
-        evidence: null,
-        sourceRefs: [],
-        synthesized: false,
-        confidence: 0,
-        note: "[forced to unverifiable: VERIFY's response did not include a result for this claim]",
-      });
     }
+    await this.degradeBatchToUnverifiable(unanswered, "[forced to unverifiable: VERIFY's response did not include a result for this claim]");
   }
 }
