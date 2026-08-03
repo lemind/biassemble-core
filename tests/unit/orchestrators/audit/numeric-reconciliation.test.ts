@@ -1250,6 +1250,44 @@ describe("reconcileComparisonVerdict — cross-row/cross-metric comparison claim
     expect(result.verdict).toBe("unverifiable"); // unchanged — left side is ambiguous between two similarly-labeled rows
   });
 
+  describe("non-monetary measure guard (2026-08-03, found live: T046 fixture-building)", () => {
+    // Real bug: "iPhone unit sales exceeded Mac unit sales" resolved supported off the products table's
+    // NET SALES dollar rows — the table has no unit-count data at all, so the code silently answered a
+    // different question than the one asked. Reproduced 2/2 live before this guard.
+    const PRODUCTS = makePassage(
+      "The following table shows net sales by category for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): iPhone $56,994 $46,841 22% $142,263 $115,979 23% Mac 8,399 7,949 6% 16,785 16,936 (1)% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+    );
+
+    it("declines a comparison naming 'unit sales' even though both product names resolve to real dollar rows", () => {
+      const claim = makeClaim("iPhone unit sales exceeded Mac unit sales in the quarter.");
+      const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [PRODUCTS]);
+      expect(result.verdict).toBe("unverifiable"); // unchanged — dollar net sales can't confirm a unit-count claim
+    });
+
+    it("declines the reverse direction too", () => {
+      const claim = makeClaim("Mac unit sales exceeded iPhone unit sales in the quarter.");
+      const result = reconcileComparisonVerdict(claim, { verdict: "unsupported", evidence: [], note: null, confidence: 0.5 }, [PRODUCTS]);
+      expect(result.verdict).toBe("unsupported"); // unchanged
+    });
+
+    it("still fires normally when the claim names the measure the table actually has (net sales, no count noun)", () => {
+      const claim = makeClaim("iPhone net sales exceeded Mac net sales in the quarter.");
+      const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [PRODUCTS]);
+      expect(result.verdict).toBe("supported"); // guard must not block legitimate dollar comparisons
+    });
+
+    it("declines on other count nouns (subscribers, shipments) the pipeline structurally can't extract", () => {
+      const subs = makeClaim("Service A subscribers exceeded Service B subscribers in the quarter.");
+      const shipments = makeClaim("Product A shipments exceeded Product B shipments in the quarter.");
+      expect(reconcileComparisonVerdict(subs, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [PRODUCTS]).verdict).toBe(
+        "supported"
+      );
+      expect(reconcileComparisonVerdict(shipments, { verdict: "contradicted", evidence: [], note: null, confidence: 0.9 }, [PRODUCTS]).verdict).toBe(
+        "contradicted"
+      );
+    });
+  });
+
   it("does not fire on a claim shape it can't parse (extractComparisonClaim declines) — no-op passthrough", () => {
     const claim = makeClaim("Revenue grew this quarter.");
     const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [SEGMENTS]);

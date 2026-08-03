@@ -383,6 +383,13 @@ const COMPARISON_PATTERNS: Array<{ re: RegExp; operator: ComparisonOperator }> =
   { re: /\b(?:was|were)\s+equal\s+to\b/gi, operator: "eq" },
 ];
 
+// extractNumericFact/extractAllNumericFacts only ever read USD or percent — a subject naming a count
+// measure these regexes can't represent must decline, not silently resolve against a dollar row that
+// merely mentions the same product name. Found live (2026-08-03): "iPhone unit sales exceeded Mac unit
+// sales" resolved supported off the two rows' NET SALES dollar figures — a measure mismatch, not a
+// period or scale one. D018 §5.14.
+const NON_MONETARY_MEASURE_RE = /\b(units?|shipments?|activations?|subscribers?|downloads?|installs?|headcount|employees?|users?)\b/i;
+
 /** Splits a claim into its two compared subjects and the operator. Declines on zero or 2+ comparator phrases. D018 §5.14. */
 export function extractComparisonClaim(claimText: string): ComparisonClaim | null {
   const matches: Array<{ start: number; end: number; operator: ComparisonOperator }> = [];
@@ -561,6 +568,10 @@ export function reconcileComparisonVerdict(
 
   const comparison = extractComparisonClaim(claim.claimText);
   if (!comparison) {
+    return { verdict: result.verdict, note: result.note, confidence };
+  }
+
+  if (NON_MONETARY_MEASURE_RE.test(comparison.leftSubject) || NON_MONETARY_MEASURE_RE.test(comparison.rightSubject)) {
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
