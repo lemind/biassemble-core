@@ -288,7 +288,7 @@ function collectPassageFacts(
   };
 }
 
-/** Shared "is this a clean, parseable table row" gate for tableRowFacts and firstUsableTableFact — the block's own column count is authoritative. `tableCandidate`, if the caller already has one (e.g. from a RowPoolEntry), skips redetection. D018 §5.2/§5.14. */
+/** Shared "is this a clean, parseable table row" gate for tableRowFacts/firstUsableTableFact. `tableCandidate`, if the caller already has one, skips redetection. D018 §5.2/§5.14. */
 function parseCleanTableRow(
   rowText: string,
   passageText: string,
@@ -421,49 +421,111 @@ function pickBestRowWithMargin(
   return top.idx;
 }
 
-/** Reads a clean table row's header/period columns, USD then percent. `periodText`, not `claim.claimText` — D018 §5.14 addendum. Null = not clean, or ambiguous. */
+/** A table cell tagged by its column's (duration, period) — period alone isn't unique across a quarter/six-month pair. D018 §5.14. */
+interface PeriodTaggedFact {
+  fact: ExtractedNumericFact;
+  periodKey: string;
+}
+
+function periodKeyOf(column: ParsedColumn): string {
+  return `${column.duration ?? ""}|${column.period}`;
+}
+
+interface TableFactResolution {
+  /** Narrowed to exactly one candidate — the confident, no-ambiguity answer. Null when narrowing left 2+. */
+  resolved: ExtractedNumericFact | null;
+  /** Every same-unit cell in the row, tagged by column — lets the caller check cross-period unanimity when `resolved` is null instead of declining outright. D018 §5.14. */
+  candidates: PeriodTaggedFact[];
+}
+
+/** Reads a clean table row's header/period columns, USD then percent. `periodText`, not `claim.claimText` — D018 §5.14 addendum. Null = not a clean table row at all. */
 function firstUsableTableFact(
   rowText: string,
   passageText: string,
   periodText: string,
   tableCandidate?: TableCandidate | null
-): ExtractedNumericFact | null {
+): TableFactResolution | null {
   const clean = parseCleanTableRow(rowText, passageText, tableCandidate);
   if (!clean) return null;
   const { cells, columns, tableScale } = clean;
 
+  let fallback: PeriodTaggedFact[] | null = null;
   for (const unit of ["USD", "percent"] as const) {
     const sameUnit = cells.map((cell, i) => ({ cell, column: columns[i]! })).filter(({ cell }) => cell.unit === unit);
     if (sameUnit.length === 0) continue;
+    const toFact = ({ cell }: { cell: { value: number } }) => ({ value: cell.value, unit, scale: unit === "USD" ? tableScale : null });
+    const tagged = sameUnit.map((c) => ({ fact: toFact(c), periodKey: periodKeyOf(c.column) }));
     const narrowed = narrowByPeriod(sameUnit, periodText);
-    if (narrowed.length !== 1) continue; // ambiguous across periods for this unit — try the other, else decline below
-    return { value: narrowed[0]!.cell.value, unit, scale: unit === "USD" ? tableScale : null };
+    if (narrowed.length === 1) return { resolved: toFact(narrowed[0]!), candidates: tagged };
+    if (!fallback) fallback = tagged; // remember USD's candidates even if percent narrows later
   }
-  return null;
+  return fallback ? { resolved: null, candidates: fallback } : null;
 }
 
-/** Resolves one side of a comparison claim to a single unambiguous fact, or declines (null). Takes an already-built pool, not `passages` — see buildRowPool's caller. D018 §5.14. */
+interface ComparisonSideResolution {
+  /** Set only when the row/period resolved to exactly one fact — the fast, unambiguous path. */
+  fact: ExtractedNumericFact | null;
+  passageId: string;
+  passageText: string;
+  /** Every same-unit candidate this row offers, tagged by period — used for cross-period unanimity when `fact` is null. Empty for prose rows (no period tagging is possible there). */
+  periodCandidates: PeriodTaggedFact[];
+}
+
+/** Resolves one side of a comparison claim, or declines (null) if the row itself can't be identified. Takes an already-built pool, not `passages` — see buildRowPool's caller. D018 §5.14. */
 function resolveComparisonSide(
   subjectWords: Set<string>,
   pool: RowPoolEntry[],
   allRows: PassageRow[],
   periodText: string,
   rowFreq?: Map<string, number>
-): { fact: ExtractedNumericFact; passageId: string; passageText: string } | null {
+): ComparisonSideResolution | null {
   if (subjectWords.size === 0 || pool.length === 0) return null;
 
   const bestIdx = pickBestRowWithMargin(pool, subjectWords, allRows, rowFreq);
   if (bestIdx === null) return null;
   const chosen = pool[bestIdx]!;
 
-  // Row settled: a clean table row is read via its own header/period columns; otherwise the row's own
-  // (already position-assigned) facts must resolve to exactly one figure, or this side declines.
-  const fact =
-    firstUsableTableFact(chosen.rowText, chosen.passage.text, periodText, chosen.tableCandidate) ??
-    (chosen.facts.length === 1 ? chosen.facts[0]! : null);
-  if (!fact) return null;
+  const table = firstUsableTableFact(chosen.rowText, chosen.passage.text, periodText, chosen.tableCandidate);
+  if (table) {
+    return { fact: table.resolved, passageId: chosen.passage.passageId, passageText: chosen.passage.text, periodCandidates: table.candidates };
+  }
+  // Prose fallback: no column/period tagging is available in free text, so there is no unanimity path —
+  // the row's own facts must resolve to exactly one figure, or this side declines. D018 §5.2/§5.14.
+  if (chosen.facts.length === 1) {
+    return { fact: chosen.facts[0]!, passageId: chosen.passage.passageId, passageText: chosen.passage.text, periodCandidates: [] };
+  }
+  return null;
+}
 
-  return { fact, passageId: chosen.passage.passageId, passageText: chosen.passage.text };
+/** Resolves by unanimity across every shared period instead of picking one — same discipline as collectPassageFacts. Unshared periods are skipped; genuine disagreement declines. D018 §5.14. */
+function unanimousComparisonAcrossPeriods(
+  left: PeriodTaggedFact[],
+  right: PeriodTaggedFact[],
+  operator: ComparisonOperator
+): { holds: boolean; leftFact: ExtractedNumericFact; rightFact: ExtractedNumericFact } | null {
+  const rightByPeriod = new Map(right.map((r) => [r.periodKey, r.fact]));
+  let holds: boolean | null = null;
+  let citedLeft: ExtractedNumericFact | null = null;
+  let citedRight: ExtractedNumericFact | null = null;
+
+  for (const l of left) {
+    const r = rightByPeriod.get(l.periodKey);
+    if (!r || !isUsableNumericFact(l.fact, r)) continue;
+    const cmp = compare(
+      { value: l.fact.value, unit: l.fact.unit, scale: l.fact.scale, period: null },
+      { value: r.value, unit: r.unit, scale: r.scale, period: null }
+    );
+    if (!cmp.comparable || cmp.equal === null) continue;
+    const pairHolds = cmp.equal ? operator === "eq" : operator === "gt" ? cmp.direction > 0 : operator === "lt" ? cmp.direction < 0 : false;
+    if (holds === null) {
+      holds = pairHolds;
+      citedLeft = l.fact;
+      citedRight = r;
+    } else if (holds !== pairHolds) {
+      return null; // genuinely period-dependent — decline rather than guess which period the claim means
+    }
+  }
+  return holds === null ? null : { holds, leftFact: citedLeft!, rightFact: citedRight! };
 }
 
 /** Two-metric comparison claims ("X exceeded Y") — no number in the claim text for any reconciler above to extract. Resolves each side independently; declines unless BOTH resolve. D018 §5.14. */
@@ -495,27 +557,40 @@ export function reconcileComparisonVerdict(
     return { verdict: result.verdict, note: result.note, confidence };
   }
 
-  // isUsableNumericFact is already symmetric (compares its two args to each other) — reused directly
-  // rather than duplicated, between the two independently-resolved sides. D018 §5.14 addendum.
-  if (!isUsableNumericFact(left.fact, right.fact)) {
-    return { verdict: result.verdict, note: result.note, confidence };
-  }
-
-  const cmp = compare(
-    { value: left.fact.value, unit: left.fact.unit, scale: left.fact.scale, period: claim.period },
-    { value: right.fact.value, unit: right.fact.unit, scale: right.fact.scale, period: claim.period }
-  );
-  if (!cmp.comparable || cmp.equal === null) {
-    return { verdict: result.verdict, note: result.note, confidence };
-  }
-
-  // direction reuses compare()'s own already-canonicalized (and, if ever needed, currency-converted)
-  // values — no separate normalize() call here, so this can never disagree with cmp.equal. D018 §5.14 addendum.
   let holds: boolean;
-  if (cmp.equal) {
-    holds = comparison.operator === "eq";
+  let citedLeft: ExtractedNumericFact;
+  let citedRight: ExtractedNumericFact;
+
+  if (left.fact && right.fact) {
+    // Fast path: both sides narrowed to exactly one fact. isUsableNumericFact is already symmetric
+    // (compares its two args to each other) — reused directly rather than duplicated. D018 §5.14 addendum.
+    if (!isUsableNumericFact(left.fact, right.fact)) {
+      return { verdict: result.verdict, note: result.note, confidence };
+    }
+    const cmp = compare(
+      { value: left.fact.value, unit: left.fact.unit, scale: left.fact.scale, period: claim.period },
+      { value: right.fact.value, unit: right.fact.unit, scale: right.fact.scale, period: claim.period }
+    );
+    if (!cmp.comparable || cmp.equal === null) {
+      return { verdict: result.verdict, note: result.note, confidence };
+    }
+    // direction reuses compare()'s own already-canonicalized values — no separate normalize() call here,
+    // so this can never disagree with cmp.equal. D018 §5.14 addendum.
+    holds = cmp.equal ? comparison.operator === "eq" : comparison.operator === "gt" ? cmp.direction > 0 : comparison.operator === "lt" ? cmp.direction < 0 : false;
+    citedLeft = left.fact;
+    citedRight = right.fact;
   } else {
-    holds = comparison.operator === "gt" ? cmp.direction > 0 : comparison.operator === "lt" ? cmp.direction < 0 : false;
+    // At least one side didn't narrow to a single period. If both are still clean table rows with
+    // period-tagged candidates, resolve by cross-period unanimity instead of guessing which period the
+    // claim means — found live (2026-08-03): a claim naming no period at all ("SG&A exceeded R&D") got
+    // raw-LLM-guessed `supported` although R&D exceeded SG&A in every period the table showed. D018 §5.14.
+    const unanimous = unanimousComparisonAcrossPeriods(left.periodCandidates, right.periodCandidates, comparison.operator);
+    if (!unanimous) {
+      return { verdict: result.verdict, note: result.note, confidence };
+    }
+    holds = unanimous.holds;
+    citedLeft = unanimous.leftFact;
+    citedRight = unanimous.rightFact;
   }
 
   const targetVerdict = holds ? "supported" : "contradicted";
@@ -530,7 +605,7 @@ export function reconcileComparisonVerdict(
   return {
     verdict: targetVerdict,
     note: buildOverrideNote(
-      `[verdict set by code: ${formatFact(left.fact)} vs ${formatFact(right.fact)} ${holds ? "confirms" : "contradicts"} the claimed comparison — D018 §5.14]`,
+      `[verdict set by code: ${formatFact(citedLeft)} vs ${formatFact(citedRight)} ${holds ? "confirms" : "contradicts"} the claimed comparison — D018 §5.14]`,
       result.note
     ),
     confidence: 1,

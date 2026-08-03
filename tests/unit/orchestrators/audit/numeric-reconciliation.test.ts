@@ -1170,6 +1170,40 @@ describe("reconcileComparisonVerdict — cross-row/cross-metric comparison claim
     expect(result.verdict).toBe("supported"); // unchanged — must not confidently compare $100M against a bare, unscaled $100
   });
 
+  describe("cross-period unanimity (2026-08-03, found live: false endorsement on a period-ambiguous claim)", () => {
+    // Real crossrow.json income-statement passage. R&D exceeds SG&A in EVERY one of its 4 columns
+    // (11419>7477, 8550>6728, 22306>14969, 16818>13903) — so the claim doesn't need a resolved period
+    // to be judged, it holds (or fails) identically regardless of which one the claim means.
+    const INCOME_STATEMENT = makePassage(
+      "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Selling, general and administrative 7,477 6,728 14,969 13,903. Total operating expenses 18,896 15,278 37,275 30,721. Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 March 28, 2026 March 29, 2025 (dollars in millions)"
+    );
+
+    it("resolves a period-ambiguous claim by unanimity across every period, instead of declining and letting a wrong raw LLM verdict through — live bug: 'SG&A exceeded R&D' was marked supported though R&D wins in every column", () => {
+      const claim = makeClaim("Selling, general and administrative expense exceeded research and development expense in the quarter.");
+      const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [INCOME_STATEMENT]);
+      expect(result.verdict).toBe("contradicted");
+      expect(result.note).toContain("D018 §5.14");
+    });
+
+    it("the reverse (true) claim also resolves by unanimity", () => {
+      const claim = makeClaim("Research and development expense exceeded selling, general and administrative expense in the quarter.");
+      const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [INCOME_STATEMENT]);
+      expect(result.verdict).toBe("supported");
+    });
+
+    it("declines (does not guess) when the direction genuinely differs across periods", () => {
+      // Gross margin (54781,44867,124012,103142) vs Total operating expenses (18896,15278,37275,30721):
+      // gross margin exceeds opex in every period here too, so flip one figure to manufacture genuine
+      // period-dependent disagreement and confirm the decline path still works, not just the unanimous one.
+      const disagreeing = makePassage(
+        "Gross margin 10,000 44,867 124,012 103,142. Total operating expenses 18,896 15,278 37,275 30,721. Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 March 28, 2026 March 29, 2025 (dollars in millions)"
+      );
+      const claim = makeClaim("Gross margin exceeded total operating expenses in the period.");
+      const result = reconcileComparisonVerdict(claim, { verdict: "supported", evidence: [], note: null, confidence: 0.9 }, [disagreeing]);
+      expect(result.verdict).toBe("supported"); // unchanged — Q2 2026 column disagrees (10,000 < 18,896) while the other 3 agree
+    });
+  });
+
   it("never overrides when only the LEFT side resolves — decline, don't guess with one resolved side", () => {
     const claim = makeClaim("Vibranium revenue exceeded International revenue.");
     const result = reconcileComparisonVerdict(claim, { verdict: "unverifiable", evidence: [], note: null, confidence: 0 }, [AMBIGUOUS_PAIR]);
