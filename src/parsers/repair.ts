@@ -21,6 +21,11 @@ function normalizeFields(raw: Record<string, unknown>): void {
   }
 }
 
+export interface RepairOptions {
+  /** Opt-in only — some callers depend on the old null-then-retry behavior for correctness. D018 §5.15. */
+  salvageArrays?: boolean;
+}
+
 /**
  * Attempts a field-by-field safe parse of a ZodObject.
  * Fields that fail validation are set to null instead of crashing the whole result.
@@ -30,6 +35,7 @@ function normalizeFields(raw: Record<string, unknown>): void {
 function partialParseObject<T>(
   raw: unknown,
   schema: ZodSchema<T>,
+  options: RepairOptions = {},
 ): T {
   // Zod v4 public API: ZodObject has .shape
   if (!(schema instanceof ZodObject) || typeof raw !== "object" || raw === null) {
@@ -52,13 +58,33 @@ function partialParseObject<T>(
     const fieldResult = fieldSchema.safeParse(value);
     if (fieldResult.success) {
       result[field] = fieldResult.data;
-    } else {
-      errors.push({
-        field,
-        message: fieldResult.error.message,
-      });
-      result[field] = null;
+      continue;
     }
+
+    // Array-typed field: drop only the bad indices instead of nulling the whole field. D018 §5.15 (T044).
+    if (options.salvageArrays && Array.isArray(value)) {
+      const badIndices = new Set(
+        fieldResult.error.issues.map((issue) => issue.path[0]).filter((i): i is number => typeof i === "number")
+      );
+      if (badIndices.size > 0 && badIndices.size < value.length) {
+        const filtered = value.filter((_, i) => !badIndices.has(i));
+        const retried = fieldSchema.safeParse(filtered);
+        if (retried.success) {
+          errors.push({
+            field,
+            message: `salvaged ${filtered.length}/${value.length} element(s); dropped index(es) ${[...badIndices].join(",")}`,
+          });
+          result[field] = retried.data;
+          continue;
+        }
+      }
+    }
+
+    errors.push({
+      field,
+      message: fieldResult.error.message,
+    });
+    result[field] = null;
   }
 
   if (errors.length > 0) {
@@ -76,7 +102,7 @@ function partialParseObject<T>(
  * Uses extractJson for structural extraction, then parses and validates.
  * Falls back to field-by-field partial parse to recover valid fields.
  */
-export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
+export function tryRepairJson<T>(text: string, schema: ZodSchema<T>, options: RepairOptions = {}): T {
   const extracted = extractJson(text);
   const parsed = JSON.parse(extracted) as Record<string, unknown>;
 
@@ -95,7 +121,7 @@ export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
 
   // Step 2: Partial field-by-field parse
   try {
-    return partialParseObject(parsed, schema);
+    return partialParseObject(parsed, schema, options);
   } catch (partialError) {
     logger.warn(
       { module: MODULE, operation: "tryRepairJson", partialError },
@@ -119,11 +145,12 @@ export function tryRepairJson<T>(text: string, schema: ZodSchema<T>): T {
 export async function repairWithFallback<T, M = void>(
   text: string,
   schema: ZodSchema<T>,
-  fallbackProvider: (() => Promise<{ result: T; metadata: M }>) | null
+  fallbackProvider: (() => Promise<{ result: T; metadata: M }>) | null,
+  options: RepairOptions = {}
 ): Promise<{ result: T; metadata: M | null }> {
   // Step 1: Try repair (extractJson + parse + validate)
   try {
-    const result = tryRepairJson(text, schema);
+    const result = tryRepairJson(text, schema, options);
     return { result, metadata: null };
   } catch (repairError) {
     logger.warn(

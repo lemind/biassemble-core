@@ -86,7 +86,11 @@ export interface RetrievalComparisonRecord {
 // ── LLM Call Record (Stage 003) ──
 export type LlmCallStatus = "success" | "timeout" | "error";
 export type LlmCallFailureType = "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other";
-export type LlmCallStage = "assessment" | "question";
+// "extract"/"verify" added for specs/008-b2b — llm_calls.stage is a plain
+// text column with no DB-level CHECK constraint (same pattern D017 already
+// used to add "backfilled" to RagStatus without a migration), so widening
+// this TypeScript-level enum needs no schema change.
+export type LlmCallStage = "assessment" | "question" | "extract" | "verify";
 export type LlmCallType = "primary" | "fallback";
 
 export interface LlmCallRecord {

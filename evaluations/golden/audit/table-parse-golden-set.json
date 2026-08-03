@@ -1,0 +1,381 @@
+{
+  "scenarios": [
+    {
+      "id": "table-001-segment-valid",
+      "why": "Real segment table with a genuine header. Faithful parse must be accepted.",
+      "block": "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%",
+      "parse": {
+        "columns": [
+          {
+            "duration": "Three Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "Change"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "Change"
+          }
+        ],
+        "rows": [
+          {
+            "label": "Europe",
+            "values": [
+              {
+                "period": "March 28, 2026",
+                "value": "28,055"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "24,454"
+              },
+              {
+                "period": "Change",
+                "value": "15"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "66,201"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "58,315"
+              },
+              {
+                "period": "Change",
+                "value": "14"
+              }
+            ]
+          },
+          {
+            "label": "Greater China",
+            "values": [
+              {
+                "period": "March 28, 2026",
+                "value": "20,497"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "16,002"
+              },
+              {
+                "period": "Change",
+                "value": "28"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "46,023"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "34,515"
+              },
+              {
+                "period": "Change",
+                "value": "33"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": "accept"
+    },
+    {
+      "id": "table-002-periods-transposed",
+      "why": "Real values, real labels, quarterly period columns swapped. Verbatim-only validation passes this; only the period-ORDER rule rejects it.",
+      "block": "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%",
+      "parse": {
+        "columns": [
+          {
+            "duration": "Three Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "Change"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "Change"
+          }
+        ],
+        "rows": [
+          {
+            "label": "Europe",
+            "values": [
+              {
+                "period": "March 29, 2025",
+                "value": "28,055"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "24,454"
+              },
+              {
+                "period": "Change",
+                "value": "15"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "66,201"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "58,315"
+              },
+              {
+                "period": "Change",
+                "value": "14"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": "reject",
+      "reason": "period_order_mismatch"
+    },
+    {
+      "id": "table-003-duration-distinct",
+      "why": "Same date appears as both a three-month and a six-month column; the two must stay distinct, not be collapsed.",
+      "block": "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%",
+      "parse": {
+        "columns": [
+          {
+            "duration": "Three Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "Change"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "Change"
+          }
+        ],
+        "rows": [
+          {
+            "label": "Europe",
+            "values": [
+              {
+                "period": "March 28, 2026",
+                "value": "28,055"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "24,454"
+              },
+              {
+                "period": "Change",
+                "value": "15"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "66,201"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "58,315"
+              },
+              {
+                "period": "Change",
+                "value": "14"
+              }
+            ]
+          },
+          {
+            "label": "Greater China",
+            "values": [
+              {
+                "period": "March 28, 2026",
+                "value": "20,497"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "16,002"
+              },
+              {
+                "period": "Change",
+                "value": "28"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "46,023"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "34,515"
+              },
+              {
+                "period": "Change",
+                "value": "33"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": "accept",
+      "assert_distinct_duration": true
+    },
+    {
+      "id": "table-004-headerless-block-ineligible",
+      "why": "Income-statement excerpt carries zero period tokens once the fixture annotation is removed. No approach can recover column identity; it must be ineligible, not guessed.",
+      "block": "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Selling, general and administrative 7,477 6,728 14,969 13,903. Total operating expenses 18,896 15,278 37,275 30,721. Operating income 35,885 29,589 86,737 72,421. Other income/(expense), net (52) (279) 98 (527). Income before provision for income taxes 35,833 29,310 86,835 71,894. Provision for income taxes 6,255 4,530 15,160 10,784. Net income $29,578 $24,780 $71,675 $61,110.",
+      "expect": "ineligible"
+    },
+    {
+      "id": "table-005-hallucinated-value",
+      "why": "A value that is not in the block must be rejected even when every label and period is real.",
+      "block": "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%",
+      "parse": {
+        "columns": [
+          {
+            "duration": "Three Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "Change"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "Change"
+          }
+        ],
+        "rows": [
+          {
+            "label": "Europe",
+            "values": [
+              {
+                "period": "March 28, 2026",
+                "value": "28,055"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "24,454"
+              },
+              {
+                "period": "Change",
+                "value": "15"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "66,201"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "58,315"
+              },
+              {
+                "period": "Change",
+                "value": "99"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": "reject",
+      "reason": "value_not_in_block"
+    },
+    {
+      "id": "table-006-column-count-mismatch",
+      "why": "Column count is the block's, never the transcriber's.",
+      "block": "The following table shows net sales by reportable segment for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change Americas $45,093 $40,315 12% $103,622 $92,963 11% Europe 28,055 24,454 15% 66,201 58,315 14% Greater China 20,497 16,002 28% 46,023 34,515 33% Japan 8,401 7,298 15% 17,814 16,285 9% Rest of Asia Pacific 9,138 7,290 25% 21,280 17,581 21% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%",
+      "parse": {
+        "columns": [
+          {
+            "duration": "Three Months Ended",
+            "period": "March 28, 2026"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "March 29, 2025"
+          },
+          {
+            "duration": "Three Months Ended",
+            "period": "Change"
+          },
+          {
+            "duration": "Six Months Ended",
+            "period": "March 28, 2026"
+          }
+        ],
+        "rows": [
+          {
+            "label": "Europe",
+            "values": [
+              {
+                "period": "March 28, 2026",
+                "value": "28,055"
+              },
+              {
+                "period": "March 29, 2025",
+                "value": "24,454"
+              },
+              {
+                "period": "Change",
+                "value": "15"
+              },
+              {
+                "period": "March 28, 2026",
+                "value": "66,201"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": "reject",
+      "reason": "column_count_mismatch"
+    }
+  ]
+}

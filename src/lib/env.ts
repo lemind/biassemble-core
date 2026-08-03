@@ -6,6 +6,12 @@ const envSchema = z.object({
   AI_CORE_API_KEY: z.string().min(1, "AI_CORE_API_KEY is required"),
   PORT: z.coerce.number().int().positive().default(3001),
   AI_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+  // Audit mode sends a whole claim batch plus its retrieved passages; the 10s story-flow default
+  // aborted 2 of 5 live runs at 46 claims. D018 §5.10.
+  AUDIT_LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
+  // Wall-clock budget spanning EXTRACT + all VERIFY batches; 240s leaves margin under vercel.json's
+  // maxDuration:300. D018 §5.13.
+  AUDIT_MAX_DURATION_MS: z.coerce.number().int().positive().default(240000),
   AI_MAX_RETRIES: z.coerce.number().int().positive().default(3),
   INNGEST_SERVE_HOST: z.string().optional(),
   VERCEL_BYPASS_TOKEN: z.string().optional(),

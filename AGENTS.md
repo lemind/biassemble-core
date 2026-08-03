@@ -22,24 +22,41 @@ pnpm db:studio        # Open Drizzle Studio
 
 ## Repository Structure
 
-This project contains **two separate git repositories** in sibling directories:
+This project contains **three separate git repositories** in sibling directories (found stale here before — this used to list only two; `biassemble-engine` was missing entirely):
 
 ```
 /home/dl/_prog/biassemble/          ← NOT a git repo (workspace container only)
 ├── biassemble/                     ← App repo (BE + FE), has its own .git
-│   ├── backend/
-│   ├── frontend/
+│   ├── backend/                    → Vercel project "biassemble-be"
+│   ├── frontend/                   → separate Vercel project
 │   └── AGENTS.md
 │
-└── biassemble-core/                ← Core repo (private), has its own .git  ← YOU ARE HERE
-    ├── src/
-    └── AGENTS.md
+├── biassemble-core/                ← Core repo (private), has its own .git  ← YOU ARE HERE
+│   ├── src/                        → Vercel project "biassemble-core"
+│   └── AGENTS.md
+│
+└── biassemble-engine/              ← RAG sidecar repo (Python, pure retriever — no LLM calls), has its own .git
+    └── AGENTS.md                   → Hugging Face Space
 ```
 
 - The parent `/home/dl/_prog/biassemble/` is **not** a git repository — it's a workspace container.
 - `biassemble/biassemble/` is the **app repo** (backend + frontend). Run git commands from `/home/dl/_prog/biassemble/biassemble/`.
 - `biassemble/biassemble-core/` is the **core repo** (private AI logic). Run git commands from `/home/dl/_prog/biassemble/biassemble-core/`.
-- Each repo has its own branch, commits, and PRs. They are independent.
+- `biassemble/biassemble-engine/` is the **RAG sidecar** (vector search + a local LLM over the bias catalog, called by this repo, never the reverse). Run git commands from `/home/dl/_prog/biassemble/biassemble-engine/`.
+- Each repo has its own branch, commits, and PRs. They are independent. Dependency direction: `biassemble` (app backend) → `biassemble-core` (this repo) → `biassemble-engine` → `pgvector`. Never reversed.
+
+### Shared secrets — keep in sync across deploy targets
+
+A mismatch here fails silently as `401`, not a build error — verified the hard way (2026-07-22): rotating `AI_CORE_API_KEY` in this repo's Vercel env without also updating the app-backend repo's copy broke every backend→core call with no build failure, no alert, until someone hit the live app.
+
+| Secret | Lives in this repo's `.env`/Vercel env | Must match | Lives in |
+|---|---|---|---|
+| `AI_CORE_API_KEY` | ✓ (this repo IS the core service being authenticated to) | ⟷ | `biassemble/backend`'s `AI_CORE_API_KEY` (Vercel project `biassemble-be`) |
+| `RAG_API_KEY` | ✓ (this repo calls `biassemble-engine` with it) | ⟷ | `biassemble-engine`'s HF Space Secret `RAG_API_KEY` |
+| `RAG_ENGINE_URL` | ✓ | must point at | `biassemble-engine`'s actual deployed HF Space URL |
+| `RAG_HF_TOKEN` | ✓ | — | only needed if `biassemble-engine`'s `LLM_MODEL_REPO` points at a private HF repo |
+
+If you rotate any of these, update **both** sides in the same sitting, then verify with a real call through the *other* repo (e.g. the backend's own proxy endpoint, or a real `/retrieve-biases` call) — a call to this repo alone won't prove the other side's copy is still valid.
 
 ## Critical Rules
 
@@ -79,6 +96,10 @@ Examples:
 - `chore: add drizzle config for core schema`
 
 **Single-line commit messages only.** No multi-line bodies.
+
+## Code Comments
+
+Max ~200 chars per comment. State what/why in one line; point to the relevant ADR (`docs/decisions/0NN-*.md` §X) for rationale, incident history, or design tradeoffs — never restate them inline. If a comment needs more than one line to justify itself, that justification belongs in the ADR, not the code.
 
 ## When To Ask
 

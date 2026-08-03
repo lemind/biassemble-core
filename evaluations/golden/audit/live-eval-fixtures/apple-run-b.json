@@ -1,0 +1,256 @@
+{
+  "audit_id": "99685106-94bc-4ec2-b195-7d40307c165b",
+  "claims": [
+    {
+      "claim": "Services net sales grew 16% in the quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Services 30,976 26,645 16% 60,989 52,985 15%"
+      ],
+      "source_refs": [
+        "5a02ac3d-f4e4-4eb1-b407-373652defc73"
+      ],
+      "note": "The passage states that Services net sales were $30,976 million for the three months ended March 28, 2026, and $26,645 million for the three months ended March 29, 2025, showing a 16% increase."
+    },
+    {
+      "claim": "Americas net sales grew 12% year over year.",
+      "verdict": "supported",
+      "evidence": [
+        "Americas $45,093 $40,315 12% $103,622 $92,963 11%"
+      ],
+      "source_refs": [
+        "b443d7f5-703f-4614-ac50-8abe3801f8f8"
+      ],
+      "note": "The passage states that Americas net sales were $45,093 million for the three months ended March 28, 2026, and $40,315 million for the three months ended March 29, 2025, showing a 12% year-over-year increase."
+    },
+    {
+      "claim": "Basic earnings per share was $2.02.",
+      "verdict": "supported",
+      "evidence": [
+        "Earnings per share: Basic $2.02 $1.65 $4.87 $4.06."
+      ],
+      "source_refs": [
+        "a266f20c-08c3-429d-b103-e79a22ebd0ab"
+      ],
+      "note": "The passage states that basic earnings per share was $2.02 for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026."
+    },
+    {
+      "claim": "iPhone net sales increased due to higher net sales of Pro models.",
+      "verdict": "supported",
+      "evidence": [
+        "iPhone net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 due to higher net sales of Pro models."
+      ],
+      "source_refs": [
+        "ef8f969d-0133-443e-89fa-8cbcdf4e0edb"
+      ],
+      "note": "The passage explicitly states that iPhone net sales increased due to higher net sales of Pro models for the specified period."
+    },
+    {
+      "claim": "Rest of Asia Pacific growth was driven primarily by higher net sales of iPhone and Services.",
+      "verdict": "supported",
+      "evidence": [
+        "Rest of Asia Pacific net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 primarily due to higher net sales of iPhone and Services."
+      ],
+      "source_refs": [
+        "4f04dd43-2c30-435f-a0fe-f0f213065012"
+      ],
+      "note": "The passage directly states that Rest of Asia Pacific growth was driven by higher net sales of iPhone and Services."
+    },
+    {
+      "claim": "Total operating expenses were $15,278 for the quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Total operating expenses 18,896 15,278 37,275 30,721."
+      ],
+      "source_refs": [
+        "9e3e838c-01b8-4408-8870-bf5da710792d"
+      ],
+      "note": "The passage states that total operating expenses were $15,278 for the three months ended March 29, 2025. The claim specifies fiscal Q2 2026. The passage provides total operating expenses for fiscal Q2 2026 as $18,896."
+    },
+    {
+      "claim": "iPad net sales decreased during the second quarter compared to the prior year.",
+      "verdict": "contradicted",
+      "evidence": [
+        "iPad net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 primarily due to higher net sales of iPad, partially offset by lower net sales of iPad mini."
+      ],
+      "source_refs": [
+        "da3f0c4d-c2cb-4f4a-80c4-a2c87f075f2f"
+      ],
+      "note": "The passage states that iPad net sales increased, which contradicts the claim that they decreased."
+    },
+    {
+      "claim": "Apple activated 41 million new iPhone units during the quarter.",
+      "verdict": "unsupported",
+      "evidence": [],
+      "source_refs": [],
+      "note": "No passage mentions the number of iPhone units activated during the quarter."
+    },
+    {
+      "claim": "App Store revenue contributed $8.2 billion of Services net sales.",
+      "verdict": "unverifiable",
+      "evidence": null,
+      "source_refs": [],
+      "note": "The provided passages do not contain information about App Store revenue contributing $8.2 billion to Services net sales. [gated: confidence 0 below threshold 0.6]"
+    },
+    {
+      "claim": "Apple repurchased $25 billion of common stock during the quarter.",
+      "verdict": "unsupported",
+      "evidence": [],
+      "source_refs": [],
+      "note": "No passage mentions the amount of common stock repurchased by Apple during the quarter."
+    },
+    {
+      "claim": "Gross margin represented 49.3% of total net sales in the quarter.",
+      "verdict": "unsupported",
+      "evidence": [],
+      "source_refs": [],
+      "note": "No passage provides the gross margin percentage for the quarter."
+    },
+    {
+      "claim": "The reporting period covered the quarterly period ended March 28, 2026.",
+      "verdict": "supported",
+      "evidence": [
+        "For the quarterly period ended March 28, 2026"
+      ],
+      "source_refs": [
+        "e98ea617-61a9-4131-95c2-1962023048ed"
+      ],
+      "note": "The passage explicitly states that the quarterly period ended March 28, 2026."
+    },
+    {
+      "claim": "Apple delivered total net sales growth of 17% year over year in the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+      ],
+      "source_refs": [
+        "b443d7f5-703f-4614-ac50-8abe3801f8f8"
+      ],
+      "note": "The passage states that total net sales increased by 17% in the three months ended March 28, 2026, compared to the same period in 2025. This aligns with the claim of 17% year-over-year growth in the second quarter."
+    },
+    {
+      "claim": "The weakness in the yen had an unfavorable year-over-year impact on Japan net sales during the first six months.",
+      "verdict": "supported",
+      "evidence": [
+        "The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026."
+      ],
+      "source_refs": [
+        "626fd6ba-0a9e-4271-9758-c44681eb6c90"
+      ],
+      "note": "The passage explicitly states that the weakness in the yen had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026."
+    },
+    {
+      "claim": "Greater China net sales declined 8% year over year in the second quarter.",
+      "verdict": "contradicted",
+      "evidence": [
+        "The following table shows net sales by category for the three- and six-month periods ended March 28, 2026 and March 29, 2025 (dollars in millions): Three Months Ended Six Months Ended March 28, 2026 March 29, 2025 Change March 28, 2026 March 29, 2025 Change iPhone $56,994 $46,841 22% $142,263 $115,979 23% Mac 8,399 7,949 6% 16,785 16,936 (1)% iPad 6,914 6,402 8% 15,509 14,490 7% Wearables, Home and Accessories 7,901 7,522 5% 19,394 19,269 1% Services 30,976 26,645 16% 60,989 52,985 15% Total net sales $111,184 $95,359 17% $254,940 $219,659 16%"
+      ],
+      "source_refs": [
+        "5a02ac3d-f4e4-4eb1-b407-373652defc73"
+      ],
+      "note": "[verdict set by code: 8% disagrees beyond tolerance with every same-measure figure cited (17%, 16%) — compare.ts, D018 §2.3] (model's original note, superseded by the above: \"None of the provided passages mention the net sales performance of Greater China or a decline of 8% year over year in the second quarter.\")"
+    },
+    {
+      "claim": "Greater China net sales grew 28% year over year.",
+      "verdict": "supported",
+      "evidence": [
+        "Greater China 20,497 16,002 28% 46,023 34,515 33%"
+      ],
+      "source_refs": [
+        "b443d7f5-703f-4614-ac50-8abe3801f8f8"
+      ],
+      "note": "The passage states that Greater China net sales were $20,497 million for the three months ended March 28, 2026, and $16,002 million for the three months ended March 29, 2025, showing a 28% year-over-year increase."
+    },
+    {
+      "claim": "Europe net sales grew 22% year over year.",
+      "verdict": "contradicted",
+      "evidence": [
+        "Europe 28,055 24,454 15% 66,201 58,315 14%"
+      ],
+      "source_refs": [
+        "b443d7f5-703f-4614-ac50-8abe3801f8f8"
+      ],
+      "note": "[verdict set by code: 22% disagrees beyond tolerance with every same-measure figure cited (15%) — compare.ts, D018 §2.3] (model's original note, superseded by the above: \"The passage states that Europe net sales increased by 15% year over year for the three months ended March 28, 2026. The claim states 22%, which is not supported by the provided text.\")"
+    },
+    {
+      "claim": "Research and development expense was $11,419 for the quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "Research and development 11,419 8,550 22,306 16,818."
+      ],
+      "source_refs": [
+        "9e3e838c-01b8-4408-8870-bf5da710792d"
+      ],
+      "note": "The passage states that research and development was 11,419 for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026. The value is in millions of dollars."
+    },
+    {
+      "claim": "Diluted earnings per share was $2.45 for the second quarter.",
+      "verdict": "contradicted",
+      "evidence": [
+        "Earnings per share: Basic $2.02 $1.65 $4.87 $4.06. Diluted $2.01 $1.65 $4.85 $4.05."
+      ],
+      "source_refs": [
+        "a266f20c-08c3-429d-b103-e79a22ebd0ab"
+      ],
+      "note": "[verdict set by code: 2.45 disagrees beyond tolerance with every same-measure figure cited (2.01, 1.65, 4.85, 4.05) — compare.ts, D018 §2.3] (model's original note, superseded by the above: \"The passage states that diluted earnings per share was $2.01 for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026. The claim states $2.45, which is not supported by the passage.\")"
+    },
+    {
+      "claim": "Net income for the quarter was $35,885.",
+      "verdict": "contradicted",
+      "evidence": [
+        "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Selling, general and administrative 7,477 6,728 14,969 13,903. Total operating expenses 18,896 15,278 37,275 30,721. Operating income 35,885 29,589 86,737 72,421. Other income/(expense), net (52) (279) 98 (527). Income before provision for income taxes 35,833 29,310 86,835 71,894. Provision for income taxes 6,255 4,530 15,160 10,784. Net income $29,578 $24,780 $71,675 $61,110. Column order throughout this section: Three Months Ended March 28 2026, Three Months Ended March 29 2025, Six Months Ended March 28 2026, Six Months Ended March 29 2025, dollars in millions."
+      ],
+      "source_refs": [
+        "9e3e838c-01b8-4408-8870-bf5da710792d"
+      ],
+      "note": "[verdict set by code: 35885 disagrees beyond tolerance with every same-measure figure cited (29578, 24780, 71675, 61110) — compare.ts, D018 §2.3] (model's original note, superseded by the above: \"The passage states that net income was $29,578 for the three months ended March 28, 2026, which corresponds to fiscal Q2 2026. The claim states $35,885, which is the operating income, not net income.\")"
+    },
+    {
+      "claim": "Provision for income taxes was $4,530 for the quarter.",
+      "verdict": "contradicted",
+      "evidence": [
+        "Gross margin 54,781 44,867 124,012 103,142. Research and development 11,419 8,550 22,306 16,818. Selling, general and administrative 7,477 6,728 14,969 13,903. Total operating expenses 18,896 15,278 37,275 30,721. Operating income 35,885 29,589 86,737 72,421. Other income/(expense), net (52) (279) 98 (527). Income before provision for income taxes 35,833 29,310 86,835 71,894. Provision for income taxes 6,255 4,530 15,160 10,784. Net income $29,578 $24,780 $71,675 $61,110. Column order throughout this section: Three Months Ended March 28 2026, Three Months Ended March 29 2025, Six Months Ended March 28 2026, Six Months Ended March 29 2025, dollars in millions."
+      ],
+      "source_refs": [
+        "9e3e838c-01b8-4408-8870-bf5da710792d"
+      ],
+      "note": "[verdict set by code: 4530 disagrees beyond tolerance with every same-measure figure cited (29578, 24780, 71675, 61110) — compare.ts, D018 §2.3] (model's original note, superseded by the above: \"The passage states that provision for income taxes was $4,530 for the three months ended March 29, 2025. The claim specifies fiscal Q2 2026. The passage provides provision for income taxes for fiscal Q2 2026 as $6,255.\")"
+    },
+    {
+      "claim": "Mac net sales increased in the second quarter due to higher net sales of laptops.",
+      "verdict": "supported",
+      "evidence": [
+        "Mac net sales increased during the second quarter of 2026 compared to the second quarter of 2025 due to higher net sales of laptops."
+      ],
+      "source_refs": [
+        "d73ce12a-2a43-43ee-b7e5-7270ac20b8c9"
+      ],
+      "note": "The passage directly states that Mac net sales increased due to higher net sales of laptops in the second quarter of 2026."
+    },
+    {
+      "claim": "Year-over-year Mac net sales during the first six months were relatively flat.",
+      "verdict": "supported",
+      "evidence": [
+        "Year-over-year Mac net sales during the first six months of 2026 were relatively flat."
+      ],
+      "source_refs": [
+        "d73ce12a-2a43-43ee-b7e5-7270ac20b8c9"
+      ],
+      "note": "The passage explicitly states that year-over-year Mac net sales during the first six months of 2026 were relatively flat."
+    },
+    {
+      "claim": "iPhone net sales more than doubled year over year.",
+      "verdict": "unverifiable",
+      "evidence": null,
+      "source_refs": [],
+      "note": "While the passages mention iPhone net sales increased by 22% for the three months ended March 28, 2026, and 23% for the six months ended March 28, 2026, none state that iPhone net sales more than doubled year over year. [gated: confidence 0 below threshold 0.6]"
+    },
+    {
+      "claim": "Management flagged substantial doubt about the ability of the company to continue as a going concern without additional financing.",
+      "verdict": "unverifiable",
+      "evidence": null,
+      "source_refs": [],
+      "note": "None of the provided passages mention management flagging substantial doubt about the company's ability to continue as a going concern without additional financing. [gated: confidence 0 below threshold 0.6]"
+    }
+  ]
+}

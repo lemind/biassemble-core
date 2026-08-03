@@ -13,6 +13,11 @@ interface RetryOptions {
 
 const MODULE = "retry";
 
+/** Shared wall-clock check for EXTRACT/VERIFY's deadline loops. Not folded into `withRetry` — see D018 §5.13/§5.10. */
+export function isPastDeadline(deadlineAt: number): boolean {
+  return Date.now() >= deadlineAt;
+}
+
 /**
  * Retries an async function with exponential backoff.
  * 

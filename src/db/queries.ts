@@ -6,6 +6,10 @@ import {
   evalResults,
   llmCalls,
   retrievalComparisons,
+  audits,
+  claims,
+  sourcePassages,
+  claimPassages,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
 import type { LlmCall } from "./schema";
@@ -202,6 +206,30 @@ export async function getCallsBySession(sessionId: string) {
     .from(llmCalls)
     .where(eq(llmCalls.sessionId, sessionId))
     .orderBy(llmCalls.createdAt);
+}
+
+/**
+ * Token/call-count aggregate for one session — a projected select, not
+ * `getCallsBySession`'s full rows (found on review: summing 3 integer
+ * columns doesn't need `rawResponse`/`parsedOutput`'s full LLM
+ * response text/jsonb pulled over the wire for every call).
+ */
+export async function getCallCostsBySession(
+  sessionId: string
+): Promise<{ count: number; inputTokens: number; outputTokens: number; totalTokens: number }> {
+  const rows = await db()
+    .select({ inputTokens: llmCalls.inputTokens, outputTokens: llmCalls.outputTokens, totalTokens: llmCalls.totalTokens })
+    .from(llmCalls)
+    .where(eq(llmCalls.sessionId, sessionId));
+  return rows.reduce<{ count: number; inputTokens: number; outputTokens: number; totalTokens: number }>(
+    (acc, r) => ({
+      count: acc.count + 1,
+      inputTokens: acc.inputTokens + (r.inputTokens ?? 0),
+      outputTokens: acc.outputTokens + (r.outputTokens ?? 0),
+      totalTokens: acc.totalTokens + (r.totalTokens ?? 0),
+    }),
+    { count: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  );
 }
 
 export async function getCallsByStage(stage: LlmCallStage) {
@@ -415,4 +443,168 @@ export async function backfillRetrievalComparisonSourceData(
     .update(retrievalComparisons)
     .set(data)
     .where(eq(retrievalComparisons.id, id));
+}
+
+// ── Audits (specs/008-b2b, D018) ──
+
+/**
+ * T035: a completed OR failed audit is immutable — enforced here, at the
+ * persistence layer, not just by orchestration-layer discipline
+ * (AuditService.run() never running twice for the same auditId in the
+ * normal case). Guards against a redelivered/replayed pipeline event (e.g.
+ * a manual Inngest replay of a failed run) silently mutating or extending
+ * an audit a caller has already read as terminal — data-model.md's Audit
+ * entity documents both "complete" and "failed" as equally permanent,
+ * append-only states, not just "complete" (found on review: the original
+ * guard only checked "complete").
+ */
+export class AuditImmutableError extends Error {
+  constructor(auditId: string) {
+    super(`Audit ${auditId} is already complete or failed — no further writes are permitted`);
+    this.name = "AuditImmutableError";
+  }
+}
+
+const TERMINAL_AUDIT_STATUSES = new Set(["complete", "failed"]);
+
+async function assertAuditMutable(auditId: string): Promise<void> {
+  const audit = await getAudit(auditId);
+  if (audit && TERMINAL_AUDIT_STATUSES.has(audit.status)) {
+    throw new AuditImmutableError(auditId);
+  }
+}
+
+/**
+ * Resolves a claim's auditId and checks its terminal status in one query
+ * (a join, not two sequential SELECTs — found on review: the original form
+ * fetched the claim's auditId, then made a second round trip to fetch the
+ * full audit row just to read `.status`).
+ */
+async function assertClaimsAuditMutable(claimId: string): Promise<void> {
+  const [row] = await db()
+    .select({ auditId: claims.auditId, status: audits.status })
+    .from(claims)
+    .innerJoin(audits, eq(claims.auditId, audits.auditId))
+    .where(eq(claims.claimId, claimId));
+  if (row && TERMINAL_AUDIT_STATUSES.has(row.status)) {
+    throw new AuditImmutableError(row.auditId);
+  }
+}
+
+export async function insertAudit(data: {
+  auditId: string;
+  inputRef: string;
+  domain: "general" | "finance" | "legal" | "healthcare";
+  threshold: number;
+}) {
+  const [row] = await db()
+    .insert(audits)
+    .values({ ...data, status: "running" })
+    .returning();
+  return row;
+}
+
+export async function updateAudit(
+  auditId: string,
+  data: Partial<{
+    status: "running" | "complete" | "failed";
+    failedStage: "extract" | "retrieve" | "verify" | "gate";
+    errorSummary: string;
+    completedAt: Date;
+    promptRevisionExtract: string;
+    promptRevisionVerify: string;
+    modelRevisionExtract: string;
+    modelRevisionVerify: string;
+    corpusId: string;
+    retrievalProvider: string;
+    pipelineCodeVersion: string;
+    truncated: boolean;
+  }>
+): Promise<void> {
+  await assertAuditMutable(auditId);
+  await db().update(audits).set(data).where(eq(audits.auditId, auditId));
+}
+
+export async function getAudit(auditId: string) {
+  const [row] = await db().select().from(audits).where(eq(audits.auditId, auditId));
+  return row ?? null;
+}
+
+export async function insertClaims(
+  rows: Array<{
+    claimId: string;
+    auditId: string;
+    type: "numeric" | "entity" | "attribution" | "causal" | "derived";
+    claimText: string;
+    excerpt: string;
+    locations: string[];
+    period: string | null;
+    derived: boolean;
+  }>
+) {
+  if (rows.length === 0) return [];
+  await assertAuditMutable(rows[0]!.auditId);
+  return await db().insert(claims).values(rows).returning();
+}
+
+export async function updateClaimRetrieval(
+  claimId: string,
+  data: { passagesRetrievedCount: number; retrievalStatus: "ok" | "error" }
+): Promise<void> {
+  await assertClaimsAuditMutable(claimId);
+  await db().update(claims).set(data).where(eq(claims.claimId, claimId));
+}
+
+export async function updateClaimVerdict(
+  claimId: string,
+  data: {
+    verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable";
+    evidence: string[] | null;
+    sourceRefs: string[];
+    synthesized: boolean;
+    confidence: number;
+    note: string | null;
+  }
+): Promise<void> {
+  await assertClaimsAuditMutable(claimId);
+  await db().update(claims).set(data).where(eq(claims.claimId, claimId));
+}
+
+export async function getClaimsByAudit(auditId: string) {
+  return await db().select().from(claims).where(eq(claims.auditId, auditId));
+}
+
+export async function insertSourcePassages(
+  rows: Array<{ passageId: string; auditId: string; docId: string; location: string | null; text: string }>
+) {
+  if (rows.length === 0) return [];
+  await assertAuditMutable(rows[0]!.auditId);
+  return await db().insert(sourcePassages).values(rows).returning();
+}
+
+export async function insertClaimPassages(
+  rows: Array<{
+    claimId: string;
+    passageId: string;
+    retrievalRank: number;
+    retrievalScore: number;
+    selectedForVerification: boolean;
+  }>
+): Promise<void> {
+  if (rows.length === 0) return;
+  await assertClaimsAuditMutable(rows[0]!.claimId);
+  await db().insert(claimPassages).values(rows);
+}
+
+export async function getClaimPassagesByAudit(auditId: string) {
+  return await db()
+    .select({
+      claimId: claimPassages.claimId,
+      passageId: claimPassages.passageId,
+      retrievalScore: claimPassages.retrievalScore,
+      selectedForVerification: claimPassages.selectedForVerification,
+    })
+    .from(claimPassages)
+    .innerJoin(claims, eq(claimPassages.claimId, claims.claimId))
+    .where(eq(claims.auditId, auditId));
 }

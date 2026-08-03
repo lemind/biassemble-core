@@ -1,0 +1,162 @@
+{
+  "audit_id": "f16c593b-8998-4660-892e-ca1a16f57f9b",
+  "claims": [
+    {
+      "claim": "The reporting period ended March 28, 2026.",
+      "verdict": "supported",
+      "evidence": [
+        "For the quarterly period ended March 28, 2026"
+      ],
+      "source_refs": [
+        "80233dbc-d11d-445d-a1e9-aec2949258ca"
+      ],
+      "note": "The passage explicitly states the reporting period ended March 28, 2026."
+    },
+    {
+      "claim": "iPhone net sales increased due to higher net sales of Pro models.",
+      "verdict": "supported",
+      "evidence": [
+        "iPhone net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 due to higher net sales of Pro models."
+      ],
+      "source_refs": [
+        "f7da3316-94ec-4668-ba18-f2d79ff5d543"
+      ],
+      "note": "The passage directly states that iPhone net sales increased due to higher net sales of Pro models."
+    },
+    {
+      "claim": "Year-over-year Mac net sales during the first six months were relatively flat.",
+      "verdict": "supported",
+      "evidence": [
+        "Year-over-year Mac net sales during the first six months of 2026 were relatively flat."
+      ],
+      "source_refs": [
+        "19d66844-ea28-43cd-b3ed-8e2165e8ca20"
+      ],
+      "note": "The passage directly states that year-over-year Mac net sales during the first six months of 2026 were relatively flat."
+    },
+    {
+      "claim": "The strength in foreign currencies had a net favorable year-over-year impact on Rest of Asia Pacific net sales during the second quarter.",
+      "verdict": "supported",
+      "evidence": [
+        "The strength in foreign currencies relative to the U.S. dollar had a net favorable year-over-year impact on Rest of Asia Pacific net sales during the second quarter of 2026."
+      ],
+      "source_refs": [
+        "f896a268-785a-4fd2-a315-1102ee501126"
+      ],
+      "note": "The passage directly states that the strength in foreign currencies had a net favorable year-over-year impact on Rest of Asia Pacific net sales during the second quarter of 2026."
+    },
+    {
+      "claim": "iPad net sales decreased during the second quarter.",
+      "verdict": "contradicted",
+      "evidence": [
+        "iPad net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 primarily due to higher net sales of iPad, partially offset by lower net sales of iPad mini."
+      ],
+      "source_refs": [
+        "a85797f1-703c-43cd-8f8d-bf33fc1fe295"
+      ],
+      "note": "[verdict overridden by code: 'supported' is invalid when its own note asserts a contradiction — D018 §2.3 VERDICT/NOTE CONSISTENCY] (model's original note, superseded by the above: \"The passage states that iPad net sales increased during the second quarter of 2026. This contradicts the claim that iPad net sales decreased.\")"
+    },
+    {
+      "claim": "The strength in the yen had a favorable year-over-year impact on Japan net sales.",
+      "verdict": "contradicted",
+      "evidence": [
+        "The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026."
+      ],
+      "source_refs": [
+        "464a6968-f5a4-44e5-a6c5-31bf46702da3"
+      ],
+      "note": "The passage states that the weakness in the yen had an unfavorable impact on Japan net sales, contradicting the claim of a favorable impact."
+    },
+    {
+      "claim": "Apple opened 12 new retail stores during the quarter.",
+      "verdict": "unsupported",
+      "evidence": [],
+      "source_refs": [],
+      "note": "No passage mentions the number of new retail stores opened during the quarter."
+    },
+    {
+      "claim": "Services gross margin expanded during the quarter.",
+      "verdict": "unsupported",
+      "evidence": [],
+      "source_refs": [],
+      "note": "No passage mentions the Services gross margin."
+    },
+    {
+      "claim": "Japan net sales growth was driven primarily by higher net sales of iPhone.",
+      "verdict": "supported",
+      "evidence": [
+        "Japan net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 primarily due to higher net sales of iPhone."
+      ],
+      "source_refs": [
+        "464a6968-f5a4-44e5-a6c5-31bf46702da3"
+      ],
+      "note": "The passage states that Japan net sales increased primarily due to higher net sales of iPhone, which supports the claim that growth was driven by iPhone net sales."
+    },
+    {
+      "claim": "Mac net sales increased in the second quarter due to higher net sales of laptops.",
+      "verdict": "supported",
+      "evidence": [
+        "Mac net sales increased during the second quarter of 2026 compared to the second quarter of 2025 due to higher net sales of laptops."
+      ],
+      "source_refs": [
+        "19d66844-ea28-43cd-b3ed-8e2165e8ca20"
+      ],
+      "note": "The passage explicitly states that Mac net sales increased in the second quarter of 2026 due to higher net sales of laptops."
+    },
+    {
+      "claim": "iPad net sales increased primarily due to higher net sales of iPad, partially offset by lower net sales of iPad mini.",
+      "verdict": "supported",
+      "evidence": [
+        "iPad net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 primarily due to higher net sales of iPad, partially offset by lower net sales of iPad mini."
+      ],
+      "source_refs": [
+        "a85797f1-703c-43cd-8f8d-bf33fc1fe295"
+      ],
+      "note": "The passage directly supports the claim, stating that iPad net sales increased primarily due to higher net sales of iPad, partially offset by lower net sales of iPad mini."
+    },
+    {
+      "claim": "The weakness in the yen had an unfavorable year-over-year impact on Japan net sales during the first six months.",
+      "verdict": "supported",
+      "evidence": [
+        "The weakness in the yen relative to the U.S. dollar had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026."
+      ],
+      "source_refs": [
+        "464a6968-f5a4-44e5-a6c5-31bf46702da3"
+      ],
+      "note": "The passage explicitly states that the weakness in the yen had an unfavorable year-over-year impact on Japan net sales during the first six months of 2026."
+    },
+    {
+      "claim": "Mac net sales declined during the second quarter due to weaker laptop demand.",
+      "verdict": "contradicted",
+      "evidence": [
+        "Mac net sales increased during the second quarter of 2026 compared to the second quarter of 2025 due to higher net sales of laptops."
+      ],
+      "source_refs": [
+        "19d66844-ea28-43cd-b3ed-8e2165e8ca20"
+      ],
+      "note": "The passage states that Mac net sales increased, which contradicts the claim that they declined."
+    },
+    {
+      "claim": "iPhone net sales increased due to higher net sales of entry-level models.",
+      "verdict": "contradicted",
+      "evidence": [
+        "iPhone net sales increased during the second quarter and first six months of 2026 compared to the same periods in 2025 due to higher net sales of Pro models."
+      ],
+      "source_refs": [
+        "f7da3316-94ec-4668-ba18-f2d79ff5d543"
+      ],
+      "note": "The passage states that iPhone net sales increased due to higher net sales of Pro models, not entry-level models."
+    },
+    {
+      "claim": "Wearables, Home and Accessories net sales were approximately flat over the first six months.",
+      "verdict": "supported",
+      "evidence": [
+        "Year-over-year Wearables, Home and Accessories net sales during the first six months of 2026 were relatively flat."
+      ],
+      "source_refs": [
+        "d9faf86c-8a56-4ff2-be32-111ead6289e5"
+      ],
+      "note": "The passage states that Wearables, Home and Accessories net sales were relatively flat for the first six months of 2026, which supports the claim."
+    }
+  ]
+}

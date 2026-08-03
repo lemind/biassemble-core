@@ -1,6 +1,11 @@
-import { boolean, index, integer, jsonb, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, doublePrecision, index, integer, jsonb, pgSchema, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 export const core = pgSchema("core");
+
+// D018 §2.4: audit-mode data lives in its own pg schema, sibling to `core`,
+// never nested inside it — so customer corpus data can be dropped
+// post-engagement without touching consumer tables.
+export const auditSchema = pgSchema("audit");
 
 // ── Runs ──
 // Each run represents one assessment pass (initial or post-questions).
@@ -62,7 +67,9 @@ export const evalResults = core.table("eval_results", {
 export const llmCalls = core.table("llm_calls", {
   id: uuid("id").defaultRandom().primaryKey(),
   sessionId: uuid("session_id"),
-  stage: text("stage", { enum: ["assessment", "question"] }).notNull(),
+  // "extract"/"verify" added for specs/008-b2b (persistence/types.ts LlmCallStage) —
+  // plain text column, no DB CHECK constraint, same D017 precedent as RagStatus.
+  stage: text("stage", { enum: ["assessment", "question", "extract", "verify"] }).notNull(),
   callType: text("call_type", { enum: ["primary", "fallback"] }).notNull(),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
@@ -121,6 +128,143 @@ export const retrievalComparisons = core.table("retrieval_comparisons", {
   index("retrieval_comparisons_session_id_idx").on(table.sessionId),
 ]);
 
+// ── Audits (specs/008-b2b, D018) ──
+// One row per pipeline run over one submitted { output_text, sources[], task }
+// input. auditId is application-generated (not defaultRandom) — it's returned
+// to the caller in the 202 response before this row exists, per T021/T021a.
+// Verdict fields (`verdict` onward) live on Claim, not a separate table —
+// data-model.md models Verdict as a 1:1 extension of Claim, and this repo's
+// task list (T003) names exactly 5 tables, not 6.
+export const audits = auditSchema.table("audits", {
+  auditId: uuid("audit_id").primaryKey(),
+  inputRef: text("input_ref").notNull(),
+  domain: text("domain", { enum: ["general", "finance", "legal", "healthcare"] }).notNull(),
+  // Ordering note for Phase 3 (T020/T021): this row must be INSERTed with
+  // status="running" synchronously, before POST /audit returns 202 — not
+  // inside the Inngest job. Otherwise GET /audit/:audit_id polled in the gap
+  // between "202 returned" and "job actually started" would 404 (no row
+  // exists yet) instead of correctly returning 202/running.
+  status: text("status", { enum: ["running", "complete", "failed"] }).notNull().default("running"),
+  // Null unless status = "failed" (data-model.md's Audit entity).
+  failedStage: text("failed_stage", { enum: ["extract", "retrieve", "verify", "gate"] }),
+  errorSummary: text("error_summary"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  // Versioning surface (FR-014) — stamped progressively as each stage runs,
+  // so nullable here; all non-null once status = "complete" (T034).
+  promptRevisionExtract: text("prompt_revision_extract"),
+  promptRevisionVerify: text("prompt_revision_verify"),
+  modelRevisionExtract: text("model_revision_extract"),
+  modelRevisionVerify: text("model_revision_verify"),
+  corpusId: text("corpus_id"),
+  retrievalProvider: text("retrieval_provider"),
+  threshold: doublePrecision("threshold"),
+  pipelineCodeVersion: text("pipeline_code_version"),
+  truncated: boolean("truncated").notNull().default(false),
+}, (table) => [
+  index("audits_status_idx").on(table.status),
+  index("audits_input_ref_idx").on(table.inputRef),
+]);
+
+// ── Claims (specs/008-b2b) ──
+// claimId is application-generated at EXTRACT time (research.md §2), not
+// defaultRandom — a content-hash ID was rejected because two genuinely
+// different claims can share identical text after EXTRACT's dedup rule.
+export const claims = auditSchema.table("claims", {
+  claimId: uuid("claim_id").primaryKey(),
+  auditId: uuid("audit_id").notNull().references(() => audits.auditId, { onDelete: "cascade" }),
+  type: text("type", { enum: ["numeric", "entity", "attribution", "causal", "derived"] }).notNull(),
+  claimText: text("claim_text").notNull(),
+  excerpt: text("excerpt").notNull(),
+  locations: jsonb("locations").notNull(),
+  period: text("period"),
+  derived: boolean("derived").notNull().default(false),
+  // Set by RETRIEVE before VERIFY runs. Distinguishes "no evidence found"
+  // (count = 0) from "evidence found but didn't support" (count > 0,
+  // verdict still unsupported) — both would otherwise collapse to the same
+  // verdict enum value (FR-009).
+  passagesRetrievedCount: integer("passages_retrieved_count").notNull().default(0),
+  // Null until RETRIEVE runs. "error" must never be silently swallowed into
+  // passagesRetrievedCount = 0 (data-model.md's retrieval-failure gate rule).
+  retrievalStatus: text("retrieval_status", { enum: ["ok", "error"] }),
+  // Verdict fields — 1:1 extension of this row, not a separate table.
+  // Null until VERIFY runs; a claim without these yet is mid-pipeline.
+  verdict: text("verdict", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
+  evidence: jsonb("evidence"),
+  // Nullable here (pre-verify state), but never null in a completed audit's
+  // API response (AuditCompleteResponseSchema requires an array, defaulting
+  // to []) — the two schemas track different invariants on purpose: this
+  // column distinguishes "not yet verified" from "verified, cited nothing";
+  // the API only ever serves completed audits, where that distinction has
+  // already collapsed to "at least an empty array."
+  sourceRefs: jsonb("source_refs"),
+  synthesized: boolean("synthesized"),
+  confidence: doublePrecision("confidence"),
+  note: text("note"),
+}, (table) => [
+  index("claims_audit_id_idx").on(table.auditId),
+]);
+
+// ── Source Passages (specs/008-b2b) ──
+// Deduplicated within an audit — the same span of source text retrieved for
+// two different claims is one row here, not two (per-claim retrieval facts
+// live on ClaimPassage instead).
+export const sourcePassages = auditSchema.table("source_passages", {
+  passageId: uuid("passage_id").primaryKey(),
+  auditId: uuid("audit_id").notNull().references(() => audits.auditId, { onDelete: "cascade" }),
+  docId: text("doc_id").notNull(),
+  location: text("location"),
+  text: text("text").notNull(),
+}, (table) => [
+  index("source_passages_audit_id_idx").on(table.auditId),
+]);
+
+// ── Claim Passages (junction, added on review — data-model.md "Claim Passage") ──
+// Exists because SourcePassage alone has nowhere to record retrieval-time
+// facts specific to one claim-passage pairing (rank, score for *this*
+// claim's query) without contradicting the many-to-many relationship
+// (a passage may support multiple claims, each with its own rank/score).
+export const claimPassages = auditSchema.table("claim_passages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  claimId: uuid("claim_id").notNull().references(() => claims.claimId, { onDelete: "cascade" }),
+  passageId: uuid("passage_id").notNull().references(() => sourcePassages.passageId, { onDelete: "cascade" }),
+  retrievalRank: integer("retrieval_rank").notNull(),
+  retrievalScore: doublePrecision("retrieval_score").notNull(),
+  selectedForVerification: boolean("selected_for_verification").notNull().default(false),
+}, (table) => [
+  index("claim_passages_claim_id_idx").on(table.claimId),
+  uniqueIndex("claim_passages_claim_passage_unique").on(table.claimId, table.passageId),
+]);
+
+// ── Score Summaries (specs/008-b2b, D018 §4) ──
+// Computed once at GATE, persisted, immutable thereafter (research.md §5) —
+// never recomputed at read time, so a value can't drift from what a caller
+// already saw across two reads of the same completed audit.
+export const scoreSummaries = auditSchema.table("score_summaries", {
+  auditId: uuid("audit_id").primaryKey().references(() => audits.auditId, { onDelete: "cascade" }),
+  countsSupported: integer("counts_supported").notNull(),
+  countsPartiallySupported: integer("counts_partially_supported").notNull(),
+  countsUnsupported: integer("counts_unsupported").notNull(),
+  countsContradicted: integer("counts_contradicted").notNull(),
+  countsUnverifiable: integer("counts_unverifiable").notNull(),
+  eligible: integer("eligible").notNull(),
+  // Nullable — data-model.md's zero-denominator guard: Eligible = 0 persists
+  // these as null, never NaN or a divide-by-zero exception.
+  groundedRate: doublePrecision("grounded_rate"),
+  groundednessScore: integer("groundedness_score"),
+  strictSupportedRate: doublePrecision("strict_supported_rate"),
+  contradictionRate: doublePrecision("contradiction_rate"),
+  unsupportedRate: doublePrecision("unsupported_rate"),
+  retrievalSuccessRate: doublePrecision("retrieval_success_rate").notNull(),
+  retrievalCoverage: doublePrecision("retrieval_coverage").notNull(),
+  // Nullable — null when zero claims have retrieval_coverage (mean of an
+  // empty set), distinct from retrievalCoverage = 0 which is a real number.
+  avgEvidenceQuality: doublePrecision("avg_evidence_quality"),
+  synthesizedCount: integer("synthesized_count").notNull(),
+  lowDecisiveness: boolean("low_decisiveness").notNull(),
+  insufficientEligibleClaims: boolean("insufficient_eligible_claims").notNull(),
+});
+
 // ── Type exports ──
 export type Run = typeof runs.$inferSelect;
 export type NewRun = typeof runs.$inferInsert;
@@ -136,3 +280,18 @@ export type NewLlmCall = typeof llmCalls.$inferInsert;
 
 export type RetrievalComparison = typeof retrievalComparisons.$inferSelect;
 export type NewRetrievalComparison = typeof retrievalComparisons.$inferInsert;
+
+export type Audit = typeof audits.$inferSelect;
+export type NewAudit = typeof audits.$inferInsert;
+
+export type Claim = typeof claims.$inferSelect;
+export type NewClaim = typeof claims.$inferInsert;
+
+export type SourcePassage = typeof sourcePassages.$inferSelect;
+export type NewSourcePassage = typeof sourcePassages.$inferInsert;
+
+export type ClaimPassage = typeof claimPassages.$inferSelect;
+export type NewClaimPassage = typeof claimPassages.$inferInsert;
+
+export type ScoreSummary = typeof scoreSummaries.$inferSelect;
+export type NewScoreSummary = typeof scoreSummaries.$inferInsert;

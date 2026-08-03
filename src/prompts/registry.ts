@@ -1,8 +1,10 @@
 import guardrailsData from "./guardrails.json" with { type: "json" };
 import questionBatchData from "./reflection/question-batch/system.json" with { type: "json" };
 import assessmentData from "./reflection/assessment/system.json" with { type: "json" };
+import auditExtractData from "./audit/extract/system.json" with { type: "json" };
+import auditVerifyData from "./audit/verify/system.json" with { type: "json" };
 
-export type PromptTemplate = "question-batch" | "assessment";
+export type PromptTemplate = "question-batch" | "assessment" | "audit-extract" | "audit-verify";
 
 interface PromptFile {
   content: string;
@@ -16,13 +18,23 @@ export class PromptRegistry {
 
   constructor() {
     this.guardrails = guardrailsData.content;
-    // Version comes from the assessment prompt JSON — single source of truth.
+    // Version comes from the assessment prompt JSON — single source of truth
+    // for story/reflection mode. Audit mode's EXTRACT/VERIFY each version
+    // independently (data-model.md's prompt_revision_extract/_verify) — use
+    // getAuditVersion(), not this method, for those.
     this.version = (assessmentData as PromptFile).version;
   }
 
-  /** Returns the current prompt version string. */
+  /** Returns the current prompt version string (reflection/story mode only). */
   getVersion(): string {
     return this.version;
+  }
+
+  /** Returns the current version for one audit-mode stage (EXTRACT/VERIFY version independently). */
+  getAuditVersion(stage: "extract" | "verify"): string {
+    return stage === "extract"
+      ? (auditExtractData as PromptFile).version
+      : (auditVerifyData as PromptFile).version;
   }
 
   render(template: PromptTemplate, variables: Record<string, string>): string {
@@ -35,8 +47,14 @@ export class PromptRegistry {
       case "assessment":
         raw = assessmentData.content;
         break;
+      case "audit-extract":
+        raw = auditExtractData.content;
+        break;
+      case "audit-verify":
+        raw = auditVerifyData.content;
+        break;
       default:
-        throw new Error(`Unknown template: ${template}`);
+        throw new Error(`Unknown template: ${template satisfies never}`);
     }
 
     let rendered = raw.replace("{{guardrails}}", this.guardrails);

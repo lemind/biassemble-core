@@ -5,6 +5,7 @@ import {
   updateLlmCallParsedOutput,
   updateLlmCallFailure,
   getCallsBySession,
+  getCallCostsBySession,
   getCallsByStage,
   getCallsByProvider,
   getCallsBySessionAndStage,
@@ -55,6 +56,12 @@ export class DrizzleLlmCallStore implements LlmCallStore {
   async getCallsBySession(sessionId: string): Promise<LlmCallRecord[]> {
     const rows = await getCallsBySession(sessionId);
     return rows.map(toLlmCallRecord);
+  }
+
+  async getCallCostsBySession(
+    sessionId: string
+  ): Promise<{ count: number; inputTokens: number; outputTokens: number; totalTokens: number }> {
+    return await getCallCostsBySession(sessionId);
   }
 
   async getCallsByStage(stage: LlmCallStage): Promise<LlmCallRecord[]> {

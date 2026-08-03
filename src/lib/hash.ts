@@ -13,3 +13,38 @@ export function computeInputHash(
   const input = [promptVersion, modelName, story, ...answers].join("\n\n");
   return createHash("sha256").update(input, "utf-8").digest("hex");
 }
+
+export interface AuditSource {
+  id: string;
+  name: string;
+  text: string;
+}
+
+function canonicalizeSources(sources: AuditSource[]): string {
+  return sources.map((s) => `${s.id}\x00${s.name}\x00${s.text}`).join("\x01");
+}
+
+/**
+ * Compute audit_id's `input_ref` — SHA-256 of the normalized
+ * `{ output_text, sources[], task }` triple (research.md §2, data-model.md's
+ * Audit entity). Two audits from identical input produce the same input_ref
+ * without being the same row (FR-013) — deterministic, no timestamp/nonce.
+ */
+export function computeAuditInputRef(
+  outputText: string,
+  sources: AuditSource[],
+  task: string | undefined
+): string {
+  const input = [outputText, canonicalizeSources(sources), task ?? ""].join("\n\n");
+  return createHash("sha256").update(input, "utf-8").digest("hex");
+}
+
+/**
+ * Compute `corpus_id` — SHA-256 of `sources[]` only, content-addressed so
+ * identical source sets produce the same id and different ones don't collide
+ * (data-model.md's Audit entity — corrected on review after an earlier draft
+ * used a static label that couldn't distinguish different source sets).
+ */
+export function computeCorpusId(sources: AuditSource[]): string {
+  return createHash("sha256").update(canonicalizeSources(sources), "utf-8").digest("hex");
+}
