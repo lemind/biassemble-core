@@ -78,9 +78,8 @@ export class VerifyService {
     });
 
     for (const batch of batches) {
-      // Checked between batches, not just between attempts: retrying past the deadline mid-batch
-      // still degrades that batch cleanly (below), but a batch that hasn't started yet at all must
-      // not be attempted — it would only burn wall-clock the audit no longer has. D018 §5.13.
+      // Checked between batches too, not just between attempts — an unstarted batch must not burn
+      // wall-clock the audit no longer has. D018 §5.13.
       if (isPastDeadline(deadlineAt)) {
         logger.warn({ module: MODULE, operation: "run", auditId }, "VERIFY deadline exceeded — degrading remaining batches without attempting them");
         await this.degradeBatchToUnverifiable(batch, "[forced to unverifiable: audit deadline exceeded before this batch could run]");

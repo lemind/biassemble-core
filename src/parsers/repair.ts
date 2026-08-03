@@ -61,12 +61,7 @@ function partialParseObject<T>(
       continue;
     }
 
-    // Array-typed field: don't let one bad element (e.g. one EXTRACT claim's excerpt failing the
-    // verbatim-substring superRefine check) discard every sibling element — previously ANY per-element
-    // issue nulled the whole field, so a single paraphrased excerpt in a prose-heavy document lost every
-    // claim, not just the one offender. Salvage by dropping only the indices with an issue and
-    // re-validating what's left; fall through to the old null-the-field behavior if that still fails,
-    // or if every element was bad. D018 §5.15 (T044).
+    // Array-typed field: drop only the bad indices instead of nulling the whole field. D018 §5.15 (T044).
     if (options.salvageArrays && Array.isArray(value)) {
       const badIndices = new Set(
         fieldResult.error.issues.map((issue) => issue.path[0]).filter((i): i is number => typeof i === "number")

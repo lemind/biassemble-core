@@ -36,9 +36,7 @@ export class AuditService {
   ) {}
 
   async run(auditId: string, request: AuditRunRequest): Promise<void> {
-    // Single wall-clock budget spanning EXTRACT + all VERIFY batches (D018 §5.13) — vercel.json caps
-    // every route at maxDuration:300, and retry stacking across both stages could otherwise exceed it
-    // with no guard, leaving the audit stuck at "running" forever after a silent platform kill.
+    // Single wall-clock budget spanning EXTRACT + all VERIFY batches. D018 §5.13.
     const deadlineAt = Date.now() + env.AUDIT_MAX_DURATION_MS;
 
     let claims: Claim[];

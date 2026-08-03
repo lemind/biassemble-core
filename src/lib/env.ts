@@ -9,10 +9,8 @@ const envSchema = z.object({
   // Audit mode sends a whole claim batch plus its retrieved passages; the 10s story-flow default
   // aborted 2 of 5 live runs at 46 claims. D018 §5.10.
   AUDIT_LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
-  // Wall-clock budget spanning EXTRACT + all VERIFY batches. vercel.json caps every route at
-  // maxDuration:300 (one function, all routes incl. the Inngest job); retry stacking across
-  // EXTRACT+VERIFY could exceed 300s with no guard, leaving the audit stuck at "running" forever
-  // after a silent platform kill. 240s leaves margin for GATE/finalization. D018 §5.13.
+  // Wall-clock budget spanning EXTRACT + all VERIFY batches; 240s leaves margin under vercel.json's
+  // maxDuration:300. D018 §5.13.
   AUDIT_MAX_DURATION_MS: z.coerce.number().int().positive().default(240000),
   AI_MAX_RETRIES: z.coerce.number().int().positive().default(3),
   INNGEST_SERVE_HOST: z.string().optional(),
