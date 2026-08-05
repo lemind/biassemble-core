@@ -1,0 +1,311 @@
+[
+  {
+    "claim": "Steven Hackel is a History Professor at UC Riverside.",
+    "ground_truth": true,
+    "num_chunks": 5,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://profiles.ucr.edu/app/home/profile/shackel",
+        "status": 200,
+        "textlen": 30,
+        "relevant": false
+      },
+      {
+        "title": "stevenhackel.com",
+        "final_url": "https://stevenhackel.com/",
+        "status": 200,
+        "textlen": 3308,
+        "relevant": true
+      },
+      {
+        "title": "ucr.edu",
+        "final_url": "https://ecpp.ucr.edu/people.html",
+        "status": 200,
+        "textlen": 2696,
+        "relevant": true
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "Raymond Holguin serves as the Dean of UC Riverside's College of Humanities, Arts, and Social Sciences.",
+    "ground_truth": false,
+    "num_chunks": 9,
+    "diy_success": false,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://chass.ucr.edu/about-the-dean",
+        "status": 200,
+        "textlen": 6562,
+        "relevant": false
+      },
+      {
+        "title": "ucr.edu",
+        "final_url": "https://chass.ucr.edu/office-of-the-dean",
+        "status": 200,
+        "textlen": 7674,
+        "relevant": false
+      },
+      {
+        "title": "ucr.edu",
+        "final_url": "https://provost.ucr.edu/deans",
+        "status": 200,
+        "textlen": 2919,
+        "relevant": false
+      }
+    ],
+    "fallback_used": "tavily",
+    "fallback_detail": [
+      [
+        "https://chass.ucr.edu/press/2026/02/06/ucrs-college-humanities-arts-and-social-sciences-launches-deans-research-impact",
+        9400
+      ],
+      [
+        "https://chass.ucr.edu",
+        14669
+      ]
+    ]
+  },
+  {
+    "claim": "The Early California Population Project database documents more than 110,000 Californians between 1769 and 1850.",
+    "ground_truth": true,
+    "num_chunks": 6,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://ecpp.ucr.edu/",
+        "status": 200,
+        "textlen": 4038,
+        "relevant": true
+      },
+      {
+        "title": "stevenhackel.com",
+        "final_url": "https://stevenhackel.com/wp-content/uploads/2019/04/transforming-an-eighteenth-century-archive-into-a-twenty-first-century-database_-the-early-california-population-project.pdf",
+        "status": 200,
+        "textlen": 5462010,
+        "relevant": false
+      },
+      {
+        "title": "stevenhackel.com",
+        "final_url": "https://stevenhackel.com/digital-history/",
+        "status": 200,
+        "textlen": 1774,
+        "relevant": true
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "UC Riverside's Early California Population Project received a $1.2 million grant from the National Science Foundation.",
+    "ground_truth": false,
+    "num_chunks": 6,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://news.ucr.edu/articles/2026/08/03/ucr-historian-awarded-neh-grant-expand-early-california-population-project",
+        "status": 200,
+        "textlen": 7591,
+        "relevant": true
+      },
+      {
+        "title": "patch.com",
+        "final_url": "https://patch.com/california/banning-beaumont/ucrs-historic-archiving-project-receives-350k-funding-thanks-endowment",
+        "status": 200,
+        "textlen": 4725,
+        "relevant": true
+      },
+      {
+        "title": "ucr.edu",
+        "final_url": "https://news.ucr.edu/tag/california-missions",
+        "status": 200,
+        "textlen": 2193,
+        "relevant": true
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "The Early California Population Project draws on records from California's 21 missions.",
+    "ground_truth": true,
+    "num_chunks": 5,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "huntington.org",
+        "final_url": "https://www.huntington.org/library/library-collections/early-california-population-project",
+        "status": 429,
+        "textlen": 0,
+        "relevant": false
+      },
+      {
+        "title": "stevenhackel.com",
+        "final_url": "https://stevenhackel.com/wp-content/uploads/2019/04/early-california-population-project-database-user-guide.pdf",
+        "status": 200,
+        "textlen": 647219,
+        "relevant": true
+      },
+      {
+        "title": "ucr.edu",
+        "final_url": "https://ecpp.ucr.edu/",
+        "status": 200,
+        "textlen": 4038,
+        "relevant": true
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "The Early California Population Project database documents more than 250,000 Californians between 1769 and 1850.",
+    "ground_truth": false,
+    "num_chunks": 3,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://ecpp.ucr.edu/",
+        "status": 200,
+        "textlen": 4038,
+        "relevant": true
+      },
+      {
+        "title": "ucr.edu",
+        "final_url": "https://ecpp.ucr.edu/files/Users%20Guide.pdf",
+        "status": 200,
+        "textlen": 1674407,
+        "relevant": true
+      },
+      {
+        "title": "stevenhackel.com",
+        "final_url": "https://stevenhackel.com/wp-content/uploads/2019/04/transforming-an-eighteenth-century-archive-into-a-twenty-first-century-database_-the-early-california-population-project.pdf",
+        "status": 200,
+        "textlen": 5462010,
+        "relevant": false
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "Clifford Trafzer, a Distinguished Professor of History, is a collaborator on the Early California Population Project.",
+    "ground_truth": true,
+    "num_chunks": 6,
+    "diy_success": false,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://profiles.ucr.edu/app/home/profile/trafzer",
+        "status": 200,
+        "textlen": 30,
+        "relevant": false
+      },
+      {
+        "title": "wikipedia.org",
+        "final_url": "https://en.wikipedia.org/wiki/Clifford_Trafzer",
+        "status": 200,
+        "textlen": 3002,
+        "relevant": false
+      },
+      {
+        "title": "cihcfoundation.org",
+        "final_url": "https://www.cihcfoundation.org/cliff-trafzer",
+        "status": 200,
+        "textlen": 3599,
+        "relevant": false
+      }
+    ],
+    "fallback_used": "tavily",
+    "fallback_detail": [
+      [
+        "https://www.cihcfoundation.org/cliff-trafzer",
+        3628
+      ],
+      [
+        "https://history.ucr.edu/faculty",
+        247
+      ]
+    ]
+  },
+  {
+    "claim": "The Early California Population Project's expansion is funded through a Ford Foundation grant to add approximately 20,000 immigrant records.",
+    "ground_truth": false,
+    "num_chunks": 6,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://news.ucr.edu/articles/2026/08/03/ucr-historian-awarded-neh-grant-expand-early-california-population-project",
+        "status": 200,
+        "textlen": 7591,
+        "relevant": true
+      },
+      {
+        "title": "ucr.edu",
+        "final_url": "https://ecpp.ucr.edu/",
+        "status": 200,
+        "textlen": 4038,
+        "relevant": true
+      },
+      {
+        "title": "stevenhackel.com",
+        "final_url": "https://stevenhackel.com/wp-content/uploads/2019/04/early-california-population-project-database-user-guide.pdf",
+        "status": 200,
+        "textlen": 647219,
+        "relevant": true
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "UC Riverside's Early California Population Project received a $350,000 grant from the National Endowment for the Humanities.",
+    "ground_truth": true,
+    "num_chunks": 6,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "ucr.edu",
+        "final_url": "https://news.ucr.edu/articles/2026/08/03/ucr-historian-awarded-neh-grant-expand-early-california-population-project",
+        "status": 200,
+        "textlen": 7591,
+        "relevant": true
+      },
+      {
+        "title": "mynewsla.com",
+        "final_url": "https://mynewsla.com/riverside/2026/07/22/uc-riverside-receives-350k-grant-from-neh/",
+        "status": 200,
+        "textlen": 4026,
+        "relevant": true
+      },
+      {
+        "title": "patch.com",
+        "final_url": "https://patch.com/california/banning-beaumont/ucrs-historic-archiving-project-receives-350k-funding-thanks-endowment",
+        "status": 200,
+        "textlen": 4725,
+        "relevant": true
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "Steven Hackel is a History Professor at UCLA.",
+    "ground_truth": false,
+    "gemini_error": "429 Client Error: Too Many Requests for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=[REDACTED]",
+    "num_chunks": 0,
+    "diy_success": false,
+    "diy_detail": [],
+    "fallback_used": "tavily",
+    "fallback_detail": [
+      [
+        "http://www.csun.edu/neh/pages/visiting-scholars-staff.html",
+        6265
+      ],
+      [
+        "https://www.latimes.com/opinion/story/2025-05-05/national-endowment-for-the-humanities-california-indigenous-history-missions",
+        23455
+      ]
+    ]
+  }
+]
