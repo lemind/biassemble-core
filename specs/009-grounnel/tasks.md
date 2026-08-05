@@ -45,12 +45,13 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
 
 ## Phase 1: Setup
 
-- [ ] **T002 [P]** Define Zod contracts in `src/contracts/grounnel.schemas.ts` — `ExtractRequestSchema`, `StatusResponseSchema`, claim/score shapes, matching spec.md's response shape and v10 §3b field-for-field (plan.md §2 step 1)
+- [x] **T002 [P]** Define Zod contracts in `src/contracts/grounnel.schemas.ts` — `ExtractRequestSchema`, `StatusResponseSchema`, claim/score shapes, matching spec.md's response shape and v10 §3b field-for-field (plan.md §2 step 1)
   - **Acceptance:** every field in v10 §3b's example response (`status`, `progress`, `claims[]`, `score`, `caps_hit`) has a corresponding Zod field with the correct nullability (`field: Type | null`, never `field?: Type | null` — AGENTS.md rule 9).
-  - **Verify:** `pnpm typecheck` passes with the new file imported nowhere yet (dead code is fine here, a type error is not — plan.md §5's first checkpoint).
+  - **Done:** `src/contracts/grounnel.schemas.ts` — `ExtractRequestSchema`/`ExtractResponseSchema` (`POST /extract`), `StatusResponseSchema` (`GET /status/:id`, with `ProgressSchema`/`ClaimSchema`/`ClaimSourceSchema`/`ScoreSchema` composed in), plus `ClaimResultSchema` for `GrounnelStore.writeClaimResult`'s `result` param (spec.md's Code Style snippet). Only `verdict`/`evidence`/`confidence`/`reason` are nullable (`Type | null`, no `.optional()` — AGENTS.md rule 9); everything else is required. Own local enums (`GrounnelStatusEnum`, `ClaimStatusEnum`, `GrounnelVerdictEnum`) rather than importing from `audit.schemas.ts`, matching spec.md's "self-contained" framing even where values overlap. `ClaimSourceSchema` is a discriminated union (`kind: "web" | "attached"`) — only `"web"` is produced in P0; `"attached"` is the P1 user-document case (spec.md's "Not in P0"). `confidence`/`reason` added to `ClaimSchema` after a full user-flow walkthrough against §5/§8 turned up both as real P0 gaps (click-through popup needs them, not just the passage/sources). `ScoreSchema` also gained a `.refine()` guarding the bucket-counts-sum-to-eligible invariant, and `ClaimSourceSchema`'s `url` uses Zod 4's top-level `z.url()`.
+  - **Verify:** `pnpm typecheck` passes with the new file imported nowhere yet (dead code is fine here, a type error is not — plan.md §5's first checkpoint). `pnpm test:run tests/unit/contracts/grounnel.schemas.test.ts` — 12 tests, all green.
   - **Dependencies:** None.
-  - **Files:** `src/contracts/grounnel.schemas.ts`.
-  - **Size:** S — 1 file.
+  - **Files:** `src/contracts/grounnel.schemas.ts`, `tests/unit/contracts/grounnel.schemas.test.ts`.
+  - **Size:** S — 1 file + test.
 
 ---
 
@@ -100,6 +101,7 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
   - **Size:** S/M — 1 file + test, new `@upstash/redis` dependency (spec.md Boundaries — ask first).
 
 - [ ] **T008** `SearchProvider` interface + Tavily implementation (plan.md §2 step 2, D019 §2 "provider abstraction scope")
+  - **Superseded shape, not yet rewritten:** `docs/decisions/021-hybrid-search-diy-fetch-with-fallback.md` (written after this task's original description) reverses v10 §4.1 and requires `SearchProvider` to be a **hybrid** — Gemini search for URL discovery → DIY fetch → Tavily/Exa fallback only on failure — not a single Tavily-only implementation. D021's own "Consequences" section defers this rewrite pending a ToS check on Gemini's grounding-redirect terms (D021's "Prerequisite" section) — **do not implement this task as literally described below** until that check has happened; check D021 first.
   - **Acceptance:** the interface (`search(query)`, `fetch(url)`) is defined before `tavily-provider.ts` implements it, checked against T001's real captured response, not guessed.
   - **Verify:** `pnpm test:run tests/unit/providers/search/tavily-provider.test.ts`, using T001's captured fixture.
   - **Dependencies:** T001 (real response shape), T002 (contracts).
@@ -123,6 +125,7 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
   - **Acceptance:**
     - A failed VERIFY batch marks its claims `not_checked` and the run continues (spec.md Success Criteria, v10 §5/§13).
     - A `contradicted` verdict never reaches the store without having passed T003's gate.
+    - **Fetch failures are logged with enough granularity to distinguish cause** (D021 "Do not," last bullet): a status code, plus a flag for "Gemini never returned grounding metadata for this chunk" vs. "grounding metadata existed, fetch was blocked" — not collapsed into one undifferentiated "fetch failed → fallback" log line. This is what makes a rising fabrication rate distinguishable from a rising bot-blocking rate later.
   - **Verify:** `pnpm test:run tests/unit/orchestrators/grounnel/pipeline-service.test.ts` (fakes for `SearchProvider`/`GrounnelStore`), **plus** a manual, real (non-mocked) run against a real Tavily key and a real short pasted article before this is trusted (plan.md §5's step-6 checkpoint — the D019-benchmark-style manual check).
   - **Dependencies:** T003, T004, T006, T007, T008.
   - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, test file.

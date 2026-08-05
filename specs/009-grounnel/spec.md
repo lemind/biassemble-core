@@ -129,6 +129,10 @@ No `mode`-style branching needed here (D018 §1's invariant doesn't apply — th
 - `/extract` rejects an unauthenticated request with a 401 (`authHook`, D020 §3) and rejects any request exceeding the configured per-IP limit with a 429. The criterion is the mechanism (auth required, limit enforced), not a specific number — the actual threshold lives as a named constant per plan.md §3's mitigation, not hardcoded into this criterion.
 - No Postgres dependency anywhere in this surface (D019 §4); no session/user schema added to `biassemble/backend` for Grounnel (D020 §5).
 
+## Not in P0
+
+- **User-attached documents as an additional claim source.** P0 only finds sources via web search/fetch (`ClaimSourceSchema`'s `kind: "web"` variant). `ClaimSourceSchema` is already a discriminated union with a `kind: "attached"` variant (`{ kind, title, documentId }`, no url/domain/status — a caller-supplied document isn't independently fetched, so D019 §2's web-source fields don't apply to it) so this doesn't force a breaking wire-shape change later, but no ingestion, upload, storage, or pipeline handling exists yet. Not decided: how a document reaches `POST /extract` (inline with `text`? a separate upload step?), whether/how D019 §2's trust boundary applies to a source the caller vouches for rather than one independently fetched, or how "attached" sources interact with Success Criteria's "real source URLs" framing (attached sources have none).
+
 ## Open Questions
 
 - ~~Grounnel's frontend repo doesn't exist yet — where does it live and how does it reach core?~~ **Resolved by D020**: it calls `biassemble/backend`, which proxies to this repo — it never calls `biassemble-core` directly, so where the frontend itself is hosted no longer affects this repo's contract the way it used to.
