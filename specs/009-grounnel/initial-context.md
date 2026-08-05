@@ -15,6 +15,16 @@ state, with named, checkable triggers for when Postgres would actually be reintr
 (5) the passage-relevance gate's coreference/pronoun gap is named as an explicit open
 issue rather than silently left as a latent bug.
 
+**Erratum (found during an automated consistency review, 2026-08-05, corrected in place):**
+two internal self-contradictions from the original v10 text, not a decision change —
+§2's flow diagram said "batch claims by topic" where §4.3 (a few hundred lines later, in
+this same original text) already said "Not in P0 ... one claim → one search"; and §3b's
+example response had `progress.total: 55` next to `score.eligible: 85` with buckets
+summing to 85, i.e. two different totals for the same claim count in one example. Both
+were transcription/arithmetic errors in the document as originally written, not a
+reflection of any decision being reopened — everything else in this file is unchanged
+and still reflects v10 as written, kept frozen per `spec.md`'s header.
+
 ---
 
 ## 1. What it is
@@ -37,9 +47,10 @@ EXTRACT  →  claim list appears immediately (grey, unchecked)
    ↓
 [NEW] pre-search filter — drop non-factual/opinion claims before they cost a search call
    ↓
-batch claims by topic
+one claim → one search (not topic-batched at P0 — see §4.3; this line previously said
+"batch claims by topic," contradicting §4.3 below in the original text — erratum, see Changelog)
    ↓
-per batch:  SEARCH → FETCH → VERIFY
+per claim:  SEARCH → FETCH → VERIFY (batched only at the VERIFY step, 5-10 claims/call — §5)
    ↓
 [NEW] deterministic gates on VERIFY output (see §4a)
    ↓
@@ -131,7 +142,7 @@ state per client.
 Response: 200 {
   id: "uuid",
   status: "extracting" | "verifying" | "done" | "failed",
-  progress: { checked: 14, total: 55 },
+  progress: { checked: 14, total: 85 },  // was 55 in the original text — didn't match score.eligible below; erratum, see Changelog
   claims: [
     {
       id: "uuid",

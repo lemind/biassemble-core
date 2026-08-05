@@ -28,9 +28,9 @@ Dependency direction, strict: `routes/grounnel.ts` depends on the orchestrators 
 Sequential where a real dependency exists, otherwise noted as parallelizable in §4.
 
 0. **Confirm Tavily's real response shape with one manual API call.** External prerequisite, not internal work — needs a Tavily key provisioned (not yet done, per earlier conversation). Blocks step 2: building `SearchProvider`'s interface against a guessed shape and adjusting later is exactly the risk §3's risk table warns about, so this has to resolve first, not in parallel with step 2.
-1. **Contracts first** (`src/contracts/grounnel.schemas.ts`) — `ExtractRequestSchema`, `StatusResponseSchema`, claim/score shapes, matching v10 §3b exactly. Nothing else can be typed against a real shape until this exists.
+1. **Contracts first** (`src/contracts/grounnel.schemas.ts`) — `ExtractRequestSchema`, `StatusResponseSchema`, claim/score shapes, matching v10 §3b exactly. Everything typed against a real shape (steps 2, 3) waits on this; step 4 (pure functions over passed-in data, no shape to type against) does not.
 2. **`SearchProvider` interface + Tavily implementation** — narrow, three methods max (`search(query) → results[]`, `fetch(url) → { text, status }`). Build the interface before the implementation so the pipeline never couples to Tavily's actual response shape. Depends on step 0.
-3. **`GrounnelStore` (Redis)** — `createAudit`, `writeClaimResult`, `getStatus`, exactly the `HSET`/`HGETALL` shape from D019 §4. This can be built in parallel with step 2 (no shared code), but both must land before step 5.
+3. **`GrounnelStore` (Redis)** — `createAudit`, `writeClaimResult`, `getStatus`, exactly the `HSET`/`HGETALL` shape from D019 §4. Depends on step 1 only, **not** step 0 — this is a single, reconciled answer (an earlier draft of this plan gave three different answers across this line, §4, and §4's grouping table, caught in review; tasks.md's T007 `Dependencies: T002` was always correct and is what this line and §4 now match). Can be built in parallel with step 2 once step 1 lands (no shared code between the two), but both must land before step 5.
 4. **The four gates + opinion/passage filters** (`gates.ts`, `opinion-filter.ts`, `passage-filter.ts`) — pure functions, no dependencies on steps 2 or 3. **Can start immediately, in parallel with everything above, including step 0.** This is the highest-value early work: it's the most novel logic in the whole feature (D019 §2's trust boundary), fully unit-testable with zero mocking, and de-risked independent of infra decisions.
 5. **`extract.service.ts`** — EXTRACT call + gate #3, writes initial claim list via `GrounnelStore`. Depends on steps 1, 3, 4.
 6. **`pipeline.service.ts`** — the per-claim loop: `SearchProvider` → fetch → gate #4 → VERIFY (batched) → gates #1/#2 → `GrounnelStore` write. Depends on steps 2, 3, 4, and the existing VERIFY prompt/repair pipeline.
@@ -52,11 +52,11 @@ Sequential where a real dependency exists, otherwise noted as parallelizable in 
 
 ## 4. Parallel vs. sequential
 
-**Can start in parallel, day one:** step 4 (gates/filters — no dependencies at all), step 1 (contracts), and step 0 (Tavily confirmation — a phone-call/API-key-provisioning task, not code, so it costs nothing to run alongside 1 and 4). Step 3 (`GrounnelStore`) can also start immediately, in parallel with 0/1/4. Step 2 (`SearchProvider`) is the one exception — it waits on step 0, even though nothing else blocks it.
+**Can start in parallel, day one:** step 4 (gates/filters — no dependencies at all), step 1 (contracts), and step 0 (Tavily confirmation — a phone-call/API-key-provisioning task, not code, so it costs nothing to run alongside 1 and 4). Step 3 (`GrounnelStore`) is **not** in this group — it needs step 1 first (see step 3's own line above). Step 2 (`SearchProvider`) needs step 0.
 
-**Must be sequential:** step 2 needs step 0; steps 5 and 6 both need 1+3+4 done first; step 8 needs everything before it; step 8.5 needs step 8; step 9 needs step 8.
+**Must be sequential:** step 2 needs step 0; step 3 needs step 1; steps 5 and 6 both need 1+3+4 done first; step 8 needs everything before it; step 8.5 needs step 8; step 9 needs step 8.
 
-**Realistic grouping for a solo-dev pace:** {0, 1, 4} first (step 0 running in the background while 1 and 4 are actual coding work — fastest path to a fully-tested, real piece of the trust boundary shipping); then {2, 3} together once step 0 resolves; then 5 → 6 → 7 → 8 → 8.5 → 9.
+**Realistic grouping for a solo-dev pace:** {0, 1, 4} first (step 0 running in the background while 1 and 4 are actual coding work — fastest path to a fully-tested, real piece of the trust boundary shipping); then, as soon as step 1 lands, step 3 can start regardless of whether step 0 has resolved yet, and step 2 can start as soon as step 0 has resolved regardless of step 3 — the two don't block each other, they just each wait on a different, independent prerequisite; then 5 → 6 → 7 → 8 → 8.5 → 9.
 
 ## 5. Verification checkpoints
 

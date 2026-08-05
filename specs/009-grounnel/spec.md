@@ -10,6 +10,17 @@ Add a second, self-contained API surface to biassemble-core — `POST /extract` 
 
 **Success looks like:** a caller can `POST /extract` with pasted text, get a claim list back within ~3 seconds (before any verification), then poll `GET /status/:id` every 10s and watch claims resolve to `supported` / `partially_supported` / `unsupported` / `contradicted` / `unverifiable`, each with a verbatim passage and real source URLs, with a score computed server-side on every poll.
 
+## Assumptions
+
+Stated up front, per the `spec-driven-development` skill's Phase 1 — the numbered citations elsewhere in this document (`Assumption N`) resolve to this list, which previously existed only in conversation and not as a written section (found during a consistency review).
+
+1. **Scope is biassemble-core only.** Grounnel's frontend doesn't exist as a repo yet; this spec covers the new API surface in this repo only. *(Still holds — D020 additionally establishes that the frontend never calls this repo directly regardless of where it's hosted.)*
+2. **Same codebase, same deploy.** New routes/orchestrators/persistence live in `biassemble-core/src/`, following the existing `routes/ → orchestrators/ → prompts/` pattern. *(Still holds.)*
+3. **`SearchProvider`'s first concrete implementation is Tavily**, not Exa — cited at Tech Stack and Open Questions. Not yet confirmed; see Open Questions.
+4. **Redis client: `@upstash/redis`** (official SDK, REST-based). *(Still holds, no open question attached.)*
+5. **Rate-limit default: 5 `/extract` submissions per IP per hour**, env-configurable — cited at Boundaries and Success Criteria. Placeholder, not yet confirmed; see Open Questions. *(D020 demoted this from primary control to defense-in-depth, but didn't change the placeholder number itself.)*
+6. **Caps: `maxClaims` default 100, search cap tied to it 1:1** (one search per claim, §4.3) — cited at Boundaries and Success Criteria. Placeholder, not yet confirmed; see Open Questions.
+
 ## Tech Stack
 
 Same stack as the rest of this repo — no new runtime, no new deploy target:
@@ -18,7 +29,7 @@ Same stack as the rest of this repo — no new runtime, no new deploy target:
 - Zod 4 for request/response contracts
 - `@google/generative-ai` for EXTRACT/VERIFY (Gemini, `GEMINI_MODEL` — currently `gemini-2.5-flash-lite`)
 - **New dependency:** `@upstash/redis` — Redis client for audit state + search/fetch cache (D019 §4)
-- **New dependency:** Tavily REST API via plain `fetch` (no SDK needed) — `SearchProvider`'s first implementation (Assumption 3)
+- **Planned dependency, not yet confirmed:** Tavily REST API via plain `fetch` (no SDK needed) — `SearchProvider`'s current planned first implementation (Assumption 3); switching to Exa remains an open decision, see Open Questions
 - Deploy: Vercel, Fluid Compute, no change to `vercel.json`'s `maxDuration: 300` (v10 §11 — 240s budget already fits)
 
 ## Commands
@@ -59,13 +70,14 @@ Reused as-is, not duplicated: EXTRACT/VERIFY prompt logic and batching conventio
 
 ## Code Style
 
-Match `src/routes/audit.ts` exactly — typed service interfaces injected into `register*Routes`, Zod-validated at the boundary, one `MODULE` constant per file for logging:
+Match `src/routes/audit.ts`'s real pattern — typed service interfaces injected into `register*Routes`, `Schema.parse()` inside a try/catch (not `.safeParse()` with an inline early return — that's a different idiom this codebase doesn't use), `reply.status()` (not `.code()`), a `{ error, details }` shape on `ZodError`, one `MODULE` constant per file for logging:
 
 ```ts
 const MODULE = "routes-grounnel";
 
 export interface GrounnelStore {
   createAudit(data: { text: string; maxClaims: number }): Promise<{ id: string }>;
+  writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
 }
 
@@ -74,14 +86,22 @@ export function registerGrounnelRoutes(
   services: { grounnelStore: GrounnelStore; pipeline: GrounnelPipeline; rateLimiter: RateLimiter }
 ) {
   server.post("/extract", { preHandler: [authHook] }, async (request, reply) => {
-    const parsed = ExtractRequestSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    // ...
+    try {
+      const body = ExtractRequestSchema.parse(request.body);
+      // ...
+      return reply.status(202).send({ id: auditId });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return reply.status(400).send({ error: "Invalid request body", details: error.issues });
+      }
+      logger.error({ module: MODULE, operation: "POST /extract", error, requestId: request.id }, "Extract submission failed");
+      return reply.status(502).send({ error: "Extract submission failed" });
+    }
   });
 }
 ```
 
-`authHook` — same one `/audit` already uses (`src/lib/auth.js`) — gates `/extract` on `AI_CORE_API_KEY` (D020 §3, §4). This is the one deviation from "matches `audit.ts` exactly": `/audit`'s route registration doesn't need a separate rate limiter in front of it since it's already behind auth; `/extract` keeps `rateLimiter` too, now as defense-in-depth rather than the primary control.
+`authHook` — same one `/audit` already uses (`src/lib/auth.js`) — gates `/extract` on `AI_CORE_API_KEY` (D020 §3, §4). This is the one deviation from `audit.ts`'s pattern: `/audit`'s route registration doesn't need a separate rate limiter in front of it since it's already behind auth; `/extract` keeps `rateLimiter` too, now as defense-in-depth rather than the primary control. `writeClaimResult` is the third `GrounnelStore` method (plan.md §1, tasks.md T007) — the one that actually persists a verdict as each VERIFY batch completes; omitting it here (an earlier draft did) would leave `pipeline.service.ts` with nothing to call.
 
 No `mode`-style branching needed here (D018 §1's invariant doesn't apply — this is a separate route tree, not a shared orchestrator with `/audit`). Nullable fields use `field: Type | null`, never `field?: Type | null` (AGENTS.md rule 9).
 
@@ -103,7 +123,7 @@ No `mode`-style branching needed here (D018 §1's invariant doesn't apply — th
 - `GET /status/:id` returns full current state every call, matches the v10 §3b shape exactly (`status`, `progress`, `claims[]`, `score`, `caps_hit`).
 - A `contradicted` verdict never reaches the client without gate #1 having verified the evidence substring against the actually-fetched passage.
 - An opinion-shaped claim (gate #3) routes to `unverifiable` **without a `SearchProvider` call being made for it** — proven by a unit test asserting zero search invocations for such a claim, not just the correct verdict. This is the one gate with a real cost consequence (§4.1's search-quota constraint), not just a correctness one, so it needs its own criterion rather than riding on gate #1/#2's coverage.
-- A passage that fails gate #4's relevance check is never sent to VERIFY — proven by a unit test asserting the VERIFY call is never made for a filtered-out passage. Includes one **known-failing** test for the coreference gap named in D019 §2 (plan.md §5) — asserted to fail the way the spec says it will, not skipped.
+- A passage that fails gate #4's relevance check is never sent to VERIFY — proven by a unit test asserting the VERIFY call is never made for a filtered-out passage. Includes one `test.todo(...)` case for the coreference gap named in D019 §2 (plan.md §5, tasks.md T006) — a visible, named pending case in every run's output, not a permanently-red test.
 - A failed VERIFY batch marks its claims `not_checked` and the run continues — proven by an integration test that force-fails one batch mid-run.
 - Exceeding `maxClaims` or the search cap sets `caps_hit: true` and marks the remainder `not_checked`, never silently drops them from the denominator.
 - `/extract` rejects an unauthenticated request with a 401 (`authHook`, D020 §3) and rejects any request exceeding the configured per-IP limit with a 429. The criterion is the mechanism (auth required, limit enforced), not a specific number — the actual threshold lives as a named constant per plan.md §3's mitigation, not hardcoded into this criterion.
