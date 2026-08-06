@@ -1,0 +1,241 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { GrounnelPipelineService } from "../../../../src/orchestrators/grounnel/pipeline.service.js";
+import { RedisGrounnelStore } from "../../../../src/persistence/grounnel-store.js";
+import { PromptRegistry } from "../../../../src/prompts/registry.js";
+import { MockProvider } from "../../../mocks/mock-provider.js";
+import { FakeRedisHashClient } from "../../../mocks/fake-redis-hash-client.js";
+import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
+import type { CompletionRequest } from "../../../../src/providers/types.js";
+
+class FakeSearchProvider implements SearchProvider {
+  constructor(private responses: Map<string, SearchPassage[]>) {}
+  async search(query: string): Promise<SearchPassage[]> {
+    return this.responses.get(query) ?? [];
+  }
+}
+
+function webSource(overrides: Partial<SearchPassage> = {}): SearchPassage {
+  return { url: "https://example.com/a", title: "Example", domain: "example.com", status: "ok", text: "long enough text ".repeat(10), ...overrides };
+}
+
+// Zod's uuid() format is version/variant-strict — "c1" fails it. Deterministic valid UUIDs instead.
+function uuid(n: number): string {
+  return `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
+}
+
+// Pulls the claim ids out of the rendered VERIFY prompt's embedded CLAIM_PASSAGE_PAIRS JSON,
+// so mock responses can answer whatever batch actually got sent without hardcoding call order.
+function idsFromRequest(request: CompletionRequest): string[] {
+  const match = request.system.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s);
+  if (!match) return [];
+  const pairs = JSON.parse(match[1]!) as Array<{ id: string }>;
+  return pairs.map((p) => p.id);
+}
+
+describe("GrounnelPipelineService (T010)", () => {
+  let provider: MockProvider;
+
+  beforeEach(() => {
+    provider = new MockProvider();
+  });
+
+  it("writes 'unsupported: no evidence found' directly, without any VERIFY call, when no source resolves to usable text", async () => {
+    const claimId = uuid(1);
+    const claimText = "Some obscure claim.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ status: "unreachable", text: null })]]]));
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.status).toBe("done");
+    expect(claim.verdict).toBe("unsupported");
+    expect(claim.reason).toBe("No relevant source found for this claim.");
+    expect(claim.sources[0]).toMatchObject({ status: "unreachable" });
+    expect(provider.getCallCount()).toBe(0);
+  });
+
+  it("writes 'unsupported: no evidence found' when the only passage is dropped by gate #4's relevance filter, with zero VERIFY calls", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({
+      text: "article",
+      maxClaims: 100,
+      claims: [{ id: claimId, text: "The Eiffel Tower was completed in 1889." }],
+      truncated: false,
+    });
+    const search = new FakeSearchProvider(
+      new Map([["The Eiffel Tower was completed in 1889.", [webSource({ text: "The Great Wall of China spans thousands of miles. ".repeat(20) })]]])
+    );
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+
+    await service.run(auditId, [{ id: claimId, text: "The Eiffel Tower was completed in 1889." }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.status).toBe("done");
+    expect(claim.verdict).toBe("unsupported");
+    expect(claim.reason).toBe("No relevant source found for this claim.");
+    expect(provider.getCallCount()).toBe(0);
+  });
+
+  it("runs VERIFY and writes the resulting verdict when a relevant passage is found", async () => {
+    const claimId = uuid(1);
+    const claimText = "Bukowski attended Los Angeles City College.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "Bukowski attended Los Angeles City College for two years, per Wikipedia. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ url: "https://en.wikipedia.org/wiki/Bukowski", text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "Wikipedia confirms it.", confidence: 0.95 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.status).toBe("done");
+    expect(claim.verdict).toBe("supported");
+    expect(claim.confidence).toBe(0.95);
+    expect(claim.sources[0]).toMatchObject({ url: "https://en.wikipedia.org/wiki/Bukowski" });
+  });
+
+  it("gate #1 downgrades a contradicted verdict whose evidence isn't a real substring of the passage", async () => {
+    const claimId = uuid(1);
+    const claimText = "Bukowski attended Harvard.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "Bukowski attended Los Angeles City College for two years. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // Evidence is fabricated — not present in the actual passage sent.
+      return { results: ids.map((id) => ({ id, verdict: "contradicted", evidence: "attended Harvard University", reason: "fabricated", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported"); // downgraded by gate #1, never reaches the store as contradicted
+    expect(claim.evidence).toBeNull();
+  });
+
+  it("gate #2 overrides the verdict when the numbers genuinely disagree beyond tolerance", async () => {
+    const claimId = uuid(1);
+    const claimText = "UC Riverside received a $1.2 million grant.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The NEH awarded UC Riverside a $350,000 grant to expand the project. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "$350,000 grant", reason: "matches", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted"); // overridden by gate #2 — $1.2M vs $350K disagree beyond tolerance
+  });
+
+  it("forces a low-confidence verdict to unverifiable", async () => {
+    const claimId = uuid(1);
+    const claimText = "Some claim with weak evidence.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: (claimText + " ").repeat(20) })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: claimText, reason: "weak match", confidence: 0.3 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    expect(status!.claims.find((c) => c.id === claimId)!.verdict).toBe("unverifiable");
+  });
+
+  it("degrades a batch to not_checked (status: failed) when VERIFY fails after retries, and the run continues", async () => {
+    const claimId = uuid(1);
+    const claimText = "A claim whose VERIFY call will fail.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: (claimText + " ").repeat(20) })]]]));
+    provider.failAll("VERIFY provider is down");
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.status).toBe("failed");
+    expect(claim.verdict).toBeNull();
+    expect(status!.score.not_checked_n).toBe(1);
+  });
+
+  it("degrades only the claims VERIFY's response omitted, not the whole batch", async () => {
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const claims = [
+      { id: uuid(1), text: "First claim about Wikipedia." },
+      { id: uuid(2), text: "Second claim about Wikipedia." },
+    ];
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims, truncated: false });
+    const search = new FakeSearchProvider(
+      new Map([
+        ["First claim about Wikipedia.", [webSource({ url: "https://a.example", text: "First claim about Wikipedia. ".repeat(20) })]],
+        ["Second claim about Wikipedia.", [webSource({ url: "https://b.example", text: "Second claim about Wikipedia. ".repeat(20) })]],
+      ])
+    );
+
+    provider.setResponseFn("You are a verification engine", () => ({
+      // Only answers c1, silently omits c2.
+      results: [{ id: uuid(1), verdict: "supported", evidence: "First claim about Wikipedia.", reason: "ok", confidence: 0.9 }],
+    }));
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, claims);
+
+    const status = await store.getStatus(auditId);
+    expect(status!.claims.find((c) => c.id === uuid(1))!.status).toBe("done");
+    expect(status!.claims.find((c) => c.id === uuid(2))!.status).toBe("failed");
+  });
+
+  it("splits more than 8 claims into multiple VERIFY batches", async () => {
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const claims = Array.from({ length: 10 }, (_, i) => ({ id: uuid(i), text: `Claim number ${i} about something.` }));
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims, truncated: false });
+    const responses = new Map(claims.map((c) => [c.text, [webSource({ url: `https://example.com/${c.id}`, text: (c.text + " ").repeat(20) })]]));
+    const search = new FakeSearchProvider(responses);
+
+    let batchCount = 0;
+    const batchSizes: number[] = [];
+    provider.setResponseFn("You are a verification engine", (request) => {
+      batchCount++;
+      const ids = idsFromRequest(request);
+      batchSizes.push(ids.length);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "long enough text", reason: "ok", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, claims);
+
+    expect(batchCount).toBe(2); // 10 claims / BATCH_MAX 8 -> two batches
+    expect(batchSizes).toEqual([8, 2]);
+    const status = await store.getStatus(auditId);
+    expect(status!.claims.every((c) => c.status === "done")).toBe(true);
+  });
+});

@@ -4,8 +4,9 @@ import assessmentData from "./reflection/assessment/system.json" with { type: "j
 import auditExtractData from "./audit/extract/system.json" with { type: "json" };
 import auditVerifyData from "./audit/verify/system.json" with { type: "json" };
 import grounnelExtractData from "./grounnel/extract/system.json" with { type: "json" };
+import grounnelVerifyData from "./grounnel/verify/system.json" with { type: "json" };
 
-export type PromptTemplate = "question-batch" | "assessment" | "audit-extract" | "audit-verify" | "grounnel-extract";
+export type PromptTemplate = "question-batch" | "assessment" | "audit-extract" | "audit-verify" | "grounnel-extract" | "grounnel-verify";
 
 interface PromptFile {
   content: string;
@@ -43,6 +44,11 @@ export class PromptRegistry {
     return (grounnelExtractData as PromptFile).version;
   }
 
+  /** Grounnel's own VERIFY prompt version, independent of audit mode's. */
+  getGrounnelVerifyVersion(): string {
+    return (grounnelVerifyData as PromptFile).version;
+  }
+
   render(template: PromptTemplate, variables: Record<string, string>): string {
     let raw: string;
 
@@ -61,6 +67,9 @@ export class PromptRegistry {
         break;
       case "grounnel-extract":
         raw = grounnelExtractData.content;
+        break;
+      case "grounnel-verify":
+        raw = grounnelVerifyData.content;
         break;
       default:
         throw new Error(`Unknown template: ${template satisfies never}`);
