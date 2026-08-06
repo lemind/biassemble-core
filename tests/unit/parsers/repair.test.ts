@@ -169,6 +169,42 @@ describe("partialParseObject — array-element salvage (2026-08-02, D018 §5.14 
   });
 });
 
+describe("tryRepairJson — bare array instead of the expected single-array-field wrapper", () => {
+  const ResultsSchema = z.object({
+    results: z.array(z.object({ id: z.string(), verdict: z.string() })),
+  });
+
+  it("wraps a bare array into the wrapper object instead of nulling the field (real Grounnel VERIFY failure, 2026-08-06)", () => {
+    // Exact shape from production logs: Gemini returned the array directly, not {results: [...]}.
+    const input = JSON.stringify([
+      { id: "563c1fdd", verdict: "supported" },
+      { id: "16267687", verdict: "supported" },
+    ]);
+    const result = tryRepairJson(input, ResultsSchema);
+    expect(result.results).toEqual([
+      { id: "563c1fdd", verdict: "supported" },
+      { id: "16267687", verdict: "supported" },
+    ]);
+  });
+
+  it("does NOT wrap when the schema has more than one field — ambiguous which field the array belongs to", () => {
+    const MultiFieldSchema = z.object({
+      results: z.array(z.object({ id: z.string() })),
+      truncated: z.boolean(),
+    });
+    const input = JSON.stringify([{ id: "a" }]);
+    const result = tryRepairJson(input, MultiFieldSchema);
+    expect(result.results).toBeNull();
+  });
+
+  it("does NOT wrap when the single field isn't array-typed", () => {
+    const SingleObjectFieldSchema = z.object({ result: z.object({ id: z.string() }) });
+    const input = JSON.stringify([{ id: "a" }]);
+    const result = tryRepairJson(input, SingleObjectFieldSchema);
+    expect(result.result).toBeNull();
+  });
+});
+
 describe("repairWithFallback", () => {
   it("should succeed on first try with clean JSON", async () => {
     const fallbackProvider = async () => {
