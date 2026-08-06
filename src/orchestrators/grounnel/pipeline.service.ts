@@ -14,10 +14,7 @@ const MODULE = "grounnel-pipeline-service";
 // D018 §2.3 — lowered from 10 to 8 there: batch size, not verdict logic, was why VERDICT/NOTE
 // CONSISTENCY got ignored at ~10 claims/call. Same tuned value reused here (D019 §1 batching convention).
 const BATCH_MAX = 8;
-// resolveEvidence (SearchProvider.search) runs in waves of this size rather than one flat
-// Promise.all across every claim — caps wasted Tavily round-trips once it starts 429ing (at
-// most SEARCH_CONCURRENCY-1 wasted instead of up to MAX_CLAIMS-1) while keeping most real
-// articles (<= this many claims) just as parallel as before (found via /code-review high on T012).
+// resolveEvidence runs in waves of this size, not one flat Promise.all — caps wasted Tavily round-trips after a 429 while keeping typical articles fully parallel (found via /code-review high, T012).
 const SEARCH_CONCURRENCY = 20;
 /** VERIFY responses are intermittently unparseable, matches audit's own retry count (D018 §5.10). */
 const VERIFY_ATTEMPTS = 3;
@@ -27,12 +24,7 @@ const CONFIDENCE_THRESHOLD = 0.6;
 const NO_EVIDENCE_REASON = "No relevant source found for this claim.";
 const TAVILY_RATE_LIMITED_REASON = "This claim could not be checked right now — our search provider's rate limit was reached. Try again later.";
 
-/**
- * Client-facing message for a Gemini RateLimitError — used both here (mid-VERIFY stop) and,
- * per tasks.md, meant to be reused by T012's route handler for the same error surfacing from
- * EXTRACT (thrown before any audit exists, so it can't be written to the store at all there —
- * it has to become the POST /extract response directly).
- */
+/** Client-facing message for a Gemini RateLimitError — also reused by the route handler for EXTRACT's own case (no audit exists yet there, so it becomes the /extract response directly). */
 export function buildGeminiRateLimitMessage(err: RateLimitError): string {
   if (err.limitType === "daily") {
     return err.resetsAt
@@ -76,20 +68,7 @@ function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
   return sources.map((s) => ({ kind: "web" as const, title: s.title, domain: s.domain, url: s.url, status: s.status }));
 }
 
-/**
- * Per-claim loop: SearchProvider → gate #4 → VERIFY (batched) → gates #1/#2 → GrounnelStore write
- * (D019 §1, tasks.md T010). Claims with no usable passage never reach VERIFY at all — a real,
- * deliberate cost saving (§4.1), not a shortcut: "no evidence found" is a legitimate, correct
- * verdict a model call adds nothing to.
- *
- * Rate-limit handling (added post-T010, explicit user request): Gemini and Tavily hitting their
- * limits are NOT the same client-facing situation and must not collapse into one generic
- * "no evidence found" message. Tavily rate-limited → only the claims that needed the fallback are
- * affected, the run continues, each gets its own "try again later" reason. Gemini rate-limited
- * during VERIFY → every remaining un-verified claim is stopped immediately (further attempts are
- * guaranteed to fail the same way and just burn wall-clock) and degraded with a clear "try
- * tomorrow"/"try in a few minutes" message built from RateLimitError's own limitType/resetsAt.
- */
+/** Per-claim loop: search -> gate #4 -> VERIFY (batched) -> gates #1/#2 -> store (D019 §1, T010). No-evidence claims skip VERIFY (cost saving, §4.1). Gemini/Tavily rate limits get distinct messages. */
 export class GrounnelPipelineService {
   constructor(
     private readonly searchProvider: SearchProvider,
@@ -152,9 +131,7 @@ export class GrounnelPipelineService {
     const sources = await this.searchProvider.search(claim.text);
     for (const s of sources) {
       if (s.status !== "ok") {
-        // Granular per-source failure logging (D021 "Do not," last bullet) already happens one
-        // layer down inside SearchProvider (discoverUrls/fetchCandidate) — this is the
-        // pipeline-level summary, distinguishing which claim a given failed source belonged to.
+        // Granular per-source failure logging already happens one layer down (SearchProvider) — this is the pipeline-level summary, tying a failed source to the claim it belonged to (D021).
         logger.info(
           { module: MODULE, operation: "resolveEvidence", claimId: claim.id, url: s.url, status: s.status },
           "Source attempt did not yield usable text for this claim"

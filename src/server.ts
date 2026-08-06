@@ -70,10 +70,7 @@ export function buildApp() {
     },
   };
 
-  // specs/009-grounnel — no Postgres, no Inngest for this surface (D019 §4, D020 §3's explicit
-  // "do not"). Same conditional-wiring pattern as ragClient above: only stood up once all
-  // secrets exist, so local/CI environments without them keep booting with Grounnel simply absent
-  // rather than crashing on a missing key (tasks.md T012).
+  // specs/009-grounnel — no Postgres, no Inngest for this surface (D019 §4, D020 §3). Same conditional-wiring as ragClient above — booted only once all secrets exist, absent otherwise, not a boot crash.
   let grounnel:
     | {
         extractService: GrounnelExtractService;

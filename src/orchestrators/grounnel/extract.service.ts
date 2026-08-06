@@ -26,12 +26,7 @@ export interface GrounnelExtractResult {
   pendingClaims: PipelineClaimInput[];
 }
 
-/**
- * EXTRACT + gate #3 (D019 §1/§2, tasks.md T009). Deliberately does NOT reuse audit's
- * executeAndRecordLlmCall/LlmCallStore — that path is Drizzle/Postgres-backed, which would
- * violate spec.md's "No Postgres dependency anywhere in this surface" (D019 §4). Cost
- * observability for Grounnel's own LLM calls is a known, named gap, not a silent drop.
- */
+/** EXTRACT + gate #3 (D019 §1/§2, T009). Skips audit's executeAndRecordLlmCall/LlmCallStore — Drizzle/Postgres-backed, violates the no-Postgres rule (D019 §4). A named cost-observability gap. */
 export class GrounnelExtractService {
   constructor(
     private provider: Provider,
@@ -54,9 +49,7 @@ export class GrounnelExtractService {
       isValid: (result) => !!result.claims,
     });
 
-    // Belt-and-suspenders cap enforcement, same rationale as audit's extract.service.ts — a cap
-    // only the model enforces isn't really a cap. Computed before slicing so it reflects an
-    // actual cut, not re-derived later from a count that could legitimately equal the cap.
+    // Belt-and-suspenders cap enforcement (same rationale as audit's) — computed before slicing so it reflects a real cut, not re-derived from a count that could legitimately equal the cap.
     let claimTexts = parsed.claims.map((c) => c.claim);
     const truncated = parsed.truncated || claimTexts.length > MAX_CLAIMS;
     if (claimTexts.length > MAX_CLAIMS) {

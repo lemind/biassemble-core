@@ -49,11 +49,7 @@ function loadEnv() {
 
 export const env = loadEnv();
 
-// Paired by source — UPSTASH_REDIS_REST_* and KV_REST_API_* must each come as a matched
-// url+token pair, never mixed. Resolving them independently (url from one naming convention,
-// token from the other) let a stale KV_REST_API_TOKEN silently pair with a freshly-set
-// UPSTASH_REDIS_REST_URL, wiring mismatched credentials into a live Redis client with no
-// boot-time warning (found via /code-review high on T012).
+// Paired by source — UPSTASH_* and KV_* must each be a matched url+token pair, never mixed; resolving independently let stale/fresh creds silently pair (found via /code-review high, T012).
 export const upstashRedisConfig: { url: string; token: string } | undefined =
   env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN
     ? { url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN }

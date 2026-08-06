@@ -15,9 +15,7 @@ const DISCOVERY_ATTEMPTS = 2;
 const CANDIDATE_FETCH_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 500;
 
-// Blocks the obvious private/loopback/link-local targets before a server-side fetch — not a
-// full SSRF defense (doesn't resolve DNS to catch a hostname that rebinds to a private IP),
-// but closes the direct-IP-literal case for a URL an LLM could return.
+// Blocks obvious private/loopback/link-local targets before a server-side fetch — not a full SSRF defense (no DNS resolution), but closes the direct-IP-literal case for an LLM-returned URL.
 const BLOCKED_HOSTNAME_RE =
   /^(localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|0\.0\.0\.0|::1)$/i;
 
@@ -54,10 +52,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Strips a key embedded in a Gemini request URL from an error's message before it's ever
-// logged — a fetch() URL-parse failure otherwise puts the full key-bearing URL in err.message,
-// which pino's redact (object key paths only, not string content) does not catch. D021's own
-// research already leaked a key this exact way once (via a Python exception message).
+// Strips a key embedded in a Gemini URL from an error message — a fetch() failure otherwise leaks the full key in err.message, past pino's redact. D021's research leaked a key this exact way once.
 function sanitizeErrorForLogging(err: unknown): unknown {
   if (err instanceof Error) {
     const sanitized = new Error(err.message.replace(/key=[^&\s"]+/gi, "key=[REDACTED]"));
@@ -67,10 +62,7 @@ function sanitizeErrorForLogging(err: unknown): unknown {
   return err;
 }
 
-// Strips <script>/<style> (closed or unclosed — an unclosed tag left raw JS/CSS in the output
-// before) and tags, decodes a handful of common entities — no HTML-parsing dependency added for
-// this; D021's research script used Python's BeautifulSoup, this is the dependency-free TS
-// equivalent (good enough for MVP text extraction, not a general HTML parser).
+// Strips <script>/<style> and tags, decodes common entities — no HTML-parsing dependency added; the dependency-free TS equivalent of D021's BeautifulSoup script (MVP-good, not a general parser).
 function extractTextFromHtml(html: string): string {
   const withoutScripts = html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
@@ -89,13 +81,7 @@ function extractTextFromHtml(html: string): string {
     .trim();
 }
 
-/**
- * D021 — Gemini's google_search tool for URL discovery only, never content/verdicts (D019 §3's
- * disqualification of native search stands unchanged). DIY-fetches the top candidates; falls
- * back to `fallback` (e.g. TavilySearchProvider) only when every DIY attempt for this claim
- * fails — not a single-vendor call. Raw REST call to Gemini, not the shared Provider/
- * completeJson path (audit's GeminiProvider) — that path doesn't expose the google_search tool.
- */
+/** D021 — Gemini's google_search for URL discovery only, never content/verdicts (D019 §3 still applies). DIY-fetches top candidates; falls back to `fallback` only when every DIY attempt fails. */
 export class HybridSearchProvider implements SearchProvider {
   constructor(
     private readonly geminiApiKey: string,
@@ -150,9 +136,7 @@ export class HybridSearchProvider implements SearchProvider {
         const rawCandidates = chunks
           .filter((c) => c.web?.uri)
           .map((c) => ({ url: c.web!.uri!, title: c.web?.title ?? domainOf(c.web!.uri!) }));
-        // Drop malformed/unsafe URLs here rather than fetching them or returning them as
-        // ClaimSourceSchema-breaking data — a genuinely malformed string has no valid url to
-        // report at all, so it's dropped, not included with a broken field.
+        // Drop malformed/unsafe URLs here rather than fetching them or returning ClaimSourceSchema-breaking data — a malformed string has no valid url to report, so it's dropped, not included broken.
         const safe = rawCandidates.filter((c) => {
           const ok = parseSafeUrl(c.url) !== null;
           if (!ok) {

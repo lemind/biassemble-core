@@ -42,9 +42,7 @@ export function registerGrounnelRoutes(
       extracted = await services.extractService.run(body.text);
     } catch (error) {
       if (error instanceof RateLimitError) {
-        // No audit exists yet at this point (D019 trust boundary) — nowhere to write a per-claim
-        // reason, so the message becomes the /extract response itself (tasks.md T012 dependency
-        // note left on pipeline.service.ts's buildGeminiRateLimitMessage).
+        // No audit exists yet (D019 trust boundary) — nowhere to write a per-claim reason, so the message becomes the /extract response itself.
         logger.error(
           { module: MODULE, operation: "POST /extract", limitType: error.limitType, requestId: request.id },
           "Gemini rate-limited during EXTRACT"
@@ -61,10 +59,7 @@ export function registerGrounnelRoutes(
 
     reply.status(202).send({ id: extracted.id });
 
-    // No external queue (D020 §3's explicit "do not" on Inngest for Grounnel) — the pipeline runs
-    // right here, after the response has already been flushed to the client. vercel.json's
-    // maxDuration:300 is what keeps this invocation alive long enough for it to finish; the client
-    // never waits on it directly, it polls GET /status/:id instead.
+    // No external queue (D020 §3) — the pipeline runs here, after the response is flushed. vercel.json's maxDuration:300 keeps the invocation alive; the client polls GET /status/:id instead.
     if (extracted.pendingClaims.length > 0) {
       await services.pipelineService.run(extracted.id, extracted.pendingClaims).catch((err) => {
         logger.error(
