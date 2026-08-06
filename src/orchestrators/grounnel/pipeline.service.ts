@@ -14,6 +14,11 @@ const MODULE = "grounnel-pipeline-service";
 // D018 §2.3 — lowered from 10 to 8 there: batch size, not verdict logic, was why VERDICT/NOTE
 // CONSISTENCY got ignored at ~10 claims/call. Same tuned value reused here (D019 §1 batching convention).
 const BATCH_MAX = 8;
+// resolveEvidence (SearchProvider.search) runs in waves of this size rather than one flat
+// Promise.all across every claim — caps wasted Tavily round-trips once it starts 429ing (at
+// most SEARCH_CONCURRENCY-1 wasted instead of up to MAX_CLAIMS-1) while keeping most real
+// articles (<= this many claims) just as parallel as before (found via /code-review high on T012).
+const SEARCH_CONCURRENCY = 20;
 /** VERIFY responses are intermittently unparseable, matches audit's own retry count (D018 §5.10). */
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
@@ -94,7 +99,7 @@ export class GrounnelPipelineService {
   ) {}
 
   async run(auditId: string, claims: PipelineClaimInput[]): Promise<void> {
-    const resolved = await Promise.all(claims.map((claim) => this.resolveEvidence(claim)));
+    const resolved = await this.resolveAllEvidence(auditId, claims);
 
     const noEvidence = resolved.filter((r) => !hasPassage(r));
     await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
@@ -115,6 +120,32 @@ export class GrounnelPipelineService {
         break;
       }
     }
+  }
+
+  /** Waves of SEARCH_CONCURRENCY, not one flat Promise.all — lets a Tavily rate limit detected in
+   * one wave stop the next wave's claims from ever calling SearchProvider.search() at all. */
+  private async resolveAllEvidence(auditId: string, claims: PipelineClaimInput[]): Promise<ResolvedEvidence[]> {
+    const resolved: ResolvedEvidence[] = [];
+    for (let i = 0; i < claims.length; i += SEARCH_CONCURRENCY) {
+      const chunk = claims.slice(i, i + SEARCH_CONCURRENCY);
+      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(claim)));
+      resolved.push(...chunkResolved);
+
+      const tavilyRateLimited = chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"));
+      if (tavilyRateLimited) {
+        const remaining = claims.slice(i + SEARCH_CONCURRENCY);
+        if (remaining.length > 0) {
+          logger.warn(
+            { module: MODULE, operation: "resolveAllEvidence", auditId, remaining: remaining.length },
+            "Tavily rate-limited mid-run — stopping remaining search calls instead of attempting each one"
+          );
+          const rateLimitedSource: SearchPassage = { url: "https://tavily.com", title: "Tavily", domain: "tavily.com", status: "rate_limited", text: null };
+          resolved.push(...remaining.map((claim) => ({ claim, passage: null, sources: [rateLimitedSource] })));
+        }
+        break;
+      }
+    }
+    return resolved;
   }
 
   private async resolveEvidence(claim: PipelineClaimInput): Promise<ResolvedEvidence> {

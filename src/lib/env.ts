@@ -31,9 +31,9 @@ const envSchema = z.object({
   TAVILY_API_KEY: z.string().min(1).optional(),
   // Vercel's own KV_REST_API_* naming is the fallback @upstash/redis's own Redis.fromEnv() uses —
   // named separately here (not via fromEnv) so server.ts can gate route registration on presence.
-  UPSTASH_REDIS_REST_URL: z.string().min(1).optional(),
+  UPSTASH_REDIS_REST_URL: z.url().optional(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
-  KV_REST_API_URL: z.string().min(1).optional(),
+  KV_REST_API_URL: z.url().optional(),
   KV_REST_API_TOKEN: z.string().min(1).optional(),
 });
 
@@ -48,3 +48,15 @@ function loadEnv() {
 }
 
 export const env = loadEnv();
+
+// Paired by source — UPSTASH_REDIS_REST_* and KV_REST_API_* must each come as a matched
+// url+token pair, never mixed. Resolving them independently (url from one naming convention,
+// token from the other) let a stale KV_REST_API_TOKEN silently pair with a freshly-set
+// UPSTASH_REDIS_REST_URL, wiring mismatched credentials into a live Redis client with no
+// boot-time warning (found via /code-review high on T012).
+export const upstashRedisConfig: { url: string; token: string } | undefined =
+  env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN
+    ? { url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN }
+    : env.KV_REST_API_URL && env.KV_REST_API_TOKEN
+      ? { url: env.KV_REST_API_URL, token: env.KV_REST_API_TOKEN }
+      : undefined;

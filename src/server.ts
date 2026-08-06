@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import { Redis } from "@upstash/redis";
 import { fastifyPlugin as inngestFastify } from "inngest/fastify";
-import { env } from "./lib/env";
+import { env, upstashRedisConfig } from "./lib/env";
 import { requestIdHook } from "./lib/request-id";
 import { logger } from "./observability/logger";
 import { GeminiProvider } from "./providers/gemini";
@@ -74,8 +74,6 @@ export function buildApp() {
   // "do not"). Same conditional-wiring pattern as ragClient above: only stood up once all
   // secrets exist, so local/CI environments without them keep booting with Grounnel simply absent
   // rather than crashing on a missing key (tasks.md T012).
-  const upstashUrl = env.UPSTASH_REDIS_REST_URL ?? env.KV_REST_API_URL;
-  const upstashToken = env.UPSTASH_REDIS_REST_TOKEN ?? env.KV_REST_API_TOKEN;
   let grounnel:
     | {
         extractService: GrounnelExtractService;
@@ -84,8 +82,8 @@ export function buildApp() {
         rateLimiter: RateLimiter;
       }
     | undefined;
-  if (env.TAVILY_API_KEY && upstashUrl && upstashToken) {
-    const redis = new Redis({ url: upstashUrl, token: upstashToken, automaticDeserialization: false });
+  if (env.TAVILY_API_KEY && upstashRedisConfig) {
+    const redis = new Redis({ ...upstashRedisConfig, automaticDeserialization: false });
     const grounnelStore = new RedisGrounnelStore(new UpstashRedisHashClient(redis));
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider);
@@ -97,7 +95,7 @@ export function buildApp() {
     };
   } else {
     logger.warn(
-      { module: "server", missing: { tavily: !env.TAVILY_API_KEY, redis: !(upstashUrl && upstashToken) } },
+      { module: "server", missing: { tavily: !env.TAVILY_API_KEY, redis: !upstashRedisConfig } },
       "Grounnel routes not registered — TAVILY_API_KEY and/or Upstash Redis credentials are missing"
     );
   }

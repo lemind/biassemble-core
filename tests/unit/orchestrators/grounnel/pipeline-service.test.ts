@@ -287,6 +287,37 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(status!.claims.every((c) => c.reason === "We've hit today's AI usage limit. Please try again after 2026-08-07T00:00:00Z.")).toBe(true);
   });
 
+  it("stops calling SearchProvider once Tavily rate-limits, instead of hitting it for every remaining claim", async () => {
+    const claims = Array.from({ length: 25 }, (_, i) => ({ id: uuid(i), text: `Claim number ${i} happened.` }));
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims, truncated: false });
+
+    const searchedTexts = new Set<string>();
+    const search: SearchProvider = {
+      async search(query: string): Promise<SearchPassage[]> {
+        searchedTexts.add(query);
+        if (query === claims[5]!.text) {
+          return [{ url: "https://tavily.com", title: "Tavily", domain: "tavily.com", status: "rate_limited", text: null }];
+        }
+        return [webSource({ status: "unreachable", text: null })];
+      },
+    };
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, claims);
+
+    // SEARCH_CONCURRENCY (20) — the wave containing the rate-limited claim (index 5, wave 1)
+    // completes in full, but the next wave (claims 20-24) should never call search() at all.
+    for (let i = 0; i < 20; i++) expect(searchedTexts.has(claims[i]!.text)).toBe(true);
+    for (let i = 20; i < 25; i++) expect(searchedTexts.has(claims[i]!.text)).toBe(false);
+
+    const status = await store.getStatus(auditId);
+    for (let i = 20; i < 25; i++) {
+      const claim = status!.claims.find((c) => c.id === claims[i]!.id)!;
+      expect(claim.reason).toContain("rate limit was reached");
+    }
+  });
+
   it("buildGeminiRateLimitMessage gives a different message for daily vs per-minute limits", () => {
     expect(buildGeminiRateLimitMessage(new RateLimitError("x", "daily", "2026-08-07T00:00:00Z"))).toContain("try again after 2026-08-07T00:00:00Z");
     expect(buildGeminiRateLimitMessage(new RateLimitError("x", "daily"))).toContain("try again tomorrow");
