@@ -209,16 +209,30 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
 
 ## Phase 7: Integration tests
 
-- [ ] **T014 [P]** `tests/integration/grounnel-extract.test.ts` — full `POST /extract` contract, including the 401-on-missing-auth case (D020 §3)
+- [x] **T014 [P]** `tests/integration/grounnel-extract.test.ts` — full `POST /extract` contract, including the 401-on-missing-auth case (D020 §3)
   - **Dependencies:** T012.
   - **Size:** S.
 
-- [ ] **T015 [P]** `tests/integration/grounnel-status.test.ts` — full `GET /status/:id` contract shape, `not_checked` on a forced batch failure, `caps_hit` on an exceeded cap
+- [x] **T015 [P]** `tests/integration/grounnel-status.test.ts` — full `GET /status/:id` contract shape, `not_checked` on a forced batch failure, `caps_hit` on an exceeded cap
   - **Dependencies:** T012.
   - **Size:** S.
 
-- [ ] **T016 [P]** `tests/integration/grounnel-rate-limit.test.ts` — 429 on exceeding the configured limit
+- [x] **T016 [P]** `tests/integration/grounnel-rate-limit.test.ts` — 429 on exceeding the configured limit
   - **Dependencies:** T011, T012.
   - **Size:** XS/S.
+
+  **Done (T014–T016).** All three built as real route-level integration tests — a fresh `Fastify()` instance + `registerGrounnelRoutes()` wired to real `GrounnelExtractService`/`GrounnelPipelineService`/`RedisGrounnelStore` instances, hit via `server.inject()`, matching this repo's existing `tests/integration/auth.test.ts` pattern rather than testing services directly. Only `MockProvider`/a fake `SearchProvider`/`FakeRedisHashClient` are mocked — no real Gemini/Tavily/Redis network calls, same convention as the rest of this spec's tests.
+
+  **T014** (6 tests): 401 missing/invalid auth, 400 on a malformed body, 202 with the full claim list already in the store (using an opinion-shaped claim so gate #3 resolves it during `EXTRACT` itself — no pipeline run, no race with the trailing `pipelineService.run()` await to worry about), 503 with the exact `buildGeminiRateLimitMessage` shape on a Gemini `RateLimitError`, 502 on a generic EXTRACT failure.
+
+  **T015** (6 tests): 401, 400 on a malformed id, 404 on a missing audit, the full `StatusResponse` shape after a real EXTRACT→search→VERIFY run settles, `not_checked_n`/`status: failed` on a forced VERIFY-only failure (a hand-rolled `Provider` that succeeds on the EXTRACT-shaped call and fails only the VERIFY-shaped one, distinguished by system-prompt prefix — not `MockProvider.failAll`, which fails unconditionally), and `caps_hit: true` via direct `grounnelStore.createAudit({truncated: true})` seeding (this route surfaces the flag; re-testing EXTRACT's own cap enforcement is T009's job, already covered there). Since `POST /extract`'s `202` is sent before `pipelineService.run()` finishes (D019/D020's no-external-queue design), the two tests that need pipeline completion poll `GET /status/:id` in a small loop until `status: "done"` — mirroring exactly what a real client does, not a test-only shortcut.
+
+  **T016** (3 tests): allowed-up-to-limit-then-429, independent per-IP buckets, and `authHook` still runs first — verified by exhausting the limit for an IP with one authenticated request, then confirming a second, *unauthenticated* request from that same now-over-limit IP still gets 401, not 429 (proves the ordering, not just asserts it).
+
+  **Self-review (`/code-review medium`, 2 finder agents) caught and fixed two real issues before commit:** the original "authHook still runs first" test never actually exhausted the limiter first, so it would have passed identically even if auth and rate-limiting were reordered — fixed as described above. `pollUntilSettled`'s budget was tight (50×5ms ≈ 250ms) for a contended CI runner — bumped to 100 attempts. Also fixed three review-flagged CLAUDE.md comment-length violations. Not changed: gate #4's "always accept" path isn't separately exercised by these tests (only "always reject via unrelated text" would be caught) — deliberately, since `passage-filter.test.ts` already covers that boundary directly; duplicating it at the integration level would test at the wrong altitude. Also not changed: `buildServer()` is hand-rolled once per file with a different signature each time rather than extracted to a shared test helper — each variant genuinely needs different things (extract's takes a swappable `Provider`, status's exposes `grounnelStore` for direct seeding, rate-limit's takes a configurable `limit`), and `registerGrounnelRoutes`'s typed `services` parameter means a future required-field change would be a compile error at all three call sites, not a silent drift — so a shared helper buys less safety here than it would elsewhere.
+
+  Postgres re-check per this phase's own checkpoint note: `grep -rn "postgres\|drizzle" src/orchestrators/grounnel src/persistence/grounnel-store.ts src/routes/grounnel.ts` — clean, no hits.
+
+  Full suite: 798 passed, 1 todo, 71 files (was 782/68 before this task).
 
 **Checkpoint — before calling P0 done**: every Success Criterion in `spec.md` checked off explicitly, not inferred from "tests pass" — `caps_hit`, `not_checked` denominator handling, and the rate-limit 429 in particular are easy to have green tests for while still being wrong in a way tests didn't cover (plan.md §5's closing note). Explicitly re-verify the two criteria with no dedicated test in this list: **"No Postgres dependency anywhere in this surface"** (T007's acceptance checks it locally at introduction time; re-confirm with one `grep -r "postgres\|drizzle" src/orchestrators/grounnel src/persistence/grounnel-store.ts` across the whole surface before sign-off, not just T007's own files) and **"No session/user schema added to `biassemble/backend`"** (T013's acceptance, `biassemble/backend`'s own schema file unchanged).
