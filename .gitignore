@@ -40,3 +40,8 @@ pnpm-workspace.yaml
 system-state-for-agents.md
 api/index.js
 api/evaluations/
+
+# Agent skills — vendored content, regenerate via `npx skills experimental_install` (reads skills-lock.json, which IS tracked)
+.agents/skills/
+.claude/skills/*
+!.claude/skills/speckit-*

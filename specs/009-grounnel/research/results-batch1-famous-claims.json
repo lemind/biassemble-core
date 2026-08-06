@@ -1,0 +1,132 @@
+[
+  {
+    "claim": "The Eiffel Tower was completed in 1920.",
+    "num_chunks": 6,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "facebook.com",
+        "final_url": "https://www.facebook.com/dw.euromaxx/posts/-on-march-31-1889-engineer-gustave-eiffel-proudly-climbed-the-steel-tower-he-had/1105814804922387/",
+        "status": 400,
+        "textlen": 0
+      },
+      {
+        "title": "ebsco.com",
+        "final_url": "https://www.ebsco.com/research-starters/history/eiffel-tower-dedicated",
+        "status": 200,
+        "textlen": 27476
+      },
+      {
+        "title": "pariscityvision.com",
+        "final_url": "https://www.pariscityvision.com/en/paris/landmarks/eiffel-tower/construction-date",
+        "status": 200,
+        "textlen": 5451
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "Mount Everest's official height, as measured by the 2020 China-Nepal joint survey, is 8,848.86 meters.",
+    "num_chunks": 8,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "nepaltrekkingplanner.com",
+        "final_url": "https://nepaltrekkingplanner.com/blogs/mount-everest",
+        "status": 200,
+        "textlen": 48891
+      },
+      {
+        "title": "britannica.com",
+        "final_url": "https://www.britannica.com/place/Mount-Everest",
+        "status": 403,
+        "textlen": 0
+      },
+      {
+        "title": "wikipedia.org",
+        "final_url": "https://en.wikipedia.org/wiki/Mount_Everest",
+        "status": 200,
+        "textlen": 176275
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "The Great Wall of China is visible from space with the naked eye.",
+    "num_chunks": 6,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "britannica.com",
+        "final_url": "https://www.britannica.com/question/Can-you-see-the-Great-Wall-of-China-from-space",
+        "status": 403,
+        "textlen": 0
+      },
+      {
+        "title": "nasa.gov",
+        "final_url": "https://www.nasa.gov/wp-content/uploads/static/history/PDFs/great_wall_less_great_from_space.pdf",
+        "status": 200,
+        "textlen": 190600
+      },
+      {
+        "title": "skyatnightmagazine.com",
+        "final_url": "https://www.skyatnightmagazine.com/space-science/can-you-see-great-wall-china-from-space",
+        "status": 200,
+        "textlen": 7392
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "Bananas are the most radioactive common food due to their potassium-40 content.",
+    "num_chunks": 8,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "spacedaily.com",
+        "final_url": "https://spacedaily.com/d-bananas-are-slightly-radioactive-they-contain-potassium-40-a-naturally-occurring-radioactive-isotope-and-the-radiation-dose-from-eating-one-banana-is-so-consistently-measurable-that-nuclea/",
+        "status": 200,
+        "textlen": 8544
+      },
+      {
+        "title": "wikipedia.org",
+        "final_url": "https://en.wikipedia.org/wiki/Banana_equivalent_dose",
+        "status": 200,
+        "textlen": 15526
+      },
+      {
+        "title": "mirion.com",
+        "final_url": "https://www.mirion.com/discover/knowledge-hub/articles/education/naturally-occurring-radiation-norm",
+        "status": 403,
+        "textlen": 0
+      }
+    ],
+    "fallback_used": "none"
+  },
+  {
+    "claim": "Charles Bukowski attended Harvard University.",
+    "num_chunks": 6,
+    "diy_success": true,
+    "diy_detail": [
+      {
+        "title": "wikipedia.org",
+        "final_url": "https://en.wikipedia.org/wiki/Charles_Bukowski",
+        "status": 200,
+        "textlen": 48439
+      },
+      {
+        "title": "poets.org",
+        "final_url": "https://poets.org/poet/charles-bukowski",
+        "status": 200,
+        "textlen": 5508
+      },
+      {
+        "title": "cdlib.org",
+        "final_url": "https://oac.cdlib.org/findaid/ark:/13030/ft4g5004pn",
+        "status": 200,
+        "textlen": 7170
+      }
+    ],
+    "fallback_used": "none"
+  }
+]
