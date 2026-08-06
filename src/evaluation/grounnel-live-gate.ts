@@ -32,6 +32,7 @@ export interface Violation {
 export interface LiveEvalResult {
   ok: boolean;
   correctRate: number;
+  correct: number;
   matched: number;
   violations: Violation[];
 }
@@ -91,5 +92,5 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
     });
   }
 
-  return { ok: violations.length === 0, correctRate, matched, violations };
+  return { ok: violations.length === 0, correctRate, correct, matched, violations };
 }

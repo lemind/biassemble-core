@@ -37,6 +37,14 @@ class InMemoryRedisHashClient implements RedisHashClient {
   }
 }
 
+// Same redaction hybrid-provider.ts's sanitizeErrorForLogging applies — a real API key leaked into
+// an error message once via a raw fetch URL (D021). Applied here too since this catch is a second
+// place a key-bearing message could otherwise reach a log/dashboard unredacted.
+function sanitizeErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.replace(/key=[^&\s"]+/gi, "key=[REDACTED]");
+}
+
 export interface GoldenCase extends LiveEvalSpec {
   text: string;
 }
@@ -51,6 +59,7 @@ export interface GrounnelEvalCaseResult {
   id: string;
   ok: boolean;
   correctRate: number;
+  correct: number;
   matched: number;
   falseAccusations: number;
   violations: Violation[];
@@ -66,54 +75,59 @@ export interface GrounnelEvalSummary {
   passed: boolean;
 }
 
+/** One golden case, one real EXTRACT + pipeline run, scored. Exported so callers that need their own checkpointing (the Inngest job, one step per case) don't have to run the whole golden set as a single unit. */
+export async function runGrounnelEvalCase(
+  deps: GrounnelEvalDeps,
+  goldenCase: GoldenCase,
+  minCorrectRateOverride?: number
+): Promise<GrounnelEvalCaseResult> {
+  const { provider, prompts, searchProvider } = deps;
+  const grounnelStore = new RedisGrounnelStore(new InMemoryRedisHashClient());
+  const extractService = new GrounnelExtractService(provider, prompts, grounnelStore);
+  const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore);
+
+  try {
+    const { id, pendingClaims } = await extractService.run(goldenCase.text);
+    if (pendingClaims.length > 0) {
+      await pipelineService.run(id, pendingClaims);
+    }
+    const status = await grounnelStore.getStatus(id);
+    const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict })) };
+
+    const spec: LiveEvalSpec = { id: goldenCase.id, claims: goldenCase.claims, minCorrectRate: minCorrectRateOverride ?? goldenCase.minCorrectRate };
+    const result = evaluateGrounnelRun([run], spec);
+    const falseAccusations = result.violations.filter((v) => v.rule === "no_false_accusation").length;
+
+    return { id: goldenCase.id, ok: result.ok, correctRate: result.correctRate, correct: result.correct, matched: result.matched, falseAccusations, violations: result.violations, run };
+  } catch (err) {
+    return { id: goldenCase.id, ok: false, correctRate: 0, correct: 0, matched: 0, falseAccusations: 0, violations: [], run: null, error: sanitizeErrorMessage(err) };
+  }
+}
+
+function summarize(cases: GrounnelEvalCaseResult[]): GrounnelEvalSummary {
+  let totalMatched = 0;
+  let totalCorrect = 0;
+  let totalFalseAccusations = 0;
+  for (const c of cases) {
+    totalMatched += c.matched;
+    totalCorrect += c.correct;
+    totalFalseAccusations += c.falseAccusations;
+  }
+  const passed = cases.every((c) => c.ok) && totalFalseAccusations === 0;
+  return { cases, totalMatched, totalCorrect, totalFalseAccusations, passed };
+}
+
 /** Shared by the CLI script and the Inngest job (both manual, real-call) — one implementation, not two. No Postgres (D019 §4); state lives only for this run. */
 export async function runGrounnelEval(
   deps: GrounnelEvalDeps,
   golden: { cases: GoldenCase[] },
   minCorrectRateOverride?: number
 ): Promise<GrounnelEvalSummary> {
-  const { provider, prompts, searchProvider } = deps;
   const cases: GrounnelEvalCaseResult[] = [];
-  let totalMatched = 0;
-  let totalCorrect = 0;
-  let totalFalseAccusations = 0;
-
   for (const goldenCase of golden.cases) {
-    const grounnelStore = new RedisGrounnelStore(new InMemoryRedisHashClient());
-    const extractService = new GrounnelExtractService(provider, prompts, grounnelStore);
-    const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore);
-
-    try {
-      const { id, pendingClaims } = await extractService.run(goldenCase.text);
-      if (pendingClaims.length > 0) {
-        await pipelineService.run(id, pendingClaims);
-      }
-      const status = await grounnelStore.getStatus(id);
-      const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict })) };
-
-      const spec: LiveEvalSpec = { id: goldenCase.id, claims: goldenCase.claims, minCorrectRate: minCorrectRateOverride ?? goldenCase.minCorrectRate };
-      const result = evaluateGrounnelRun([run], spec);
-      const falseAccusations = result.violations.filter((v) => v.rule === "no_false_accusation").length;
-
-      totalMatched += result.matched;
-      totalCorrect += Math.round(result.correctRate * result.matched);
-      totalFalseAccusations += falseAccusations;
-
-      cases.push({ id: goldenCase.id, ok: result.ok, correctRate: result.correctRate, matched: result.matched, falseAccusations, violations: result.violations, run });
-    } catch (err) {
-      cases.push({
-        id: goldenCase.id,
-        ok: false,
-        correctRate: 0,
-        matched: 0,
-        falseAccusations: 0,
-        violations: [],
-        run: null,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    cases.push(await runGrounnelEvalCase(deps, goldenCase, minCorrectRateOverride));
   }
-
-  const passed = cases.every((c) => c.ok) && totalFalseAccusations === 0;
-  return { cases, totalMatched, totalCorrect, totalFalseAccusations, passed };
+  return summarize(cases);
 }
+
+export { summarize as summarizeGrounnelEvalCases };
