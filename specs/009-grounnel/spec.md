@@ -76,7 +76,7 @@ Match `src/routes/audit.ts`'s real pattern — typed service interfaces injected
 const MODULE = "routes-grounnel";
 
 export interface GrounnelStore {
-  createAudit(data: { text: string; maxClaims: number }): Promise<{ id: string }>;
+  createAudit(data: { text: string; maxClaims: number; claims: Array<Pick<Claim, "id" | "text">> }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
 }
@@ -101,7 +101,7 @@ export function registerGrounnelRoutes(
 }
 ```
 
-`authHook` — same one `/audit` already uses (`src/lib/auth.js`) — gates `/extract` on `AI_CORE_API_KEY` (D020 §3, §4). This is the one deviation from `audit.ts`'s pattern: `/audit`'s route registration doesn't need a separate rate limiter in front of it since it's already behind auth; `/extract` keeps `rateLimiter` too, now as defense-in-depth rather than the primary control. `writeClaimResult` is the third `GrounnelStore` method (plan.md §1, tasks.md T007) — the one that actually persists a verdict as each VERIFY batch completes; omitting it here (an earlier draft did) would leave `pipeline.service.ts` with nothing to call.
+`authHook` — same one `/audit` already uses (`src/lib/auth.js`) — gates `/extract` on `AI_CORE_API_KEY` (D020 §3, §4). This is the one deviation from `audit.ts`'s pattern: `/audit`'s route registration doesn't need a separate rate limiter in front of it since it's already behind auth; `/extract` keeps `rateLimiter` too, now as defense-in-depth rather than the primary control. `writeClaimResult` is the third `GrounnelStore` method (plan.md §1, tasks.md T007) — the one that actually persists a verdict as each VERIFY batch completes; omitting it here (an earlier draft did) would leave `pipeline.service.ts` with nothing to call. `createAudit`'s `claims` param was added during T007's implementation — the earlier signature had no way for any method to ever receive a claim's `text`, a required, non-nullable field on every claim. `RedisGrounnelStore` (T007) also derives top-level `status`/`progress`/`score` from claim state on every `getStatus` read rather than storing them as mutable fields — deviates from D019 §4's illustrative `HSET ... meta '{"status":"verifying",...}'` example, but removes any chance of `meta` drifting out of sync with the claims that are the actual source of truth.
 
 No `mode`-style branching needed here (D018 §1's invariant doesn't apply — this is a separate route tree, not a shared orchestrator with `/audit`). Nullable fields use `field: Type | null`, never `field?: Type | null` (AGENTS.md rule 9).
 
