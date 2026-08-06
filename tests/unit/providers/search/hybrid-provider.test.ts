@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { HybridSearchProvider } from "../../../../src/providers/search/hybrid-provider.js";
 import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
+import { logger } from "../../../../src/observability/logger.js";
 
 const LONG_TEXT = "Bukowski attended Los Angeles City College. ".repeat(30); // > 800 chars
 
@@ -123,4 +124,102 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(calls).toBe(2);
     expect(results[0]).toMatchObject({ url: "https://found-on-retry.example", status: "ok" });
   }, 10000);
+
+  it("never logs the Gemini API key when a discovery request fails to parse", async () => {
+    const warnSpy = vi.spyOn(logger, "warn");
+    const fallback = new StubFallback([]);
+    // A key containing characters that break URL parsing forces fetch()'s URL-parse-failure path.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to parse URL from https://x?key=AIzaSECRET123 not-a-url")));
+
+    const provider = new HybridSearchProvider("AIzaSECRET123", "gemini-2.5-flash-lite", fallback);
+    await provider.search("some claim");
+
+    // Error.message is non-enumerable — JSON.stringify silently drops it, so check it directly.
+    const loggedMessages = warnSpy.mock.calls.map((call) => (call[0] as { err?: Error })?.err?.message).filter(Boolean);
+    expect(loggedMessages.some((m) => m!.includes("AIzaSECRET123"))).toBe(false);
+    expect(loggedMessages.some((m) => m!.includes("[REDACTED]"))).toBe(true);
+  });
+
+  it("drops a candidate URL pointing at a private/loopback address instead of fetching it", async () => {
+    const fallback = new StubFallback([{ url: "https://tavily.example", title: "T", domain: "tavily.example", status: "ok", text: "x" }]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "http://169.254.169.254/latest/meta-data/", title: "Metadata" }]));
+      }
+      throw new Error("must not fetch a blocked-hostname URL");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const results = await provider.search("some claim");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // only the Gemini discovery call, never the blocked URL
+    expect(results).toEqual([{ url: "https://tavily.example", title: "T", domain: "tavily.example", status: "ok", text: "x" }]);
+  });
+
+  it("logs a warning when an individual candidate fetch fails", async () => {
+    const warnSpy = vi.spyOn(logger, "warn");
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://blocked.example", title: "Blocked" }]));
+      }
+      return Promise.resolve({ ok: false, status: 403, url });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    await provider.search("some claim");
+
+    expect(warnSpy.mock.calls.some((call) => JSON.stringify(call).includes("blocked.example"))).toBe(true);
+  });
+
+  it("retries a 500 on a candidate fetch but does not retry a 403", async () => {
+    const fallback = new StubFallback([]);
+    let blockedCalls = 0;
+    let flakyCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(
+          geminiGroundingResponse([
+            { uri: "https://blocked.example", title: "Blocked" },
+            { uri: "https://flaky.example", title: "Flaky" },
+          ])
+        );
+      }
+      if (url.includes("blocked.example")) {
+        blockedCalls++;
+        return Promise.resolve({ ok: false, status: 403, url });
+      }
+      flakyCalls++;
+      if (flakyCalls === 1) return Promise.resolve({ ok: false, status: 500, url });
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const results = await provider.search("some claim");
+
+    expect(blockedCalls).toBe(1); // 403 never retried
+    expect(flakyCalls).toBe(2); // 500 retried once, then succeeded
+    expect(results.find((r) => r.domain === "flaky.example")).toMatchObject({ status: "ok" });
+  });
+
+  it("does not leak raw JS from an unclosed <script> tag into the extracted text", async () => {
+    const fallback = new StubFallback([]);
+    const malformedHtml = `<html><body>${LONG_TEXT}<script>var leaked = "should not appear in evidence";`;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://malformed.example", title: "M" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => malformedHtml });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const results = await provider.search("some claim");
+
+    expect(results[0]!.text).not.toContain("leaked");
+    expect(results[0]!.text).not.toContain("should not appear in evidence");
+  });
 });

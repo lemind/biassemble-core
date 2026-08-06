@@ -5,7 +5,11 @@
  * of a single vendor call) without changing this contract.
  */
 
-export type SourceStatus = "ok" | "paywalled" | "unreachable" | "blocked";
+import type { z } from "zod";
+import type { SourceStatusEnum } from "../../contracts/grounnel.schemas.js";
+
+// Derived from grounnel.schemas.ts's SourceStatusEnum, not hand-duplicated — one definition, no drift risk.
+export type SourceStatus = z.infer<typeof SourceStatusEnum>;
 
 export interface SearchPassage {
   url: string;
