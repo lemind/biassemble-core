@@ -92,7 +92,7 @@ export async function runGrounnelEvalCase(
       await pipelineService.run(id, pendingClaims);
     }
     const status = await grounnelStore.getStatus(id);
-    const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict })) };
+    const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };
 
     const spec: LiveEvalSpec = { id: goldenCase.id, claims: goldenCase.claims, minCorrectRate: minCorrectRateOverride ?? goldenCase.minCorrectRate };
     const result = evaluateGrounnelRun([run], spec);
