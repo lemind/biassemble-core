@@ -26,6 +26,9 @@ const envSchema = z.object({
   // and concurrency headroom.
   RAG_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   RAG_HF_TOKEN: z.string().optional(),
+  // Grounnel's SearchProvider fallback (D021) — optional since Grounnel isn't wired into
+  // server.ts yet (T012); required only once that wiring exists.
+  TAVILY_API_KEY: z.string().min(1).optional(),
 });
 
 function loadEnv() {
