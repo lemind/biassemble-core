@@ -110,6 +110,7 @@ No `mode`-style branching needed here (D018 §1's invariant doesn't apply — th
 - **Unit** (`tests/unit/orchestrators/grounnel/`): gate #1–#4 and the opinion/passage filters as pure functions — no network, no Redis, no Gemini. This is where most of the actual logic coverage lives, since D019 §2's whole premise is that these gates are deterministic code.
 - **Integration** (`tests/integration/`): real Fastify instance, `MockProvider` standing in for Gemini (existing pattern), an in-memory fake for `SearchProvider` and `GrounnelStore` — assert the full `POST /extract` → `GET /status/:id` contract shape, including `not_checked` on a forced batch failure and `caps_hit` on an exceeded cap.
 - **Not covered by automated tests at P0:** real Tavily calls, real Redis — those are the one manual/live check before shipping (mirrors D019 §3's benchmark methodology: a small hand-run set, not a golden set, promoted to one once the harness exists per v10 §9).
+- **Post-P0 addition (D022 §1):** the "promoted to one once the harness exists" line above has happened — `evaluations/golden/grounnel/live-eval-golden-set.json` (11 real cases) + `src/evaluation/run-grounnel-eval.ts` run real, non-mocked Gemini/Tavily calls via a local CLI (`pnpm eval:grounnel`) or an Inngest job (`pnpm eval:grounnel:trigger`). Deliberately not wired into `.github/workflows/test.yml` (real API cost/latency) — stays a manually/Inngest-triggered gate, run before shipping prompt or gate changes to this surface (D022 §4's validation criterion).
 
 ## Boundaries
 
@@ -132,6 +133,10 @@ No `mode`-style branching needed here (D018 §1's invariant doesn't apply — th
 ## Not in P0
 
 - **User-attached documents as an additional claim source.** P0 only finds sources via web search/fetch (`ClaimSourceSchema`'s `kind: "web"` variant). `ClaimSourceSchema` is already a discriminated union with a `kind: "attached"` variant (`{ kind, title, documentId }`, no url/domain/status — a caller-supplied document isn't independently fetched, so D019 §2's web-source fields don't apply to it) so this doesn't force a breaking wire-shape change later, but no ingestion, upload, storage, or pipeline handling exists yet. Not decided: how a document reaches `POST /extract` (inline with `text`? a separate upload step?), whether/how D019 §2's trust boundary applies to a source the caller vouches for rather than one independently fetched, or how "attached" sources interact with Success Criteria's "real source URLs" framing (attached sources have none).
+
+## Post-P0
+
+Real, non-mocked golden-set runs (D022) found and fixed three production bugs not caught by mocked unit/integration tests: a bare-array Gemini response silently nulling valid EXTRACT/VERIFY data (`repair.ts`, shared infra), a threshold-claim gap in gate #2 ("surpassed $X" only checked equality, not direction), and a verdict/reason binding mismatch (new `applyReasonConsistencyGate`, reusing audit's proven contradiction-language regex). A VERIFY prompt rewrite (v2.0.0) was also shipped and measured against the golden set — confirmed to fix the binding-mismatch class but **not** a bare "X, not Y" negation case (`g05`) even with a matching worked example in the prompt, an explicitly recorded negative result (D022 §3) so it isn't re-attempted blind. A code-side gate for that remaining gap is planned (D022 §4, tasks.md T021) with a named, deliberate recall/precision tradeoff; a second known gap (multi-date role misclassification, `g04`) is investigate-first, not build-first (D022 §4, tasks.md T022).
 
 ## Open Questions
 

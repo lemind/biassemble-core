@@ -236,3 +236,48 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
   Full suite: 798 passed, 1 todo, 71 files (was 782/68 before this task).
 
 **Checkpoint — before calling P0 done**: every Success Criterion in `spec.md` checked off explicitly, not inferred from "tests pass" — `caps_hit`, `not_checked` denominator handling, and the rate-limit 429 in particular are easy to have green tests for while still being wrong in a way tests didn't cover (plan.md §5's closing note). Explicitly re-verify the two criteria with no dedicated test in this list: **"No Postgres dependency anywhere in this surface"** (T007's acceptance checks it locally at introduction time; re-confirm with one `grep -r "postgres\|drizzle" src/orchestrators/grounnel src/persistence/grounnel-store.ts` across the whole surface before sign-off, not just T007's own files) and **"No session/user schema added to `biassemble/backend`"** (T013's acceptance, `biassemble/backend`'s own schema file unchanged).
+
+---
+
+## Phase 8: Post-P0 hardening — real-call golden-set gate (D022)
+
+**Purpose**: P0's tests (Phase 2–7) are unit/integration tests against fixed inputs and mocked providers — they prove the code is internally consistent, not that it's correct against real Gemini/Tavily responses. This phase built the missing real-call check (D022 §1) and covers what it found. Not foreseeable at plan time (plan.md §6) — a direct consequence of running the already-shipped P0 pipeline for real.
+
+- [x] **T017** `.github/workflows/test.yml` — CI gate running `pnpm typecheck` + `pnpm test:run` on every PR/push to main
+  - **Acceptance:** zero real-secret dependency (verified against `vitest.config.ts`'s fake-injection setup).
+  - **Files:** `.github/workflows/test.yml`.
+  - **Size:** XS.
+
+- [x] **T018** Real-call golden-set eval harness (D022 §1) — `evaluations/golden/grounnel/live-eval-golden-set.json` (11 cases), `src/evaluation/grounnel-live-gate.ts` (pure scoring: `evaluateGrounnelRun`, `ACCEPTABLE` map, `Violation{rule: "no_false_accusation"}`), `src/evaluation/run-grounnel-eval.ts` (shared real-call runner), two entry points: `scripts/eval-grounnel.ts` (`pnpm eval:grounnel`, local CLI) and `src/jobs/eval-grounnel-run.ts` (Inngest job, per-case `step.run` checkpointing, triggered via `scripts/trigger-eval-grounnel.ts` / `pnpm eval:grounnel:trigger`)
+  - **Acceptance:** no mocked provider anywhere in this suite — real Gemini + real Tavily on every case, including `g11-bloomberg-fallback` added specifically to exercise D021's DIY-fetch-then-Tavily-fallback path. `falseAccusations` tracked as its own non-negotiable field, separate from `minCorrectRate`.
+  - **Verify:** `pnpm eval:grounnel` (local) and `pnpm eval:grounnel:trigger` (deployed, real Inngest run) both produce per-case PASS/FAIL + aggregate summary.
+  - **Dependencies:** T012 (needs a stable `/extract`+`/status` pipeline to eval against).
+  - **Files:** `evaluations/golden/grounnel/live-eval-golden-set.json`, `evaluations/golden/grounnel/README.md`, `src/evaluation/grounnel-live-gate.ts`, `src/evaluation/run-grounnel-eval.ts`, `scripts/eval-grounnel.ts`, `scripts/trigger-eval-grounnel.ts`, `src/jobs/eval-grounnel-run.ts`, `src/jobs/inngest-functions.ts` (registration).
+  - **Size:** M — new subsystem, no existing pattern to extend (audit's own `eval-run.ts` provided the dual-path golden-set resolution convention, reused not duplicated).
+
+- [x] **T019** Three real production bugs found via T018 and fixed (D022 §2): bare-array Gemini response silently discarded by `repair.ts`'s null-on-unsalvageable-field behavior; gate #2 missing threshold-comparison support (`AT_LEAST_RE`/`AT_MOST_RE`, direction-based check); new `applyReasonConsistencyGate` for verdict/reason binding mismatches (reuses audit's `CONTRADICTION_LANGUAGE_RE`/`NEGATED_CONTRADICTION_RE`, newly exported)
+  - **Acceptance:** each fix reproduces the exact real failure (from real `vercel logs` output, not a synthetic case) as a regression test before the fix, green after.
+  - **Verify:** `tests/unit/parsers/repair.test.ts`, `tests/unit/orchestrators/grounnel/gates.test.ts`, `tests/unit/orchestrators/grounnel/pipeline-service.test.ts` — all green; full suite has no regressions.
+  - **Dependencies:** T018 (bugs were found by running it).
+  - **Files:** `src/parsers/repair.ts`, `src/orchestrators/grounnel/gates.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, `src/orchestrators/audit/verify-reconcilers.ts` (two consts exported), corresponding test files.
+  - **Size:** M — three independent fixes, bundled here since all three were found and fixed in the same investigation pass rather than as separately-scoped work.
+
+- [x] **T020** VERIFY prompt rewrite to v2.0.0 (D022 §3) — explicit STEP 1→2→3 decision procedure, worked consistency examples, numeric-relationship table, deterministic evidence-quoting
+  - **Acceptance:** validated against T018's real golden set before and after, not assumed correct from the prompt text alone.
+  - **Result, recorded not rounded up:** fixes the `g04` binding-mismatch failure mode (superseded by T019's code-side gate as the actual fix); does **not** fix `g05`'s bare "X, not Y" negation — byte-identical `reason` output before/after despite a matching worked example in the new prompt. Recorded as a negative result specifically so it isn't re-attempted blind (D022 §3).
+  - **Files:** `src/prompts/grounnel/verify/system.json`.
+  - **Size:** S — one file, high-value verification step.
+
+- [ ] **T021** Case A gate — claim entity extractor for bare "X, not Y" negation (D022 §4, `g05`)
+  - **Acceptance:** three conditions (contradiction-shaped `,\s*not\s+Y` in `reason`; `Y` present in `claimText`; a claim entity other than `Y` present in `passageText`) — condition 3 documented in code as a deliberate recall-for-precision tradeoff, not to be weakened. `g05` flips `unsupported` → `contradicted`; every case stable across all real runs so far (`g01, g03, g06, g07, g08, g09, g10`) stays byte-identical; `g02`/`g04`/`g11` excluded from the strict identity check (already-observed real-run-to-run non-determinism, not code-caused); `falseAccusations` stays 0.
+  - **Verify:** unit tests including the retrieval-miss counter-example and the single-entity-claim case that's expected to *not* fire (documents the accepted recall cost directly in the test), plus a real T018 golden-set run before/after.
+  - **Dependencies:** T019 (shares `gates.ts`, runs alongside `applyReasonConsistencyGate` in the same gate chain).
+  - **Files:** `src/orchestrators/grounnel/gates.ts`, `tests/unit/orchestrators/grounnel/gates.test.ts`, `tests/unit/orchestrators/grounnel/pipeline-service.test.ts`.
+  - **Size:** S — one file + tests, same pattern as T003/T004.
+
+- [ ] **T022** Case B investigation — multi-date role misclassification (D022 §4, `g04`), investigate only, no build without checking back in
+  - **Acceptance:** grep the golden set + any captured real fixtures for how many bare-year claims have a passage containing 2+ years in the relevant sentence. One case (just `g04`) → log as a scoped-out known limitation, no gate built. More than one → written up as its own ADR + plan, not bundled into D022.
+  - **Verify:** none (read-only investigation) unless the count triggers a build, in which case it becomes its own task list.
+  - **Dependencies:** None (read-only, can run any time; `reconcileTemporalVerdict` already checked and confirmed out of scope — `QUARTER_RE`-only, doesn't cover bare-year claims).
+  - **Files:** None expected; a new ADR if the count triggers a build.
+  - **Size:** XS — investigation step only.
