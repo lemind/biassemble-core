@@ -1,10 +1,12 @@
 # Grounnel live eval — minimum golden set
 
-10 cases, `live-eval-golden-set.json`, in the same spirit as `evaluations/golden/audit/live-eval-fixtures/`: a real, live run of the actual pipeline (`GrounnelExtractService` + `GrounnelPipelineService`) against real Gemini (EXTRACT, VERIFY, `google_search` discovery) and a real Tavily fallback — no mocks, no recorded/replayed responses for the run itself.
+11 cases, `live-eval-golden-set.json`, in the same spirit as `evaluations/golden/audit/live-eval-fixtures/`: a real, live run of the actual pipeline (`GrounnelExtractService` + `GrounnelPipelineService`) against real Gemini (EXTRACT, VERIFY, `google_search` discovery) and a real Tavily fallback — no mocks, no recorded/replayed responses for the run itself.
 
 ## Labeling discipline
 
-Same rule as `evaluations/golden/audit/README.md`: every case's expected `kind` (`true` / `false` / `silence`) was written before the script ever ran against it, based on independently verifiable public facts (5 true, 4 false, 1 fabricated/obscure for the silence case) — not adjusted afterward to match whatever the model produced.
+Same rule as `evaluations/golden/audit/README.md`: every case's expected `kind` (`true` / `false` / `silence`) was written before the script ever ran against it, based on independently verifiable public facts (6 true, 4 false, 1 fabricated/obscure for the silence case) — not adjusted afterward to match whatever the model produced.
+
+`g11-bloomberg-fallback` is the one case deliberately targeting a different thing than a true/false/silence label: `HybridSearchProvider` only calls Tavily when *every* DIY candidate (Gemini `google_search` discovery + direct fetch) fails for a claim — none of g01–g10 are designed to force that, so the fallback path had zero deliberate coverage. `bloomberg.com` commonly blocks non-browser fetches (403/unreachable), and the fact itself (Apple's market cap) is widely corroborated elsewhere, so Tavily has a real shot at resolving it. **Not guaranteed** — this repo has no per-claim provider-attribution field, so whether it actually fell back to Tavily on a given run has to be confirmed from logs (`"DIY fetch failed for every candidate — falling back"`), not from the eval's JSON output alone.
 
 ## Running it
 
@@ -21,6 +23,9 @@ Requires `GEMINI_API_KEY` and `TAVILY_API_KEY` in `.env` (the trigger form also 
 
 ## Status (2026-08-06)
 
-Built and structurally verified (loads the golden set, makes real Gemini/Tavily calls, catches and classifies errors correctly, scores and reports correctly, exits non-zero on failure) — but **no successful full run has completed yet**: the `.env` key's daily Gemini quota was already exhausted by other real-API work earlier in this session before this script's first run. `live-eval-fixtures/` is currently empty; nothing in it is fabricated to look like a real result.
+Deployed and run for real via the Inngest trigger. First real run crashed 2/10 cases (`GrounnelPipelineService.runBatch()` had no guard against VERIFY's `results` field coming back `null` when `repair.ts` can't salvage it — fixed, see `src/orchestrators/grounnel/pipeline.service.ts`'s `isValid` check). Second real run: 0 crashes, 0 false accusations across every completed case, 2 open, not-yet-diagnosed findings:
 
-**Next step, not yet done:** re-run `pnpm eval:grounnel` once quota resets (or with a different key) to produce real fixtures, confirm the golden set's labels hold up against a real model, and — only after that — add a `tests/unit/evaluation/grounnel-live-gate.test.ts` fixture-replay suite (mirroring `audit-live-gate.test.ts`) so the recorded run becomes a fast, no-network CI regression test. Don't write that suite against fixtures that don't exist yet.
+- `g02-mount-everest` — both claims landed on `verdict: null` (a degraded/failed batch, not a wrong verdict). Cause not yet confirmed — likely a transient Gemini per-minute rate limit mid-VERIFY, since nothing else in the same run failed. `GrounnelClaim` now also captures `status`/`reason` (previously only `verdict`), so the next real run's output will actually say why instead of just showing `null`.
+- `g05-statue-of-liberty` — landed on `unsupported` instead of `contradicted`. This looks like a real pipeline/prompt limitation, not a bug: the claim needs *indirect* contradiction (evidence says "gift from France," claim says "gift from Canada" — mutually exclusive facts about the same entity, not a direct "X is false" statement). Not investigated further yet.
+
+`live-eval-fixtures/` is still empty in git — real runs so far were via the Inngest trigger (`pnpm eval:grounnel:trigger`), which doesn't write files (no persistent filesystem, D019 §4); only the CLI form (`pnpm eval:grounnel`) does. **Next steps, not yet done:** run the CLI form for real to produce committable fixtures; once they exist, add a `tests/unit/evaluation/grounnel-live-gate.test.ts` fixture-replay suite (mirroring `audit-live-gate.test.ts`) as a fast, no-network CI regression test; diagnose g02 and g05 with a fresh real run now that status/reason are captured.
