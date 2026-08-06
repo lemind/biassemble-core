@@ -137,9 +137,10 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
   - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, test file.
   - **Size:** S/M by file count (1 file + test) despite the wide dependency list — wiring, not new logic.
 
-- [ ] **T011 [P]** `rate-limit.ts` — IP-based limiter in front of `/extract`, now defense-in-depth behind `authHook` rather than the primary control (plan.md §2 step 7, D020 §4)
+- [x] **T011 [P]** `rate-limit.ts` — IP-based limiter in front of `/extract`, now defense-in-depth behind `authHook` rather than the primary control (plan.md §2 step 7, D020 §4)
   - **Acceptance:** requests exceeding the configured per-IP limit get a 429; the limit itself is a named constant in one file, not scattered inline (plan.md §3's mitigation) — exact number is an open question (spec.md), not decided by this task.
-  - **Verify:** `pnpm test:run tests/unit/lib/rate-limit.test.ts`.
+  - **Done:** `RateLimiter` class in `rate-limit.ts`, `checkAndConsume(ip)` returns a plain boolean — the actual `429` response is T012's job at the route level (`registerGrounnelRoutes`'s injected `rateLimiter` service, per spec.md's Code Style). `RATE_LIMIT_PER_IP_PER_HOUR = 5` is a named, exported constant (spec.md Assumption 5's existing placeholder value), not decided/tuned here. **Known, named P0 gap:** in-memory per-process counter — on Vercel's serverless model each function instance has its own memory, so this isn't a global cross-instance guarantee. Acceptable because D020 §4 already demoted this to defense-in-depth, not the sole control; move to a Redis-backed counter (Upstash is already a dependency as of T007) if this ever needs to be airtight — not yet a named trigger.
+  - **Verify:** `pnpm test:run tests/unit/lib/rate-limit.test.ts` — 5 tests green, including a fake-timer window-reset case.
   - **Dependencies:** T002.
   - **Files:** `src/lib/rate-limit.ts`, test file.
   - **Size:** S.
