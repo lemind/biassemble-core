@@ -58,6 +58,15 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
     });
     expect(result.verdict).toBe("unsupported");
   });
+
+  it("matches across straight vs smart quote style, not just whitespace/basic punctuation", () => {
+    const result = applyContradictionEvidenceGate({
+      verdict: "contradicted",
+      evidence: "the world's largest museum",
+      passageText: "The Louvre is often called “the world’s largest museum” by visitors.",
+    });
+    expect(result.verdict).toBe("contradicted");
+  });
 });
 
 describe("gate #2 — numeric normalization/comparison in code (T004)", () => {

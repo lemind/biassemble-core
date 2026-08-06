@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { logger } from "../../observability/logger.js";
-import { repairWithFallback } from "../../parsers/repair.js";
-import { isSuspectedInjection, InjectionSuspectedError } from "../audit/injection-guard.js";
+import { callLlmForJson } from "../llm-json-call.js";
 import { isOpinionClaim } from "./opinion-filter.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
@@ -39,64 +37,47 @@ export class GrounnelExtractService {
 
   async run(text: string): Promise<GrounnelExtractResult> {
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
-    const user = "Return the JSON now.";
 
-    let parsed: z.infer<typeof ExtractResponseSchema> | null = null;
-    let lastError: Error | null = null;
-    for (let attempt = 1; attempt <= EXTRACT_ATTEMPTS; attempt++) {
-      let raw: unknown;
-      try {
-        ({ result: raw } = await this.provider.completeJson<unknown>({ system, user, options: { temperature: 0 } }));
-      } catch (err) {
-        lastError = err as Error;
-        logger.warn({ module: MODULE, operation: "run", attempt, err }, "EXTRACT provider call failed — retrying");
-        continue;
-      }
+    const parsed = await callLlmForJson({
+      provider: this.provider,
+      system,
+      user: "Return the JSON now.",
+      schema: ExtractResponseSchema,
+      expectedKeys: ["claims", "truncated"],
+      attempts: EXTRACT_ATTEMPTS,
+      module: MODULE,
+      operation: "run",
+      isValid: (result) => !!result.claims,
+    });
 
-      if (isSuspectedInjection(JSON.stringify(raw), ["claims", "truncated"])) {
-        logger.error({ module: MODULE, operation: "run", raw }, "EXTRACT response flagged as injection-suspected — hard stop, not repaired");
-        throw new InjectionSuspectedError("grounnel-extract");
-      }
-
-      try {
-        const { result } = await repairWithFallback(JSON.stringify(raw), ExtractResponseSchema, null, { salvageArrays: true });
-        if (!result.claims) {
-          throw new Error("EXTRACT response failed schema validation: claims could not be parsed (see repair warnings)");
-        }
-        parsed = result;
-        break;
-      } catch (err) {
-        lastError = err as Error;
-        logger.warn({ module: MODULE, operation: "run", attempt, err }, "EXTRACT response unparseable — retrying");
-      }
-    }
-    if (!parsed) {
-      throw lastError ?? new Error("EXTRACT failed after retries with no captured error");
-    }
-
-    // Belt-and-suspenders cap enforcement, same rationale as audit's extract.service.ts —
-    // a cap only the model enforces isn't really a cap.
+    // Belt-and-suspenders cap enforcement, same rationale as audit's extract.service.ts — a cap
+    // only the model enforces isn't really a cap. Computed before slicing so it reflects an
+    // actual cut, not re-derived later from a count that could legitimately equal the cap.
     let claimTexts = parsed.claims.map((c) => c.claim);
+    const truncated = parsed.truncated || claimTexts.length > MAX_CLAIMS;
     if (claimTexts.length > MAX_CLAIMS) {
       claimTexts = claimTexts.slice(0, MAX_CLAIMS);
     }
 
     const claims = claimTexts.map((claimText) => ({ id: randomUUID(), text: claimText }));
-    const { id } = await this.grounnelStore.createAudit({ text, maxClaims: MAX_CLAIMS, claims });
+    const { id } = await this.grounnelStore.createAudit({ text, maxClaims: MAX_CLAIMS, claims, truncated });
 
     // Gate #3 — resolved immediately, no SearchProvider call ever made for these (D019 §2, T005).
-    for (const claim of claims) {
-      if (isOpinionClaim(claim.text)) {
-        await this.grounnelStore.writeClaimResult(id, claim.id, {
-          status: "done",
-          verdict: "unverifiable",
-          evidence: null,
-          confidence: null,
-          reason: "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).",
-          sources: [],
-        });
-      }
-    }
+    // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
+    await Promise.all(
+      claims
+        .filter((claim) => isOpinionClaim(claim.text))
+        .map((claim) =>
+          this.grounnelStore.writeClaimResult(id, claim.id, {
+            status: "done",
+            verdict: "unverifiable",
+            evidence: null,
+            confidence: null,
+            reason: "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).",
+            sources: [],
+          })
+        )
+    );
 
     return { id };
   }

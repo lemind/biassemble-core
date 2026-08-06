@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { GrounnelExtractService } from "../../../../src/orchestrators/grounnel/extract.service.js";
 import { RedisGrounnelStore } from "../../../../src/persistence/grounnel-store.js";
 import { PromptRegistry } from "../../../../src/prompts/registry.js";
+import { RateLimitError } from "../../../../src/providers/gemini.js";
 import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../../../mocks/fake-redis-hash-client.js";
+import type { Provider } from "../../../../src/providers/types.js";
 
 function makeService(provider: MockProvider) {
   const store = new RedisGrounnelStore(new FakeRedisHashClient());
@@ -68,6 +70,22 @@ describe("GrounnelExtractService (T009)", () => {
     expect(searchCalls).toEqual(["The Eiffel Tower was completed in 1889."]);
   });
 
+  it("fails fast on RateLimitError instead of burning all retries against a guaranteed-to-repeat failure", async () => {
+    let calls = 0;
+    const rateLimitedProvider: Provider = {
+      mode: "mock",
+      completeJson: async () => {
+        calls++;
+        throw new RateLimitError("quota exceeded", "daily");
+      },
+    };
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const service = new GrounnelExtractService(rateLimitedProvider, new PromptRegistry(), store);
+
+    await expect(service.run("text")).rejects.toThrow(RateLimitError);
+    expect(calls).toBe(1);
+  });
+
   it("retries on a provider failure and succeeds on a later attempt", async () => {
     provider.failOn(1, "transient provider error");
     provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
@@ -94,6 +112,26 @@ describe("GrounnelExtractService (T009)", () => {
     const { id } = await service.run("text");
     const status = await store.getStatus(id);
     expect(status!.claims).toHaveLength(100);
+    expect(status!.caps_hit).toBe(true);
+  });
+
+  it("does NOT set caps_hit when EXTRACT returns exactly MAX_CLAIMS with no real truncation", async () => {
+    const claims = Array.from({ length: 100 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.` }));
+    provider.setDefault({ claims, truncated: false });
+    const { service, store } = makeService(provider);
+
+    const { id } = await service.run("text");
+    const status = await store.getStatus(id);
+    expect(status!.claims).toHaveLength(100);
+    expect(status!.caps_hit).toBe(false);
+  });
+
+  it("sets caps_hit when the LLM itself reports truncation, even under MAX_CLAIMS", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: true });
+    const { service, store } = makeService(provider);
+
+    const { id } = await service.run("text");
+    const status = await store.getStatus(id);
     expect(status!.caps_hit).toBe(true);
   });
 

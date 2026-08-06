@@ -31,4 +31,9 @@ export class FakeRedisHashClient implements RedisHashClient {
   async expire(): Promise<number> {
     return 1;
   }
+
+  async hsetWithExpire(key: string, fields: Record<string, string>, seconds: number): Promise<void> {
+    await this.hset(key, fields);
+    await this.expire(key, seconds);
+  }
 }

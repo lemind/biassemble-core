@@ -16,6 +16,7 @@ describe("RedisGrounnelStore (T007)", () => {
         { id: "11111111-1111-4111-8111-111111111111", text: "Claim A" },
         { id: "22222222-2222-4222-8222-222222222222", text: "Claim B" },
       ],
+      truncated: false,
     });
 
     const status = await store.getStatus(id);
@@ -39,6 +40,7 @@ describe("RedisGrounnelStore (T007)", () => {
       text: "article",
       maxClaims: 100,
       claims: [{ id: claimId, text: "Bukowski attended Los Angeles City College." }],
+      truncated: false,
     });
 
     await store.writeClaimResult(id, claimId, {
@@ -60,7 +62,7 @@ describe("RedisGrounnelStore (T007)", () => {
 
   it("throws when writing a result for a claim that was never created on this audit", async () => {
     const store = makeStore();
-    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [] });
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [], truncated: false });
     await expect(
       store.writeClaimResult(id, "nonexistent-claim-id", {
         status: "done",
@@ -84,6 +86,7 @@ describe("RedisGrounnelStore (T007)", () => {
         { id: claimA, text: "Claim A" },
         { id: claimB, text: "Claim B" },
       ],
+      truncated: false,
     });
 
     await Promise.all([
@@ -125,6 +128,7 @@ describe("RedisGrounnelStore (T007)", () => {
         { id: claimA, text: "Claim A" },
         { id: claimB, text: "Claim B" },
       ],
+      truncated: false,
     });
 
     let status = await store.getStatus(id);
@@ -159,14 +163,27 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status!.score.grounded_pct).toBe(50);
   });
 
-  it("sets caps_hit when the extracted claim count reached maxClaims", async () => {
+  it("sets caps_hit when the caller reports truncation", async () => {
     const store = makeStore();
     const { id } = await store.createAudit({
       text: "article",
       maxClaims: 1,
       claims: [{ id: "11111111-1111-4111-8111-111111111111", text: "Only claim" }],
+      truncated: true,
     });
     const status = await store.getStatus(id);
     expect(status!.caps_hit).toBe(true);
+  });
+
+  it("does NOT set caps_hit when the claim count merely equals maxClaims but nothing was truncated", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({
+      text: "article",
+      maxClaims: 1,
+      claims: [{ id: "11111111-1111-4111-8111-111111111111", text: "Only claim" }],
+      truncated: false,
+    });
+    const status = await store.getStatus(id);
+    expect(status!.caps_hit).toBe(false);
   });
 });

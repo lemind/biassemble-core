@@ -5,9 +5,13 @@ import type { z } from "zod";
 
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
 
+// Also strips smart quotes/dashes (’‘“”–—) — LLM JSON output commonly straightens these even
+// when quoting "verbatim" from web prose that renders them typographically.
+const PUNCTUATION_RE = /[.,!?;:"'()‘’“”–—]/g;
+
 /** Exact substring after whitespace/punctuation normalization only — never fuzzy/semantic (D019 §2). */
 function normalizeForSubstringCheck(text: string): string {
-  return text.toLowerCase().replace(/[.,!?;:"'()]/g, "").replace(/\s+/g, " ").trim();
+  return text.toLowerCase().replace(PUNCTUATION_RE, "").replace(/\s+/g, " ").trim();
 }
 
 export interface GateOneInput {

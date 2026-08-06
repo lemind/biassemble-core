@@ -7,13 +7,7 @@ interface Bucket {
   resetAt: number;
 }
 
-/**
- * IP-based limiter for /extract, defense-in-depth behind authHook now (D020 §4), not the
- * primary control. In-memory, per-process — a known P0 gap on Vercel's serverless model
- * (each function instance has its own memory, so this isn't a global cross-instance
- * guarantee), acceptable because it's no longer the sole control. Move to a Redis-backed
- * counter if this ever needs to be airtight — not yet a named trigger.
- */
+// In-memory, per-process — not a cross-instance guarantee on Vercel serverless. Known P0 gap, D020 §4.
 export class RateLimiter {
   private buckets = new Map<string, Bucket>();
 

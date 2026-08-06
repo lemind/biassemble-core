@@ -5,6 +5,11 @@
  * rather than papering over it with a hedged rule.
  */
 
+// Common sentence-starters that are only capitalized because of position, not identity — the
+// only case the old "i > 0" guard needs, since excluding every first word also dropped real
+// subjects ("Shakespeare wrote sonnets." -> zero terms, gate #4 silently disabled).
+const COMMON_FIRST_WORDS = new Set(["the", "a", "an", "this", "that", "these", "those", "it", "he", "she", "they", "there", "here"]);
+
 function extractKeyTerms(claimText: string): string[] {
   const words = claimText.split(/\s+/);
   const terms: string[] = [];
@@ -15,7 +20,7 @@ function extractKeyTerms(claimText: string): string[] {
     if (!clean) return;
     if (/\d/.test(clean)) {
       terms.push(clean.toLowerCase());
-    } else if (i > 0 && /^[A-Z]/.test(clean)) {
+    } else if (/^[A-Z]/.test(clean) && (i > 0 || !COMMON_FIRST_WORDS.has(clean.toLowerCase()))) {
       terms.push(clean.toLowerCase());
     }
   });

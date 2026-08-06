@@ -10,6 +10,7 @@ export interface GrounnelStore {
     text: string;
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text">>;
+    truncated: boolean;
   }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
@@ -21,16 +22,22 @@ export interface RedisHashClient {
   hget(key: string, field: string): Promise<string | null>;
   hgetall(key: string): Promise<Record<string, string> | null>;
   expire(key: string, seconds: number): Promise<number>;
+  // hset + expire combined into one round-trip (e.g. via @upstash/redis's multi()/pipeline()) —
+  // two separate calls left a crash-between-them window where the hash gets no TTL and leaks.
+  hsetWithExpire(key: string, fields: Record<string, string>, seconds: number): Promise<void>;
 }
 
 // Immutable, creation-time-only facts. Deliberately does NOT store `status` or `progress` —
 // both are derived from the claims currently in the hash every read (getStatus), so there is
 // no second place for them to drift out of sync with the claims that are the actual source of
 // truth. Deviates from D019 §4's illustrative `HSET ... meta '{"status":"verifying",...}'`
-// example, which shows status as stored/mutable — this store recomputes it instead.
+// example, which shows status as stored/mutable — this store recomputes it instead. `truncated`
+// is the caller's own real signal (EXTRACT's self-reported flag OR-ed with the cap actually
+// being applied), not re-derived from `total`/`maxClaims` — a `total >= maxClaims` comparison
+// false-positives when EXTRACT legitimately returns exactly the cap with nothing cut.
 interface Meta {
-  maxClaims: number;
   total: number;
+  truncated: boolean;
 }
 
 const META_FIELD = "meta";
@@ -51,10 +58,11 @@ export class RedisGrounnelStore implements GrounnelStore {
     text: string;
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text">>;
+    truncated: boolean;
   }): Promise<{ id: string }> {
     const id = randomUUID();
     const key = `audit:${id}`;
-    const meta: Meta = { maxClaims: data.maxClaims, total: data.claims.length };
+    const meta: Meta = { total: data.claims.length, truncated: data.truncated };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };
     for (const claim of data.claims) {
       const full: Claim = {
@@ -69,8 +77,7 @@ export class RedisGrounnelStore implements GrounnelStore {
       };
       fields[claimField(claim.id)] = JSON.stringify(full);
     }
-    await this.redis.hset(key, fields);
-    await this.redis.expire(key, AUDIT_TTL_SECONDS);
+    await this.redis.hsetWithExpire(key, fields, AUDIT_TTL_SECONDS);
     return { id };
   }
 
@@ -120,7 +127,7 @@ export class RedisGrounnelStore implements GrounnelStore {
       progress: { checked, total },
       claims,
       score: { grounded_pct, grounded_n, unclear_n, no_evidence_n, contradicted_n, not_checked_n, eligible },
-      caps_hit: total >= meta.maxClaims,
+      caps_hit: meta.truncated,
     };
   }
 }
