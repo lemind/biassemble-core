@@ -1,5 +1,6 @@
 import { compare } from "../../numbers/compare.js";
 import { extractNumericFact, CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
+import { extractKeyTerms } from "./passage-filter.js";
 import type { GrounnelVerdictEnum } from "../../contracts/grounnel.schemas.js";
 import type { z } from "zod";
 
@@ -33,6 +34,60 @@ export function applyReasonConsistencyGate(input: ReasonConsistencyInput): Reaso
   if (!CONTRADICTION_LANGUAGE_RE.test(input.reason) || NEGATED_CONTRADICTION_RE.test(input.reason)) {
     return { verdict: input.verdict, overridden: false };
   }
+  return { verdict: "contradicted", overridden: true };
+}
+
+export interface ImplicitNegationInput {
+  verdict: Verdict;
+  reason: string | null;
+  claimText: string;
+  passageText: string;
+}
+
+export interface ImplicitNegationResult {
+  verdict: Verdict;
+  overridden: boolean;
+}
+
+// Matches a bare "X, not Y" correction with no contradiction verb — the shape
+// applyReasonConsistencyGate deliberately doesn't catch (D022 §2, real gap: g05). Y's words must
+// be capitalized (entity-shaped) so the match stops at the entity instead of swallowing trailing
+// lowercase words ("not Canada to the United States" would otherwise capture "Canada to the").
+const IMPLICIT_NEGATION_RE = /,\s*not\s+(?:the\s+)?([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})/;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Case A gate (D022 §4) — bare "X, not Y" negation applyReasonConsistencyGate misses. Condition
+ * 3 trades recall for precision by deliberate design — see D022 §4 before weakening it.
+ */
+export function applyImplicitNegationGate(input: ImplicitNegationInput): ImplicitNegationResult {
+  // Only "unsupported" is in scope: "contradicted" is already there, "unverifiable" is a
+  // confidence downgrade this gate shouldn't override, "supported" would mean firing on a
+  // narrative correction the model already resolved correctly (D022 §4 review finding).
+  if (input.verdict !== "unsupported" || !input.reason) {
+    return { verdict: input.verdict, overridden: false };
+  }
+
+  const match = IMPLICIT_NEGATION_RE.exec(input.reason);
+  if (!match) return { verdict: input.verdict, overridden: false };
+
+  const y = match[1]!.trim().toLowerCase().replace(/\s+/g, " ");
+  const yInClaim = new RegExp(`\\b${escapeRegExp(y)}\\b`, "i").test(input.claimText);
+  if (!yInClaim) return { verdict: input.verdict, overridden: false };
+
+  // Y's own words are excluded individually, not as one string — a multi-word Y ("United
+  // Kingdom") must not let its own constituent words ("united", "states") count as the second,
+  // independent entity condition 3 requires (D022 §4 review finding).
+  const yWords = new Set(y.split(/\s+/));
+  const passageLower = input.passageText.toLowerCase();
+  const hasSecondEntity = extractKeyTerms(input.claimText)
+    .filter((term) => !yWords.has(term))
+    .some((term) => passageLower.includes(term));
+  if (!hasSecondEntity) return { verdict: input.verdict, overridden: false };
+
   return { verdict: "contradicted", overridden: true };
 }
 

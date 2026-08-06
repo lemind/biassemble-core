@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { applyContradictionEvidenceGate, applyNumericGate, applyReasonConsistencyGate } from "../../../../src/orchestrators/grounnel/gates.js";
+import {
+  applyContradictionEvidenceGate,
+  applyImplicitNegationGate,
+  applyNumericGate,
+  applyReasonConsistencyGate,
+} from "../../../../src/orchestrators/grounnel/gates.js";
 
 describe("gate #1 — contradiction evidence gate (T003)", () => {
   it("passes through non-contradicted verdicts unchanged", () => {
@@ -224,5 +229,127 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
       reason: "The passage directly confirms the claim's figures.",
     });
     expect(result).toEqual({ verdict: "supported", overridden: false });
+  });
+});
+
+describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real live-eval gap: g05)", () => {
+  it("forces contradicted for the real g05 case: 'gift from France, not Canada', a second entity (United States) shared with the passage", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: "The passage states the statue was a gift from France, not Canada.",
+      claimText: "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.",
+      passageText: "The Statue of Liberty was a gift from France to the United States, dedicated in 1886 to celebrate the friendship between the two nations.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+  });
+
+  it("abstains (retrieval-miss counter-example) when the passage shares no entity with the claim beyond Y", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: "The passage states the gift was from France, not Canada.",
+      claimText: "The Statue of Liberty was a gift from Canada.",
+      passageText: "France has given many diplomatic gifts to other nations over the centuries.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
+
+  it("abstains on a common-noun-only Y (no proper-noun claim entity to match against)", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: "The passage says the material is steel, not concrete.",
+      claimText: "The bridge is made of concrete.",
+      passageText: "The bridge is made of steel, a common material for suspension bridges.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
+
+  it("abstains on a single-entity claim ('the winner was Bob, not Alice') — accepted recall cost, condition 3 by design (D022 §4)", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: "The passage says the winner was Bob, not Alice.",
+      claimText: "The winner of the race was Alice.",
+      passageText: "The winner of the race was Bob, who finished in record time.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
+
+  it("leaves a verdict already at contradicted unchanged", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "contradicted",
+      reason: "The passage says France, not Canada.",
+      claimText: "The gift was from Canada to the United States.",
+      passageText: "The gift was from France to the United States.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false });
+  });
+
+  it("does nothing when there's no reason", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: null,
+      claimText: "The gift was from Canada.",
+      passageText: "The gift was from France.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
+
+  it("does not fire when the reason has no 'X, not Y' shape at all", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "supported",
+      reason: "The passage directly confirms the claim.",
+      claimText: "The gift was from France to the United States.",
+      passageText: "The gift was from France to the United States.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false });
+  });
+
+  it("does not fire when Y isn't actually present in the claim text (a different correction, not this claim's negation)", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: "The passage discusses trade policy, not tariffs.",
+      claimText: "The Statue of Liberty was a gift from Canada to the United States.",
+      passageText: "The Statue of Liberty was a gift from France to the United States.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
+
+  it("does not swallow trailing words after Y into the match (regex fix — 'not Canada to the United States' must capture only 'Canada')", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: "The passage states it was a gift from France, not Canada to the United States.",
+      claimText: "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.",
+      passageText: "The Statue of Liberty was a gift from France to the United States, dedicated in 1886.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+  });
+
+  it("abstains on a single-entity claim even when Y is multi-word (fix — a multi-word Y's own words no longer count as the second entity)", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason: "Museum records show the painting was donated by an anonymous donor, not the United Kingdom.",
+      claimText: "The painting was donated by the United Kingdom.",
+      passageText: "Some visitors assume the painting was donated by the United Kingdom, but museum records list the donor as anonymous.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
+
+  it("does not fire on a correct 'supported' verdict, even when the reason has a narrative 'X, not Y' correction shape", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "supported",
+      reason: "The article confirms the current mascot is Wildcat, not Tiger as it was previously known, matching the claim.",
+      claimText: "The team's mascot, previously called Tiger, is now called Wildcat.",
+      passageText: "The team's mascot was renamed from Tiger to Wildcat last season.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false });
+  });
+
+  it("does not fire on 'unverifiable' — a confidence downgrade this gate must not override", () => {
+    const result = applyImplicitNegationGate({
+      verdict: "unverifiable",
+      reason: "The passage states the gift was from France, not Canada.",
+      claimText: "The Statue of Liberty was a gift from Canada to the United States.",
+      passageText: "The Statue of Liberty was a gift from France to the United States, dedicated in 1886.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false });
   });
 });

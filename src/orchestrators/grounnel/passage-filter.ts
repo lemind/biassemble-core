@@ -10,7 +10,8 @@
 // subjects ("Shakespeare wrote sonnets." -> zero terms, gate #4 silently disabled).
 const COMMON_FIRST_WORDS = new Set(["the", "a", "an", "this", "that", "these", "those", "it", "he", "she", "they", "there", "here"]);
 
-function extractKeyTerms(claimText: string): string[] {
+/** Exported for reuse by gates.ts's Case A gate (D022 §4) — same "meaningful claim term" definition, not a second implementation. */
+export function extractKeyTerms(claimText: string): string[] {
   const words = claimText.split(/\s+/);
   const terms: string[] = [];
   words.forEach((word, i) => {

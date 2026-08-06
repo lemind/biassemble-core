@@ -159,6 +159,38 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.verdict).toBe("contradicted"); // gate #1 still validates the evidence is a real substring
   });
 
+  it("Case A gate forces contradicted on a bare 'X, not Y' negation applyReasonConsistencyGate misses (real live-eval finding, g05)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText =
+      "The Statue of Liberty was a gift from France to the United States, dedicated in 1886 to celebrate the friendship between the two nations. ".repeat(
+        3
+      );
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "unsupported",
+          evidence: "a gift from France to the United States",
+          reason: "The passage states the statue was a gift from France, not Canada.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted");
+  });
+
   it("gate #2 overrides the verdict when the numbers genuinely disagree beyond tolerance", async () => {
     const claimId = uuid(1);
     const claimText = "UC Riverside received a $1.2 million grant.";

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
-import { applyContradictionEvidenceGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
+import { applyContradictionEvidenceGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource } from "../../contracts/grounnel.schemas.js";
 import type { Provider } from "../../providers/types.js";
@@ -233,6 +233,15 @@ export class GrounnelPipelineService {
         // (2026-08-06 live-eval findings: g04/g05). Runs before gate #1 so a flip to `contradicted`
         // still has to clear gate #1's real evidence-substring check, not bypass it.
         verdict = applyReasonConsistencyGate({ verdict, reason: result.reason }).verdict;
+
+        // Case A gate (D022 §4) — bare "X, not Y" negation, the gap applyReasonConsistencyGate
+        // names but doesn't catch (g05). Also runs before gate #1 — a flip still needs real evidence.
+        verdict = applyImplicitNegationGate({
+          verdict,
+          reason: result.reason,
+          claimText: item.claim.text,
+          passageText: item.passage.text!,
+        }).verdict;
 
         // Gate #1 — never reaches the store without passing this (D019 §2, T003, tasks.md acceptance).
         const gate1 = applyContradictionEvidenceGate({ verdict, evidence: result.evidence, passageText: item.passage.text! });
