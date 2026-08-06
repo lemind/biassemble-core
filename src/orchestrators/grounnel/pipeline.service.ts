@@ -202,6 +202,9 @@ export class GrounnelPipelineService {
         attempts: VERIFY_ATTEMPTS,
         module: MODULE,
         operation: "runBatch",
+        // repair.ts nulls out a field it can't salvage rather than throwing (D018 §5.15) — without
+        // this, a null `results` sails past callLlmForJson and crashes .map() below, uncaught.
+        isValid: (result) => Array.isArray(result.results),
       });
     } catch (err) {
       if (err instanceof RateLimitError) {

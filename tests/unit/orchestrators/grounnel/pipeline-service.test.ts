@@ -188,6 +188,27 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(status!.score.not_checked_n).toBe(1);
   });
 
+  it("degrades a batch to not_checked instead of crashing when VERIFY's response is missing the results field entirely", async () => {
+    // repair.ts's partialParseObject nulls out a field it can't validate (D018 §5.15) rather than
+    // throwing — a real run hit this for VERIFY's `results` field and crashed .map() on null,
+    // uncaught, instead of degrading cleanly like every other VERIFY failure path.
+    const claimId = uuid(1);
+    const claimText = "A claim whose VERIFY response omits results.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: (claimText + " ").repeat(20) })]]]));
+    provider.setDefault({}); // valid JSON, but no `results` key — repair.ts nulls the field, doesn't throw
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.status).toBe("failed");
+    expect(claim.verdict).toBeNull();
+    expect(status!.score.not_checked_n).toBe(1);
+  });
+
   it("degrades only the claims VERIFY's response omitted, not the whole batch", async () => {
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const claims = [
