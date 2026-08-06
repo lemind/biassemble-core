@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { Redis } from "@upstash/redis";
 import { fastifyPlugin as inngestFastify } from "inngest/fastify";
 import { env } from "./lib/env";
 import { requestIdHook } from "./lib/request-id";
@@ -10,6 +11,7 @@ import { QuestionService } from "./orchestrators/reflection/question.service";
 import { AssessmentService } from "./orchestrators/reflection/assessment.service";
 import { registerReflectionRoutes } from "./routes/reflection";
 import { registerAuditRoutes, type AuditEnqueuer } from "./routes/audit";
+import { registerGrounnelRoutes } from "./routes/grounnel";
 import { inngest } from "./jobs/client";
 import { buildInngestFunctions } from "./jobs/inngest-functions";
 import { createRagRetrieveJob } from "./jobs/rag-retrieve";
@@ -19,6 +21,12 @@ import { DrizzleTraceStore } from "./persistence/trace-store";
 import { DrizzleRetrievalComparisonStore } from "./persistence/retrieval-comparison-store";
 import { DrizzleAuditStore } from "./persistence/audit-store";
 import { RagEngineClient } from "./rag/engine-client";
+import { UpstashRedisHashClient, RedisGrounnelStore } from "./persistence/grounnel-store";
+import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service";
+import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
+import { HybridSearchProvider } from "./providers/search/hybrid-provider";
+import { TavilySearchProvider } from "./providers/search/tavily-provider";
+import { RateLimiter } from "./lib/rate-limit";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -28,6 +36,9 @@ import { RagEngineClient } from "./rag/engine-client";
 export function buildApp() {
   const server = Fastify({
     logger: false, // we use our own pino logger
+    // request.ip otherwise resolves to Vercel's own proxy, not the real client — the one thing
+    // T011's per-IP RateLimiter actually needs to work (tasks.md T012).
+    trustProxy: true,
   });
 
   // ─── Dependency Injection ──────────────────────────────────
@@ -59,6 +70,38 @@ export function buildApp() {
     },
   };
 
+  // specs/009-grounnel — no Postgres, no Inngest for this surface (D019 §4, D020 §3's explicit
+  // "do not"). Same conditional-wiring pattern as ragClient above: only stood up once all
+  // secrets exist, so local/CI environments without them keep booting with Grounnel simply absent
+  // rather than crashing on a missing key (tasks.md T012).
+  const upstashUrl = env.UPSTASH_REDIS_REST_URL ?? env.KV_REST_API_URL;
+  const upstashToken = env.UPSTASH_REDIS_REST_TOKEN ?? env.KV_REST_API_TOKEN;
+  let grounnel:
+    | {
+        extractService: GrounnelExtractService;
+        pipelineService: GrounnelPipelineService;
+        grounnelStore: RedisGrounnelStore;
+        rateLimiter: RateLimiter;
+      }
+    | undefined;
+  if (env.TAVILY_API_KEY && upstashUrl && upstashToken) {
+    const redis = new Redis({ url: upstashUrl, token: upstashToken, automaticDeserialization: false });
+    const grounnelStore = new RedisGrounnelStore(new UpstashRedisHashClient(redis));
+    const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
+    const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider);
+    grounnel = {
+      extractService: new GrounnelExtractService(provider, prompts, grounnelStore),
+      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore),
+      grounnelStore,
+      rateLimiter: new RateLimiter(),
+    };
+  } else {
+    logger.warn(
+      { module: "server", missing: { tavily: !env.TAVILY_API_KEY, redis: !(upstashUrl && upstashToken) } },
+      "Grounnel routes not registered — TAVILY_API_KEY and/or Upstash Redis credentials are missing"
+    );
+  }
+
   // ─── Global hooks ──────────────────────────────────────────
   server.addHook("onRequest", requestIdHook);
 
@@ -85,6 +128,11 @@ export function buildApp() {
     verifyPromptVersion: prompts.getAuditVersion("verify"),
     pipelineCodeVersion: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev",
   });
+
+  // Grounnel routes (specs/009-grounnel, T012)
+  if (grounnel) {
+    registerGrounnelRoutes(server, grounnel);
+  }
 
   // Inngest webhook
   // If VERCEL_BYPASS_TOKEN is set, append it to the serve host so Inngest

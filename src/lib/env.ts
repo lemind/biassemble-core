@@ -26,9 +26,15 @@ const envSchema = z.object({
   // and concurrency headroom.
   RAG_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   RAG_HF_TOKEN: z.string().optional(),
-  // Grounnel's SearchProvider fallback (D021) — optional since Grounnel isn't wired into
-  // server.ts yet (T012); required only once that wiring exists.
+  // Grounnel's SearchProvider fallback (D021) and GrounnelStore's Redis (D019 §4) — both
+  // optional: server.ts only wires the whole surface up when all of them are present (T012).
   TAVILY_API_KEY: z.string().min(1).optional(),
+  // Vercel's own KV_REST_API_* naming is the fallback @upstash/redis's own Redis.fromEnv() uses —
+  // named separately here (not via fromEnv) so server.ts can gate route registration on presence.
+  UPSTASH_REDIS_REST_URL: z.string().min(1).optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
+  KV_REST_API_URL: z.string().min(1).optional(),
+  KV_REST_API_TOKEN: z.string().min(1).optional(),
 });
 
 function loadEnv() {

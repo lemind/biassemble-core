@@ -163,12 +163,30 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
 
 ## Phase 5: Wiring
 
-- [ ] **T012** `routes/grounnel.ts` — `registerGrounnelRoutes`, wiring `POST /extract` (with `authHook` as `preHandler`, D020 §3) and `GET /status/:id` (plan.md §2 step 8)
+- [x] **T012** `routes/grounnel.ts` — `registerGrounnelRoutes`, wiring `POST /extract` (with `authHook` as `preHandler`, D020 §3) and `GET /status/:id` (plan.md §2 step 8)
   - **Acceptance:** an unauthenticated `POST /extract` returns 401; a valid request returns `202 { id }` with the claim list already in Redis (T009's guarantee, surfaced at the route level); `GET /status/:id` returns the full shape every call, no delta logic.
   - **Verify:** `pnpm test:run` on the new integration tests (Phase 6, T014–T016) — this task isn't independently verifiable without them.
   - **Dependencies:** T009, T010, T011.
   - **Files:** `src/routes/grounnel.ts`, `src/server.ts` (route registration).
   - **Size:** S/M.
+
+  **Done.** `GrounnelExtractService.run()` now also returns `pendingClaims` (non-opinion claims) so the route can hand them straight to `GrounnelPipelineService.run()` without a second Redis read. `POST /extract`: rate limiter (defense-in-depth, D020 §4) → parse body → `extractService.run()` → `202 { id }` sent → pipeline runs in the *same* invocation, `await`ed after the response is already flushed (no external queue — D020 §3's explicit "do not" on Inngest for this surface; `vercel.json`'s existing `maxDuration:300` is what keeps the invocation alive long enough). `GET /status/:id`: 400 on a malformed id, 404 when the store has nothing, otherwise the full `StatusResponse` every time, no running/complete split like `/audit`'s.
+
+  A Gemini `RateLimitError` thrown by `extractService.run()` (no audit exists yet — nowhere to write a per-claim reason) now becomes the `/extract` response directly: `503 { error: buildGeminiRateLimitMessage(err), limit_type, resets_at }`, reusing the helper `pipeline.service.ts` exported for exactly this case.
+
+  **DI (`server.ts`):** conditionally wired, same pattern as `ragClient` — only stood up when `TAVILY_API_KEY` and Upstash Redis credentials (`UPSTASH_REDIS_REST_URL`/`TOKEN`, falling back to Vercel's `KV_REST_API_URL`/`TOKEN` naming) are all present; otherwise Grounnel is simply absent from the route table with a boot-time warning, not a crash. All four now validated through `env.ts` like every other secret (an `if`/`let` block, not a ternary+IIFE — avoids a non-null assertion that a first draft needed). `trustProxy: true` added to the Fastify instance — without it `request.ip` resolves to Vercel's own proxy, not the real client, silently defeating T011's per-IP `RateLimiter`.
+
+  New `UpstashRedisHashClient` (`grounnel-store.ts`) adapts `@upstash/redis`'s `Redis` client to `RedisHashClient`, constructed with `automaticDeserialization: false` (this store always hands it pre-`JSON.stringify`'d strings and does its own `JSON.parse` on read).
+
+  **Real bug found and fixed via `/code-review medium` + live verification against the actual provisioned Upstash database** (not just unit tests): `automaticDeserialization: false` doesn't just disable the SDK's default JSON parsing — it replaces *every* command's deserializer with a plain identity function, including `HGETALL`'s own field-flattening one. `redis.hgetall()` was therefore returning Upstash's raw flat `[field1, value1, field2, ...]` REST reply instead of an object — `GET /status/:id` would have 404'd on every real audit in production, a bug no unit test (all backed by `FakeRedisHashClient`) could have caught. Fixed by zipping the flat array into `{field: value}` in `UpstashRedisHashClient.hgetall()` itself; also fixed a related edge case the same fix surfaced — HGETALL on a missing key returns `[]` (truthy) over the wire, not `null`, so the zip needs its own `flat.length === 0` check to honor the `RedisHashClient` interface's `null`-on-missing-key contract. Verified directly against the live `upstash-kv-bistre-tree` database (write, `hget`, `hgetall`, missing-key case) before and after the fix.
+
+  Real end-to-end smoke test (`POST /extract` → `GET /status/:id`) against live Gemini + Tavily + the real Upstash database hit the same sandbox networking wall documented in T008/T010 (Gemini: "User location is not supported" — proven environment-specific there, not a code defect) — but it did confirm the route's own error path end-to-end: 3 retries, then a clean `502 { error: "Extract failed" }`, matching `audit.ts`'s own convention for this failure class.
+
+  **Named, not fixed — an accepted architectural risk, not a gap in this task:** `pipelineService.run()` runs in the same serverless invocation as the `202` response (`await`ed after `reply.send()`), relying on `vercel.json`'s `maxDuration:300` to keep the invocation alive. This is D019/D020's explicit design (no external queue for this surface), not a shortcut taken here — but it hasn't been verified against real Vercel Node runtime behavior (only Fastify's local `.inject()`), so whether the platform actually honors an in-flight response the way this assumes is unconfirmed until a real deploy. Flagged for whoever does the first live deploy, not silently assumed.
+
+  `/code-review medium` run against the T012 diff: 2 finder agents (correctness angles; cleanup/reuse/simplification/efficiency/altitude/conventions angles), all findings verified. Fixed: the `hgetall` bug above (high severity, confirmed via live DB); the ternary+IIFE → `if`/`let` DI refactor (removed a non-null assertion); a >200-char inline comment (CLAUDE.md convention) shortened; the four Upstash env vars moved from raw `process.env` reads into `env.ts`'s validated schema, matching every other secret in the DI block. Not changed: `UUID_RE` duplication between `routes/grounnel.ts` and `routes/audit.ts` (matches this repo's existing precedent, not worth a shared module for two call sites); `trustProxy: true` trusting the full X-Forwarded-For chain (standard, correct behavior for Vercel's single-hop reverse proxy).
+
+  Full suite after fixes: 782 passed, 1 todo, 68 files, no regressions. No new unit tests added for `routes/grounnel.ts` itself — this task's own acceptance criteria defers verification to the Phase 6/7 integration tests (T014–T016), not yet built.
 
 ---
 

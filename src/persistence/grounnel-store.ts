@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Redis } from "@upstash/redis";
 import { ClaimSchema, type Claim, type ClaimResult, type StatusResponse } from "../contracts/grounnel.schemas.js";
 
 // D019 §4 — comfortably covers the P0 one-shot flow and a time-limited shareable-result page
@@ -38,6 +39,53 @@ export interface RedisHashClient {
 interface Meta {
   total: number;
   truncated: boolean;
+}
+
+/**
+ * Adapts @upstash/redis's `Redis` client to `RedisHashClient` (T012 wiring). The caller must
+ * construct `Redis` with `automaticDeserialization: false` — this store always hands it strings
+ * it already `JSON.stringify`'d itself, and the client's default auto-JSON-parse-on-read would
+ * hand `writeClaimResult`/`getStatus` an object instead of the string they call `JSON.parse` on.
+ */
+export class UpstashRedisHashClient implements RedisHashClient {
+  constructor(private readonly redis: Redis) {}
+
+  async hset(key: string, fields: Record<string, string>): Promise<number> {
+    return this.redis.hset(key, fields);
+  }
+
+  async hget(key: string, field: string): Promise<string | null> {
+    return this.redis.hget<string>(key, field);
+  }
+
+  async hgetall(key: string): Promise<Record<string, string> | null> {
+    // automaticDeserialization:false also disables HGETALL's own field-flattening deserializer
+    // (not just JSON parsing) — the SDK then hands back its raw REST reply, a flat
+    // [field1, value1, field2, value2, ...] array, not an object. Zipped here instead of via
+    // redis.hgetall<Record<string,string>>(), which would silently return that array as-is.
+    // Cast: the SDK's own type says Record<string, unknown>, but under automaticDeserialization:false
+    // this command's actual runtime shape is the raw flat array described above, not an object.
+    const flat = (await this.redis.hgetall<Record<string, unknown>>(key)) as unknown as string[] | null;
+    // A missing key comes back as `[]` (truthy), not `null` — HGETALL on a key that doesn't
+    // exist is an empty array over the REST wire, same as real Redis's empty-hash reply.
+    if (!flat || flat.length === 0) return null;
+    const result: Record<string, string> = {};
+    for (let i = 0; i < flat.length; i += 2) {
+      result[flat[i]!] = flat[i + 1]!;
+    }
+    return result;
+  }
+
+  async expire(key: string, seconds: number): Promise<number> {
+    return this.redis.expire(key, seconds);
+  }
+
+  async hsetWithExpire(key: string, fields: Record<string, string>, seconds: number): Promise<void> {
+    const pipeline = this.redis.pipeline();
+    pipeline.hset(key, fields);
+    pipeline.expire(key, seconds);
+    await pipeline.exec();
+  }
 }
 
 const META_FIELD = "meta";
