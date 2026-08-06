@@ -132,4 +132,49 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
     });
     expect(result).toEqual({ verdict: "supported", overridden: false });
   });
+
+  it("overrides to supported when a 'surpassed X' threshold claim's evidence is above X (real live-eval miss, g11 2026-08-06)", () => {
+    const result = applyNumericGate({
+      claimText: "Bloomberg reported that Apple's market capitalization surpassed $3.5 trillion in 2024.",
+      verdict: "contradicted",
+      evidence: "Apple's market capitalization was $3.57 trillion in November 2024.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true });
+  });
+
+  it("overrides to contradicted when a 'surpassed X' threshold claim's evidence is actually below X", () => {
+    const result = applyNumericGate({
+      claimText: "The company's revenue surpassed $10 million in 2024.",
+      verdict: "supported",
+      evidence: "The company's revenue was $8 million in 2024.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+  });
+
+  it("overrides to supported when an 'under X' threshold claim's evidence is below X", () => {
+    const result = applyNumericGate({
+      claimText: "Unemployment stayed under 5% in 2024.",
+      verdict: "contradicted",
+      evidence: "Unemployment was 3.9% in 2024.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true });
+  });
+
+  it("overrides to contradicted when an 'under X' threshold claim's evidence is actually above X", () => {
+    const result = applyNumericGate({
+      claimText: "Unemployment stayed under 5% in 2024.",
+      verdict: "supported",
+      evidence: "Unemployment was 6.1% in 2024.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+  });
+
+  it("leaves a threshold claim unchanged when code and VERIFY already agree", () => {
+    const result = applyNumericGate({
+      claimText: "Revenue exceeded $1 million.",
+      verdict: "supported",
+      evidence: "Revenue reached $1.4 million.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false });
+  });
 });

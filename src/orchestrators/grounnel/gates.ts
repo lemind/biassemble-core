@@ -50,6 +50,20 @@ export interface GateTwoResult {
   overridden: boolean;
 }
 
+// A real live-eval failure (g11, 2026-08-06): "surpassed $3.5 trillion" against evidence stating
+// $3.57 trillion got marked contradicted — the equality-only comparison below treated "3.5 ≠ 3.57"
+// as confirming a mismatch, with no concept of threshold claims where a HIGHER evidence value means
+// the claim holds, not that it's wrong. `compare()`'s own `direction` field already carries what's
+// needed to fix this; it just wasn't used here before.
+const AT_LEAST_RE = /\b(surpassed|exceeded|topped|crossed|more than|greater than|over|above|at least)\b/i;
+const AT_MOST_RE = /\b(less than|fewer than|under|below|at most|no more than)\b/i;
+
+function detectThreshold(claimText: string): "at_least" | "at_most" | null {
+  if (AT_LEAST_RE.test(claimText)) return "at_least";
+  if (AT_MOST_RE.test(claimText)) return "at_most";
+  return null;
+}
+
 /**
  * Gate #2 — numeric normalization/comparison in code (D019 §2, tasks.md T004). Near-direct port of
  * the equal/inverted/wrong-scale decision logic in verify-reconcilers.ts's reconcileNumericVerdict —
@@ -65,7 +79,19 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
   if (!claimFact || !evidenceFact) return { verdict: input.verdict, overridden: false };
 
   const comparison = compare(claimFact, evidenceFact);
-  if (!comparison.comparable || comparison.equal === null) {
+  if (!comparison.comparable) return { verdict: input.verdict, overridden: false };
+
+  const threshold = detectThreshold(input.claimText);
+  if (threshold) {
+    // direction is sign(claim - source): "at_least" (claim says source >= claim) holds when
+    // claim <= source (direction <= 0); "at_most" holds when claim >= source (direction >= 0).
+    const holds = threshold === "at_least" ? comparison.direction <= 0 : comparison.direction >= 0;
+    if (holds && input.verdict !== "supported") return { verdict: "supported", overridden: true };
+    if (!holds && input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true };
+    return { verdict: input.verdict, overridden: false };
+  }
+
+  if (comparison.equal === null) {
     return { verdict: input.verdict, overridden: false };
   }
 
