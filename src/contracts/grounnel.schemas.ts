@@ -1,8 +1,6 @@
 import { z } from "zod";
 
-// Matches specs/009-grounnel/initial-context.md §3b field-for-field (T002).
-// Grounnel is a self-contained API surface (spec.md) — its own enums here,
-// not shared with audit.schemas.ts, even where values happen to overlap.
+// Matches initial-context.md §3b field-for-field (T002) — own enums, not shared with audit.schemas.ts.
 
 // ─── Enums ──────────────────────────────────────────────────
 
@@ -15,8 +13,8 @@ export const GrounnelVerdictEnum = z.enum([
   "contradicted",
   "unverifiable",
 ]);
-// Unreachable sources are counted/shown/excluded from Eligible, not dropped (initial-context.md §4.4).
-export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "blocked"]);
+// Unreachable sources count toward Eligible, not dropped (initial-context.md §4.4). rate_limited is distinct — its own "try again later" message, not the generic "no evidence found" one.
+export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "blocked", "rate_limited"]);
 
 // ─── Request schema — POST /extract ──────────────────────────
 

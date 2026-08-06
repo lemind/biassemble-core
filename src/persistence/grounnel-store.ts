@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Redis } from "@upstash/redis";
 import { ClaimSchema, type Claim, type ClaimResult, type StatusResponse } from "../contracts/grounnel.schemas.js";
 
 // D019 §4 — comfortably covers the P0 one-shot flow and a time-limited shareable-result page
@@ -27,17 +28,45 @@ export interface RedisHashClient {
   hsetWithExpire(key: string, fields: Record<string, string>, seconds: number): Promise<void>;
 }
 
-// Immutable, creation-time-only facts. Deliberately does NOT store `status` or `progress` —
-// both are derived from the claims currently in the hash every read (getStatus), so there is
-// no second place for them to drift out of sync with the claims that are the actual source of
-// truth. Deviates from D019 §4's illustrative `HSET ... meta '{"status":"verifying",...}'`
-// example, which shows status as stored/mutable — this store recomputes it instead. `truncated`
-// is the caller's own real signal (EXTRACT's self-reported flag OR-ed with the cap actually
-// being applied), not re-derived from `total`/`maxClaims` — a `total >= maxClaims` comparison
-// false-positives when EXTRACT legitimately returns exactly the cap with nothing cut.
+// Deliberately excludes `status`/`progress` (derived from claims each read, no drift) and takes `truncated` as the caller's own signal, not `total>=maxClaims` — rationale: D019 §4.
 interface Meta {
   total: number;
   truncated: boolean;
+}
+
+/** Adapts @upstash/redis's `Redis` to `RedisHashClient`. Build it with `automaticDeserialization: false` — this store parses JSON itself; the SDK's auto-parse would return objects, not strings. */
+export class UpstashRedisHashClient implements RedisHashClient {
+  constructor(private readonly redis: Redis) {}
+
+  async hset(key: string, fields: Record<string, string>): Promise<number> {
+    return this.redis.hset(key, fields);
+  }
+
+  async hget(key: string, field: string): Promise<string | null> {
+    return this.redis.hget<string>(key, field);
+  }
+
+  async hgetall(key: string): Promise<Record<string, string> | null> {
+    // automaticDeserialization:false skips HGETALL's field-flattening too — SDK returns the raw flat [field,value,...] array (`[]`, not null, when missing), zipped into an object here.
+    const flat = (await this.redis.hgetall<Record<string, unknown>>(key)) as unknown as string[] | null;
+    if (!flat || flat.length === 0) return null;
+    const result: Record<string, string> = {};
+    for (let i = 0; i < flat.length; i += 2) {
+      result[flat[i]!] = flat[i + 1]!;
+    }
+    return result;
+  }
+
+  async expire(key: string, seconds: number): Promise<number> {
+    return this.redis.expire(key, seconds);
+  }
+
+  async hsetWithExpire(key: string, fields: Record<string, string>, seconds: number): Promise<void> {
+    const pipeline = this.redis.pipeline();
+    pipeline.hset(key, fields);
+    pipeline.expire(key, seconds);
+    await pipeline.exec();
+  }
 }
 
 const META_FIELD = "meta";
@@ -46,11 +75,7 @@ function claimField(claimId: string): string {
   return `claim:${claimId}`;
 }
 
-/**
- * Redis hash-per-audit persistence (D019 §4): one hash per audit (`audit:{id}`), one field per
- * claim plus `meta` — never a single JSON blob, which would need read-modify-write on every
- * batch completion and race when two batches finish close together (D019 §4).
- */
+/** Redis hash-per-audit persistence: one hash per audit (`audit:{id}`), one field per claim + `meta` — never one JSON blob, which would race across concurrent batch writes. D019 §4. */
 export class RedisGrounnelStore implements GrounnelStore {
   constructor(private readonly redis: RedisHashClient) {}
 

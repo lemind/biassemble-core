@@ -26,6 +26,15 @@ const envSchema = z.object({
   // and concurrency headroom.
   RAG_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   RAG_HF_TOKEN: z.string().optional(),
+  // Grounnel's SearchProvider fallback (D021) and GrounnelStore's Redis (D019 §4) — both
+  // optional: server.ts only wires the whole surface up when all of them are present (T012).
+  TAVILY_API_KEY: z.string().min(1).optional(),
+  // Vercel's own KV_REST_API_* naming is the fallback @upstash/redis's own Redis.fromEnv() uses —
+  // named separately here (not via fromEnv) so server.ts can gate route registration on presence.
+  UPSTASH_REDIS_REST_URL: z.url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
+  KV_REST_API_URL: z.url().optional(),
+  KV_REST_API_TOKEN: z.string().min(1).optional(),
 });
 
 function loadEnv() {
@@ -39,3 +48,11 @@ function loadEnv() {
 }
 
 export const env = loadEnv();
+
+// Paired by source — UPSTASH_* and KV_* must each be a matched url+token pair, never mixed; resolving independently let stale/fresh creds silently pair (found via /code-review high, T012).
+export const upstashRedisConfig: { url: string; token: string } | undefined =
+  env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN
+    ? { url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN }
+    : env.KV_REST_API_URL && env.KV_REST_API_TOKEN
+      ? { url: env.KV_REST_API_URL, token: env.KV_REST_API_TOKEN }
+      : undefined;

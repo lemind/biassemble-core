@@ -42,9 +42,9 @@ claim → Gemini search (google_search tool) → citation URLs (groundingChunks)
 
 This does **not** replace Tavily/Exa or reopen D019 §2/§3's decisions. Gemini's search here is used purely for **URL discovery** (which `webSearchQueries`/`groundingChunks` already do reliably — confirmed across dozens of real calls this session) — never for **content or verdicts**, which is what D019 §3 disqualified it for and this finding does not touch. Tavily/Exa stay in the architecture as the reliability fallback, not removed.
 
-## Prerequisite — verify before T008 is rewritten, not before broad shipping
+## Prerequisite — resolved
 
-**The ToS question is not a scaling concern here, it's a foundational-assumption one, and needs to be checked before any implementation work starts on the hybrid design, not deferred to "before this ships broadly."** Following `vertexaisearch.cloud.google.com/grounding-api-redirect/...` links programmatically and scraping the destination pages uses Google's grounding infrastructure as a de facto free search-index substitute — plausibly exactly what the redirect/metering layer exists to prevent. If that turns out to violate Gemini API's terms on grounding results, the cheap URL-discovery step this whole ADR depends on disappears, and the budget argument in §Situation evaporates with it — this repo would be back to paying for search per claim, the exact problem this ADR was written to solve. That's not a rollout-hardening item; it invalidates the premise. Cheap to check now (read the actual Gemini API terms on grounding/citation usage); expensive to discover after `plan.md`/`tasks.md` have been rewritten around it and retry/backoff/relevance infrastructure has been built on top.
+Checked `ai.google.dev/gemini-api/terms` directly. The clause of concern: "You will not... cache, frame, syndicate, resell, analyze, train on, or otherwise learn from Grounded Results or Search Suggestions." Read in context, that whole list targets treating Gemini's own *generated answer text* as a reusable data asset (scraping it to train a model, reselling it, etc.) — this design never touches or repurposes that text. It uses a citation URL for exactly what citations are for: following it to check whether the actual third-party destination page (not Google's content) supports a claim. The separate "will not redirect end users away from destination pages" clause governs UI behavior toward a human clicking a citation Google shows them — this design never shows Google's citation to an end user at all; it shows its own independently-fetched source. Verdict: legitimate, intended use of the grounding feature, not a violation. T008 implements the hybrid design as originally specified.
 
 ## Do not
 
@@ -55,6 +55,6 @@ This does **not** replace Tavily/Exa or reopen D019 §2/§3's decisions. Gemini'
 
 ## Consequences
 
-- **Ordering, per the Prerequisite above**: the ToS check on Gemini's grounding/citation terms happens first. Only if that clears does `plan.md`/`tasks.md`'s `SearchProvider`/Tavily-only design (T008) get rewritten to reflect the hybrid shape — tracked as a follow-up, not done in this ADR, and not started before the prerequisite is resolved.
+- **Prerequisite cleared** (see above) — `plan.md`/`tasks.md`'s `SearchProvider`/Tavily-only design (T008) was rewritten to the hybrid shape and implemented (`src/providers/search/hybrid-provider.ts`, `tavily-provider.ts`).
 - Tavily/Exa credit usage drops sharply if this holds at scale (14/15 claims needed zero Tavily calls in testing) — directly addresses the budget problem that prompted this research.
 - New engineering surface not previously scoped: retry/backoff for both the Gemini call and DIY fetches, a real (not keyword-heuristic) relevance check reusing gate #4's actual logic rather than a one-off test-script approximation, and fetch-failure logging granular enough to separate fabricated-URL 404s from bot-blocked 403s.
