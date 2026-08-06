@@ -145,6 +145,8 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
   - **Files:** `src/lib/rate-limit.ts`, test file.
   - **Size:** S.
 
+**Post-implementation review** — `/code-review medium` run against the full T001–T011 diff (`b7beddc..HEAD`). 8 findings, 6 confirmed + 2 plausible, all fixed: no `RateLimitError` short-circuit in EXTRACT's retry loop; `caps_hit` false-positived when claim count exactly equalled `maxClaims` with no real truncation (fixed by passing a real `truncated` flag instead of re-deriving from counts); gate #1's substring check missed Unicode smart quotes; gate #4 dropped a claim's first word unconditionally, silently disabling the filter for claims whose only entity is word 1; `createAudit`'s `hset`+`expire` could leave a TTL-less hash on a crash between the two (now one `hsetWithExpire` call); opinion-claim writes ran sequentially instead of `Promise.all`; the EXTRACT retry/injection/repair skeleton was duplicated from the audit orchestrator (factored into `src/orchestrators/llm-json-call.ts`, used by Grounnel only — audit's own file left untouched to avoid regression risk on mature, incident-fixed code); `rate-limit.ts`'s comment exceeded the repo's ~200-char rule. Regression tests added for each. Full suite after fixes: 754 passed, 1 todo, 65 files.
+
 ---
 
 ## Phase 5: Wiring
