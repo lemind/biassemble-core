@@ -43,6 +43,11 @@ export class TavilySearchProvider implements SearchProvider {
 
     if (!response.ok) {
       logger.warn({ module: MODULE, operation: "search", query, status: response.status }, "Tavily returned a non-OK status");
+      // 429 gets its own synthetic entry (real url, no page) so callers can tell "rate limited,
+      // try later" apart from "genuinely found nothing" — a materially different client message.
+      if (response.status === 429) {
+        return [{ url: "https://tavily.com", title: "Tavily", domain: "tavily.com", status: "rate_limited", text: null }];
+      }
       return [];
     }
 

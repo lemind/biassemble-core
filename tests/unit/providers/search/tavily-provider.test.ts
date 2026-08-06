@@ -55,6 +55,15 @@ describe("TavilySearchProvider (T008)", () => {
     expect(results).toEqual([]);
   });
 
+  it("returns a rate_limited entry (not an empty array) on a 429 — distinguishable from 'genuinely found nothing'", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) }));
+    const provider = new TavilySearchProvider("fake-key");
+
+    const results = await provider.search("query");
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ status: "rate_limited", text: null });
+  });
+
   it("returns an empty array (not a throw) when the network request itself fails", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
     const provider = new TavilySearchProvider("fake-key");

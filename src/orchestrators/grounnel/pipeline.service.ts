@@ -3,6 +3,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
 import { applyContradictionEvidenceGate, applyNumericGate } from "./gates.js";
+import { RateLimitError } from "../../providers/gemini.js";
 import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource } from "../../contracts/grounnel.schemas.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
@@ -17,6 +18,24 @@ const BATCH_MAX = 8;
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 const CONFIDENCE_THRESHOLD = 0.6;
+
+const NO_EVIDENCE_REASON = "No relevant source found for this claim.";
+const TAVILY_RATE_LIMITED_REASON = "This claim could not be checked right now — our search provider's rate limit was reached. Try again later.";
+
+/**
+ * Client-facing message for a Gemini RateLimitError — used both here (mid-VERIFY stop) and,
+ * per tasks.md, meant to be reused by T012's route handler for the same error surfacing from
+ * EXTRACT (thrown before any audit exists, so it can't be written to the store at all there —
+ * it has to become the POST /extract response directly).
+ */
+export function buildGeminiRateLimitMessage(err: RateLimitError): string {
+  if (err.limitType === "daily") {
+    return err.resetsAt
+      ? `We've hit today's AI usage limit. Please try again after ${err.resetsAt}.`
+      : "We've hit today's AI usage limit. Please try again tomorrow.";
+  }
+  return "We're being rate-limited right now. Please try again in a few minutes.";
+}
 
 const VerifyResultSchema = z.object({
   id: z.string(),
@@ -57,6 +76,14 @@ function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
  * (D019 §1, tasks.md T010). Claims with no usable passage never reach VERIFY at all — a real,
  * deliberate cost saving (§4.1), not a shortcut: "no evidence found" is a legitimate, correct
  * verdict a model call adds nothing to.
+ *
+ * Rate-limit handling (added post-T010, explicit user request): Gemini and Tavily hitting their
+ * limits are NOT the same client-facing situation and must not collapse into one generic
+ * "no evidence found" message. Tavily rate-limited → only the claims that needed the fallback are
+ * affected, the run continues, each gets its own "try again later" reason. Gemini rate-limited
+ * during VERIFY → every remaining un-verified claim is stopped immediately (further attempts are
+ * guaranteed to fail the same way and just burn wall-clock) and degraded with a clear "try
+ * tomorrow"/"try in a few minutes" message built from RateLimitError's own limitType/resetsAt.
  */
 export class GrounnelPipelineService {
   constructor(
@@ -74,7 +101,19 @@ export class GrounnelPipelineService {
 
     const needsVerify = resolved.filter(hasPassage);
     for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
-      await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX));
+      const batch = needsVerify.slice(i, i + BATCH_MAX);
+      const geminiRateLimit = await this.runBatch(auditId, batch);
+      if (geminiRateLimit) {
+        const remaining = needsVerify.slice(i + BATCH_MAX);
+        if (remaining.length > 0) {
+          logger.warn(
+            { module: MODULE, operation: "run", auditId, remaining: remaining.length },
+            "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
+          );
+          await this.degradeBatch(auditId, remaining, buildGeminiRateLimitMessage(geminiRateLimit));
+        }
+        break;
+      }
     }
   }
 
@@ -110,17 +149,18 @@ export class GrounnelPipelineService {
   }
 
   private async writeNoEvidence(auditId: string, r: ResolvedEvidence): Promise<void> {
+    const rateLimited = r.sources.some((s) => s.status === "rate_limited");
     await this.grounnelStore.writeClaimResult(auditId, r.claim.id, {
       status: "done",
       verdict: "unsupported",
       evidence: null,
       confidence: null,
-      reason: "No relevant source found for this claim.",
+      reason: rateLimited ? TAVILY_RATE_LIMITED_REASON : NO_EVIDENCE_REASON,
       sources: toClaimSources(r.sources),
     });
   }
 
-  private async degradeBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<void> {
+  private async degradeBatch(auditId: string, batch: ResolvedWithPassage[], reason: string | null = null): Promise<void> {
     await Promise.all(
       batch.map((b) =>
         this.grounnelStore.writeClaimResult(auditId, b.claim.id, {
@@ -128,14 +168,15 @@ export class GrounnelPipelineService {
           verdict: null,
           evidence: null,
           confidence: null,
-          reason: null,
+          reason,
           sources: toClaimSources(b.sources),
         })
       )
     );
   }
 
-  private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<void> {
+  /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
+  private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
     const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text, source_url: b.passage.url }));
     const system = this.prompts.render("grounnel-verify", {
       claim_passage_pairs: JSON.stringify(pairs),
@@ -155,11 +196,16 @@ export class GrounnelPipelineService {
         operation: "runBatch",
       });
     } catch (err) {
+      if (err instanceof RateLimitError) {
+        logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: err.limitType }, "Gemini rate-limited during VERIFY — stopping");
+        await this.degradeBatch(auditId, batch, buildGeminiRateLimitMessage(err));
+        return err;
+      }
       // A failed VERIFY batch marks its claims not_checked (status: "failed") and the run
       // continues — never fails the whole audit over one bad batch (spec.md Success Criteria).
       logger.error({ module: MODULE, operation: "runBatch", auditId, err }, "VERIFY batch failed after retries — degrading to not_checked");
       await this.degradeBatch(auditId, batch);
-      return;
+      return null;
     }
 
     const byId = new Map(batch.map((b) => [b.claim.id, b]));
@@ -201,5 +247,6 @@ export class GrounnelPipelineService {
       );
       await this.degradeBatch(auditId, missing);
     }
+    return null;
   }
 }

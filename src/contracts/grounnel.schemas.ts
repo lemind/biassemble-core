@@ -16,7 +16,9 @@ export const GrounnelVerdictEnum = z.enum([
   "unverifiable",
 ]);
 // Unreachable sources are counted/shown/excluded from Eligible, not dropped (initial-context.md §4.4).
-export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "blocked"]);
+// rate_limited is distinct from unreachable — a provider-level rate limit needs its own
+// client-facing "try again later" message, not the generic "no evidence found" one.
+export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "blocked", "rate_limited"]);
 
 // ─── Request schema — POST /extract ──────────────────────────
 

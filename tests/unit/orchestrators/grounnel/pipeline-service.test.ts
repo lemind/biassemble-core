@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { GrounnelPipelineService } from "../../../../src/orchestrators/grounnel/pipeline.service.js";
+import { GrounnelPipelineService, buildGeminiRateLimitMessage } from "../../../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../../../src/persistence/grounnel-store.js";
 import { PromptRegistry } from "../../../../src/prompts/registry.js";
+import { RateLimitError } from "../../../../src/providers/gemini.js";
 import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../../../mocks/fake-redis-hash-client.js";
 import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
-import type { CompletionRequest } from "../../../../src/providers/types.js";
+import type { CompletionRequest, Provider } from "../../../../src/providers/types.js";
 
 class FakeSearchProvider implements SearchProvider {
   constructor(private responses: Map<string, SearchPassage[]>) {}
@@ -237,5 +238,58 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(batchSizes).toEqual([8, 2]);
     const status = await store.getStatus(auditId);
     expect(status!.claims.every((c) => c.status === "done")).toBe(true);
+  });
+
+  it("writes a distinct 'try again later' reason when the only source hit Tavily's rate limit, not the generic no-evidence message", async () => {
+    const claimId = uuid(1);
+    const claimText = "A claim whose search fallback got rate limited.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(
+      new Map([[claimText, [{ url: "https://tavily.com", title: "Tavily", domain: "tavily.com", status: "rate_limited", text: null }]]])
+    );
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported");
+    expect(claim.reason).toBe(
+      "This claim could not be checked right now — our search provider's rate limit was reached. Try again later."
+    );
+    expect(provider.getCallCount()).toBe(0);
+  });
+
+  it("stops attempting further VERIFY batches when Gemini itself is rate-limited, degrading all remaining claims with a clear retry message", async () => {
+    const claims = Array.from({ length: 16 }, (_, i) => ({ id: uuid(i), text: `Claim number ${i} about something.` }));
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims, truncated: false });
+    const responses = new Map(claims.map((c) => [c.text, [webSource({ url: `https://example.com/${c.id}`, text: (c.text + " ").repeat(20) })]]));
+    const search = new FakeSearchProvider(responses);
+
+    let calls = 0;
+    const rateLimitedProvider: Provider = {
+      mode: "mock",
+      completeJson: async () => {
+        calls++;
+        throw new RateLimitError("daily quota exceeded", "daily", "2026-08-07T00:00:00Z");
+      },
+    };
+
+    const service = new GrounnelPipelineService(search, rateLimitedProvider, new PromptRegistry(), store);
+    await service.run(auditId, claims);
+
+    // 16 claims / BATCH_MAX 8 = 2 batches — only the first should ever be attempted.
+    expect(calls).toBe(1);
+    const status = await store.getStatus(auditId);
+    expect(status!.claims.every((c) => c.status === "failed")).toBe(true);
+    expect(status!.claims.every((c) => c.reason === "We've hit today's AI usage limit. Please try again after 2026-08-07T00:00:00Z.")).toBe(true);
+  });
+
+  it("buildGeminiRateLimitMessage gives a different message for daily vs per-minute limits", () => {
+    expect(buildGeminiRateLimitMessage(new RateLimitError("x", "daily", "2026-08-07T00:00:00Z"))).toContain("try again after 2026-08-07T00:00:00Z");
+    expect(buildGeminiRateLimitMessage(new RateLimitError("x", "daily"))).toContain("try again tomorrow");
+    expect(buildGeminiRateLimitMessage(new RateLimitError("x", "per-minute"))).toContain("a few minutes");
   });
 });
