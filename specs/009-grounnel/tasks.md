@@ -119,9 +119,10 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
 
 ## Phase 4: Orchestration
 
-- [ ] **T009** `extract.service.ts` — EXTRACT call + gate #3, writes initial claim list via `GrounnelStore` (plan.md §2 step 5)
+- [x] **T009** `extract.service.ts` — EXTRACT call + gate #3, writes initial claim list via `GrounnelStore` (plan.md §2 step 5)
   - **Acceptance:** claim list is written to Redis and the function returns **before** the caller needs to wait on any search/verify work — this is what makes T012's `202` response synchronous-EXTRACT, not fire-and-forget (spec.md Success Criteria).
-  - **Verify:** `pnpm test:run tests/unit/orchestrators/grounnel/extract-service.test.ts`, `MockProvider` standing in for Gemini.
+  - **Done:** `GrounnelExtractService` in `extract.service.ts` — new prompt `src/prompts/grounnel/extract/system.json` (`PromptRegistry`'s `"grounnel-extract"` template, its own version via `getGrounnelExtractVersion()`, independent of audit mode's), retry loop + injection guard + `repairWithFallback` reused from the audit orchestrator's established pattern. Gate #3 (`isOpinionClaim`) runs immediately after `createAudit`, writing `unverifiable`/`done` for opinion claims before returning — the real integration test T005 deferred to this task. **Deliberately does not** reuse `executeAndRecordLlmCall`/`LlmCallStore` — that path is Drizzle/Postgres-backed, which would violate "No Postgres dependency anywhere in this surface" (D019 §4); Grounnel's own LLM-call cost observability is a named, flagged gap, not silently dropped. `MAX_CLAIMS = 100` is an internal constant (spec.md Assumption 6 is still an open, ask-first question — this is a runnable placeholder, not the tuned number). **Prompt content is unvalidated against a real model** — adapted from `audit/extract/system.json`, tested only against `MockProvider`; a real-Gemini smoke test is still owed, same staged-validation gap T001/T010 already name explicitly for their own pieces.
+  - **Verify:** `pnpm test:run tests/unit/orchestrators/grounnel/extract-service.test.ts` — 6 tests green, `MockProvider` standing in for Gemini. Full repo suite re-run: 743 passed, 1 todo, 64 files, no regressions from the shared `registry.ts` change.
   - **Dependencies:** T002, T005, T007.
   - **Files:** `src/orchestrators/grounnel/extract.service.ts`, test file.
   - **Size:** S/M.
