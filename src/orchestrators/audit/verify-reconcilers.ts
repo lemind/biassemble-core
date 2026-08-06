@@ -865,12 +865,15 @@ export function reconcileTemporalVerdict(
 // Kept in sync with COMPARISON_PATTERNS' vocabulary (gt/lt/eq verbs below) — found on review
 // (2026-08-03): "match" was grouped with exceed/surpass (a gt concept) even though it's the eq verb
 // COMPARISON_PATTERNS itself uses; moved to its own eq-negation group. D018 §5.14.
-const CONTRADICTION_LANGUAGE_RE =
+// Exported — reused by Grounnel's own reason-consistency gate (gates.ts), not reimplemented there.
+// This is the hardened, incident-tuned version; a fresh regex for the same problem would repeat
+// mistakes this one already paid for (see the comment history above each incident date).
+export const CONTRADICTION_LANGUAGE_RE =
   /\b(contradict(?:s|ing)?|(?:is|are|was|were|be|being|been)\s+contradicted|conflict(?:s|ed|ing)?\s+with|differ(?:s|ed|ing)?\s+from|is\s+inconsistent\s+with|(?:did|does)\s+not\s+(?:exceed|surpass|outpace|outperform|top)|(?:is|are|was|were)\s+not\s+(?:higher|greater|more|larger|bigger)\s+than|(?:is|are|was|were)\s+not\s+(?:lower|less|smaller|fewer)\s+than|(?:did|does)\s+not\s+fall\s+(?:short\s+of|below)|(?:did|does)\s+not\s+(?:match|equal))\b/i;
 // Clause-scoped negation, not fixed char count; "n't" has no leading \b (contractions have no word boundary before 'n'). D018 §5.5.
 // Widened in lockstep with CONTRADICTION_LANGUAGE_RE — widening only the positive side would let
 // "does not contradicted"-shaped negations through as real contradictions. D018 §5.5.
-const NEGATED_CONTRADICTION_RE =
+export const NEGATED_CONTRADICTION_RE =
   /(?:\bnot\b|n't|\bno\b|\bnever\b)[^.,;]{0,40}\b(contradict(?:s|ed|ing)?|conflict(?:s|ed|ing)?|differ(?:s|ed|ing)?|inconsistent)\b/i;
 
 export function reconcileVerdictNoteConsistency(result: {

@@ -130,6 +130,35 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBeNull();
   });
 
+  it("reason-consistency gate forces contradicted when VERIFY's own reason says so but verdict didn't (real live-eval finding, g04)", async () => {
+    const claimId = uuid(1);
+    const claimText = "World War II ended in 1943.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "unsupported",
+          evidence: "ended in 1945",
+          reason: "The passage states that World War II ended in 1945, directly contradicting the claim that it ended in 1943.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted"); // gate #1 still validates the evidence is a real substring
+  });
+
   it("gate #2 overrides the verdict when the numbers genuinely disagree beyond tolerance", async () => {
     const claimId = uuid(1);
     const claimText = "UC Riverside received a $1.2 million grant.";

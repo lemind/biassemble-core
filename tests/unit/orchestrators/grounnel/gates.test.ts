@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyContradictionEvidenceGate, applyNumericGate } from "../../../../src/orchestrators/grounnel/gates.js";
+import { applyContradictionEvidenceGate, applyNumericGate, applyReasonConsistencyGate } from "../../../../src/orchestrators/grounnel/gates.js";
 
 describe("gate #1 — contradiction evidence gate (T003)", () => {
   it("passes through non-contradicted verdicts unchanged", () => {
@@ -174,6 +174,54 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       claimText: "Revenue exceeded $1 million.",
       verdict: "supported",
       evidence: "Revenue reached $1.4 million.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false });
+  });
+});
+
+describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => {
+  it("forces contradicted when the reason explicitly says 'directly contradicting the claim' (g04)", () => {
+    const result = applyReasonConsistencyGate({
+      verdict: "unsupported",
+      reason: "The passage states that World War II began in 1939 and ended in 1945, directly contradicting the claim that it ended in 1943.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+  });
+
+  it("does NOT catch a bare 'X, not Y' correction with no contradiction verb (g05 — a real, known, separate gap)", () => {
+    // "a gift from France, not Canada" uses none of CONTRADICTION_LANGUAGE_RE's verbs — deliberately
+    // not force-matched here: a bare `,\s*not\b` pattern would false-positive on filler phrases like
+    // "grew significantly, not surprisingly" or "not coincidentally". Needs a real prompt-side fix
+    // (clearer VERDICT/REASON language) or a claim-aware heuristic, not a blind regex widening.
+    const result = applyReasonConsistencyGate({
+      verdict: "unsupported",
+      reason: "The passage states the statue was a gift from France, not Canada.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
+
+  it("leaves a verdict already at contradicted unchanged", () => {
+    const result = applyReasonConsistencyGate({ verdict: "contradicted", reason: "This contradicts the claim." });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false });
+  });
+
+  it("does nothing when there's no reason", () => {
+    const result = applyReasonConsistencyGate({ verdict: "supported", reason: null });
+    expect(result).toEqual({ verdict: "supported", overridden: false });
+  });
+
+  it("does not fire on a negated contradiction ('does not contradict')", () => {
+    const result = applyReasonConsistencyGate({
+      verdict: "supported",
+      reason: "This does not contradict the earlier report.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false });
+  });
+
+  it("does nothing when the reason has no contradiction language at all", () => {
+    const result = applyReasonConsistencyGate({
+      verdict: "supported",
+      reason: "The passage directly confirms the claim's figures.",
     });
     expect(result).toEqual({ verdict: "supported", overridden: false });
   });

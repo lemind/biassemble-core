@@ -1,9 +1,40 @@
 import { compare } from "../../numbers/compare.js";
-import { extractNumericFact } from "../audit/verify-reconcilers.js";
+import { extractNumericFact, CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
 import type { GrounnelVerdictEnum } from "../../contracts/grounnel.schemas.js";
 import type { z } from "zod";
 
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
+
+export interface ReasonConsistencyInput {
+  verdict: Verdict;
+  reason: string | null;
+}
+
+export interface ReasonConsistencyResult {
+  verdict: Verdict;
+  overridden: boolean;
+}
+
+/**
+ * Forces verdict to `contradicted` when the model's own reason asserts a contradiction but the
+ * verdict says otherwise — reuses audit's hardened CONTRADICTION_LANGUAGE_RE (D018 §5.5) rather
+ * than a fresh regex. Real live-eval failures (2026-08-06): reason explicitly said "contradicts"/
+ * "not Canada" while verdict landed on `unsupported`.
+ *
+ * One direction only, deliberately: the opposite (reason argues support, verdict says
+ * contradicted — also observed live) has no equivalent hardened detector in this codebase yet.
+ * A fresh "support-language" regex now would repeat the exact under-tested-heuristic mistake
+ * this file's own incident history warns against — a named, not silently dropped, gap.
+ */
+export function applyReasonConsistencyGate(input: ReasonConsistencyInput): ReasonConsistencyResult {
+  if (input.verdict === "contradicted" || !input.reason) {
+    return { verdict: input.verdict, overridden: false };
+  }
+  if (!CONTRADICTION_LANGUAGE_RE.test(input.reason) || NEGATED_CONTRADICTION_RE.test(input.reason)) {
+    return { verdict: input.verdict, overridden: false };
+  }
+  return { verdict: "contradicted", overridden: true };
+}
 
 // Also strips smart quotes/dashes (’‘“”–—) — LLM JSON output commonly straightens these even
 // when quoting "verbatim" from web prose that renders them typographically.
