@@ -525,3 +525,37 @@ T023 (grounnel pg schema — 5 tables)
   - **Size:** M — cross-repo, as originally scoped, plus the ADR conflict resolution and the X-Grounnel-Client-IP fix folded in.
 
 **Checkpoint — before calling Phase 9 done**: `grep -rn "postgres\|drizzle" biassemble/backend/src/lib/db` confirms no Grounnel-specific table was added there (D023 §2's "reuse, don't reinvent" — a violation here would mean T028 quietly grew a second mechanism instead of reusing `sessions`); a real run's `grounnel_runs`/`grounnel_claims`/`grounnel_llm_calls`/`grounnel_search_calls`/`grounnel_gate_events` rows are checked by hand against that same run's Redis/API response, not just "insert didn't throw."
+
+## Phase 10 — Search escalation and multi-source evidence (D024, real live-eval finding: g11)
+
+**Purpose**: D024 reopens the search-depth assumption D021 shipped with. Real findings this session: DIY fetch never escalates beyond 3 fixed candidates: Tavily fallback runs at the cheap `"basic"` tier by default; VERIFY only ever sees one passage per claim even when more than one source succeeded. Not urgent bugs — real quality gaps found via a golden-set regression eval, not guessed at. Sequenced schema-first per this file's own established convention (T023 before T024-T027).
+
+- [ ] **T029** `grounnel_search_calls` schema: add `wave` (int) and `usedAsEvidence` (boolean) columns
+  - **Brief:** Migration only. `wave` records which escalation wave (1/2/3) an attempt belonged to; `usedAsEvidence` marks whether a successful source actually became one of the (up to 2) passages sent to VERIFY, vs. attempted-but-unused. Answers "how often do we need wave 2/3" and "how often did 2 sources get used" as a query, not a guess.
+  - **Dependencies:** None.
+  - **Files:** `src/db/schema.ts`, new migration, `src/db/queries.ts` (`insertGrounnelSearchCall`).
+  - **Size:** S.
+
+- [ ] **T030** Escalating DIY fetch waves: 3 → 5 → 8, stop as soon as a wave yields ≥1 `"ok"` source
+  - **Brief:** `hybrid-provider.ts`'s `discoverUrls`/candidate-fetch loop gains wave logic instead of a single `MAX_CANDIDATES = 3` slice. Wave 2 (next 5, cumulative 8) only runs if wave 1 yields zero `"ok"` sources; wave 3 (next 8, cumulative 16) only if wave 2 also yields zero. Fewer candidates available than a wave needs is not a failure — fetch whatever exists. Tavily fallback trigger condition unchanged, just reached later (after all 3 waves, not after 1).
+  - **Dependencies:** T029 (needs `wave` column to record into).
+  - **Files:** `src/providers/search/hybrid-provider.ts`, tests.
+  - **Size:** M.
+
+- [ ] **T031** Tavily `search_depth: "advanced"`
+  - **Brief:** One-line change to the Tavily API request body — directly addresses the confirmed root cause of g11's forced-fallback failure (defaulted to the cheap/shallow `"basic"` tier). No escalation logic needed for Tavily itself at this stage.
+  - **Dependencies:** None — can land independently, first, before anything else in this phase.
+  - **Files:** `src/providers/search/tavily-provider.ts`, tests.
+  - **Size:** XS.
+
+- [ ] **T032** Multi-passage evidence: up to 2 successful sources per claim instead of 1
+  - **Brief:** `resolveEvidence`'s return shape changes from `passage: SearchPassage | null` to a small array (max 2). Breaking change to every downstream consumer: `hasPassage`, `runBatch`, and all four gates in `gates.ts` that currently take one `passageText` — each needs to check evidence against whichever passage actually contains it, not a naive concatenation (would break the ellipsis-fragment logic from the same session's gate #1 fix). This is the largest, riskiest task in this phase — see D024 §3 for why it's not folded into T030.
+  - **Dependencies:** T029 (schema for `usedAsEvidence`); logically related to but not blocked by T030 (a single wave can already yield 2 successful sources without escalation).
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, `src/orchestrators/grounnel/gates.ts`, tests.
+  - **Size:** L.
+
+- [ ] **T033** VERIFY prompt: multi-passage payload + output shape, version bump
+  - **Brief:** VERIFY's prompt and `CLAIM_PASSAGE_PAIRS` payload currently assume exactly one passage per claim. Needs to represent "evaluate against up to 2 passages" — verdict logic (supported if either passage supports it, contradicted if either conflicts) and the reason must name which passage. New prompt version; needs the same "UNVALIDATED against a real model" staged rollout this repo already applies to prompt changes (see verify/system.json v2.0.0/v2.1.0 notes).
+  - **Dependencies:** T032 (needs the real code-side payload shape decided before the prompt can describe it).
+  - **Files:** `src/prompts/grounnel/verify/system.json`, `src/orchestrators/grounnel/pipeline.service.ts`.
+  - **Size:** M.

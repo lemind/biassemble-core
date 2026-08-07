@@ -16,7 +16,7 @@ import {
   grounnelSearchCalls,
   grounnelGateEvents,
 } from "./schema";
-import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
+import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus, GateReason } from "../persistence/types";
 import type { LlmCall } from "./schema";
 
 function db() {
@@ -707,6 +707,7 @@ export async function insertGrounnelGateEvents(
     verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     overridden: boolean;
+    reason: GateReason | null;
   }>
 ) {
   if (rows.length === 0) return [];

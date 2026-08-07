@@ -34,7 +34,7 @@ export class DrizzleGrounnelLlmCallStore implements GrounnelLlmCallStore {
       waitUntil(insertGrounnelLlmCall({
         ...context,
         rawResponse: info.raw !== null ? JSON.stringify(info.raw) : null,
-        parsedOutput: null,
+        parsedOutput: info.parsedOutput,
         status: info.status,
         failureType: info.failureType,
         inputTokens: info.inputTokens,

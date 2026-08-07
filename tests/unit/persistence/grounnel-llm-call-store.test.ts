@@ -29,6 +29,7 @@ describe("DrizzleGrounnelLlmCallStore (T025) — D023 §4, best-effort, never th
     const endedAt = new Date("2026-01-01T00:00:01Z");
     onComplete({
       raw: { foo: "bar" },
+      parsedOutput: { foo: "bar", truncated: false },
       startedAt,
       endedAt,
       durationMs: 1000,
@@ -53,6 +54,7 @@ describe("DrizzleGrounnelLlmCallStore (T025) — D023 §4, best-effort, never th
         model: "gemini-2.5-flash-lite",
         promptVersion: "1.0.0",
         rawResponse: JSON.stringify({ foo: "bar" }),
+        parsedOutput: { foo: "bar", truncated: false },
         status: "success",
         inputTokens: 10,
         outputTokens: 20,
@@ -60,6 +62,35 @@ describe("DrizzleGrounnelLlmCallStore (T025) — D023 §4, best-effort, never th
         durationMs: 1000,
       })
     );
+  });
+
+  it("passes parsedOutput straight through as null on a failed attempt (never the pre-repair raw value)", async () => {
+    mockInsertLlmCall.mockResolvedValue({ id: "llm3" });
+    const store = new DrizzleGrounnelLlmCallStore();
+    const onComplete = store.recordCall({
+      runId: "r1",
+      stage: "verify",
+      callType: "primary",
+      provider: "gemini",
+      model: "gemini-2.5-flash-lite",
+      promptVersion: "2.0.0",
+    });
+    onComplete({
+      raw: { malformed: true },
+      parsedOutput: null,
+      startedAt: new Date(),
+      endedAt: new Date(),
+      durationMs: 5,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      status: "error",
+      failureType: "parse_error",
+      errorMessage: "unparseable",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockInsertLlmCall).toHaveBeenCalledWith(expect.objectContaining({ parsedOutput: null }));
   });
 
   it("does not throw when the DB insert fails", async () => {
@@ -77,6 +108,7 @@ describe("DrizzleGrounnelLlmCallStore (T025) — D023 §4, best-effort, never th
     expect(() =>
       onComplete({
         raw: null,
+        parsedOutput: null,
         startedAt: new Date(),
         endedAt: new Date(),
         durationMs: 5,
@@ -105,6 +137,7 @@ describe("DrizzleGrounnelLlmCallStore (T025) — D023 §4, best-effort, never th
     });
     onComplete({
       raw: null,
+      parsedOutput: null,
       startedAt: new Date(),
       endedAt: new Date(),
       durationMs: 5,

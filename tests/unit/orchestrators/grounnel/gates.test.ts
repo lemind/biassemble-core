@@ -13,7 +13,7 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
       evidence: "anything",
       passageText: "some other text entirely",
     });
-    expect(result).toEqual({ verdict: "supported", evidence: "anything" });
+    expect(result).toEqual({ verdict: "supported", evidence: "anything", overridden: false, reason: null });
   });
 
   it("keeps a contradicted verdict whose evidence is a real substring of the passage", () => {
@@ -25,6 +25,8 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
     expect(result).toEqual({
       verdict: "contradicted",
       evidence: "attended Los Angeles City College",
+      overridden: false,
+      reason: null,
     });
   });
 
@@ -43,7 +45,7 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
       evidence: "attended Harvard University",
       passageText: "Bukowski attended Los Angeles City College for two years.",
     });
-    expect(result).toEqual({ verdict: "unsupported", evidence: null });
+    expect(result).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_not_grounded" });
   });
 
   it("downgrades a contradicted verdict with null evidence", () => {
@@ -52,7 +54,16 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
       evidence: null,
       passageText: "Bukowski attended Los Angeles City College for two years.",
     });
-    expect(result).toEqual({ verdict: "unsupported", evidence: null });
+    expect(result).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_null" });
+  });
+
+  it("treats whitespace-only evidence the same as null, not as 'given but ungrounded' (reviewed finding)", () => {
+    const result = applyContradictionEvidenceGate({
+      verdict: "contradicted",
+      evidence: "   ",
+      passageText: "Bukowski attended Los Angeles City College for two years.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_null" });
   });
 
   it("never uses fuzzy/semantic matching — a paraphrase that isn't a substring still downgrades", () => {
@@ -88,6 +99,8 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
       verdict: "contradicted",
       evidence:
         "September 1, 1939 Germany invades Poland, initiating World War II in Europe. ... September 2, 1945 Having agreed in principle to unconditional surrender on August 14, 1945, Japan formally surrenders, ending World War II.",
+      overridden: false,
+      reason: null,
     });
   });
 
@@ -97,7 +110,7 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
       evidence: "Germany invades Poland ... Japan launches a surprise invasion of California",
       passageText: "Germany invades Poland in 1939. Japan formally surrenders in 1945, ending the war.",
     });
-    expect(result).toEqual({ verdict: "unsupported", evidence: null });
+    expect(result).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_not_grounded" });
   });
 });
 
@@ -108,7 +121,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "Bukowski attended Los Angeles City College for two years.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("does nothing when there is no evidence to compare against", () => {
@@ -117,7 +130,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "unsupported",
       evidence: null,
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("overrides to supported when the numbers are equal but VERIFY said otherwise", () => {
@@ -126,7 +139,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "unsupported",
       evidence: "The NEH awarded UC Riverside a $350,000 grant to expand the project.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: true });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "equality_comparison" });
   });
 
   it("overrides to contradicted when the numbers genuinely differ beyond tolerance (wrong scale)", () => {
@@ -135,7 +148,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "The NEH awarded UC Riverside a $350,000 grant to expand the project.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "equality_comparison" });
   });
 
   it("overrides an inverted-sign case (negative vs positive)", () => {
@@ -144,7 +157,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "The fund reported net income of $52 million.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "equality_comparison" });
   });
 
   it("leaves the verdict unchanged when code and VERIFY already agree", () => {
@@ -153,7 +166,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "The NEH awarded UC Riverside a $350,000 grant to expand the project.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("does nothing when claim and evidence units aren't comparable (percent vs currency)", () => {
@@ -162,7 +175,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "The university received a $12 million endowment.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("overrides to supported when a 'surpassed X' threshold claim's evidence is above X (real live-eval miss, g11 2026-08-06)", () => {
@@ -171,7 +184,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "contradicted",
       evidence: "Apple's market capitalization was $3.57 trillion in November 2024.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: true });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "threshold_comparison" });
   });
 
   it("overrides to contradicted when a 'surpassed X' threshold claim's evidence is actually below X", () => {
@@ -180,7 +193,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "The company's revenue was $8 million in 2024.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "threshold_comparison" });
   });
 
   it("overrides to supported when an 'under X' threshold claim's evidence is below X", () => {
@@ -189,7 +202,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "contradicted",
       evidence: "Unemployment was 3.9% in 2024.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: true });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "threshold_comparison" });
   });
 
   it("overrides to contradicted when an 'under X' threshold claim's evidence is actually above X", () => {
@@ -198,7 +211,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "Unemployment was 6.1% in 2024.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "threshold_comparison" });
   });
 
   it("leaves a threshold claim unchanged when code and VERIFY already agree", () => {
@@ -207,7 +220,7 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       verdict: "supported",
       evidence: "Revenue reached $1.4 million.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 });
 
@@ -217,7 +230,7 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
       verdict: "unsupported",
       reason: "The passage states that World War II began in 1939 and ended in 1945, directly contradicting the claim that it ended in 1943.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "contradiction_language_in_model_reason" });
   });
 
   it("does NOT catch a bare 'X, not Y' correction with no contradiction verb (g05 — a real, known, separate gap)", () => {
@@ -229,17 +242,17 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
       verdict: "unsupported",
       reason: "The passage states the statue was a gift from France, not Canada.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("leaves a verdict already at contradicted unchanged", () => {
     const result = applyReasonConsistencyGate({ verdict: "contradicted", reason: "This contradicts the claim." });
-    expect(result).toEqual({ verdict: "contradicted", overridden: false });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
   });
 
   it("does nothing when there's no reason", () => {
     const result = applyReasonConsistencyGate({ verdict: "supported", reason: null });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("does not fire on a negated contradiction ('does not contradict')", () => {
@@ -247,7 +260,7 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
       verdict: "supported",
       reason: "This does not contradict the earlier report.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("does nothing when the reason has no contradiction language at all", () => {
@@ -255,7 +268,7 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
       verdict: "supported",
       reason: "The passage directly confirms the claim's figures.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 });
 
@@ -267,7 +280,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.",
       passageText: "The Statue of Liberty was a gift from France to the United States, dedicated in 1886 to celebrate the friendship between the two nations.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "bare_negation_matched" });
   });
 
   it("abstains (retrieval-miss counter-example) when the passage shares no entity with the claim beyond Y", () => {
@@ -277,7 +290,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The Statue of Liberty was a gift from Canada.",
       passageText: "France has given many diplomatic gifts to other nations over the centuries.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("abstains on a common-noun-only Y (no proper-noun claim entity to match against)", () => {
@@ -287,7 +300,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The bridge is made of concrete.",
       passageText: "The bridge is made of steel, a common material for suspension bridges.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("abstains on a single-entity claim ('the winner was Bob, not Alice') — accepted recall cost, condition 3 by design (D022 §4)", () => {
@@ -297,7 +310,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The winner of the race was Alice.",
       passageText: "The winner of the race was Bob, who finished in record time.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("leaves a verdict already at contradicted unchanged", () => {
@@ -307,7 +320,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The gift was from Canada to the United States.",
       passageText: "The gift was from France to the United States.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: false });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
   });
 
   it("does nothing when there's no reason", () => {
@@ -317,7 +330,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The gift was from Canada.",
       passageText: "The gift was from France.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("does not fire when the reason has no 'X, not Y' shape at all", () => {
@@ -327,7 +340,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The gift was from France to the United States.",
       passageText: "The gift was from France to the United States.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("does not fire when Y isn't actually present in the claim text (a different correction, not this claim's negation)", () => {
@@ -337,7 +350,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The Statue of Liberty was a gift from Canada to the United States.",
       passageText: "The Statue of Liberty was a gift from France to the United States.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("does not swallow trailing words after Y into the match (regex fix — 'not Canada to the United States' must capture only 'Canada')", () => {
@@ -347,7 +360,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.",
       passageText: "The Statue of Liberty was a gift from France to the United States, dedicated in 1886.",
     });
-    expect(result).toEqual({ verdict: "contradicted", overridden: true });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "bare_negation_matched" });
   });
 
   it("abstains on a single-entity claim even when Y is multi-word (fix — a multi-word Y's own words no longer count as the second entity)", () => {
@@ -357,7 +370,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The painting was donated by the United Kingdom.",
       passageText: "Some visitors assume the painting was donated by the United Kingdom, but museum records list the donor as anonymous.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("does not fire on a correct 'supported' verdict, even when the reason has a narrative 'X, not Y' correction shape", () => {
@@ -367,7 +380,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The team's mascot, previously called Tiger, is now called Wildcat.",
       passageText: "The team's mascot was renamed from Tiger to Wildcat last season.",
     });
-    expect(result).toEqual({ verdict: "supported", overridden: false });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("does not fire on 'unverifiable' — a confidence downgrade this gate must not override", () => {
@@ -377,7 +390,7 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       claimText: "The Statue of Liberty was a gift from Canada to the United States.",
       passageText: "The Statue of Liberty was a gift from France to the United States, dedicated in 1886.",
     });
-    expect(result).toEqual({ verdict: "unverifiable", overridden: false });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
   });
 
   it("does NOT catch the real g11-mixed-content Einstein case: 'won for relativity' vs 'won for the photoelectric effect' (named, known, separate gap)", () => {
@@ -397,6 +410,6 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
       passageText:
         "Einstein won the 1921 Nobel Prize in Physics for his services to theoretical physics, and especially for his discovery of the law of the photoelectric effect.",
     });
-    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 });

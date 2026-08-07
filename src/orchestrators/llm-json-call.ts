@@ -19,6 +19,8 @@ export interface LlmCallCompletionInfo {
   status: LlmCallStatus;
   failureType: LlmCallFailureType | null;
   errorMessage: string | null;
+  // Only non-null on status "success" — the schema-validated result post-repair, distinct from `raw` (pre-repair).
+  parsedOutput: unknown;
 }
 
 export interface LlmJsonCallOptions<T> {
@@ -60,6 +62,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
         // produced zero grounnel_llm_calls row, unlike every other failure path here.
         onComplete?.({
           raw: null,
+          parsedOutput: null,
           startedAt,
           endedAt: new Date(),
           durationMs: Date.now() - t0,
@@ -76,6 +79,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       logger.warn({ module, operation, attempt, err }, "provider call failed — retrying");
       onComplete?.({
         raw: null,
+        parsedOutput: null,
         startedAt,
         endedAt: new Date(),
         durationMs: Date.now() - t0,
@@ -93,6 +97,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       logger.error({ module, operation, raw }, "response flagged as injection-suspected — hard stop, not repaired");
       onComplete?.({
         raw,
+        parsedOutput: null,
         startedAt,
         endedAt: new Date(),
         durationMs: Date.now() - t0,
@@ -114,6 +119,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       logger.warn({ module, operation, attempt, err }, "response unparseable — retrying");
       onComplete?.({
         raw,
+        parsedOutput: null,
         startedAt,
         endedAt: new Date(),
         durationMs: Date.now() - t0,
@@ -134,6 +140,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       logger.warn({ module, operation, attempt, err: lastError }, "response failed isValid check — retrying");
       onComplete?.({
         raw,
+        parsedOutput: null,
         startedAt,
         endedAt: new Date(),
         durationMs: Date.now() - t0,
@@ -149,6 +156,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
 
     onComplete?.({
       raw,
+      parsedOutput: result,
       startedAt,
       endedAt: new Date(),
       durationMs: Date.now() - t0,

@@ -2,6 +2,7 @@ import { waitUntil } from "@vercel/functions";
 import { insertGrounnelGateEvents } from "../db/queries.js";
 import { logger } from "../observability/logger.js";
 import type { GrounnelVerdictEnum } from "../contracts/grounnel.schemas.js";
+import type { GateReason } from "./types.js";
 import type { z } from "zod";
 
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
@@ -11,6 +12,7 @@ export interface GateEventInput {
   verdictBefore: Verdict | null;
   verdictAfter: Verdict | null;
   overridden: boolean;
+  reason: GateReason | null;
 }
 
 export interface GrounnelGateEventStore {

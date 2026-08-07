@@ -434,6 +434,17 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
   verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   verdictAfter: text("verdict_after", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   overridden: boolean("overridden").notNull(),
+  // Machine-readable code for why the gate acted — null when overridden is false (D023 §5).
+  reason: text("reason", {
+    enum: [
+      "contradiction_language_in_model_reason",
+      "bare_negation_matched",
+      "evidence_null",
+      "evidence_not_grounded",
+      "threshold_comparison",
+      "equality_comparison",
+    ],
+  }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index("grounnel_gate_events_run_id_idx").on(table.runId),

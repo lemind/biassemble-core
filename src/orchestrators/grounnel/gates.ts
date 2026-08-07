@@ -14,6 +14,8 @@ export interface ReasonConsistencyInput {
 export interface ReasonConsistencyResult {
   verdict: Verdict;
   overridden: boolean;
+  // Machine-readable code for why this gate acted — null when overridden is false (D023 §5).
+  reason: "contradiction_language_in_model_reason" | null;
 }
 
 /**
@@ -29,12 +31,12 @@ export interface ReasonConsistencyResult {
  */
 export function applyReasonConsistencyGate(input: ReasonConsistencyInput): ReasonConsistencyResult {
   if (input.verdict === "contradicted" || !input.reason) {
-    return { verdict: input.verdict, overridden: false };
+    return { verdict: input.verdict, overridden: false, reason: null };
   }
   if (!CONTRADICTION_LANGUAGE_RE.test(input.reason) || NEGATED_CONTRADICTION_RE.test(input.reason)) {
-    return { verdict: input.verdict, overridden: false };
+    return { verdict: input.verdict, overridden: false, reason: null };
   }
-  return { verdict: "contradicted", overridden: true };
+  return { verdict: "contradicted", overridden: true, reason: "contradiction_language_in_model_reason" };
 }
 
 export interface ImplicitNegationInput {
@@ -47,6 +49,7 @@ export interface ImplicitNegationInput {
 export interface ImplicitNegationResult {
   verdict: Verdict;
   overridden: boolean;
+  reason: "bare_negation_matched" | null;
 }
 
 // Matches a bare "X, not Y" correction with no contradiction verb — the shape
@@ -68,15 +71,15 @@ export function applyImplicitNegationGate(input: ImplicitNegationInput): Implici
   // confidence downgrade this gate shouldn't override, "supported" would mean firing on a
   // narrative correction the model already resolved correctly (D022 §4 review finding).
   if (input.verdict !== "unsupported" || !input.reason) {
-    return { verdict: input.verdict, overridden: false };
+    return { verdict: input.verdict, overridden: false, reason: null };
   }
 
   const match = IMPLICIT_NEGATION_RE.exec(input.reason);
-  if (!match) return { verdict: input.verdict, overridden: false };
+  if (!match) return { verdict: input.verdict, overridden: false, reason: null };
 
   const y = match[1]!.trim().toLowerCase().replace(/\s+/g, " ");
   const yInClaim = new RegExp(`\\b${escapeRegExp(y)}\\b`, "i").test(input.claimText);
-  if (!yInClaim) return { verdict: input.verdict, overridden: false };
+  if (!yInClaim) return { verdict: input.verdict, overridden: false, reason: null };
 
   // Y's own words are excluded individually, not as one string — a multi-word Y ("United
   // Kingdom") must not let its own constituent words ("united", "states") count as the second,
@@ -86,9 +89,9 @@ export function applyImplicitNegationGate(input: ImplicitNegationInput): Implici
   const hasSecondEntity = extractKeyTerms(input.claimText)
     .filter((term) => !yWords.has(term))
     .some((term) => passageLower.includes(term));
-  if (!hasSecondEntity) return { verdict: input.verdict, overridden: false };
+  if (!hasSecondEntity) return { verdict: input.verdict, overridden: false, reason: null };
 
-  return { verdict: "contradicted", overridden: true };
+  return { verdict: "contradicted", overridden: true, reason: "bare_negation_matched" };
 }
 
 // Also strips smart quotes/dashes (’‘“”–—) — LLM JSON output commonly straightens these even
@@ -130,18 +133,29 @@ export interface GateOneInput {
 export interface GateOneResult {
   verdict: Verdict;
   evidence: string | null;
+  overridden: boolean;
+  // Downgrade-only: "evidence_null" (no evidence given) vs "evidence_not_grounded" (D023 §5).
+  reason: "evidence_null" | "evidence_not_grounded" | null;
 }
 
 /** Gate #1 — contradiction evidence gate (D019 §2, tasks.md T003). Only fires on `contradicted`. */
 export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResult {
   if (input.verdict !== "contradicted") {
-    return { verdict: input.verdict, evidence: input.evidence };
+    return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
   }
-  const evidenceOk = !!input.evidence && evidenceMatchesPassage(input.evidence, input.passageText);
+  // Trimmed, not just truthy — a whitespace-only string ("  ") is truthy but carries no real
+  // content, same as null (reviewed finding: naive `!!input.evidence` misclassified it as grounded).
+  const hasContent = !!input.evidence?.trim();
+  const evidenceOk = hasContent && evidenceMatchesPassage(input.evidence!, input.passageText);
   if (evidenceOk) {
-    return { verdict: input.verdict, evidence: input.evidence };
+    return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
   }
-  return { verdict: "unsupported", evidence: null };
+  return {
+    verdict: "unsupported",
+    evidence: null,
+    overridden: true,
+    reason: hasContent ? "evidence_not_grounded" : "evidence_null",
+  };
 }
 
 export interface GateTwoInput {
@@ -153,6 +167,7 @@ export interface GateTwoInput {
 export interface GateTwoResult {
   verdict: Verdict;
   overridden: boolean;
+  reason: "threshold_comparison" | "equality_comparison" | null;
 }
 
 // A real live-eval failure (g11, 2026-08-06): "surpassed $3.5 trillion" against evidence stating
@@ -177,34 +192,34 @@ function detectThreshold(claimText: string): "at_least" | "at_most" | null {
  * on a structured `claim.period` field D018's B2B claims have and Grounnel's ClaimSchema does not.
  */
 export function applyNumericGate(input: GateTwoInput): GateTwoResult {
-  if (!input.evidence) return { verdict: input.verdict, overridden: false };
+  if (!input.evidence) return { verdict: input.verdict, overridden: false, reason: null };
 
   const claimFact = extractNumericFact(input.claimText);
   const evidenceFact = extractNumericFact(input.evidence);
-  if (!claimFact || !evidenceFact) return { verdict: input.verdict, overridden: false };
+  if (!claimFact || !evidenceFact) return { verdict: input.verdict, overridden: false, reason: null };
 
   const comparison = compare(claimFact, evidenceFact);
-  if (!comparison.comparable) return { verdict: input.verdict, overridden: false };
+  if (!comparison.comparable) return { verdict: input.verdict, overridden: false, reason: null };
 
   const threshold = detectThreshold(input.claimText);
   if (threshold) {
     // direction is sign(claim - source): "at_least" (claim says source >= claim) holds when
     // claim <= source (direction <= 0); "at_most" holds when claim >= source (direction >= 0).
     const holds = threshold === "at_least" ? comparison.direction <= 0 : comparison.direction >= 0;
-    if (holds && input.verdict !== "supported") return { verdict: "supported", overridden: true };
-    if (!holds && input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true };
-    return { verdict: input.verdict, overridden: false };
+    if (holds && input.verdict !== "supported") return { verdict: "supported", overridden: true, reason: "threshold_comparison" };
+    if (!holds && input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true, reason: "threshold_comparison" };
+    return { verdict: input.verdict, overridden: false, reason: null };
   }
 
   if (comparison.equal === null) {
-    return { verdict: input.verdict, overridden: false };
+    return { verdict: input.verdict, overridden: false, reason: null };
   }
 
   if (comparison.equal && input.verdict !== "supported") {
-    return { verdict: "supported", overridden: true };
+    return { verdict: "supported", overridden: true, reason: "equality_comparison" };
   }
   if (!comparison.equal && input.verdict !== "contradicted") {
-    return { verdict: "contradicted", overridden: true };
+    return { verdict: "contradicted", overridden: true, reason: "equality_comparison" };
   }
-  return { verdict: input.verdict, overridden: false };
+  return { verdict: input.verdict, overridden: false, reason: null };
 }

@@ -306,7 +306,7 @@ export class GrounnelPipelineService {
         // (2026-08-06 live-eval findings: g04/g05). Runs before gate #1 so a flip to `contradicted`
         // still has to clear gate #1's real evidence-substring check, not bypass it.
         const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: result.reason });
-        gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden });
+        gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden, reason: reasonConsistency.reason });
         verdict = reasonConsistency.verdict;
 
         // Case A gate (D022 §4) — bare "X, not Y" negation, the gap applyReasonConsistencyGate
@@ -317,18 +317,18 @@ export class GrounnelPipelineService {
           claimText: item.claim.text,
           passageText: item.passage.text!,
         });
-        gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden });
+        gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
         verdict = implicitNegation.verdict;
 
         // Gate #1 — never reaches the store without passing this (D019 §2, T003, tasks.md acceptance).
         const gate1 = applyContradictionEvidenceGate({ verdict, evidence: result.evidence, passageText: item.passage.text! });
-        gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.verdict !== verdict });
+        gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.overridden, reason: gate1.reason });
         verdict = gate1.verdict;
         const evidence = gate1.evidence;
 
         // Gate #2 — numeric normalization/comparison in code (D019 §2, T004).
         const gate2 = applyNumericGate({ claimText: item.claim.text, verdict, evidence });
-        gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden });
+        gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
         verdict = gate2.verdict;
 
         const sources = toClaimSources(item.sources);
