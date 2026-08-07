@@ -73,6 +73,7 @@ export class UpstashRedisHashClient implements RedisHashClient {
 }
 
 const META_FIELD = "meta";
+const LAST_ACTIVITY_FIELD = "lastActivityAt";
 
 function claimField(claimId: string): string {
   return `claim:${claimId}`;
@@ -122,7 +123,9 @@ export class RedisGrounnelStore implements GrounnelStore {
     const merged: Claim = { ...existing, ...result };
     // Single-field HSET — independent of every other claim's own field, which is what makes
     // concurrent writeClaimResult calls for different claims land without clobbering each other.
-    await this.redis.hset(key, { [claimField(claimId)]: JSON.stringify(merged) });
+    // lastActivityAt rides along in the same call (no extra round trip) — getStatus uses it to
+    // freeze elapsed_seconds once status is "done", instead of it counting up forever on every read.
+    await this.redis.hset(key, { [claimField(claimId)]: JSON.stringify(merged), [LAST_ACTIVITY_FIELD]: new Date().toISOString() });
   }
 
   async getStatus(id: string): Promise<StatusResponse | null> {
@@ -133,7 +136,7 @@ export class RedisGrounnelStore implements GrounnelStore {
 
     const claims: Claim[] = [];
     for (const [field, value] of Object.entries(raw)) {
-      if (field === META_FIELD) continue;
+      if (field === META_FIELD || field === LAST_ACTIVITY_FIELD) continue;
       claims.push(ClaimSchema.parse(JSON.parse(value)));
     }
 
@@ -151,7 +154,10 @@ export class RedisGrounnelStore implements GrounnelStore {
     const grounded_pct = eligible === 0 ? 0 : Math.round((grounded_n / eligible) * 100);
 
     const startedAt = meta.createdAt ?? null;
-    const elapsedSeconds = startedAt ? Math.round((Date.now() - new Date(startedAt).getTime()) / 1000) : null;
+    // Frozen at the last claim write once done, not Date.now() — otherwise elapsed_seconds keeps
+    // climbing forever on every later poll of an already-finished run (real bug, caught live).
+    const endedAt = status === "done" && raw[LAST_ACTIVITY_FIELD] ? raw[LAST_ACTIVITY_FIELD] : new Date().toISOString();
+    const elapsedSeconds = startedAt ? Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000) : null;
 
     return {
       id,
