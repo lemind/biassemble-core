@@ -71,10 +71,15 @@ export const evalGrounnelRunJob = inngest.createFunction(
 
     // Inngest's run status (green/red) reflects only whether this handler threw, not what it
     // returned — without this, a real failure (e.g. below_correct_rate) still shows green.
-    // Per-case detail stays inspectable via each case's own step.run output regardless.
+    // Full failed-case detail (claims/reasons/verdicts/violations) is embedded in the thrown
+    // message itself, not just referenced — step.run output isn't always where this gets read
+    // from (e.g. Vercel/Inngest error capture only shows the thrown message).
     if (!summary.passed) {
-      const failedIds = summary.cases.filter((c) => !c.ok).map((c) => c.id);
-      throw new Error(`Grounnel live eval failed: ${failedIds.join(", ")} (see step outputs for detail)`);
+      const failed = summary.cases.filter((c) => !c.ok);
+      throw new Error(
+        `Grounnel live eval failed (${summary.totalCorrect}/${summary.totalMatched} correct, ` +
+          `${summary.totalFalseAccusations} false accusations):\n${JSON.stringify(failed, null, 2)}`
+      );
     }
 
     return summary;
