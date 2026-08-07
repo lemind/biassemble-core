@@ -305,7 +305,8 @@ T023 (grounnel pg schema — 5 tables)
 
 **Checkpoint after T023**: migration generated and reviewed (schema shape agreed) before any store/wiring code is written against it — same "don't build against a guessed shape" discipline as T001/plan.md §2 step 0 applied to Tavily's response shape.
 
-- [ ] **T023** `grounnel` pg schema — 5 new tables, own schema sibling to `core`/`audit` (D023 §3, D018 §2.4's per-product-schema precedent)
+- [x] **T023** `grounnel` pg schema — 5 new tables, own schema sibling to `core`/`audit` (D023 §3, D018 §2.4's per-product-schema precedent)
+  - **Done:** `src/db/schema.ts` (5 tables + type exports), `drizzle.config.ts`'s `schemaFilter` gained `"grounnel"`, migration `0011_swift_spiral.sql` generated (`CREATE SCHEMA "grounnel"` + 5 `CREATE TABLE`s, all FKs/indexes matching schema.ts exactly, zero diff against `core`/`audit`) and applied to the real database — verified directly via a live query (`information_schema.tables`) confirming all 5 tables exist in `grounnel`. `pnpm typecheck` clean.
   - **Acceptance:** `drizzle-kit generate` produces a clean migration with no unexpected diff against `core`/`audit`; `schemaFilter` in `drizzle.config.ts` includes `"grounnel"`; every column nullability matches the real lifecycle (e.g. `grounnel_claims.verdict` nullable only in the sense a `status:"failed"` row never got one — matches `audits`/`claims`' own "nullable pre-verify, never null once done" precedent).
   - **Schema** (`src/db/schema.ts`):
     ```ts
