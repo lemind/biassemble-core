@@ -38,11 +38,11 @@ function buildServer(limit: number) {
   return server;
 }
 
-async function post(server: ReturnType<typeof buildServer>, remoteAddress: string) {
+async function post(server: ReturnType<typeof buildServer>, remoteAddress: string, extraHeaders: Record<string, string> = {}) {
   return server.inject({
     method: "POST",
     url: "/extract",
-    headers: { authorization: VALID_AUTH },
+    headers: { authorization: VALID_AUTH, ...extraHeaders },
     payload: { text: "Some pasted article text." },
     remoteAddress,
   });
@@ -81,5 +81,27 @@ describe("POST /extract rate limiting (T016, defense-in-depth behind authHook �
 
     const res = await server.inject({ method: "POST", url: "/extract", payload: { text: "x" }, remoteAddress: "5.5.5.5" });
     expect(res.statusCode).toBe(401);
+  });
+
+  it("T028/ADR-001 §4: prefers X-Grounnel-Client-IP over the raw connection IP — every request from biassemble/backend shares one egress IP, real end-users must not share one rate-limit bucket", async () => {
+    const server = buildServer(1);
+
+    // Same remoteAddress (the proxy's own egress IP) for both — but different real end-user IPs
+    // via the header. If the header weren't honored, the second request would incorrectly 429.
+    const userA = await post(server, "10.10.10.10", { "x-grounnel-client-ip": "203.0.113.1" });
+    const userB = await post(server, "10.10.10.10", { "x-grounnel-client-ip": "203.0.113.2" });
+
+    expect(userA.statusCode).toBe(202);
+    expect(userB.statusCode).toBe(202);
+  });
+
+  it("T028/ADR-001 §4: falls back to the raw connection IP when the header is absent (local dev/direct testing)", async () => {
+    const server = buildServer(1);
+
+    const first = await post(server, "7.7.7.7");
+    const second = await post(server, "7.7.7.7");
+
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(429);
   });
 });

@@ -18,8 +18,11 @@ export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "block
 
 // ─── Request schema — POST /extract ──────────────────────────
 
+// sessionId is optional — a caller that doesn't have one (e.g. a direct test call) still works,
+// same as grounnel_runs.session_id being nullable until this arrives (D023 §2/T028).
 export const ExtractRequestSchema = z.object({
   text: z.string().min(1),
+  sessionId: z.string().uuid().optional(),
 });
 
 export type ExtractRequest = z.infer<typeof ExtractRequestSchema>;

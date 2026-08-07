@@ -10,6 +10,7 @@ import { RateLimitError } from "../../src/providers/gemini.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
 import { NoopGrounnelHistoryStore } from "../mocks/noop-grounnel-history-store.js";
+import { FakeGrounnelHistoryStore } from "../mocks/fake-grounnel-history-store.js";
 import { NoopGrounnelLlmCallStore } from "../mocks/noop-grounnel-llm-call-store.js";
 import { NoopGrounnelGateEventStore } from "../mocks/noop-grounnel-gate-event-store.js";
 import type { SearchProvider, SearchPassage } from "../../src/providers/search/search-provider.js";
@@ -135,5 +136,29 @@ describe("POST /extract (T014)", () => {
 
     expect(res.statusCode).toBe(502);
     expect(JSON.parse(res.body)).toEqual({ error: "Extract failed" });
+  });
+
+  it("T028/D023 §2: a sessionId in the request body reaches the history store's grounnel_runs write", async () => {
+    const server = Fastify();
+    const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());
+    const prompts = new PromptRegistry();
+    const historyStore = new FakeGrounnelHistoryStore();
+    registerGrounnelRoutes(server, {
+      extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, new NoopGrounnelLlmCallStore()),
+      pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
+      grounnelStore,
+      rateLimiter: new RateLimiter(1000, 60_000),
+    });
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/extract",
+      headers: { authorization: VALID_AUTH },
+      payload: { text: "Some pasted article text.", sessionId: "11111111-1111-4111-8111-111111111111" },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(historyStore.createRunCalls).toHaveLength(1);
+    expect(historyStore.createRunCalls[0]).toMatchObject({ sessionId: "11111111-1111-4111-8111-111111111111" });
   });
 });

@@ -22,12 +22,17 @@ export function registerGrounnelRoutes(
   }
 ) {
   server.post("/extract", { preHandler: [authHook] }, async (request, reply) => {
+    // ADR-001 §4 (biassemble/backend) — every Grounnel request arrives via that repo's
+    // server-to-server proxy, so request.ip is the backend's own egress IP for every user, not
+    // the real end-user. X-Grounnel-Client-IP carries the real one; request.ip is the fallback
+    // for local dev/direct testing where no proxy is in front of this route.
+    const clientIp = (request.headers["x-grounnel-client-ip"] as string | undefined) || request.ip;
     // Defense-in-depth behind authHook, not the primary control (D020 §4, spec.md).
-    if (!services.rateLimiter.checkAndConsume(request.ip)) {
+    if (!services.rateLimiter.checkAndConsume(clientIp)) {
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 
-    let body: { text: string };
+    let body: { text: string; sessionId?: string };
     try {
       body = ExtractRequestSchema.parse(request.body);
     } catch (error) {
@@ -39,7 +44,7 @@ export function registerGrounnelRoutes(
 
     let extracted;
     try {
-      extracted = await services.extractService.run(body.text);
+      extracted = await services.extractService.run(body.text, "production", body.sessionId ?? null);
     } catch (error) {
       if (error instanceof RateLimitError) {
         // No audit exists yet (D019 trust boundary) — nowhere to write a per-claim reason, so the message becomes the /extract response itself.

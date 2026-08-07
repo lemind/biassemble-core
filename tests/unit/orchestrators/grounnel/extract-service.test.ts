@@ -207,4 +207,15 @@ describe("GrounnelExtractService (T009)", () => {
     expect(llmCallStore.completions[0]!.info.status).toBe("error");
     expect(llmCallStore.completions[1]!.info.status).toBe("success");
   });
+
+  it("T028/D023 §2: a real sessionId, once the caller has one (biassemble/backend's proxy), is written to grounnel_runs", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    await service.run("Some pasted article text.", "production", "11111111-1111-4111-8111-111111111111");
+
+    expect(historyStore.createRunCalls[0]).toMatchObject({ sessionId: "11111111-1111-4111-8111-111111111111" });
+  });
 });

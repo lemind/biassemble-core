@@ -40,15 +40,17 @@ export class GrounnelExtractService {
   ) {}
 
   /** source distinguishes real user runs from golden-set eval runs (D023 §3) — defaults to
-   * "production"; scripts/eval-grounnel.ts and src/jobs/eval-grounnel-run.ts pass "eval". */
-  async run(text: string, source: "production" | "eval" = "production"): Promise<GrounnelExtractResult> {
+   * "production"; scripts/eval-grounnel.ts and src/jobs/eval-grounnel-run.ts pass "eval".
+   * sessionId is null until the caller has one (T028 — biassemble/backend's proxy passes a real
+   * one now; a direct test call or a caller without a session still works, per D023 §3's nullable column). */
+  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null): Promise<GrounnelExtractResult> {
     // Minted upfront (not left to createAudit's own randomUUID()) — the SAME id is used for the
     // Redis hash key, grounnel_runs.run_id, and grounnel_llm_calls.run_id below, one identity
     // across all three (D023 §3). Fire-and-forget createRun happens before the LLM call, not
     // after createAudit as T024 originally had it — grounnel_llm_calls' FK needs a real run row
     // to reference; in practice the local Postgres insert finishes long before Gemini responds.
     const runId = randomUUID();
-    void this.historyStore.createRun({ runId, sessionId: null, text, source, maxClaims: MAX_CLAIMS, truncated: false });
+    void this.historyStore.createRun({ runId, sessionId, text, source, maxClaims: MAX_CLAIMS, truncated: false });
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
