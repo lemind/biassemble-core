@@ -43,7 +43,7 @@ describe("TavilySearchProvider (T008)", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://api.tavily.com/search");
     const body = JSON.parse(init.body);
-    expect(body).toMatchObject({ query: "some query", max_results: 3, include_raw_content: true });
+    expect(body).toMatchObject({ query: "some query", max_results: 16, include_raw_content: true });
     expect(init.headers.Authorization).toBe("Bearer fake-key");
   });
 

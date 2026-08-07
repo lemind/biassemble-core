@@ -3,7 +3,9 @@ import type { SearchProvider, SearchPassage } from "./search-provider.js";
 
 const MODULE = "tavily-search-provider";
 const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
-const MAX_RESULTS = 3;
+// 16, not 3 — one Tavily API call either way, so this costs nothing extra; consumers already take
+// the first "ok" result in ranked order, so a bigger pool needs no new grouping logic (D024 §2, T031).
+const MAX_RESULTS = 16;
 
 interface TavilyResult {
   url: string;

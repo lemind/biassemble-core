@@ -167,6 +167,73 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.verdict).toBe("contradicted"); // gate #1 still validates the evidence is a real substring
   });
 
+  it("T034: retries VERIFY once when reason_consistency flips a verdict but gate #1 finds no real evidence backing it (real live-eval finding, g04, 2026-08-07)", async () => {
+    const claimId = uuid(1);
+    const claimText = "World War II ended in 1943.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // First call (the real batch): self-inconsistent — reason narrates a contradiction, but
+      // verdict/evidence don't reflect it (the exact real g04 shape). Second call (T034's retry):
+      // the model gets it right this time, with real evidence.
+      const selfInconsistent = provider.getCallCount() === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: selfInconsistent ? "unsupported" : "contradicted",
+          evidence: selfInconsistent ? null : "ended in 1945",
+          reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(provider.getCallCount()).toBe(2); // proves the retry actually fired, not just that the final verdict looks right
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).toBe("ended in 1945");
+  });
+
+  it("T034: keeps the original degraded verdict when the retry also comes back self-inconsistent — never loops", async () => {
+    const claimId = uuid(1);
+    const claimText = "World War II ended in 1943.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // Every call is self-inconsistent — the retry doesn't help this time.
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "unsupported",
+          evidence: null,
+          reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(provider.getCallCount()).toBe(2); // one retry attempted, exactly one — no loop
+    expect(claim.verdict).toBe("unsupported"); // degrades safely, doesn't fabricate evidence on the second miss either
+    expect(claim.evidence).toBeNull();
+  });
+
   it("Case A gate forces contradicted on a bare 'X, not Y' negation applyReasonConsistencyGate misses (real live-eval finding, g05)", async () => {
     const claimId = uuid(1);
     const claimText = "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.";

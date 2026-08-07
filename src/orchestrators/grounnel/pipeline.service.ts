@@ -26,6 +26,8 @@ const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 const CONFIDENCE_THRESHOLD = 0.6;
 
+type Verdict = z.infer<typeof GrounnelVerdictEnum>;
+
 const NO_EVIDENCE_REASON = "No relevant source found for this claim.";
 const TAVILY_RATE_LIMITED_REASON = "This claim could not be checked right now — our search provider's rate limit was reached. Try again later.";
 
@@ -239,6 +241,92 @@ export class GrounnelPipelineService {
     );
   }
 
+  /** The 4-gate chain, extracted so T034's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
+  private runGateChain(input: {
+    verdict: Verdict;
+    reason: string | null;
+    evidence: string | null;
+    claimText: string;
+    passageText: string;
+  }): { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[]; needsRetry: boolean } {
+    let verdict = input.verdict;
+    const gateEvents: GateEventInput[] = [];
+
+    // Reason-consistency gate — the model's own reason overriding a verdict that contradicts it
+    // (2026-08-06 live-eval findings: g04/g05). Runs before gate #1 so a flip to `contradicted`
+    // still has to clear gate #1's real evidence-substring check, not bypass it.
+    const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: input.reason });
+    gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden, reason: reasonConsistency.reason });
+    verdict = reasonConsistency.verdict;
+
+    // Case A gate (D022 §4) — bare "X, not Y" negation, the gap applyReasonConsistencyGate
+    // names but doesn't catch (g05). Also runs before gate #1 — a flip still needs real evidence.
+    const implicitNegation = applyImplicitNegationGate({
+      verdict,
+      reason: input.reason,
+      claimText: input.claimText,
+      passageText: input.passageText,
+    });
+    gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
+    verdict = implicitNegation.verdict;
+
+    // Gate #1 — never reaches the store without passing this (D019 §2, T003, tasks.md acceptance).
+    const gate1 = applyContradictionEvidenceGate({ verdict, evidence: input.evidence, passageText: input.passageText });
+    gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.overridden, reason: gate1.reason });
+    verdict = gate1.verdict;
+    const evidence = gate1.evidence;
+
+    // Gate #2 — numeric normalization/comparison in code (D019 §2, T004).
+    const gate2 = applyNumericGate({ claimText: input.claimText, verdict, evidence });
+    gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
+    verdict = gate2.verdict;
+
+    // T034 (real live-eval finding, g04) — reason_consistency flipped this to contradicted based on
+    // the model's own reason text, but gate #1 immediately reverted it: no real evidence backed the
+    // flip. Worth one retry — the model may have simply omitted `evidence`, not lacked it entirely.
+    const needsRetry = reasonConsistency.overridden && (gate1.reason === "evidence_null" || gate1.reason === "evidence_not_grounded");
+
+    return { verdict, evidence, gateEvents, needsRetry };
+  }
+
+  /** T034 — one bounded retry for a single claim, fired only when runGateChain flags a self-inconsistent VERIFY output. Never blocks the batch: a retry failure just keeps the original (already gate-processed) result. */
+  private async retryVerifyClaim(
+    auditId: string,
+    item: ResolvedWithPassage,
+    verifyVersion: string
+  ): Promise<z.infer<typeof VerifyResultSchema> | null> {
+    const pairs = [{ id: item.claim.id, claim: item.claim.text, passage: item.passage.text, source_url: item.passage.url }];
+    const system = this.prompts.render("grounnel-verify", {
+      claim_passage_pairs: JSON.stringify(pairs),
+      threshold: String(CONFIDENCE_THRESHOLD),
+    });
+    try {
+      const parsed = await callLlmForJson({
+        provider: this.provider,
+        system,
+        user: "Return the JSON now.",
+        schema: VerifyResponseSchema,
+        expectedKeys: ["results"],
+        attempts: VERIFY_ATTEMPTS,
+        module: MODULE,
+        operation: "retryVerifyClaim",
+        isValid: (result) => Array.isArray(result.results),
+        onComplete: this.llmCallStore.recordCall({
+          runId: auditId,
+          stage: "verify",
+          callType: "fallback",
+          provider: this.provider.mode,
+          model: env.GEMINI_MODEL,
+          promptVersion: verifyVersion,
+        }),
+      });
+      return parsed.results.find((r) => r.id === item.claim.id) ?? null;
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "retryVerifyClaim", auditId, claimId: item.claim.id, err }, "VERIFY retry failed — keeping the original gate-processed result");
+      return null;
+    }
+  }
+
   /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
   private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
     const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text, source_url: b.passage.url }));
@@ -296,50 +384,27 @@ export class GrounnelPipelineService {
         if (!item) return; // model echoed an id we didn't send — ignore, don't persist (matches audit's own precedent)
         answeredIds.add(item.claim.id);
 
-        let verdict = result.confidence < CONFIDENCE_THRESHOLD && result.verdict !== "unverifiable" ? "unverifiable" : result.verdict;
+        let reason = result.reason;
+        let confidence = result.confidence;
+        const initialVerdict = confidence < CONFIDENCE_THRESHOLD && result.verdict !== "unverifiable" ? "unverifiable" : result.verdict;
 
-        // Buffered here, flushed only after this claim's grounnel_claims row is written below —
-        // grounnel_gate_events.claimId has a real FK, and gates finish before that row exists (D023 §5/T027).
-        const gateEvents: GateEventInput[] = [];
+        let chain = this.runGateChain({ verdict: initialVerdict, reason, evidence: result.evidence, claimText: item.claim.text, passageText: item.passage.text! });
 
-        // Reason-consistency gate — the model's own reason overriding a verdict that contradicts it
-        // (2026-08-06 live-eval findings: g04/g05). Runs before gate #1 so a flip to `contradicted`
-        // still has to clear gate #1's real evidence-substring check, not bypass it.
-        const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: result.reason });
-        gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden, reason: reasonConsistency.reason });
-        verdict = reasonConsistency.verdict;
+        // T034 — a self-inconsistent VERIFY output (reason narrates a contradiction, but gate #1
+        // found no real evidence backing the flip) gets one retry before the degraded result stands.
+        if (chain.needsRetry) {
+          const retried = await this.retryVerifyClaim(auditId, item, verifyVersion);
+          if (retried) {
+            reason = retried.reason;
+            confidence = retried.confidence;
+            const retryVerdict = confidence < CONFIDENCE_THRESHOLD && retried.verdict !== "unverifiable" ? "unverifiable" : retried.verdict;
+            chain = this.runGateChain({ verdict: retryVerdict, reason, evidence: retried.evidence, claimText: item.claim.text, passageText: item.passage.text! });
+          }
+        }
 
-        // Case A gate (D022 §4) — bare "X, not Y" negation, the gap applyReasonConsistencyGate
-        // names but doesn't catch (g05). Also runs before gate #1 — a flip still needs real evidence.
-        const implicitNegation = applyImplicitNegationGate({
-          verdict,
-          reason: result.reason,
-          claimText: item.claim.text,
-          passageText: item.passage.text!,
-        });
-        gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
-        verdict = implicitNegation.verdict;
-
-        // Gate #1 — never reaches the store without passing this (D019 §2, T003, tasks.md acceptance).
-        const gate1 = applyContradictionEvidenceGate({ verdict, evidence: result.evidence, passageText: item.passage.text! });
-        gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.overridden, reason: gate1.reason });
-        verdict = gate1.verdict;
-        const evidence = gate1.evidence;
-
-        // Gate #2 — numeric normalization/comparison in code (D019 §2, T004).
-        const gate2 = applyNumericGate({ claimText: item.claim.text, verdict, evidence });
-        gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
-        verdict = gate2.verdict;
-
+        const { verdict, evidence, gateEvents } = chain;
         const sources = toClaimSources(item.sources);
-        const result_: ClaimResult = {
-          status: "done",
-          verdict,
-          evidence,
-          confidence: result.confidence,
-          reason: result.reason,
-          sources,
-        };
+        const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason, sources };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
         await this.historyStore.createClaim({
           claimId: item.claim.id,
@@ -347,11 +412,13 @@ export class GrounnelPipelineService {
           claimText: item.claim.text,
           verdict,
           evidence,
-          confidence: result.confidence,
-          reason: result.reason,
+          confidence,
+          reason,
           sources,
           status: "done",
         });
+        // Buffered until here, flushed only after the claim row above — grounnel_gate_events.claimId
+        // has a real FK, and gates finish before that row exists (D023 §5/T027).
         this.gateEventStore.recordGateEvents(auditId, item.claim.id, gateEvents);
       })
     );
