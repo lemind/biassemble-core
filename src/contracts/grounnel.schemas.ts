@@ -20,9 +20,15 @@ export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "block
 
 // sessionId is optional — a caller that doesn't have one (e.g. a direct test call) still works,
 // same as grounnel_runs.session_id being nullable until this arrives (D023 §2/T028).
+// searchEngine lets a caller force the Tavily fallback path directly, skipping DIY fetch —
+// otherwise untestable on demand, since which URLs Gemini's grounding search returns (and
+// therefore whether DIY fetch fails for all of them) isn't something a caller controls.
+export const SearchEngineEnum = z.enum(["defaultFlow", "tavily"]);
+
 export const ExtractRequestSchema = z.object({
   text: z.string().min(1),
   sessionId: z.string().uuid().optional(),
+  searchEngine: SearchEngineEnum.default("defaultFlow"),
 });
 
 export type ExtractRequest = z.infer<typeof ExtractRequestSchema>;

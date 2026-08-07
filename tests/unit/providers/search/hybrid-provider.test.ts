@@ -290,4 +290,28 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(searchCallStore.calls).toHaveLength(1);
     expect(searchCallStore.calls[0]).toMatchObject({ callType: "diy_fetch", status: "ok" });
   });
+
+  it("forceFallback skips DIY fetch entirely, even when the first candidate would have succeeded", async () => {
+    const fallback = new StubFallback([{ url: "https://fallback.example", title: "F", domain: "fallback.example", status: "ok", text: "x" }]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/X", title: "X" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const searchCallStore = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
+    const results = await provider.search("Bukowski attended Los Angeles City College.", {
+      runId: "r1",
+      claimId: "c1",
+      forceFallback: true,
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(results).toEqual([{ url: "https://fallback.example", title: "F", domain: "fallback.example", status: "ok", text: "x" }]);
+    expect(searchCallStore.calls).toHaveLength(1);
+    expect(searchCallStore.calls[0]).toMatchObject({ callType: "tavily_fallback", status: "ok" });
+  });
 });

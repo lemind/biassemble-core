@@ -85,9 +85,9 @@ export class GrounnelPipelineService {
     private readonly gateEventStore: GrounnelGateEventStore
   ) {}
 
-  async run(auditId: string, claims: PipelineClaimInput[]): Promise<void> {
+  async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<void> {
     try {
-      const resolved = await this.resolveAllEvidence(auditId, claims);
+      const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine);
 
       const noEvidence = resolved.filter((r) => !hasPassage(r));
       await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
@@ -122,11 +122,15 @@ export class GrounnelPipelineService {
 
   /** Waves of SEARCH_CONCURRENCY, not one flat Promise.all — lets a Tavily rate limit detected in
    * one wave stop the next wave's claims from ever calling SearchProvider.search() at all. */
-  private async resolveAllEvidence(auditId: string, claims: PipelineClaimInput[]): Promise<ResolvedEvidence[]> {
+  private async resolveAllEvidence(
+    auditId: string,
+    claims: PipelineClaimInput[],
+    searchEngine: "defaultFlow" | "tavily"
+  ): Promise<ResolvedEvidence[]> {
     const resolved: ResolvedEvidence[] = [];
     for (let i = 0; i < claims.length; i += SEARCH_CONCURRENCY) {
       const chunk = claims.slice(i, i + SEARCH_CONCURRENCY);
-      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim)));
+      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine)));
       resolved.push(...chunkResolved);
 
       const tavilyRateLimited = chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"));
@@ -146,10 +150,16 @@ export class GrounnelPipelineService {
     return resolved;
   }
 
-  private async resolveEvidence(auditId: string, claim: PipelineClaimInput): Promise<ResolvedEvidence> {
+  private async resolveEvidence(auditId: string, claim: PipelineClaimInput, searchEngine: "defaultFlow" | "tavily"): Promise<ResolvedEvidence> {
     // context (D023 §6) is additive/optional on SearchProvider.search — only HybridSearchProvider
-    // reads it, to attribute grounnel_search_calls rows to this real run/claim.
-    const sources = await this.searchProvider.search(claim.text, { runId: auditId, claimId: claim.id });
+    // reads it, to attribute grounnel_search_calls rows to this real run/claim. forceFallback lets
+    // a caller exercise the Tavily path on demand (searchEngine request param), instead of gambling
+    // on whether Gemini's grounding search happens to return only unfetchable URLs.
+    const sources = await this.searchProvider.search(claim.text, {
+      runId: auditId,
+      claimId: claim.id,
+      forceFallback: searchEngine === "tavily",
+    });
     for (const s of sources) {
       if (s.status !== "ok") {
         // Granular per-source failure logging already happens one layer down (SearchProvider) — this is the pipeline-level summary, tying a failed source to the claim it belonged to (D021).

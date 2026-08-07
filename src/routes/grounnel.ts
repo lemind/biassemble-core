@@ -31,7 +31,7 @@ export function registerGrounnelRoutes(
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 
-    let body: { text: string; sessionId?: string };
+    let body: { text: string; sessionId?: string; searchEngine: "defaultFlow" | "tavily" };
     try {
       body = ExtractRequestSchema.parse(request.body);
     } catch (error) {
@@ -70,7 +70,7 @@ export function registerGrounnelRoutes(
     // it does not keep the container alive to do it. waitUntil is the actual platform contract.
     if (extracted.pendingClaims.length > 0) {
       waitUntil(
-        services.pipelineService.run(extracted.id, extracted.pendingClaims).catch((err) => {
+        services.pipelineService.run(extracted.id, extracted.pendingClaims, body.searchEngine).catch((err) => {
           logger.error(
             { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
             "Pipeline run failed after the 202 response was already sent"

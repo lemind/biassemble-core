@@ -95,7 +95,11 @@ export class HybridSearchProvider implements SearchProvider {
     private readonly searchCallStore: GrounnelSearchCallStore
   ) {}
 
-  async search(query: string, context?: { runId: string; claimId: string }): Promise<SearchPassage[]> {
+  async search(query: string, context?: { runId: string; claimId: string; forceFallback?: boolean }): Promise<SearchPassage[]> {
+    if (context?.forceFallback) {
+      return this.runFallback(query, context);
+    }
+
     const candidates = await this.discoverUrls(query);
     // Granularity, decided (D023 §6): one row per attempted DIY candidate — real per-URL
     // status/timing, matching this method's own "returns every attempted source" contract.
@@ -127,6 +131,15 @@ export class HybridSearchProvider implements SearchProvider {
       { module: MODULE, operation: "search", query, attempted: attempted.length },
       "DIY fetch failed for every candidate — falling back"
     );
+    const fallbackResults = await this.runFallback(query, context);
+    return [...attempted, ...fallbackResults];
+  }
+
+  /** Shared by the natural "every DIY candidate failed" path and `forceFallback` (test/debug escape hatch). */
+  private async runFallback(
+    query: string,
+    context?: { runId: string; claimId: string }
+  ): Promise<SearchPassage[]> {
     const fallbackT0 = Date.now();
     const fallbackResults = await this.fallback.search(query);
     if (context) {
@@ -148,7 +161,7 @@ export class HybridSearchProvider implements SearchProvider {
         durationMs: Date.now() - fallbackT0,
       });
     }
-    return [...attempted, ...fallbackResults];
+    return fallbackResults;
   }
 
   private async discoverUrls(query: string): Promise<Array<{ url: string; title: string }>> {
