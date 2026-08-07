@@ -526,9 +526,9 @@ T023 (grounnel pg schema — 5 tables)
 
 **Checkpoint — before calling Phase 9 done**: `grep -rn "postgres\|drizzle" biassemble/backend/src/lib/db` confirms no Grounnel-specific table was added there (D023 §2's "reuse, don't reinvent" — a violation here would mean T028 quietly grew a second mechanism instead of reusing `sessions`); a real run's `grounnel_runs`/`grounnel_claims`/`grounnel_llm_calls`/`grounnel_search_calls`/`grounnel_gate_events` rows are checked by hand against that same run's Redis/API response, not just "insert didn't throw."
 
-## Phase 10 — Search escalation and multi-source evidence (D024, real live-eval finding: g11)
+## Phase 10 — Search escalation, multi-source evidence, and VERIFY self-consistency (D024, real live-eval findings: g04, g11)
 
-**Purpose**: D024 reopens the search-depth assumption D021 shipped with. Real findings this session: DIY fetch never escalates beyond 3 fixed candidates: Tavily fallback runs at the cheap `"basic"` tier by default; VERIFY only ever sees one passage per claim even when more than one source succeeded. Not urgent bugs — real quality gaps found via a golden-set regression eval, not guessed at. Sequenced schema-first per this file's own established convention (T023 before T024-T027).
+**Purpose**: D024 (T029-T033) reopens the search-depth assumption D021 shipped with — DIY fetch never escalates beyond 3 fixed candidates, Tavily only ever asks for 3 results, VERIFY only ever sees one passage per claim. T034 is a separate, real finding from the same eval run (g04) — not a search gap, a VERIFY-output self-consistency gap — tracked here because it surfaced the same session, not because it's part of D024's decision. Not urgent bugs — real quality gaps found via a golden-set regression eval, not guessed at. Sequenced schema-first per this file's own established convention (T023 before T024-T027).
 
 - [ ] **T029** `grounnel_search_calls` schema: add `wave` (int) and `usedAsEvidence` (boolean) columns
   - **Brief:** Migration only. `wave` records which escalation wave (1/2/3) an attempt belonged to; `usedAsEvidence` marks whether a successful source actually became one of the (up to 2) passages sent to VERIFY, vs. attempted-but-unused. Answers "how often do we need wave 2/3" and "how often did 2 sources get used" as a query, not a guess.
@@ -542,11 +542,11 @@ T023 (grounnel pg schema — 5 tables)
   - **Files:** `src/providers/search/hybrid-provider.ts`, tests.
   - **Size:** M.
 
-- [ ] **T031** Tavily `search_depth: "advanced"`
-  - **Brief:** One-line change to the Tavily API request body — directly addresses the confirmed root cause of g11's forced-fallback failure (defaulted to the cheap/shallow `"basic"` tier). No escalation logic needed for Tavily itself at this stage.
+- [ ] **T031** Tavily: `max_results` 3 → 16 in one call, evaluated progressively in groups of 3 → 5 → 8
+  - **Brief:** `tavily-provider.ts`'s `max_results: MAX_RESULTS` raised from 3 to 16 — one API call, `include_raw_content: true` already returns full content for all 16 in that single response, no extra network cost. The results are then checked for a usable `"ok"` one in groups (1-3, then 4-8, then 9-16), stopping as soon as a group has one — same stop-early shape as T030's DIY waves, applied to an already-fetched pool instead of new fetches. **Not** `search_depth: "advanced"` — considered and explicitly rejected (D024 §1.2/§4).
   - **Dependencies:** None — can land independently, first, before anything else in this phase.
   - **Files:** `src/providers/search/tavily-provider.ts`, tests.
-  - **Size:** XS.
+  - **Size:** S.
 
 - [ ] **T032** Multi-passage evidence: up to 2 successful sources per claim instead of 1
   - **Brief:** `resolveEvidence`'s return shape changes from `passage: SearchPassage | null` to a small array (max 2). Breaking change to every downstream consumer: `hasPassage`, `runBatch`, and all four gates in `gates.ts` that currently take one `passageText` — each needs to check evidence against whichever passage actually contains it, not a naive concatenation (would break the ellipsis-fragment logic from the same session's gate #1 fix). This is the largest, riskiest task in this phase — see D024 §3 for why it's not folded into T030.
@@ -558,4 +558,10 @@ T023 (grounnel pg schema — 5 tables)
   - **Brief:** VERIFY's prompt and `CLAIM_PASSAGE_PAIRS` payload currently assume exactly one passage per claim. Needs to represent "evaluate against up to 2 passages" — verdict logic (supported if either passage supports it, contradicted if either conflicts) and the reason must name which passage. New prompt version; needs the same "UNVALIDATED against a real model" staged rollout this repo already applies to prompt changes (see verify/system.json v2.0.0/v2.1.0 notes).
   - **Dependencies:** T032 (needs the real code-side payload shape decided before the prompt can describe it).
   - **Files:** `src/prompts/grounnel/verify/system.json`, `src/orchestrators/grounnel/pipeline.service.ts`.
+  - **Size:** M.
+
+- [ ] **T034** Retry VERIFY once for a claim when gates detect a self-inconsistent output (real live-eval finding: g04, 2026-08-07) — not part of D024, a VERIFY-retry concern not a search one
+  - **Brief:** Real g04 case: the model returned `verdict: "unsupported", evidence: null` while its own `reason` clearly narrated a CONFLICT ("...which contradicts the claim..."). `reason_consistency` correctly flipped the verdict to `contradicted`; gate #1 then correctly reverted it because there was no real `evidence` to back the flip — every gate fired exactly right, but the net result (`unsupported`) reflects the model's own self-contradictory output, not a gate bug. No gate can fabricate evidence the model never gave. When this exact combination happens (`reason_consistency` fired **and** `contradiction_evidence` downgraded with `reason: "evidence_null"` or `"evidence_not_grounded"`), retry that one claim's VERIFY call once before accepting the degraded verdict — a bounded, targeted retry, not a blanket one (most claims never hit this path).
+  - **Dependencies:** None — orthogonal to T029-T033, can land independently.
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts` (`runBatch`), tests.
   - **Size:** M.
