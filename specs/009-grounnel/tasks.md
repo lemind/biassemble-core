@@ -284,3 +284,229 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
   - **Dependencies:** None (read-only, can run any time; `reconcileTemporalVerdict` already checked and confirmed out of scope — `QUARTER_RE`-only, doesn't cover bare-year claims).
   - **Files:** None expected; a new ADR if the count triggers a build.
   - **Size:** XS — investigation step only.
+
+---
+
+## Phase 9: Durable persistence — history, analytics, gate/fallback telemetry (D023)
+
+**Purpose**: D023 reopens D019 §4 on its own named triggers (persistent history, analytics) and adds two new telemetry capabilities (gate decisions, search-provider fallback) this repo has never had for any product. Sequenced per `planning-and-task-breakdown`'s dependency-graph rule: schema is the root — nothing else can be built or even reviewed meaningfully against a wrong column shape — so it lands first and alone as a checkpoint, then three independent write-path tasks fan out from it (each touches a different call site, none depend on each other), then the cross-repo session task once T024 specifically (not the others) is stable — same "why sequenced last" reasoning D020 §3/tasks.md's own T013 already established. T027 depends on both T023 *and* T024 (schema, plus T024's write must land first at the code level within a claim's processing — see T027's own note; a real cross-task code dependency, not just a schema one), so it isn't fully independent of the other three the way T025/T026 are.
+
+```
+T023 (grounnel pg schema — 5 tables)
+  │
+  ├── T024 (runs+claims store — the "history" slice)        ─┐
+  ├── T025 (llm_calls store + prompt-version wiring)          ├─ independent of each other
+  └── T026 (search_calls store — Tavily-fallback telemetry)  ─┘
+        │
+        ├── T027 (gate_events store — needs T024's write to land first per claim, see T027's note)
+        │
+        └── T028 (biassemble/backend session reuse — cross-repo, depends on T024 only, not T025-T027)
+```
+
+**Checkpoint after T023**: migration generated and reviewed (schema shape agreed) before any store/wiring code is written against it — same "don't build against a guessed shape" discipline as T001/plan.md §2 step 0 applied to Tavily's response shape.
+
+- [ ] **T023** `grounnel` pg schema — 5 new tables, own schema sibling to `core`/`audit` (D023 §3, D018 §2.4's per-product-schema precedent)
+  - **Acceptance:** `drizzle-kit generate` produces a clean migration with no unexpected diff against `core`/`audit`; `schemaFilter` in `drizzle.config.ts` includes `"grounnel"`; every column nullability matches the real lifecycle (e.g. `grounnel_claims.verdict` nullable only in the sense a `status:"failed"` row never got one — matches `audits`/`claims`' own "nullable pre-verify, never null once done" precedent).
+  - **Schema** (`src/db/schema.ts`):
+    ```ts
+    export const grounnel = pgSchema("grounnel");
+
+    // Table names are prefixed with grounnel_ (unlike core.table("runs")/auditSchema.table("audits"),
+    // which don't repeat the schema name) — deliberately, not a copy-paste oversight: grounnelClaims
+    // and auditSchema's existing `claims` export would otherwise collide as TS identifiers, since
+    // Drizzle export names are flat across the whole schema.ts module regardless of pg schema.
+
+    // One row per POST /extract call. runId is application-generated — the SAME id
+    // already used as the Redis hash key `audit:{id}` (D023 §3), not a second identity.
+    export const grounnelRuns = grounnel.table("grounnel_runs", {
+      runId: uuid("run_id").primaryKey(),
+      // Nullable, not notNull — reviewed and corrected (/code-review high): no code path in this
+      // repo supplies a sessionId until T028 (cross-repo, sequenced last) exists. A notNull column
+      // would either block T024 entirely or force a fabricated placeholder UUID. Revisit tightening
+      // to notNull once T028 ships and every caller genuinely has one. No FK regardless — backend-owned (D023 §2).
+      sessionId: uuid("session_id"),
+      text: text("text").notNull(),
+      // production vs eval distinguishes real user runs from golden-set runs (scripts/eval-grounnel.ts,
+      // src/jobs/eval-grounnel-run.ts — both construct a real GrounnelPipelineService/GrounnelExtractService,
+      // so without this column golden-set noise would silently corrupt "verdict distribution over time"
+      // analytics, D023 §1's own stated reopening trigger — reviewed finding, /code-review high).
+      // Deliberately minimal (not benchmark/manual/cli/etc. — considered, not added): a text-enum
+      // column is a one-line migration to extend later; adding speculative values now with no real
+      // caller for them yet would be designing for a hypothetical, not a named requirement.
+      source: text("source", { enum: ["production", "eval"] }).notNull().default("production"),
+      status: text("status", { enum: ["extracting", "verifying", "done", "failed"] }).notNull().default("extracting"),
+      maxClaims: integer("max_claims").notNull(),
+      truncated: boolean("truncated").notNull().default(false),
+      promptVersionExtract: text("prompt_version_extract"),
+      promptVersionVerify: text("prompt_version_verify"),
+      score: jsonb("score"),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+      completedAt: timestamp("completed_at", { withTimezone: true }),
+    }, (table) => [
+      index("grounnel_runs_session_id_idx").on(table.sessionId),
+      index("grounnel_runs_status_idx").on(table.status),
+      index("grounnel_runs_created_at_idx").on(table.createdAt),
+      // Composite, not just the two singles above — the named "show me my past checks" query
+      // (D023 §1) is `WHERE session_id = ? ORDER BY created_at DESC`, which a single-column
+      // index on either field alone still forces a separate sort step for.
+      index("grounnel_runs_session_created_idx").on(table.sessionId, table.createdAt),
+    ]);
+
+    // One row per claim, durable copy of what Redis holds transiently (D023 §7 — additive, not a
+    // replacement). Deliberately narrower status enum than the live ClaimStatusEnum (no "pending") —
+    // this table is written once a claim reaches its FINAL state only, matching D023 §7's "written
+    // after Redis, once already correct" rule; Redis is where in-progress state lives.
+    export const grounnelClaims = grounnel.table("grounnel_claims", {
+      claimId: uuid("claim_id").primaryKey(), // same id as the API/Redis contract
+      runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+      claimText: text("claim_text").notNull(),
+      verdict: text("verdict", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
+      evidence: text("evidence"),
+      confidence: doublePrecision("confidence"),
+      reason: text("reason"),
+      sources: jsonb("sources").notNull(), // ClaimSource[]
+      status: text("status", { enum: ["done", "failed"] }).notNull(),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    }, (table) => [
+      index("grounnel_claims_run_id_idx").on(table.runId),
+      index("grounnel_claims_verdict_idx").on(table.verdict),
+      index("grounnel_claims_status_idx").on(table.status), // "how many verifications failed" — analytics, not just lookup by run
+    ]);
+
+    // Gemini EXTRACT/VERIFY calls — mirrors core.llm_calls' shape (D023 §3), own table, not shared.
+    // callType defaults to "primary" (core.llm_calls has no default) — deliberate deviation, not
+    // copy-paste drift: Grounnel has no LLM-level fallback provider today (only HybridSearchProvider's
+    // *search*-level fallback, a different table below), so requiring every call site to pass the
+    // literal "primary" explicitly would be pure boilerplate with zero signal.
+    export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
+      id: uuid("id").defaultRandom().primaryKey(),
+      runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+      stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
+      callType: text("call_type", { enum: ["primary", "fallback"] }).notNull().default("primary"),
+      provider: text("provider").notNull(),
+      model: text("model").notNull(),
+      promptVersion: text("prompt_version").notNull(),
+      rawResponse: text("raw_response"),
+      parsedOutput: jsonb("parsed_output"),
+      status: text("status", { enum: ["success", "timeout", "error"] }).notNull(),
+      failureType: text("failure_type", { enum: ["schema_validation", "parse_error", "provider_error", "timeout", "other"] }),
+      inputTokens: integer("input_tokens"),
+      outputTokens: integer("output_tokens"),
+      totalTokens: integer("total_tokens"),
+      startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+      endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
+      durationMs: integer("duration_ms").notNull(),
+      errorMessage: text("error_message"),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    }, (table) => [
+      index("grounnel_llm_calls_run_id_idx").on(table.runId),
+      index("grounnel_llm_calls_stage_idx").on(table.stage),
+      index("grounnel_llm_calls_created_at_idx").on(table.createdAt),
+      // Composite, mirroring core.llm_calls' own llm_calls_metrics_idx — same "success/failure rate
+      // by stage over time" query shape D023 §3 claims this table mirrors; a real mirror needs this too.
+      index("grounnel_llm_calls_metrics_idx").on(table.createdAt, table.stage, table.status),
+    ]);
+
+    // SearchProvider calls — DIY-fetch vs Tavily-fallback (D021/D023 §6). New concept, no biassemble
+    // precedent. claimId has no FK: unlike grounnel_gate_events below, search runs in an entirely
+    // earlier, separate phase (resolveAllEvidence, waves of up to SEARCH_CONCURRENCY claims at once)
+    // well before any claim's final write — buffering every in-flight search call across a whole
+    // run until each claim's eventual write would be a much bigger restructuring than gate_events'
+    // buffer-four-then-flush, so no-FK is the pragmatic choice here specifically, not a blanket rule.
+    //
+    // Granularity, decided (external review, second pass): ONE ROW PER ATTEMPTED SOURCE, not one
+    // row per search() call — matches search-provider.ts's own doc comment ("returns every
+    // attempted source, not just the successful one"). A DIY phase trying 3 candidate URLs before
+    // falling back to Tavily writes 3 diy_fetch rows (one per URL, real per-candidate status/timing)
+    // plus 1 tavily_fallback row if the fallback fires (one row for that whole provider call — Tavily
+    // itself returns multiple results per HTTP call, not per-URL attempts the way DIY fetches are).
+    // url is null on a tavily_fallback row for exactly this reason (it isn't one URL's attempt).
+    export const grounnelSearchCalls = grounnel.table("grounnel_search_calls", {
+      id: uuid("id").defaultRandom().primaryKey(),
+      runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+      claimId: uuid("claim_id").notNull(),
+      query: text("query").notNull(),
+      callType: text("call_type", { enum: ["diy_fetch", "tavily_fallback"] }).notNull(),
+      url: text("url"), // the specific candidate URL for a diy_fetch row; null for tavily_fallback
+      resultCount: integer("result_count").notNull(), // 1 for diy_fetch; Tavily's own result count for tavily_fallback
+      status: text("status", { enum: ["ok", "paywalled", "unreachable", "blocked", "rate_limited"] }).notNull(), // matches SourceStatusEnum
+      durationMs: integer("duration_ms").notNull(),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    }, (table) => [
+      index("grounnel_search_calls_run_id_idx").on(table.runId),
+      index("grounnel_search_calls_call_type_idx").on(table.callType),
+    ]);
+
+    // Every gate evaluation (D022 §4/§2, D023 §5) — fired or not; overridden:false is itself the
+    // data that answers "how often does this gate even get a chance to fire." claimId DOES get a
+    // real FK (reviewed and corrected — /code-review high flagged the original "no FK, same reason
+    // as search_calls" as a misapplied copy-paste: gates run in pipeline.service.ts's runBatch loop
+    // directly before that same iteration's writeClaimResult call, not in an earlier separate phase
+    // the way search is). T027's write path must buffer the 4 gate decisions in memory while the
+    // chain runs, then flush them AFTER T024's grounnel_claims insert for that claim succeeds, so
+    // the FK always references a real, already-written row — not written eagerly per-gate.
+    export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
+      id: uuid("id").defaultRandom().primaryKey(),
+      runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+      claimId: uuid("claim_id").notNull().references(() => grounnelClaims.claimId, { onDelete: "cascade" }),
+      gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "contradiction_evidence", "numeric"] }).notNull(),
+      verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
+      verdictAfter: text("verdict_after", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
+      overridden: boolean("overridden").notNull(),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    }, (table) => [
+      index("grounnel_gate_events_run_id_idx").on(table.runId),
+      index("grounnel_gate_events_gate_idx").on(table.gate),
+      index("grounnel_gate_events_overridden_idx").on(table.overridden),
+    ]);
+    ```
+  - **Note on the four different status/lifecycle enums (external review, second pass):** `grounnel_runs.status` (`extracting|verifying|done|failed`), `grounnel_claims.status` (`done|failed`), `grounnel_llm_calls.status` (`success|timeout|error`), and `grounnel_search_calls.status` (`ok|paywalled|unreachable|blocked|rate_limited`) are all genuinely different lifecycles for genuinely different things (a run, a claim, an LLM call, a search attempt) — each intentionally owns its own enum rather than sharing one normalized "status" concept. Do not "simplify" these into a single shared enum later; they were never the same thing to begin with. `grounnel_gate_events` has no status column at all, also intentionally — `overridden: boolean` already is that table's outcome field.
+  - **Note on cascade + future retention (reviewed, /code-review high):** every FK above cascades from `grounnel_runs`. D023's own "Not decided" section already flags a future PII/retention deletion policy as unresolved — this cascade means deleting a `grounnel_runs` row for that reason would also delete its `grounnel_llm_calls`/`grounnel_search_calls`/`grounnel_gate_events` rows, losing aggregate telemetry that has nothing to do with the PII being removed. Not fixed here (no retention policy exists yet to design against — same "don't build against a hypothetical" reasoning D019 §2 already applied elsewhere) but named explicitly so a future retention design accounts for it rather than discovering it by surprise.
+  - **Acceptance:** `drizzle-kit generate` produces a clean migration with no unexpected diff against `core`/`audit`; `schemaFilter` in `drizzle.config.ts` includes `"grounnel"`; every column nullability matches the real lifecycle (e.g. `grounnel_claims.verdict` nullable only in the sense a `status:"failed"` row never got one — matches `audits`/`claims`' own "nullable pre-verify, never null once done" precedent).
+  - **Verify:** `pnpm db:generate` (or repo's equivalent drizzle-kit script) produces a migration touching only `grounnel.*`; `pnpm typecheck` passes with the new exports imported nowhere yet (dead code is fine, a type error is not — same discipline as T002).
+  - **Dependencies:** None.
+  - **Files:** `src/db/schema.ts`, `drizzle.config.ts` (`schemaFilter`), generated migration under `src/db/migrations/`.
+  - **Size:** M — one file with real column-design weight, despite being "1 file" by count.
+
+- [ ] **T024** `grounnel_runs`/`grounnel_claims` durable write path — the "history" vertical slice (D023 §3, §7)
+  - **Source of truth (D023 §7, made explicit — external review, second pass):** Redis is authoritative for a run's actual state; Postgres is best-effort analytics/history only. A Postgres write failure after Redis already succeeded is an accepted, un-retried divergence for that row — not a bug to fix in this task. No code on the `POST /extract`/`GET /status/:id` path may ever read from Postgres.
+  - **Acceptance:** a `grounnel_runs` row is written once, at EXTRACT time, alongside the existing Redis `createAudit` call (fire-and-forget, matching `retrievalComparisons`' "written fire-and-forget after runFullAssessment" precedent — a Postgres write failure must never fail the user-facing `202`). **`sessionId` is written as `null` until T028 ships** (schema is nullable specifically for this — reviewed/corrected, see T023's schema note) — do not fabricate a placeholder UUID. `source` is written `"eval"` when the caller is `scripts/eval-grounnel.ts`/`src/jobs/eval-grounnel-run.ts`, `"production"` otherwise (both construct a real `GrounnelPipelineService`/`GrounnelExtractService` — reviewed finding: without this, golden-set runs would silently pollute production analytics). A `grounnel_claims` row is written once per claim, alongside each Redis `writeClaimResult` call. `grounnel_runs.status`/`completed_at` update once the run finishes. No change to `GET /status/:id`'s latency or correctness — it keeps reading Redis only (D023 §7 — this is additive, not on the read path).
+  - **Verify:** unit tests for the new store against a fake DB client (matching `FakeRedisHashClient`'s existing precedent for the Redis side); one test asserting a Postgres write failure doesn't throw out of `extractService.run()`/`pipelineService.run()`; one test asserting an eval-triggered run writes `source: "eval"`.
+  - **Dependencies:** T023.
+  - **Files:** `src/persistence/grounnel-history-store.ts` (new — distinct name from the existing Redis-backed `GrounnelStore` in `routes/grounnel.ts`, not a rename of it), `src/orchestrators/grounnel/extract.service.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, `src/evaluation/run-grounnel-eval.ts` (needs to pass `source: "eval"` through to the constructed services), tests.
+  - **Size:** M — 4-5 files, one cohesive write-path feature.
+
+- [ ] **T025** `grounnel_llm_calls` write path + prompt-version wiring (D023 §4, §3)
+  - **Architecture, decided (external review, second pass — this was left as an open A/B choice after the first review; a reviewer correctly flagged that the two options produce different ownership and can't both be "the plan"):** **Option A — extend `callLlmForJson` itself.** `callLlmForJson()` (`src/orchestrators/llm-json-call.ts`) gains an optional `onComplete?: (info: { raw: unknown; startedAt: Date; endedAt: Date; durationMs: number; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; status: LlmCallStatus; failureType: LlmCallFailureType | null }) => void` callback, invoked once per call (success or final failure) with everything `grounnel_llm_calls`/`core.llm_calls` need. The `Promise<T>` return contract is unchanged — callers that don't pass `onComplete` (audit/extract.service.ts today) are unaffected. Grounnel's call sites pass one to actually write the row. **Not** Option B (bypass `callLlmForJson`, duplicate its retry/repair/injection-guard control flow the way audit's VERIFY currently does for a different reason) — that repeats exactly the "reinvent instead of inherit fixes already paid for" anti-pattern this codebase's own ADRs (D022 §2) already call out, and audit's VERIFY predates `callLlmForJson`'s extraction, not a pattern to extend. This decision also benefits audit: `extract.service.ts` could adopt the same callback later instead of `verify.service.ts`'s hand-rolled wrapper remaining the only path with this detail — not required by this task, just a consequence worth naming.
+  - **Acceptance:** every EXTRACT/VERIFY Gemini call writes one `grounnel_llm_calls` row with `stage`/`callType`/`provider`/`model`/`promptVersion`/`status`/`rawResponse`/tokens/timing/`failureType` all populated, via the `onComplete` callback. `PromptRegistry.getGrounnelExtractVersion()`/`getGrounnelVerifyVersion()` (already exist, currently dead code — confirmed zero call sites, D023 §4) are called and the result stamped into both `grounnel_runs.prompt_version_extract`/`_verify` and every relevant `grounnel_llm_calls.prompt_version` row.
+  - **Verify:** unit test asserting `callLlmForJson` with no `onComplete` passed behaves identically to today (no behavior change for existing callers); unit test asserting the stamped `prompt_version` matches the real value from `verify/system.json`'s `version` field (not a hardcoded string, so a future prompt bump doesn't silently go untracked).
+  - **Dependencies:** T023.
+  - **Files:** `src/orchestrators/llm-json-call.ts` (`onComplete` addition), `src/persistence/grounnel-llm-call-store.ts` (new, own table per D023 §3 — not `DrizzleLlmCallStore` reused), `src/orchestrators/grounnel/extract.service.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, tests.
+  - **Size:** M.
+
+- [ ] **T026** `grounnel_search_calls` write path — closes the Tavily-fallback telemetry gap (D023 §6, this session's real finding)
+  - **Design, decided (external review, second pass — no longer an open question):** `SearchProvider.search(query, context?)` gains a **second, optional** parameter (`context?: { runId: string; claimId: string }`), purely additive — every existing implementor (`TavilySearchProvider`, any test fake) keeps working unchanged and simply ignores it; only `HybridSearchProvider` (the one concrete class that needs to attribute rows) actually reads it. This deliberately avoids a breaking signature change rippling to every `SearchProvider` implementor, and keeps real per-attempt timing/status where it naturally lives (inside `HybridSearchProvider`, which already loops per-candidate) rather than moving the write to a caller that only ever sees the final merged array. `pipeline.service.ts`'s `resolveEvidence` gains `auditId` as a parameter (currently only takes `claim`) so it can pass `{ runId: auditId, claimId: claim.id }` through — a small, local signature change, not a public-contract one.
+  - **Granularity, decided:** one row per attempted DIY candidate (real per-URL status/timing) plus one row for the Tavily fallback call as a whole when it fires — see T023's schema comment for why the two shapes differ (Tavily's own HTTP call already returns multiple results, DIY tries URLs one at a time).
+  - **Acceptance:** every `HybridSearchProvider.search()` call correctly attributes each row to the real `runId`/`claimId` it was called for. "How many times did we fall back to Tavily" becomes a live SQL query instead of an unrecoverable question once Vercel's log retention rolls over (confirmed this session: it already had).
+  - **Verify:** unit test asserting a fallback-triggering search (all DIY candidates fail) writes one `diy_fetch` row per candidate plus one `tavily_fallback` row, all carrying the correct `runId`/`claimId`; one test asserting a `TavilySearchProvider` used standalone (no `context` passed) doesn't throw or behave differently.
+  - **Dependencies:** T023.
+  - **Files:** `src/persistence/grounnel-search-call-store.ts` (new), `src/providers/search/search-provider.ts` (additive optional param on the interface), `src/providers/search/hybrid-provider.ts` (constructor takes the store, `search()` consumes `context`), `src/orchestrators/grounnel/pipeline.service.ts` (`resolveEvidence` gains `auditId`), tests.
+  - **Size:** S/M.
+
+- [ ] **T027** `grounnel_gate_events` write path — gate telemetry (D023 §5, new capability)
+  - **Write-ordering constraint (reviewed and corrected, `/code-review high`):** in `pipeline.service.ts`'s `runBatch`, all four gates run sequentially (lines ~235-252) and complete *before* `writeClaimResult` is called (line ~263) — the claim's durable row (T024) doesn't exist yet while gates are running. `grounnel_gate_events.claimId` has a real FK (T023's schema, corrected from an earlier no-FK draft), so this task must **buffer** the gate decisions (`{gate, verdictBefore, verdictAfter, overridden}`) in memory while the chain runs, and only insert them **after** T024's `grounnel_claims` write for that same claim succeeds — not eagerly per-gate.
+  - **Buffer-failure semantics (external review, second pass):** if the `grounnel_claims` insert for a claim fails, its buffered gate-event rows are **discarded, not retried** — same best-effort/fire-and-forget semantics as every other Phase 9 write (see D023 §7's "Postgres is best-effort, Redis is truth" rule). The real FK means an orphaned gate-event row is structurally impossible, not just unlikely — the alternative (retrying independently of the claim write) would risk a gate-event row for a claim whose durable history never actually landed.
+  - **Acceptance:** each gate in `pipeline.service.ts`'s chain (`applyReasonConsistencyGate`, `applyImplicitNegationGate`, `applyContradictionEvidenceGate`, `applyNumericGate` today) produces one buffered row, per claim, regardless of whether it fired — `overridden: false` rows are the data that answers "how often does this gate even get a chance to fire," not just override rate. All rows for a claim are inserted only after that claim's `grounnel_claims` row exists.
+  - **Verify:** unit test asserting **one row per gate actually present in the chain at call time** (not a hardcoded `4` — a future gate addition must not need this test's assertion count edited, only the gate list itself), with `verdict_before`/`verdict_after` matching the real chain, not just the final verdict; one test asserting insert order (claim row committed before its gate-event rows); one test asserting a failed claim-row insert discards its buffered gate events rather than writing orphans.
+  - **Dependencies:** T023, T024 (needs T024's write to have landed first, at the code level, even though the schema itself only requires T023 — named explicitly here since it's easy to miss from the schema dependency alone).
+  - **Files:** `src/persistence/grounnel-gate-event-store.ts` (new), `src/orchestrators/grounnel/pipeline.service.ts`, tests.
+  - **Size:** S/M.
+
+- [ ] **T028** `biassemble/backend` — reuse the existing `sessions` table for Grounnel, mirror `session.service.ts`'s pattern (D023 §2, extends T013's scope)
+  - **Acceptance:** `handleCreateGrounnelExtract`-equivalent creates a session via the SAME `createSession()`/`sessions` table the reflection product already uses (no new table, no new mechanism, D023 §2) before calling this repo's `POST /extract`, passing `sessionId` through — same shape as `handleCreateSession`'s `create session → call AI Core, passing sessionId → persist product-specific data → update session status`. This is T013 (tasks.md Phase 6, not yet built) with a now-concrete session-creation requirement it didn't have when originally scoped — extends it, not a duplicate task.
+  - **Verify:** manual real end-to-end call through the proxy (matches T013's own original verification plan) confirming a `sessions` row exists and `grounnel_runs.session_id` (T024) matches it — the first time that column is populated with a real value instead of `null`.
+  - **Dependencies:** T024 only (this repo's `/extract` contract + nullable `sessionId` column must exist first — same "why sequenced after" reasoning plan.md §2 step 8.5 already applied to T013). **Not** T025/T026/T027 — those tables' shape doesn't affect T028's session-creation work; the Phase 9 intro diagram's "depends on this repo's shape being stable" is about T024's contract specifically, not the full telemetry surface.
+  - **Files:** (different repo) `biassemble/backend/src/lib/ai/core-client.ts`, `biassemble/backend/src/services/session.service.ts` (extended, not replaced), two new route files under `biassemble/backend/src/app/api/grounnel/`.
+  - **Size:** M — cross-repo, named here so it isn't silently dropped (same discipline D020 §5/T013 already established).
+
+**Checkpoint — before calling Phase 9 done**: `grep -rn "postgres\|drizzle" biassemble/backend/src/lib/db` confirms no Grounnel-specific table was added there (D023 §2's "reuse, don't reinvent" — a violation here would mean T028 quietly grew a second mechanism instead of reusing `sessions`); a real run's `grounnel_runs`/`grounnel_claims`/`grounnel_llm_calls`/`grounnel_search_calls`/`grounnel_gate_events` rows are checked by hand against that same run's Redis/API response, not just "insert didn't throw."

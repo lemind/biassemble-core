@@ -37,7 +37,7 @@ grounnel schema
 └── grounnel_gate_events  — every gate firing, per claim (§5, new concept)
 ```
 
-**`grounnel_runs`** — `run_id uuid PK` (application-generated, the *same* id already used as the Redis hash key `audit:{id}` — one id, two stores, not two identities for one run); `session_id uuid` (no FK, backend-owned, per §2); `text` (the pasted story); `status` (`running|done|failed`, mirrors `GrounnelStatusEnum`); `max_claims`, `truncated`; `prompt_version_extract`, `prompt_version_verify` (§4); `score jsonb` (final score object, written once); `created_at`, `completed_at`.
+**`grounnel_runs`** — `run_id uuid PK` (application-generated, the *same* id already used as the Redis hash key `audit:{id}` — one id, two stores, not two identities for one run); `session_id uuid, nullable` (no FK, backend-owned per §2 — nullable specifically because no code path supplies one until `biassemble/backend`'s session-reuse work ships, tasks.md T028; tighten once it does); `text` (the pasted story); `source` (`production|eval` — corrected during review: without this, real-call golden-set runs, which construct the same `GrounnelPipelineService`, would silently mix into production analytics); `status` (`extracting|verifying|done|failed` — corrected during review, this is the real `GrounnelStatusEnum` value set, not the `running|done|failed` this section originally, incorrectly, stated); `max_claims`, `truncated`; `prompt_version_extract`, `prompt_version_verify` (§4); `score jsonb` (final score object, written once); `created_at`, `completed_at`. Full column-level design, including indexes and the FK/no-FK reasoning per table, lives in tasks.md's T023 — this section is the summary, that's the source of truth.
 
 **`grounnel_claims`** — `claim_id uuid PK` (same id as the API/Redis contract); `run_id` FK → `grounnel_runs` (same-schema FK, matches `audits`/`claims`' existing precedent in `auditSchema`); `claim_text`; `verdict`, `evidence`, `confidence`, `reason`; `sources jsonb`; `status` (`done|failed`); `created_at`. Written once per claim, when its final result is written to Redis — a durable mirror, not a replacement (§7).
 
@@ -53,6 +53,8 @@ grounnel schema
 
 **Decision**: no new versioning infrastructure. `pipeline.service.ts`/`extract.service.ts` call the existing getters and pass the result into `grounnel_runs.prompt_version_extract`/`_verify` and every `grounnel_llm_calls.prompt_version` row, exactly matching `verify.service.ts`'s existing call shape.
 
+**Why the version is stored at two granularities, not redundantly (external review, second pass — worth one sentence so a future reviewer doesn't flag it as duplication):** `grounnel_runs.prompt_version_extract`/`_verify` is a **snapshot** — the version active for that whole run, one value each, set once. `grounnel_llm_calls.prompt_version` is **per-invocation** — every individual EXTRACT/VERIFY call gets its own value at the moment it happened. These only look redundant because a prompt version can't currently change mid-run; if this repo ever adds hot-reloading prompts or a version rollout mid-flight, the two would diverge and the per-call granularity becomes the one that's actually correct.
+
 ---
 
 ## §5. Gate telemetry — new capability, no precedent to reuse
@@ -63,6 +65,8 @@ grounnel schema
 
 **Consequences**: this is what would have let this session's own gate-fix work (D022) be validated against real aggregate rates instead of an 11-case golden set alone, going forward.
 
+**Corrected during `/code-review high` (tasks.md T023/T027)**: `claim_id` gets a real FK to `grounnel_claims.claim_id` — an earlier draft left it bare-uuid "for the same reason as `grounnel_search_calls`," which doesn't actually hold here. Gates run inline in `pipeline.service.ts`'s per-claim loop, immediately before that same claim's durable row is written (unlike search, which runs in an entirely earlier, separate phase) — so the write path buffers each claim's 4 gate decisions and flushes them right after that claim's `grounnel_claims` row lands, giving this table real referential integrity instead of the search-calls table's pragmatic no-FK.
+
 ---
 
 ## §6. Search-provider fallback telemetry — closes a real, found gap
@@ -70,6 +74,8 @@ grounnel schema
 **Decision**: `HybridSearchProvider.search()` (`hybrid-provider.ts`) writes one `grounnel_search_calls` row per claim's search: `run_id`, `claim_id`, `query`, `call_type` (`diy_fetch|tavily_fallback`), `result_count`, `status` (mirrors `SearchPassage.status`), `duration_ms`, `created_at`. The `logger.info()` at line 102-105 stays (operational visibility during an active incident) — this is additive, a durable second copy for anything that needs to survive past Vercel's log retention window, which this session confirmed is already too short to answer a same-day question.
 
 **Why this is its own table, not folded into `grounnel_llm_calls`**: a search call is not an LLM call — different provider, different failure modes (`rate_limited`, `unreachable`, not `schema_validation`/`timeout`), and D021's whole fallback design (DIY-fetch first, Tavily only when every DIY candidate fails) is specifically about *this* call type. Collapsing it into the LLM-call table would mean overloading `call_type`'s meaning across two unrelated systems.
+
+**Corrected during `/code-review high` (tasks.md T026)**: `HybridSearchProvider.search(query)` — the real call site — only ever receives a query string today, with no `run_id`/`claim_id` to attribute a row to. Writing this table requires a real (small) signature change to `SearchProvider`/its call site in `pipeline.service.ts`, not just internal wiring inside `hybrid-provider.ts` as this section originally implied.
 
 ---
 
@@ -82,6 +88,21 @@ grounnel schema
 **Redis TTL** (`AUDIT_TTL_SECONDS`, 7 days) is unchanged — it still governs how long a run is *live-pollable*; Postgres is what makes it *permanently retrievable* past that window, which is the actual "history" requirement.
 
 **Consequences**: `POST /extract`'s response latency is unaffected (Postgres writes are fire-and-forget or already-inline-and-cheap, not blocking the `202`); `GET /status/:id`'s latency is unaffected (still Redis-only); a new `GET /grounnel/history` (or equivalent, not designed here) becomes possible against Postgres, out of this ADR's scope to design.
+
+**Stated explicitly (external review, second pass) — this was implied but never written down, and needed to be:**
+
+> **Postgres history is best-effort analytics. Redis remains the source of truth for a run's actual state.**
+
+If a Postgres write fails (fire-and-forget) after a Redis write already succeeded, the two stores diverge for that run/claim — Redis stays correct, Postgres is missing or stale for that one row, and nothing retries it. This is an accepted consequence of the fire-and-forget design (§1's whole premise — a Postgres failure must never fail the user-facing run), not an oversight. A future contributor must not treat a `grounnel_runs`/`grounnel_claims` row as authoritative over what Redis/the live API actually served — if the two ever disagree, Redis wins, always.
+
+**Read ownership, stated explicitly for the same reason:**
+
+| | Redis | Postgres |
+|---|---|---|
+| **Owns** | Live progress, `GET /status/:id` | History, analytics, offline inspection, a future dashboard |
+| **Read by** | The running request/poll cycle only | Nothing in the request path — no production read depends on it |
+
+No code on the `POST /extract` → `GET /status/:id` path may read from Postgres, ever — that would reintroduce exactly the latency/consistency risk D019 §4 was written to avoid. Postgres is written to, never read from, by anything user-facing; it exists for whatever reads history/analytics later (a future endpoint, a dashboard, a direct SQL query), out of this ADR's scope to build.
 
 ---
 
