@@ -13,6 +13,7 @@ import {
   grounnelRuns,
   grounnelClaims,
   grounnelLlmCalls,
+  grounnelSearchCalls,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
 import type { LlmCall } from "./schema";
@@ -678,5 +679,19 @@ export async function insertGrounnelLlmCall(data: {
   errorMessage: string | null;
 }) {
   const [row] = await db().insert(grounnelLlmCalls).values(data).returning();
+  return row;
+}
+
+export async function insertGrounnelSearchCall(data: {
+  runId: string;
+  claimId: string;
+  query: string;
+  callType: "diy_fetch" | "tavily_fallback";
+  url: string | null;
+  resultCount: number;
+  status: "ok" | "paywalled" | "unreachable" | "blocked" | "rate_limited";
+  durationMs: number;
+}) {
+  const [row] = await db().insert(grounnelSearchCalls).values(data).returning();
   return row;
 }

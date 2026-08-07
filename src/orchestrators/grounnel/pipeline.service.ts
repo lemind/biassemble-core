@@ -116,7 +116,7 @@ export class GrounnelPipelineService {
     const resolved: ResolvedEvidence[] = [];
     for (let i = 0; i < claims.length; i += SEARCH_CONCURRENCY) {
       const chunk = claims.slice(i, i + SEARCH_CONCURRENCY);
-      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(claim)));
+      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim)));
       resolved.push(...chunkResolved);
 
       const tavilyRateLimited = chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"));
@@ -136,8 +136,10 @@ export class GrounnelPipelineService {
     return resolved;
   }
 
-  private async resolveEvidence(claim: PipelineClaimInput): Promise<ResolvedEvidence> {
-    const sources = await this.searchProvider.search(claim.text);
+  private async resolveEvidence(auditId: string, claim: PipelineClaimInput): Promise<ResolvedEvidence> {
+    // context (D023 §6) is additive/optional on SearchProvider.search — only HybridSearchProvider
+    // reads it, to attribute grounnel_search_calls rows to this real run/claim.
+    const sources = await this.searchProvider.search(claim.text, { runId: auditId, claimId: claim.id });
     for (const s of sources) {
       if (s.status !== "ok") {
         // Granular per-source failure logging already happens one layer down (SearchProvider) — this is the pipeline-level summary, tying a failed source to the claim it belonged to (D021).

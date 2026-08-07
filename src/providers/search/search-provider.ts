@@ -16,6 +16,13 @@ export interface SearchPassage {
 }
 
 export interface SearchProvider {
-  /** Resolves a claim/query to real, independently-fetched passage text. Returns every attempted source, not just the successful one — failures are counted/shown, never silently dropped (§4.4). */
-  search(query: string): Promise<SearchPassage[]>;
+  /**
+   * Resolves a claim/query to real, independently-fetched passage text. Returns every attempted
+   * source, not just the successful one — failures are counted/shown, never silently dropped (§4.4).
+   *
+   * `context` (D023 §6) is additive/optional — a plain (string) implementation still satisfies
+   * this interface unchanged; only `HybridSearchProvider` (the concrete class Grounnel's pipeline
+   * actually uses) reads it, to attribute `grounnel_search_calls` rows to the real run/claim.
+   */
+  search(query: string, context?: { runId: string; claimId: string }): Promise<SearchPassage[]>;
 }

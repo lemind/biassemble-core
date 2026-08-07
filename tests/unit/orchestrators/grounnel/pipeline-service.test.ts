@@ -13,8 +13,10 @@ import type { SearchProvider, SearchPassage } from "../../../../src/providers/se
 import type { CompletionRequest, Provider } from "../../../../src/providers/types.js";
 
 class FakeSearchProvider implements SearchProvider {
+  calls: Array<{ query: string; context?: { runId: string; claimId: string } }> = [];
   constructor(private responses: Map<string, SearchPassage[]>) {}
-  async search(query: string): Promise<SearchPassage[]> {
+  async search(query: string, context?: { runId: string; claimId: string }): Promise<SearchPassage[]> {
+    this.calls.push({ query, context });
     return this.responses.get(query) ?? [];
   }
 }
@@ -478,5 +480,19 @@ describe("GrounnelPipelineService (T010)", () => {
       promptVersion: prompts.getGrounnelVerifyVersion(),
     });
     expect(llmCallStore.completions[0]!.info.status).toBe("success");
+  });
+
+  it("T026/D023 §6: passes {runId, claimId} context through to SearchProvider.search()", async () => {
+    const claimId = uuid(1);
+    const claimText = "Bukowski attended Los Angeles City College.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ status: "unreachable", text: null })]]]));
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(search.calls).toHaveLength(1);
+    expect(search.calls[0]).toMatchObject({ query: claimText, context: { runId: auditId, claimId } });
   });
 });

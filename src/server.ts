@@ -24,6 +24,7 @@ import { RagEngineClient } from "./rag/engine-client";
 import { UpstashRedisHashClient, RedisGrounnelStore } from "./persistence/grounnel-store";
 import { DrizzleGrounnelHistoryStore } from "./persistence/grounnel-history-store";
 import { DrizzleGrounnelLlmCallStore } from "./persistence/grounnel-llm-call-store";
+import { DrizzleGrounnelSearchCallStore } from "./persistence/grounnel-search-call-store";
 import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service";
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
@@ -88,8 +89,9 @@ export function buildApp() {
     // DATABASE_URL configured; every method catches and logs internally, never throws.
     const historyStore = new DrizzleGrounnelHistoryStore();
     const llmCallStore = new DrizzleGrounnelLlmCallStore();
+    const searchCallStore = new DrizzleGrounnelSearchCallStore();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
-    const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider);
+    const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider, searchCallStore);
     grounnel = {
       extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore),
       pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore),

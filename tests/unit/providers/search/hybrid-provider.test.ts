@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { HybridSearchProvider } from "../../../../src/providers/search/hybrid-provider.js";
 import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
 import { logger } from "../../../../src/observability/logger.js";
+import { NoopGrounnelSearchCallStore } from "../../../mocks/noop-grounnel-search-call-store.js";
+import { FakeGrounnelSearchCallStore } from "../../../mocks/fake-grounnel-search-call-store.js";
 
 const LONG_TEXT = "Bukowski attended Los Angeles City College. ".repeat(30); // > 800 chars
 
@@ -39,7 +41,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("Bukowski attended Los Angeles City College.");
 
     expect(results).toHaveLength(1);
@@ -66,7 +68,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
     expect(results).toHaveLength(3); // 2 failed DIY attempts + 1 fallback result
@@ -85,7 +87,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
     expect(results[0]).toMatchObject({ status: "paywalled", text: null });
@@ -99,7 +101,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
       vi.fn().mockResolvedValue(geminiGroundingResponse([]))
     );
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
     expect(results).toEqual([fallbackResult]);
@@ -118,7 +120,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
     expect(calls).toBe(2);
@@ -131,7 +133,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     // A key containing characters that break URL parsing forces fetch()'s URL-parse-failure path.
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to parse URL from https://x?key=AIzaSECRET123 not-a-url")));
 
-    const provider = new HybridSearchProvider("AIzaSECRET123", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("AIzaSECRET123", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     await provider.search("some claim");
 
     // Error.message is non-enumerable — JSON.stringify silently drops it, so check it directly.
@@ -150,7 +152,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the Gemini discovery call, never the blocked URL
@@ -168,7 +170,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     await provider.search("some claim");
 
     expect(warnSpy.mock.calls.some((call) => JSON.stringify(call).includes("blocked.example"))).toBe(true);
@@ -197,7 +199,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
     expect(blockedCalls).toBe(1); // 403 never retried
@@ -216,10 +218,76 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
     expect(results[0]!.text).not.toContain("leaked");
     expect(results[0]!.text).not.toContain("should not appear in evidence");
+  });
+
+  it("T026/D023 §6: writes zero grounnel_search_calls rows when no context is given (backward compatible)", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/X", title: "X" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const searchCallStore = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
+    await provider.search("Bukowski attended Los Angeles City College.");
+
+    expect(searchCallStore.calls).toHaveLength(0);
+  });
+
+  it("T026/D023 §6: writes one diy_fetch row per attempted candidate when context is given", async () => {
+    const fallbackResult: SearchPassage = { url: "https://tavily-found.example", title: "T", domain: "tavily-found.example", status: "ok", text: "fallback text" };
+    const fallback = new StubFallback([fallbackResult]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(
+          geminiGroundingResponse([
+            { uri: "https://blocked.example", title: "Blocked" },
+            { uri: "https://gone.example", title: "Gone" },
+          ])
+        );
+      }
+      if (url.includes("blocked.example")) return Promise.resolve({ ok: false, status: 403, url });
+      return Promise.resolve({ ok: false, status: 404, url });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const searchCallStore = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    const diyCalls = searchCallStore.calls.filter((c) => c.callType === "diy_fetch");
+    const fallbackCalls = searchCallStore.calls.filter((c) => c.callType === "tavily_fallback");
+    expect(diyCalls).toHaveLength(2);
+    expect(diyCalls.every((c) => c.runId === "r1" && c.claimId === "c1")).toBe(true);
+    expect(diyCalls.find((c) => c.url === "https://blocked.example")).toMatchObject({ status: "blocked" });
+    expect(diyCalls.find((c) => c.url === "https://gone.example")).toMatchObject({ status: "unreachable" });
+    expect(fallbackCalls).toHaveLength(1);
+    expect(fallbackCalls[0]).toMatchObject({ runId: "r1", claimId: "c1", url: null, status: "ok", resultCount: 1 });
+  });
+
+  it("T026/D023 §6: no tavily_fallback row is written when the first DIY candidate already succeeds", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/X", title: "X" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const searchCallStore = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
+    await provider.search("Bukowski attended Los Angeles City College.", { runId: "r1", claimId: "c1" });
+
+    expect(searchCallStore.calls).toHaveLength(1);
+    expect(searchCallStore.calls[0]).toMatchObject({ callType: "diy_fetch", status: "ok" });
   });
 });

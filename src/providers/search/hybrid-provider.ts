@@ -1,5 +1,6 @@
 import { logger } from "../../observability/logger.js";
 import type { SearchProvider, SearchPassage, SourceStatus } from "./search-provider.js";
+import type { GrounnelSearchCallStore } from "../../persistence/grounnel-search-call-store.js";
 
 const MODULE = "hybrid-search-provider";
 const GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -86,13 +87,32 @@ export class HybridSearchProvider implements SearchProvider {
   constructor(
     private readonly geminiApiKey: string,
     private readonly geminiModel: string,
-    private readonly fallback: SearchProvider
+    private readonly fallback: SearchProvider,
+    private readonly searchCallStore: GrounnelSearchCallStore
   ) {}
 
-  async search(query: string): Promise<SearchPassage[]> {
+  async search(query: string, context?: { runId: string; claimId: string }): Promise<SearchPassage[]> {
     const candidates = await this.discoverUrls(query);
+    // Granularity, decided (D023 §6): one row per attempted DIY candidate — real per-URL
+    // status/timing, matching this method's own "returns every attempted source" contract.
     const attempted = await Promise.all(
-      candidates.slice(0, MAX_CANDIDATES).map((candidate) => this.fetchCandidate(candidate))
+      candidates.slice(0, MAX_CANDIDATES).map(async (candidate) => {
+        const t0 = Date.now();
+        const result = await this.fetchCandidate(candidate);
+        if (context) {
+          this.searchCallStore.recordSearchCall({
+            runId: context.runId,
+            claimId: context.claimId,
+            query,
+            callType: "diy_fetch",
+            url: result.url,
+            resultCount: 1,
+            status: result.status,
+            durationMs: Date.now() - t0,
+          });
+        }
+        return result;
+      })
     );
 
     if (attempted.some((p) => p.status === "ok")) {
@@ -103,7 +123,27 @@ export class HybridSearchProvider implements SearchProvider {
       { module: MODULE, operation: "search", query, attempted: attempted.length },
       "DIY fetch failed for every candidate — falling back"
     );
+    const fallbackT0 = Date.now();
     const fallbackResults = await this.fallback.search(query);
+    if (context) {
+      // One row for the whole fallback call — Tavily's own HTTP call already returns multiple
+      // results per call, not per-URL attempts the way DIY fetches are (D023 §6/T026).
+      const fallbackStatus: SourceStatus = fallbackResults.some((p) => p.status === "rate_limited")
+        ? "rate_limited"
+        : fallbackResults.some((p) => p.status === "ok")
+          ? "ok"
+          : "unreachable";
+      this.searchCallStore.recordSearchCall({
+        runId: context.runId,
+        claimId: context.claimId,
+        query,
+        callType: "tavily_fallback",
+        url: null,
+        resultCount: fallbackResults.length,
+        status: fallbackStatus,
+        durationMs: Date.now() - fallbackT0,
+      });
+    }
     return [...attempted, ...fallbackResults];
   }
 
