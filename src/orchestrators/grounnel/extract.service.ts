@@ -5,6 +5,7 @@ import { isOpinionClaim } from "./opinion-filter.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
+import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import type { PipelineClaimInput } from "./pipeline.service.js";
 
 const MODULE = "grounnel-extract-service";
@@ -31,10 +32,13 @@ export class GrounnelExtractService {
   constructor(
     private provider: Provider,
     private prompts: PromptRegistry,
-    private grounnelStore: GrounnelStore
+    private grounnelStore: GrounnelStore,
+    private historyStore: GrounnelHistoryStore
   ) {}
 
-  async run(text: string): Promise<GrounnelExtractResult> {
+  /** source distinguishes real user runs from golden-set eval runs (D023 §3) — defaults to
+   * "production"; scripts/eval-grounnel.ts and src/jobs/eval-grounnel-run.ts pass "eval". */
+  async run(text: string, source: "production" | "eval" = "production"): Promise<GrounnelExtractResult> {
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
 
     const parsed = await callLlmForJson({
@@ -58,6 +62,10 @@ export class GrounnelExtractService {
 
     const claims = claimTexts.map((claimText) => ({ id: randomUUID(), text: claimText }));
     const { id } = await this.grounnelStore.createAudit({ text, maxClaims: MAX_CLAIMS, claims, truncated });
+
+    // Fire-and-forget (D023 §7) — must never block the 202 this run() call leads to; the store's
+    // own methods catch and log internally, so no await/try-catch is needed here.
+    void this.historyStore.createRun({ runId: id, sessionId: null, text, source, maxClaims: MAX_CLAIMS, truncated });
 
     // Gate #3 — resolved immediately, no SearchProvider call ever made for these (D019 §2, T005).
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.

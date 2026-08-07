@@ -5,11 +5,13 @@ import { PromptRegistry } from "../../../../src/prompts/registry.js";
 import { RateLimitError } from "../../../../src/providers/gemini.js";
 import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../../../mocks/fake-redis-hash-client.js";
+import { NoopGrounnelHistoryStore } from "../../../mocks/noop-grounnel-history-store.js";
+import { FakeGrounnelHistoryStore } from "../../../mocks/fake-grounnel-history-store.js";
 import type { Provider } from "../../../../src/providers/types.js";
 
 function makeService(provider: MockProvider) {
   const store = new RedisGrounnelStore(new FakeRedisHashClient());
-  const service = new GrounnelExtractService(provider, new PromptRegistry(), store);
+  const service = new GrounnelExtractService(provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore());
   return { service, store };
 }
 
@@ -80,7 +82,7 @@ describe("GrounnelExtractService (T009)", () => {
       },
     };
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
-    const service = new GrounnelExtractService(rateLimitedProvider, new PromptRegistry(), store);
+    const service = new GrounnelExtractService(rateLimitedProvider, new PromptRegistry(), store, new NoopGrounnelHistoryStore());
 
     await expect(service.run("text")).rejects.toThrow(RateLimitError);
     expect(calls).toBe(1);
@@ -143,5 +145,29 @@ describe("GrounnelExtractService (T009)", () => {
     const status = await store.getStatus(id);
     expect(status!.claims).toEqual([]);
     expect(status!.progress.total).toBe(0);
+  });
+
+  it("T024/D023 §3: defaults to source 'production' and writes the same runId used for the Redis audit", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore);
+
+    const { id } = await service.run("Some pasted article text.");
+
+    expect(historyStore.createRunCalls).toHaveLength(1);
+    expect(historyStore.createRunCalls[0]).toMatchObject({ runId: id, sessionId: null, source: "production", text: "Some pasted article text." });
+  });
+
+  it("T024/D023 §3: an eval-triggered run writes source 'eval' — golden-set runs must not pollute production analytics", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore);
+
+    await service.run("Some pasted article text.", "eval");
+
+    expect(historyStore.createRunCalls).toHaveLength(1);
+    expect(historyStore.createRunCalls[0]).toMatchObject({ source: "eval" });
   });
 });

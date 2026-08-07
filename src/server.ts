@@ -22,6 +22,7 @@ import { DrizzleRetrievalComparisonStore } from "./persistence/retrieval-compari
 import { DrizzleAuditStore } from "./persistence/audit-store";
 import { RagEngineClient } from "./rag/engine-client";
 import { UpstashRedisHashClient, RedisGrounnelStore } from "./persistence/grounnel-store";
+import { DrizzleGrounnelHistoryStore } from "./persistence/grounnel-history-store";
 import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service";
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
@@ -82,11 +83,14 @@ export function buildApp() {
   if (env.TAVILY_API_KEY && upstashRedisConfig) {
     const redis = new Redis({ ...upstashRedisConfig, automaticDeserialization: false });
     const grounnelStore = new RedisGrounnelStore(new UpstashRedisHashClient(redis));
+    // Best-effort Postgres history (D023 §7) — safe to construct unconditionally even without
+    // DATABASE_URL configured; every method catches and logs internally, never throws.
+    const historyStore = new DrizzleGrounnelHistoryStore();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider);
     grounnel = {
-      extractService: new GrounnelExtractService(provider, prompts, grounnelStore),
-      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore),
+      extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore),
+      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore),
       grounnelStore,
       rateLimiter: new RateLimiter(),
     };

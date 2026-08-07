@@ -8,6 +8,7 @@ import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource } from "../../c
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
+import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import type { SearchProvider, SearchPassage } from "../../providers/search/search-provider.js";
 
 const MODULE = "grounnel-pipeline-service";
@@ -74,7 +75,8 @@ export class GrounnelPipelineService {
     private readonly searchProvider: SearchProvider,
     private readonly provider: Provider,
     private readonly prompts: PromptRegistry,
-    private readonly grounnelStore: GrounnelStore
+    private readonly grounnelStore: GrounnelStore,
+    private readonly historyStore: GrounnelHistoryStore
   ) {}
 
   async run(auditId: string, claims: PipelineClaimInput[]): Promise<void> {
@@ -99,6 +101,10 @@ export class GrounnelPipelineService {
         break;
       }
     }
+
+    // Best-effort (D023 §7) — this run's Redis state is already fully settled by this point
+    // (every claim above has already been written to Redis); Postgres just needs to catch up.
+    await this.historyStore.updateRun(auditId, { status: "done", completedAt: new Date() });
   }
 
   /** Waves of SEARCH_CONCURRENCY, not one flat Promise.all — lets a Tavily rate limit detected in
@@ -158,28 +164,53 @@ export class GrounnelPipelineService {
 
   private async writeNoEvidence(auditId: string, r: ResolvedEvidence): Promise<void> {
     const rateLimited = r.sources.some((s) => s.status === "rate_limited");
+    const reason = rateLimited ? TAVILY_RATE_LIMITED_REASON : NO_EVIDENCE_REASON;
+    const sources = toClaimSources(r.sources);
     await this.grounnelStore.writeClaimResult(auditId, r.claim.id, {
       status: "done",
       verdict: "unsupported",
       evidence: null,
       confidence: null,
-      reason: rateLimited ? TAVILY_RATE_LIMITED_REASON : NO_EVIDENCE_REASON,
-      sources: toClaimSources(r.sources),
+      reason,
+      sources,
+    });
+    await this.historyStore.createClaim({
+      claimId: r.claim.id,
+      runId: auditId,
+      claimText: r.claim.text,
+      verdict: "unsupported",
+      evidence: null,
+      confidence: null,
+      reason,
+      sources,
+      status: "done",
     });
   }
 
   private async degradeBatch(auditId: string, batch: ResolvedWithPassage[], reason: string | null = null): Promise<void> {
     await Promise.all(
-      batch.map((b) =>
-        this.grounnelStore.writeClaimResult(auditId, b.claim.id, {
+      batch.map(async (b) => {
+        const sources = toClaimSources(b.sources);
+        await this.grounnelStore.writeClaimResult(auditId, b.claim.id, {
           status: "failed",
           verdict: null,
           evidence: null,
           confidence: null,
           reason,
-          sources: toClaimSources(b.sources),
-        })
-      )
+          sources,
+        });
+        await this.historyStore.createClaim({
+          claimId: b.claim.id,
+          runId: auditId,
+          claimText: b.claim.text,
+          verdict: null,
+          evidence: null,
+          confidence: null,
+          reason,
+          sources,
+          status: "failed",
+        });
+      })
     );
   }
 
@@ -252,15 +283,27 @@ export class GrounnelPipelineService {
         const gate2 = applyNumericGate({ claimText: item.claim.text, verdict, evidence });
         verdict = gate2.verdict;
 
+        const sources = toClaimSources(item.sources);
         const result_: ClaimResult = {
           status: "done",
           verdict,
           evidence,
           confidence: result.confidence,
           reason: result.reason,
-          sources: toClaimSources(item.sources),
+          sources,
         };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
+        await this.historyStore.createClaim({
+          claimId: item.claim.id,
+          runId: auditId,
+          claimText: item.claim.text,
+          verdict,
+          evidence,
+          confidence: result.confidence,
+          reason: result.reason,
+          sources,
+          status: "done",
+        });
       })
     );
 

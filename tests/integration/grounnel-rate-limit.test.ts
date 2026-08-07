@@ -8,6 +8,7 @@ import { RateLimiter } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
+import { NoopGrounnelHistoryStore } from "../mocks/noop-grounnel-history-store.js";
 import type { SearchProvider, SearchPassage } from "../../src/providers/search/search-provider.js";
 
 const VALID_AUTH = "Bearer dev-secret-change-me";
@@ -27,8 +28,8 @@ function buildServer(limit: number) {
   const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());
   const prompts = new PromptRegistry();
   registerGrounnelRoutes(server, {
-    extractService: new GrounnelExtractService(provider, prompts, grounnelStore),
-    pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore),
+    extractService: new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore()),
+    pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore()),
     grounnelStore,
     rateLimiter: new RateLimiter(limit, 60_000),
   });

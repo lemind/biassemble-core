@@ -9,6 +9,7 @@ import { PromptRegistry } from "../../src/prompts/registry.js";
 import { RateLimitError } from "../../src/providers/gemini.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
+import { NoopGrounnelHistoryStore } from "../mocks/noop-grounnel-history-store.js";
 import type { SearchProvider, SearchPassage } from "../../src/providers/search/search-provider.js";
 import type { Provider } from "../../src/providers/types.js";
 
@@ -24,8 +25,8 @@ function buildServer(provider: Provider, searchProvider: SearchProvider = NEVER_
   const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());
   const prompts = new PromptRegistry();
   registerGrounnelRoutes(server, {
-    extractService: new GrounnelExtractService(provider, prompts, grounnelStore),
-    pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore),
+    extractService: new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore()),
+    pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore()),
     grounnelStore,
     // High limit — this file exercises /extract's own contract, not rate limiting (T016's job).
     rateLimiter: new RateLimiter(1000, 60_000),

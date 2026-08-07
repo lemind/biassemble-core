@@ -10,6 +10,8 @@ import {
   claims,
   sourcePassages,
   claimPassages,
+  grounnelRuns,
+  grounnelClaims,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
 import type { LlmCall } from "./schema";
@@ -607,4 +609,49 @@ export async function getClaimPassagesByAudit(auditId: string) {
     .from(claimPassages)
     .innerJoin(claims, eq(claimPassages.claimId, claims.claimId))
     .where(eq(claims.auditId, auditId));
+}
+
+// ── Grounnel (specs/009-grounnel, D023 §7) ──
+// Best-effort history/analytics only — Redis remains the source of truth (D023 §7). No
+// AuditImmutableError-style guard here: unlike audit's Postgres rows, these are never read back
+// by any production code path, so there's nothing for a stale write to corrupt.
+
+export async function insertGrounnelRun(data: {
+  runId: string;
+  sessionId: string | null;
+  text: string;
+  source: "production" | "eval";
+  maxClaims: number;
+  truncated: boolean;
+}) {
+  const [row] = await db().insert(grounnelRuns).values(data).returning();
+  return row;
+}
+
+export async function updateGrounnelRun(
+  runId: string,
+  data: Partial<{
+    status: "extracting" | "verifying" | "done" | "failed";
+    promptVersionExtract: string;
+    promptVersionVerify: string;
+    score: unknown;
+    completedAt: Date;
+  }>
+): Promise<void> {
+  await db().update(grounnelRuns).set(data).where(eq(grounnelRuns.runId, runId));
+}
+
+export async function insertGrounnelClaim(data: {
+  claimId: string;
+  runId: string;
+  claimText: string;
+  verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+  evidence: string | null;
+  confidence: number | null;
+  reason: string | null;
+  sources: unknown;
+  status: "done" | "failed";
+}) {
+  const [row] = await db().insert(grounnelClaims).values(data).returning();
+  return row;
 }
