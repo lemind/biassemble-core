@@ -542,9 +542,9 @@ T023 (grounnel pg schema — 5 tables)
   - **Files:** `src/providers/search/hybrid-provider.ts`, tests.
   - **Size:** M.
 
-- [ ] **T031** Tavily: `max_results` 3 → 16 in one call, evaluated progressively in groups of 3 → 5 → 8
-  - **Brief:** `tavily-provider.ts`'s `max_results: MAX_RESULTS` raised from 3 to 16 — one API call, `include_raw_content: true` already returns full content for all 16 in that single response, no extra network cost. The results are then checked for a usable `"ok"` one in groups (1-3, then 4-8, then 9-16), stopping as soon as a group has one — same stop-early shape as T030's DIY waves, applied to an already-fetched pool instead of new fetches. **Not** `search_depth: "advanced"` — considered and explicitly rejected (D024 §1.2/§4).
-  - **Dependencies:** None — can land independently, first, before anything else in this phase.
+- [x] **T031** Tavily: `max_results` 3 → 16 in one call, evaluated progressively in groups of 3 → 5 → 8
+  - **Done:** `tavily-provider.ts`'s `MAX_RESULTS` raised 3 → 16 — one API call, `include_raw_content: true` already returns full content for all 16 in that single response, no extra network cost. **No new grouping code was needed**: `resolveEvidence`'s existing `sources.find(s => s.status === "ok" && s.text)` already takes the first usable result in ranked order, so a bigger pool gives the "check a few, use more only if needed" effect for free — the 3→5→8 framing describes the emergent outcome of a bigger pool + existing first-match logic, not new batching code. **Not** `search_depth: "advanced"` — considered and explicitly rejected by the user.
+  - **Dependencies:** None.
   - **Files:** `src/providers/search/tavily-provider.ts`, tests.
   - **Size:** S.
 
@@ -560,8 +560,9 @@ T023 (grounnel pg schema — 5 tables)
   - **Files:** `src/prompts/grounnel/verify/system.json`, `src/orchestrators/grounnel/pipeline.service.ts`.
   - **Size:** M.
 
-- [ ] **T034** Retry VERIFY once for a claim when gates detect a self-inconsistent output (real live-eval finding: g04, 2026-08-07) — not part of D024, a VERIFY-retry concern not a search one
-  - **Brief:** Real g04 case: the model returned `verdict: "unsupported", evidence: null` while its own `reason` clearly narrated a CONFLICT ("...which contradicts the claim..."). `reason_consistency` correctly flipped the verdict to `contradicted`; gate #1 then correctly reverted it because there was no real `evidence` to back the flip — every gate fired exactly right, but the net result (`unsupported`) reflects the model's own self-contradictory output, not a gate bug. No gate can fabricate evidence the model never gave. When this exact combination happens (`reason_consistency` fired **and** `contradiction_evidence` downgraded with `reason: "evidence_null"` or `"evidence_not_grounded"`), retry that one claim's VERIFY call once before accepting the degraded verdict — a bounded, targeted retry, not a blanket one (most claims never hit this path).
-  - **Dependencies:** None — orthogonal to T029-T033, can land independently.
-  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts` (`runBatch`), tests.
+- [x] **T034** Retry VERIFY once for a claim when gates detect a self-inconsistent output (real live-eval finding: g04, 2026-08-07) — not part of D024, a VERIFY-retry concern not a search one
+  - **Done:** `pipeline.service.ts`'s 4-gate chain extracted into `runGateChain()` (was inline in `runBatch`'s per-result loop), returning a new `needsRetry` flag: true exactly when `reason_consistency` fired (`overridden: true`) **and** gate #1 then downgraded with `reason: "evidence_null"` or `"evidence_not_grounded"` — the real g04 signature. New `retryVerifyClaim()` fires a single-claim VERIFY call (`callType: "fallback"`, reusing the existing dual-callType schema field, not a new one) when that flag is set; on success, `runGateChain()` re-runs against the retry's output and that becomes final; on retry failure/timeout, the original (already gate-processed) result stands — never blocks the batch, never loops past one retry.
+  - **Verify:** two new tests in `pipeline-service.test.ts` — the real g04 case where the retry succeeds (asserts `provider.getCallCount() === 2` and the final verdict/evidence are the retry's, not the original), and a case where the retry *also* comes back self-inconsistent (asserts exactly one retry attempt, no loop, degrades safely to `unsupported`/`null` evidence rather than fabricating anything). Full suite: 880 passed (was 878), no regressions.
+  - **Dependencies:** None — orthogonal to T029-T033.
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts` (`runBatch`, new `runGateChain`/`retryVerifyClaim`), tests.
   - **Size:** M.
