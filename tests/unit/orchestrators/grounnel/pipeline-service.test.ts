@@ -9,6 +9,8 @@ import { NoopGrounnelHistoryStore } from "../../../mocks/noop-grounnel-history-s
 import { FakeGrounnelHistoryStore } from "../../../mocks/fake-grounnel-history-store.js";
 import { NoopGrounnelLlmCallStore } from "../../../mocks/noop-grounnel-llm-call-store.js";
 import { FakeGrounnelLlmCallStore } from "../../../mocks/fake-grounnel-llm-call-store.js";
+import { NoopGrounnelGateEventStore } from "../../../mocks/noop-grounnel-gate-event-store.js";
+import { FakeGrounnelGateEventStore } from "../../../mocks/fake-grounnel-gate-event-store.js";
 import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
 import type { CompletionRequest, Provider } from "../../../../src/providers/types.js";
 
@@ -52,7 +54,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
     const search = new FakeSearchProvider(new Map([[claimText, [webSource({ status: "unreachable", text: null })]]]));
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
 
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
@@ -77,7 +79,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const search = new FakeSearchProvider(
       new Map([["The Eiffel Tower was completed in 1889.", [webSource({ text: "The Great Wall of China spans thousands of miles. ".repeat(20) })]]])
     );
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
 
     await service.run(auditId, [{ id: claimId, text: "The Eiffel Tower was completed in 1889." }]);
 
@@ -102,7 +104,7 @@ describe("GrounnelPipelineService (T010)", () => {
       return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "Wikipedia confirms it.", confidence: 0.95 })) };
     });
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -127,7 +129,7 @@ describe("GrounnelPipelineService (T010)", () => {
       return { results: ids.map((id) => ({ id, verdict: "contradicted", evidence: "attended Harvard University", reason: "fabricated", confidence: 0.9 })) };
     });
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -157,7 +159,7 @@ describe("GrounnelPipelineService (T010)", () => {
       };
     });
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -189,7 +191,7 @@ describe("GrounnelPipelineService (T010)", () => {
       };
     });
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -210,7 +212,7 @@ describe("GrounnelPipelineService (T010)", () => {
       return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "$350,000 grant", reason: "matches", confidence: 0.9 })) };
     });
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -230,7 +232,7 @@ describe("GrounnelPipelineService (T010)", () => {
       return { results: ids.map((id) => ({ id, verdict: "supported", evidence: claimText, reason: "weak match", confidence: 0.3 })) };
     });
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -245,7 +247,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: (claimText + " ").repeat(20) })]]]));
     provider.failAll("VERIFY provider is down");
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -266,7 +268,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: (claimText + " ").repeat(20) })]]]));
     provider.setDefault({}); // valid JSON, but no `results` key — repair.ts nulls the field, doesn't throw
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     const status = await store.getStatus(auditId);
@@ -295,7 +297,7 @@ describe("GrounnelPipelineService (T010)", () => {
       results: [{ id: uuid(1), verdict: "supported", evidence: "First claim about Wikipedia.", reason: "ok", confidence: 0.9 }],
     }));
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, claims);
 
     const status = await store.getStatus(auditId);
@@ -319,7 +321,7 @@ describe("GrounnelPipelineService (T010)", () => {
       return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "long enough text", reason: "ok", confidence: 0.9 })) };
     });
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, claims);
 
     expect(batchCount).toBe(2); // 10 claims / BATCH_MAX 8 -> two batches
@@ -336,7 +338,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const search = new FakeSearchProvider(
       new Map([[claimText, [{ url: "https://tavily.com", title: "Tavily", domain: "tavily.com", status: "rate_limited", text: null }]]])
     );
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
 
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
@@ -365,7 +367,7 @@ describe("GrounnelPipelineService (T010)", () => {
       },
     };
 
-    const service = new GrounnelPipelineService(search, rateLimitedProvider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, rateLimitedProvider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, claims);
 
     // 16 claims / BATCH_MAX 8 = 2 batches — only the first should ever be attempted.
@@ -391,7 +393,7 @@ describe("GrounnelPipelineService (T010)", () => {
       },
     };
 
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, claims);
 
     // SEARCH_CONCURRENCY (20) — the wave containing the rate-limited claim (index 5, wave 1)
@@ -426,7 +428,7 @@ describe("GrounnelPipelineService (T010)", () => {
     });
 
     const historyStore = new FakeGrounnelHistoryStore();
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     expect(historyStore.createClaimCalls).toHaveLength(1);
@@ -446,7 +448,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
     const search = new FakeSearchProvider(new Map([[claimText, [webSource({ status: "unreachable", text: null })]]]));
     const historyStore = new FakeGrounnelHistoryStore();
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
 
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
@@ -469,7 +471,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const prompts = new PromptRegistry();
     const llmCallStore = new FakeGrounnelLlmCallStore();
-    const service = new GrounnelPipelineService(search, provider, prompts, store, new NoopGrounnelHistoryStore(), llmCallStore);
+    const service = new GrounnelPipelineService(search, provider, prompts, store, new NoopGrounnelHistoryStore(), llmCallStore, new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     expect(llmCallStore.recordCallContexts).toHaveLength(1);
@@ -488,11 +490,76 @@ describe("GrounnelPipelineService (T010)", () => {
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
     const search = new FakeSearchProvider(new Map([[claimText, [webSource({ status: "unreachable", text: null })]]]));
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
 
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
     expect(search.calls).toHaveLength(1);
     expect(search.calls[0]).toMatchObject({ query: claimText, context: { runId: auditId, claimId } });
+  });
+
+  it("T027/D023 §5: records exactly one grounnel_gate_events batch per claim, one entry per gate, in chain order", async () => {
+    const claimId = uuid(1);
+    const claimText = "Bukowski attended Los Angeles City College.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "Bukowski attended Los Angeles City College for two years, per Wikipedia. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "confirmed", confidence: 0.9 })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(gateEventStore.calls).toHaveLength(1);
+    expect(gateEventStore.calls[0]!.runId).toBe(auditId);
+    expect(gateEventStore.calls[0]!.claimId).toBe(claimId);
+    expect(gateEventStore.calls[0]!.events.map((e) => e.gate)).toEqual([
+      "reason_consistency",
+      "implicit_negation",
+      "contradiction_evidence",
+      "numeric",
+    ]);
+    // Real claim: verdict starts and ends "supported" — none of the four gates should fire.
+    expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
+  });
+
+  it("T027/D023 §5: an overriding gate (g05-shaped implicit negation) is recorded with overridden:true and the real before/after verdicts", async () => {
+    const claimId = uuid(1);
+    const claimText = "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText =
+      "The Statue of Liberty was a gift from France to the United States, dedicated in 1886 to celebrate the friendship between the two nations. ".repeat(
+        3
+      );
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "unsupported",
+          evidence: "a gift from France to the United States",
+          reason: "The passage states the statue was a gift from France, not Canada.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const events = gateEventStore.calls[0]!.events;
+    const implicitNegation = events.find((e) => e.gate === "implicit_negation")!;
+    expect(implicitNegation).toMatchObject({ verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true });
+    // reason_consistency runs first and doesn't catch this bare negation (no contradiction verb) — abstains.
+    expect(events.find((e) => e.gate === "reason_consistency")).toMatchObject({ overridden: false });
   });
 });

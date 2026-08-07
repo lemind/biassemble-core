@@ -14,6 +14,7 @@ import {
   grounnelClaims,
   grounnelLlmCalls,
   grounnelSearchCalls,
+  grounnelGateEvents,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
 import type { LlmCall } from "./schema";
@@ -694,4 +695,20 @@ export async function insertGrounnelSearchCall(data: {
 }) {
   const [row] = await db().insert(grounnelSearchCalls).values(data).returning();
   return row;
+}
+
+// Batch, not one insert per gate — the 4 (or however many) gate decisions for one claim are
+// always written together, right after that claim's grounnel_claims row lands (T027, D023 §5).
+export async function insertGrounnelGateEvents(
+  rows: Array<{
+    runId: string;
+    claimId: string;
+    gate: "reason_consistency" | "implicit_negation" | "contradiction_evidence" | "numeric";
+    verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+    verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+    overridden: boolean;
+  }>
+) {
+  if (rows.length === 0) return [];
+  return await db().insert(grounnelGateEvents).values(rows).returning();
 }

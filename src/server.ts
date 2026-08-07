@@ -25,6 +25,7 @@ import { UpstashRedisHashClient, RedisGrounnelStore } from "./persistence/grounn
 import { DrizzleGrounnelHistoryStore } from "./persistence/grounnel-history-store";
 import { DrizzleGrounnelLlmCallStore } from "./persistence/grounnel-llm-call-store";
 import { DrizzleGrounnelSearchCallStore } from "./persistence/grounnel-search-call-store";
+import { DrizzleGrounnelGateEventStore } from "./persistence/grounnel-gate-event-store";
 import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service";
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
@@ -90,11 +91,12 @@ export function buildApp() {
     const historyStore = new DrizzleGrounnelHistoryStore();
     const llmCallStore = new DrizzleGrounnelLlmCallStore();
     const searchCallStore = new DrizzleGrounnelSearchCallStore();
+    const gateEventStore = new DrizzleGrounnelGateEventStore();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider, searchCallStore);
     grounnel = {
       extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore),
-      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore),
+      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore),
       grounnelStore,
       rateLimiter: new RateLimiter(),
     };

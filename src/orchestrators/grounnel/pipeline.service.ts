@@ -11,6 +11,7 @@ import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
+import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { SearchProvider, SearchPassage } from "../../providers/search/search-provider.js";
 
 const MODULE = "grounnel-pipeline-service";
@@ -79,7 +80,8 @@ export class GrounnelPipelineService {
     private readonly prompts: PromptRegistry,
     private readonly grounnelStore: GrounnelStore,
     private readonly historyStore: GrounnelHistoryStore,
-    private readonly llmCallStore: GrounnelLlmCallStore
+    private readonly llmCallStore: GrounnelLlmCallStore,
+    private readonly gateEventStore: GrounnelGateEventStore
   ) {}
 
   async run(auditId: string, claims: PipelineClaimInput[]): Promise<void> {
@@ -278,27 +280,37 @@ export class GrounnelPipelineService {
 
         let verdict = result.confidence < CONFIDENCE_THRESHOLD && result.verdict !== "unverifiable" ? "unverifiable" : result.verdict;
 
+        // Buffered here, flushed only after this claim's grounnel_claims row is written below —
+        // grounnel_gate_events.claimId has a real FK, and gates finish before that row exists (D023 §5/T027).
+        const gateEvents: GateEventInput[] = [];
+
         // Reason-consistency gate — the model's own reason overriding a verdict that contradicts it
         // (2026-08-06 live-eval findings: g04/g05). Runs before gate #1 so a flip to `contradicted`
         // still has to clear gate #1's real evidence-substring check, not bypass it.
-        verdict = applyReasonConsistencyGate({ verdict, reason: result.reason }).verdict;
+        const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: result.reason });
+        gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden });
+        verdict = reasonConsistency.verdict;
 
         // Case A gate (D022 §4) — bare "X, not Y" negation, the gap applyReasonConsistencyGate
         // names but doesn't catch (g05). Also runs before gate #1 — a flip still needs real evidence.
-        verdict = applyImplicitNegationGate({
+        const implicitNegation = applyImplicitNegationGate({
           verdict,
           reason: result.reason,
           claimText: item.claim.text,
           passageText: item.passage.text!,
-        }).verdict;
+        });
+        gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden });
+        verdict = implicitNegation.verdict;
 
         // Gate #1 — never reaches the store without passing this (D019 §2, T003, tasks.md acceptance).
         const gate1 = applyContradictionEvidenceGate({ verdict, evidence: result.evidence, passageText: item.passage.text! });
+        gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.verdict !== verdict });
         verdict = gate1.verdict;
         const evidence = gate1.evidence;
 
         // Gate #2 — numeric normalization/comparison in code (D019 §2, T004).
         const gate2 = applyNumericGate({ claimText: item.claim.text, verdict, evidence });
+        gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden });
         verdict = gate2.verdict;
 
         const sources = toClaimSources(item.sources);
@@ -322,6 +334,7 @@ export class GrounnelPipelineService {
           sources,
           status: "done",
         });
+        this.gateEventStore.recordGateEvents(auditId, item.claim.id, gateEvents);
       })
     );
 
