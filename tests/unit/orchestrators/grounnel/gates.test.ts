@@ -352,4 +352,24 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
     });
     expect(result).toEqual({ verdict: "unverifiable", overridden: false });
   });
+
+  it("does NOT catch the real g11-mixed-content Einstein case: 'won for relativity' vs 'won for the photoelectric effect' (named, known, separate gap)", () => {
+    // Real production reason text (run 9eed3c3a, 2026-08-07) — mutually exclusive award-reasons
+    // for the same Nobel Prize, but phrased as "does not state X... it mentions Y instead", not
+    // IMPLICIT_NEGATION_RE's bare ", not Y" shape (g05's "gift from France, not Canada"). Widening
+    // the regex to catch this too would mean matching "does not... mentions Y instead" generally —
+    // a much broader, under-tested pattern, exactly what this file's own incident history (see
+    // gates.ts's applyReasonConsistencyGate doc comment) warns against introducing casually. Needs
+    // a real VERIFY-prompt fix (asking the model to state contradictions explicitly) or a
+    // claim-aware heuristic, not a blind regex widening — same category of gap as the g05 test above.
+    const result = applyImplicitNegationGate({
+      verdict: "unsupported",
+      reason:
+        "The passage lists many of Einstein's known for contributions, including General Relativity and Special Relativity, but it does not explicitly state that he won the Nobel Prize for his theory of relativity. It mentions he won the Nobel Prize for his discovery of the law of the photoelectric effect.",
+      claimText: "Albert Einstein won the Nobel Prize in Physics for his theory of relativity.",
+      passageText:
+        "Einstein won the 1921 Nobel Prize in Physics for his services to theoretical physics, and especially for his discovery of the law of the photoelectric effect.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false });
+  });
 });
