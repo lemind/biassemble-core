@@ -74,7 +74,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results).toHaveLength(3); // 2 failed DIY attempts + 1 fallback result
     expect(results.find((r) => r.domain === "blocked.example")).toMatchObject({ status: "blocked", text: null });
     expect(results.find((r) => r.domain === "gone.example")).toMatchObject({ status: "unreachable", text: null });
-    expect(results).toContainEqual(fallbackResult);
+    expect(results).toContainEqual({ ...fallbackResult, retrievalMethod: "tavily_fallback" });
   });
 
   it("marks a suspiciously short 200 response as paywalled, not ok", async () => {
@@ -104,7 +104,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("some claim");
 
-    expect(results).toEqual([fallbackResult]);
+    expect(results).toEqual([{ ...fallbackResult, retrievalMethod: "tavily_fallback" }]);
   });
 
   it("retries the Gemini discovery call once on failure before giving up", async () => {
@@ -156,7 +156,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     const results = await provider.search("some claim");
 
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the Gemini discovery call, never the blocked URL
-    expect(results).toEqual([{ url: "https://tavily.example", title: "T", domain: "tavily.example", status: "ok", text: "x" }]);
+    expect(results).toEqual([{ url: "https://tavily.example", title: "T", domain: "tavily.example", status: "ok", text: "x", retrievalMethod: "tavily_fallback" }]);
   });
 
   it("logs a warning when an individual candidate fetch fails", async () => {
@@ -310,7 +310,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     });
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(results).toEqual([{ url: "https://fallback.example", title: "F", domain: "fallback.example", status: "ok", text: "x" }]);
+    expect(results).toEqual([{ url: "https://fallback.example", title: "F", domain: "fallback.example", status: "ok", text: "x", retrievalMethod: "tavily_fallback" }]);
     expect(searchCallStore.calls).toHaveLength(1);
     expect(searchCallStore.calls[0]).toMatchObject({ callType: "tavily_fallback", status: "ok" });
   });

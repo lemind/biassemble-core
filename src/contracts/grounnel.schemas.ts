@@ -51,6 +51,9 @@ export const ClaimSourceSchema = z.discriminatedUnion("kind", [
     domain: z.string(),
     url: z.url(),
     status: SourceStatusEnum,
+    // Which path produced this source — tells DIY vs Tavily apart without a DB query. Optional:
+    // only HybridSearchProvider stamps it (D021); TavilySearchProvider used standalone doesn't.
+    retrievalMethod: z.enum(["diy_fetch", "tavily_fallback"]).optional(),
   }),
   z.object({
     kind: z.literal("attached"),

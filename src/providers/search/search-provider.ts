@@ -13,6 +13,8 @@ export interface SearchPassage {
   status: SourceStatus;
   /** null whenever status !== "ok" — a failed fetch has no usable text. */
   text: string | null;
+  /** Which path produced this passage — lets an API consumer tell DIY vs Tavily apart without querying grounnel_search_calls. Optional: only HybridSearchProvider stamps it. */
+  retrievalMethod?: "diy_fetch" | "tavily_fallback";
 }
 
 export interface SearchProvider {

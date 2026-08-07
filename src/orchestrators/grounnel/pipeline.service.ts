@@ -70,7 +70,7 @@ function hasPassage(r: ResolvedEvidence): r is ResolvedWithPassage {
 }
 
 function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
-  return sources.map((s) => ({ kind: "web" as const, title: s.title, domain: s.domain, url: s.url, status: s.status }));
+  return sources.map((s) => ({ kind: "web" as const, title: s.title, domain: s.domain, url: s.url, status: s.status, retrievalMethod: s.retrievalMethod }));
 }
 
 /** Per-claim loop: search -> gate #4 -> VERIFY (batched) -> gates #1/#2 -> store (D019 §1, T010). No-evidence claims skip VERIFY (cost saving, §4.1). Gemini/Tavily rate limits get distinct messages. */
@@ -284,7 +284,7 @@ export class GrounnelPipelineService {
       // A failed VERIFY batch marks its claims not_checked (status: "failed") and the run
       // continues — never fails the whole audit over one bad batch (spec.md Success Criteria).
       logger.error({ module: MODULE, operation: "runBatch", auditId, err }, "VERIFY batch failed after retries — degrading to not_checked");
-      await this.degradeBatch(auditId, batch);
+      await this.degradeBatch(auditId, batch, "VERIFY failed after retries (provider/parse error) — see grounnel_llm_calls for detail.");
       return null;
     }
 
@@ -362,7 +362,7 @@ export class GrounnelPipelineService {
         { module: MODULE, operation: "runBatch", auditId, missingIds: missing.map((m) => m.claim.id) },
         "VERIFY response omitted some claims in this batch — degrading them to not_checked"
       );
-      await this.degradeBatch(auditId, missing);
+      await this.degradeBatch(auditId, missing, "VERIFY's response omitted this claim from its batch — not a provider/parse error, the model simply didn't answer for it.");
     }
     return null;
   }

@@ -106,7 +106,7 @@ export class HybridSearchProvider implements SearchProvider {
     const attempted = await Promise.all(
       candidates.slice(0, MAX_CANDIDATES).map(async (candidate) => {
         const t0 = Date.now();
-        const result = await this.fetchCandidate(candidate);
+        const result: SearchPassage = { ...(await this.fetchCandidate(candidate)), retrievalMethod: "diy_fetch" };
         if (context) {
           this.searchCallStore.recordSearchCall({
             runId: context.runId,
@@ -141,7 +141,7 @@ export class HybridSearchProvider implements SearchProvider {
     context?: { runId: string; claimId: string }
   ): Promise<SearchPassage[]> {
     const fallbackT0 = Date.now();
-    const fallbackResults = await this.fallback.search(query);
+    const fallbackResults: SearchPassage[] = (await this.fallback.search(query)).map((p) => ({ ...p, retrievalMethod: "tavily_fallback" }));
     if (context) {
       // One row for the whole fallback call — Tavily's own HTTP call already returns multiple
       // results per call, not per-URL attempts the way DIY fetches are (D023 §6/T026).
