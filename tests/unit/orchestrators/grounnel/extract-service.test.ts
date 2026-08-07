@@ -218,4 +218,28 @@ describe("GrounnelExtractService (T009)", () => {
 
     expect(historyStore.createRunCalls[0]).toMatchObject({ sessionId: "11111111-1111-4111-8111-111111111111" });
   });
+
+  it("reviewed finding: an opinion-shaped claim (gate #3) also gets a durable grounnel_claims row, not just a Redis write", async () => {
+    provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    await service.run("Some pasted article text.");
+
+    expect(historyStore.createClaimCalls).toHaveLength(1);
+    expect(historyStore.createClaimCalls[0]).toMatchObject({ verdict: "unverifiable", status: "done" });
+  });
+
+  it("reviewed finding: marks the run 'failed' in history when EXTRACT itself fails after exhausting retries", async () => {
+    provider.failAll("persistent provider error");
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    await expect(service.run("text")).rejects.toThrow();
+
+    expect(historyStore.updateRunCalls).toHaveLength(1);
+    expect(historyStore.updateRunCalls[0]!.data).toMatchObject({ status: "failed" });
+  });
 });

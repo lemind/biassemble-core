@@ -7,7 +7,7 @@ import { TimeoutError } from "../providers/types.js";
 import type { Provider } from "../providers/types.js";
 import type { LlmCallStatus, LlmCallFailureType } from "../persistence/types.js";
 
-/** Per-attempt call detail (D023 §4/T025) — one per actual provider call, including retries, matching core.llm_calls' own "One row per actual provider call (including retries and fallback calls)" convention. */
+/** Per-attempt call detail (D023 §4) — one per actual provider call, including retries, matching core.llm_calls' own convention. */
 export interface LlmCallCompletionInfo {
   raw: unknown;
   startedAt: Date;
@@ -32,21 +32,11 @@ export interface LlmJsonCallOptions<T> {
   operation: string;
   /** Extra post-repair check (e.g. a required array field must not be null) — throws to trigger a retry. */
   isValid?: (result: T) => boolean;
-  /**
-   * Optional, additive (D023 §4/T025) — invoked once per attempt with call detail
-   * (raw response, timing, tokens, status). Callers that don't pass this see no behavior
-   * change at all; existing callers (audit/extract.service.ts) are unaffected.
-   */
+  /** Optional, additive (D023 §4) — fires once per attempt with call detail. Omitting it changes nothing for existing callers. */
   onComplete?: (info: LlmCallCompletionInfo) => void;
 }
 
-/**
- * Retry + injection-guard + repair skeleton, factored out of the audit and Grounnel EXTRACT
- * orchestrators' near-identical control flow. Does NOT include cost/observability recording by
- * default (executeAndRecordLlmCall/LlmCallStore) — that's Postgres-backed and callers that need
- * it either keep their own wrapping around this (audit/verify.service.ts, predates this file) or
- * pass `onComplete` (Grounnel, D023 §4 — chosen over duplicating this control flow a second time).
- */
+/** Retry + injection-guard + repair skeleton, shared by audit and Grounnel EXTRACT/VERIFY. Cost recording is opt-in via `onComplete` (D023 §4), not built in — see that file's own doc comment for why. */
 export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise<T> {
   const { provider, system, user, schema, expectedKeys, attempts, module, operation, isValid, onComplete } = options;
   let lastError: Error | null = null;
@@ -65,7 +55,23 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       outputTokens = response.usage?.outputTokens ?? null;
       totalTokens = response.usage?.totalTokens ?? null;
     } catch (err) {
-      if (err instanceof RateLimitError) throw err; // fails again immediately — retrying wastes attempts
+      if (err instanceof RateLimitError) {
+        // Reviewed finding: this used to skip onComplete entirely — a rate-limited attempt
+        // produced zero grounnel_llm_calls row, unlike every other failure path here.
+        onComplete?.({
+          raw: null,
+          startedAt,
+          endedAt: new Date(),
+          durationMs: Date.now() - t0,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          status: "error",
+          failureType: "provider_error",
+          errorMessage: err.message,
+        });
+        throw err; // fails again immediately — retrying wastes attempts
+      }
       lastError = err as Error;
       logger.warn({ module, operation, attempt, err }, "provider call failed — retrying");
       onComplete?.({
@@ -100,24 +106,9 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       throw new InjectionSuspectedError(operation);
     }
 
+    let result: T;
     try {
-      const { result } = await repairWithFallback(JSON.stringify(raw), schema, null, { salvageArrays: true });
-      if (isValid && !isValid(result)) {
-        throw new Error(`${operation} response failed schema validation (see repair warnings)`);
-      }
-      onComplete?.({
-        raw,
-        startedAt,
-        endedAt: new Date(),
-        durationMs: Date.now() - t0,
-        inputTokens,
-        outputTokens,
-        totalTokens,
-        status: "success",
-        failureType: null,
-        errorMessage: null,
-      });
-      return result;
+      ({ result } = await repairWithFallback(JSON.stringify(raw), schema, null, { salvageArrays: true }));
     } catch (err) {
       lastError = err as Error;
       logger.warn({ module, operation, attempt, err }, "response unparseable — retrying");
@@ -133,7 +124,42 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
         failureType: "parse_error",
         errorMessage: lastError.message,
       });
+      continue;
     }
+
+    // Split from the repairWithFallback try/catch above (reviewed finding) — a genuine parse
+    // failure and an isValid() rejection are different failureTypes, not both "parse_error".
+    if (isValid && !isValid(result)) {
+      lastError = new Error(`${operation} response failed schema validation (see repair warnings)`);
+      logger.warn({ module, operation, attempt, err: lastError }, "response failed isValid check — retrying");
+      onComplete?.({
+        raw,
+        startedAt,
+        endedAt: new Date(),
+        durationMs: Date.now() - t0,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        status: "error",
+        failureType: "schema_validation",
+        errorMessage: lastError.message,
+      });
+      continue;
+    }
+
+    onComplete?.({
+      raw,
+      startedAt,
+      endedAt: new Date(),
+      durationMs: Date.now() - t0,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      status: "success",
+      failureType: null,
+      errorMessage: null,
+    });
+    return result;
   }
   throw lastError ?? new Error(`${operation} failed after retries with no captured error`);
 }

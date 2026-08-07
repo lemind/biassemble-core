@@ -85,26 +85,33 @@ export class GrounnelPipelineService {
   ) {}
 
   async run(auditId: string, claims: PipelineClaimInput[]): Promise<void> {
-    const resolved = await this.resolveAllEvidence(auditId, claims);
+    try {
+      const resolved = await this.resolveAllEvidence(auditId, claims);
 
-    const noEvidence = resolved.filter((r) => !hasPassage(r));
-    await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
+      const noEvidence = resolved.filter((r) => !hasPassage(r));
+      await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
 
-    const needsVerify = resolved.filter(hasPassage);
-    for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
-      const batch = needsVerify.slice(i, i + BATCH_MAX);
-      const geminiRateLimit = await this.runBatch(auditId, batch);
-      if (geminiRateLimit) {
-        const remaining = needsVerify.slice(i + BATCH_MAX);
-        if (remaining.length > 0) {
-          logger.warn(
-            { module: MODULE, operation: "run", auditId, remaining: remaining.length },
-            "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
-          );
-          await this.degradeBatch(auditId, remaining, buildGeminiRateLimitMessage(geminiRateLimit));
+      const needsVerify = resolved.filter(hasPassage);
+      for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
+        const batch = needsVerify.slice(i, i + BATCH_MAX);
+        const geminiRateLimit = await this.runBatch(auditId, batch);
+        if (geminiRateLimit) {
+          const remaining = needsVerify.slice(i + BATCH_MAX);
+          if (remaining.length > 0) {
+            logger.warn(
+              { module: MODULE, operation: "run", auditId, remaining: remaining.length },
+              "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
+            );
+            await this.degradeBatch(auditId, remaining, buildGeminiRateLimitMessage(geminiRateLimit));
+          }
+          break;
         }
-        break;
       }
+    } catch (err) {
+      // Reviewed finding: status otherwise never reaches "failed" on an uncaught error here
+      // (e.g. a SearchProvider bug) — the row would stay stuck at its prior status forever.
+      void this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() });
+      throw err;
     }
 
     // Best-effort (D023 §7) — this run's Redis state is already fully settled by this point

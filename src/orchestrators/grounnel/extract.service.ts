@@ -29,7 +29,7 @@ export interface GrounnelExtractResult {
   pendingClaims: PipelineClaimInput[];
 }
 
-/** EXTRACT + gate #3 (D019 §1/§2, T009). Cost-observability gap named here previously (skipping audit's executeAndRecordLlmCall — Postgres-backed, violated the no-Postgres rule) is closed by D023/T025's own llmCallStore, once D019 §4 was reopened on its own terms. */
+/** EXTRACT + gate #3 (D019 §1/§2, T009). Cost-observability gap noted here previously is closed by D023/T025's llmCallStore. */
 export class GrounnelExtractService {
   constructor(
     private provider: Provider,
@@ -39,41 +39,42 @@ export class GrounnelExtractService {
     private llmCallStore: GrounnelLlmCallStore
   ) {}
 
-  /** source distinguishes real user runs from golden-set eval runs (D023 §3) — defaults to
-   * "production"; scripts/eval-grounnel.ts and src/jobs/eval-grounnel-run.ts pass "eval".
-   * sessionId is null until the caller has one (T028 — biassemble/backend's proxy passes a real
-   * one now; a direct test call or a caller without a session still works, per D023 §3's nullable column). */
+  /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). */
   async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null): Promise<GrounnelExtractResult> {
-    // Minted upfront (not left to createAudit's own randomUUID()) — the SAME id is used for the
-    // Redis hash key, grounnel_runs.run_id, and grounnel_llm_calls.run_id below, one identity
-    // across all three (D023 §3). Fire-and-forget createRun happens before the LLM call, not
-    // after createAudit as T024 originally had it — grounnel_llm_calls' FK needs a real run row
-    // to reference; in practice the local Postgres insert finishes long before Gemini responds.
+    // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
     void this.historyStore.createRun({ runId, sessionId, text, source, maxClaims: MAX_CLAIMS, truncated: false });
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
 
-    const parsed = await callLlmForJson({
-      provider: this.provider,
-      system,
-      user: "Return the JSON now.",
-      schema: ExtractResponseSchema,
-      expectedKeys: ["claims", "truncated"],
-      attempts: EXTRACT_ATTEMPTS,
-      module: MODULE,
-      operation: "run",
-      isValid: (result) => !!result.claims,
-      onComplete: this.llmCallStore.recordCall({
-        runId,
-        stage: "extract",
-        callType: "primary",
-        provider: this.provider.mode,
-        model: env.GEMINI_MODEL,
-        promptVersion: extractVersion,
-      }),
-    });
+    let parsed: z.infer<typeof ExtractResponseSchema>;
+    try {
+      parsed = await callLlmForJson({
+        provider: this.provider,
+        system,
+        user: "Return the JSON now.",
+        schema: ExtractResponseSchema,
+        expectedKeys: ["claims", "truncated"],
+        attempts: EXTRACT_ATTEMPTS,
+        module: MODULE,
+        operation: "run",
+        isValid: (result) => !!result.claims,
+        onComplete: this.llmCallStore.recordCall({
+          runId,
+          stage: "extract",
+          callType: "primary",
+          provider: this.provider.mode,
+          model: env.GEMINI_MODEL,
+          promptVersion: extractVersion,
+        }),
+      });
+    } catch (err) {
+      // Reviewed finding: status otherwise never reaches "failed" — the row would stay stuck
+      // at "extracting" forever on any EXTRACT failure (D023 §3's own enum names this state).
+      void this.historyStore.updateRun(runId, { status: "failed", completedAt: new Date() });
+      throw err;
+    }
 
     // Belt-and-suspenders cap enforcement (same rationale as audit's) — computed before slicing so it reflects a real cut, not re-derived from a count that could legitimately equal the cap.
     let claimTexts = parsed.claims.map((c) => c.claim);
@@ -92,17 +93,31 @@ export class GrounnelExtractService {
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
     const pendingClaims = claims.filter((claim) => !isOpinionClaim(claim.text));
+    const OPINION_REASON = "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).";
     await Promise.all(
-      opinionClaims.map((claim) =>
-        this.grounnelStore.writeClaimResult(id, claim.id, {
+      opinionClaims.map(async (claim) => {
+        await this.grounnelStore.writeClaimResult(id, claim.id, {
           status: "done",
           verdict: "unverifiable",
           evidence: null,
           confidence: null,
-          reason: "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).",
+          reason: OPINION_REASON,
           sources: [],
-        })
-      )
+        });
+        // Reviewed finding: gate #3 claims were only ever written to Redis — never to
+        // grounnel_claims, permanently absent from history/analytics (D023 §3).
+        await this.historyStore.createClaim({
+          claimId: claim.id,
+          runId,
+          claimText: claim.text,
+          verdict: "unverifiable",
+          evidence: null,
+          confidence: null,
+          reason: OPINION_REASON,
+          sources: [],
+          status: "done",
+        });
+      })
     );
 
     return { id, pendingClaims };

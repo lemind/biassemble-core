@@ -22,10 +22,8 @@ export function registerGrounnelRoutes(
   }
 ) {
   server.post("/extract", { preHandler: [authHook] }, async (request, reply) => {
-    // ADR-001 §4 (biassemble/backend) — every Grounnel request arrives via that repo's
-    // server-to-server proxy, so request.ip is the backend's own egress IP for every user, not
-    // the real end-user. X-Grounnel-Client-IP carries the real one; request.ip is the fallback
-    // for local dev/direct testing where no proxy is in front of this route.
+    // ADR-001 §4 (biassemble/backend) — request.ip is the proxy's own egress IP, not the real
+    // end-user; the header carries the real one, request.ip is the local-dev/no-proxy fallback.
     const clientIp = (request.headers["x-grounnel-client-ip"] as string | undefined) || request.ip;
     // Defense-in-depth behind authHook, not the primary control (D020 §4, spec.md).
     if (!services.rateLimiter.checkAndConsume(clientIp)) {

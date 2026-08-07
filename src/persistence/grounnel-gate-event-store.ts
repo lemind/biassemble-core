@@ -13,13 +13,7 @@ export interface GateEventInput {
 }
 
 export interface GrounnelGateEventStore {
-  /**
-   * Fire-and-forget (D023 §7) — never awaited, never throws. Call this AFTER the claim's
-   * grounnel_claims row insert (T024) has already been attempted, not before: claimId has a real
-   * FK (D023 §5/T027, corrected from an earlier no-FK draft) — if the claim insert silently
-   * failed, this insert fails the same way (FK violation), caught and logged like any other
-   * best-effort write, which is the intended "discard, don't retry" outcome for that case.
-   */
+  /** Fire-and-forget (D023 §7). Call AFTER the claim's grounnel_claims insert — claimId has a real FK (D023 §5). */
   recordGateEvents(runId: string, claimId: string, events: GateEventInput[]): void;
 }
 

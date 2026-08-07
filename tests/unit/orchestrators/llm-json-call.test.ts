@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { callLlmForJson, type LlmCallCompletionInfo } from "../../../src/orchestrators/llm-json-call.js";
 import { MockProvider } from "../../mocks/mock-provider.js";
+import { RateLimitError } from "../../../src/providers/gemini.js";
+import type { Provider } from "../../../src/providers/types.js";
 
 const Schema = z.object({ value: z.string() });
 
@@ -84,5 +86,52 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
     ).rejects.toThrow();
     expect(calls).toHaveLength(2);
     for (const c of calls) expect(c).toMatchObject({ status: "error" });
+  });
+
+  it("reviewed finding: calls onComplete before rethrowing a RateLimitError, not skipping it entirely", async () => {
+    const rateLimitedProvider: Provider = {
+      mode: "mock",
+      completeJson: async () => {
+        throw new RateLimitError("quota exceeded", "daily");
+      },
+    };
+    const calls: LlmCallCompletionInfo[] = [];
+    await expect(
+      callLlmForJson({
+        provider: rateLimitedProvider,
+        system: "test",
+        user: "go",
+        schema: Schema,
+        expectedKeys: ["value"],
+        attempts: 3,
+        module: "test",
+        operation: "test-op",
+        onComplete: (info) => calls.push(info),
+      })
+    ).rejects.toThrow(RateLimitError);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ status: "error", failureType: "provider_error" });
+  });
+
+  it("reviewed finding: tags an isValid() rejection as failureType 'schema_validation', distinct from a genuine parse failure ('parse_error')", async () => {
+    const provider = new MockProvider();
+    provider.setDefault({ value: "hello" }); // parses fine, but isValid below rejects it
+    const calls: LlmCallCompletionInfo[] = [];
+    await expect(
+      callLlmForJson({
+        provider,
+        system: "test",
+        user: "go",
+        schema: Schema,
+        expectedKeys: ["value"],
+        attempts: 2,
+        module: "test",
+        operation: "test-op",
+        isValid: () => false,
+        onComplete: (info) => calls.push(info),
+      })
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(2);
+    for (const c of calls) expect(c).toMatchObject({ status: "error", failureType: "schema_validation" });
   });
 });
