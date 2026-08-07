@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
@@ -110,7 +111,7 @@ export class GrounnelPipelineService {
     } catch (err) {
       // Reviewed finding: status otherwise never reaches "failed" on an uncaught error here
       // (e.g. a SearchProvider bug) — the row would stay stuck at its prior status forever.
-      void this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() });
+      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
       throw err;
     }
 
@@ -239,7 +240,7 @@ export class GrounnelPipelineService {
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
     // than tracking "already stamped" across an arbitrary number of batches for one run.
-    void this.historyStore.updateRun(auditId, { promptVersionVerify: verifyVersion });
+    waitUntil(this.historyStore.updateRun(auditId, { promptVersionVerify: verifyVersion }));
 
     let parsed: z.infer<typeof VerifyResponseSchema>;
     try {

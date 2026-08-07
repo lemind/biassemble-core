@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { waitUntil } from "@vercel/functions";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isOpinionClaim } from "./opinion-filter.js";
 import { env } from "../../lib/env.js";
@@ -43,7 +44,9 @@ export class GrounnelExtractService {
   async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null): Promise<GrounnelExtractResult> {
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
-    void this.historyStore.createRun({ runId, sessionId, text, source, maxClaims: MAX_CLAIMS, truncated: false });
+    // waitUntil, not void: fire-and-forget alone races the response — nothing guarantees this
+    // resolves before reply.send(), and Vercel can freeze the container the instant it does.
+    waitUntil(this.historyStore.createRun({ runId, sessionId, text, source, maxClaims: MAX_CLAIMS, truncated: false }));
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
@@ -72,7 +75,7 @@ export class GrounnelExtractService {
     } catch (err) {
       // Reviewed finding: status otherwise never reaches "failed" — the row would stay stuck
       // at "extracting" forever on any EXTRACT failure (D023 §3's own enum names this state).
-      void this.historyStore.updateRun(runId, { status: "failed", completedAt: new Date() });
+      waitUntil(this.historyStore.updateRun(runId, { status: "failed", completedAt: new Date() }));
       throw err;
     }
 
@@ -87,7 +90,7 @@ export class GrounnelExtractService {
     const { id } = await this.grounnelStore.createAudit({ id: runId, text, maxClaims: MAX_CLAIMS, claims, truncated });
 
     // Best-effort (D023 §7) — real truncated value + stamped prompt version, once both are known.
-    void this.historyStore.updateRun(runId, { truncated, promptVersionExtract: extractVersion });
+    waitUntil(this.historyStore.updateRun(runId, { truncated, promptVersionExtract: extractVersion }));
 
     // Gate #3 — resolved immediately, no SearchProvider call ever made for these (D019 §2, T005).
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.

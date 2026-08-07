@@ -1,3 +1,4 @@
+import { waitUntil } from "@vercel/functions";
 import { insertGrounnelLlmCall } from "../db/queries.js";
 import { logger } from "../observability/logger.js";
 import type { LlmCallCompletionInfo } from "../orchestrators/llm-json-call.js";
@@ -30,7 +31,7 @@ export class DrizzleGrounnelLlmCallStore implements GrounnelLlmCallStore {
     promptVersion: string;
   }): (info: LlmCallCompletionInfo) => void {
     return (info: LlmCallCompletionInfo) => {
-      void insertGrounnelLlmCall({
+      waitUntil(insertGrounnelLlmCall({
         ...context,
         rawResponse: info.raw !== null ? JSON.stringify(info.raw) : null,
         parsedOutput: null,
@@ -45,7 +46,7 @@ export class DrizzleGrounnelLlmCallStore implements GrounnelLlmCallStore {
         errorMessage: info.errorMessage,
       }).catch((err) => {
         logger.warn({ module: MODULE, operation: "recordCall", runId: context.runId, err }, "Failed to write grounnel_llm_calls row — Redis remains authoritative (D023 §7)");
-      });
+      }));
     };
   }
 }

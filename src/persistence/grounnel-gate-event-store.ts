@@ -1,3 +1,4 @@
+import { waitUntil } from "@vercel/functions";
 import { insertGrounnelGateEvents } from "../db/queries.js";
 import { logger } from "../observability/logger.js";
 import type { GrounnelVerdictEnum } from "../contracts/grounnel.schemas.js";
@@ -21,8 +22,10 @@ export class DrizzleGrounnelGateEventStore implements GrounnelGateEventStore {
   recordGateEvents(runId: string, claimId: string, events: GateEventInput[]): void {
     if (events.length === 0) return;
     const rows = events.map((e) => ({ runId, claimId, ...e }));
-    void insertGrounnelGateEvents(rows).catch((err) => {
-      logger.warn({ module: "grounnel-gate-event-store", operation: "recordGateEvents", runId, claimId, err }, "Failed to write grounnel_gate_events rows — Redis remains authoritative (D023 §7)");
-    });
+    waitUntil(
+      insertGrounnelGateEvents(rows).catch((err) => {
+        logger.warn({ module: "grounnel-gate-event-store", operation: "recordGateEvents", runId, claimId, err }, "Failed to write grounnel_gate_events rows — Redis remains authoritative (D023 §7)");
+      })
+    );
   }
 }

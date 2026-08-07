@@ -1,3 +1,4 @@
+import { waitUntil } from "@vercel/functions";
 import { insertGrounnelSearchCall } from "../db/queries.js";
 import { logger } from "../observability/logger.js";
 import type { SourceStatus } from "../providers/search/search-provider.js";
@@ -21,8 +22,10 @@ export interface GrounnelSearchCallStore {
 /** D023 §6 — closes the real gap this session found: Tavily-fallback usage previously had no durable tracking at all, only short-retention Vercel logs. */
 export class DrizzleGrounnelSearchCallStore implements GrounnelSearchCallStore {
   recordSearchCall(data: Parameters<GrounnelSearchCallStore["recordSearchCall"]>[0]): void {
-    void insertGrounnelSearchCall(data).catch((err) => {
-      logger.warn({ module: MODULE, operation: "recordSearchCall", runId: data.runId, err }, "Failed to write grounnel_search_calls row — Redis remains authoritative (D023 §7)");
-    });
+    waitUntil(
+      insertGrounnelSearchCall(data).catch((err) => {
+        logger.warn({ module: MODULE, operation: "recordSearchCall", runId: data.runId, err }, "Failed to write grounnel_search_calls row — Redis remains authoritative (D023 §7)");
+      })
+    );
   }
 }
