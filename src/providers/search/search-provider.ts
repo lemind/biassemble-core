@@ -18,9 +18,10 @@ export interface SearchPassage {
 export interface SearchProvider {
   /**
    * Every attempted source, not just the successful one (§4.4). `context` is additive/optional —
-   * only `HybridSearchProvider` reads it (D023 §6). `forceFallback` skips DIY fetch entirely and
-   * goes straight to the fallback provider (Tavily) — lets a caller actually exercise that path
-   * on demand instead of gambling on which URLs a live grounding search happens to return.
+   * only `HybridSearchProvider` reads it (D023 §6). `searchFlow: "tavily"` skips DIY fetch entirely
+   * and goes straight to the fallback provider — lets a caller actually exercise that path on
+   * demand (POST /extract's `searchEngine` param) instead of gambling on which URLs a live
+   * grounding search happens to return.
    */
-  search(query: string, context?: { runId: string; claimId: string; forceFallback?: boolean }): Promise<SearchPassage[]>;
+  search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily" }): Promise<SearchPassage[]>;
 }

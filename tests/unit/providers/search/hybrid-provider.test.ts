@@ -291,7 +291,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(searchCallStore.calls[0]).toMatchObject({ callType: "diy_fetch", status: "ok" });
   });
 
-  it("forceFallback skips DIY fetch entirely, even when the first candidate would have succeeded", async () => {
+  it("searchFlow: tavily skips DIY fetch entirely, even when the first candidate would have succeeded", async () => {
     const fallback = new StubFallback([{ url: "https://fallback.example", title: "F", domain: "fallback.example", status: "ok", text: "x" }]);
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url.includes("generativelanguage.googleapis.com")) {
@@ -306,7 +306,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     const results = await provider.search("Bukowski attended Los Angeles City College.", {
       runId: "r1",
       claimId: "c1",
-      forceFallback: true,
+      searchFlow: "tavily",
     });
 
     expect(fetchMock).not.toHaveBeenCalled();

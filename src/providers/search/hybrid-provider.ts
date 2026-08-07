@@ -95,8 +95,8 @@ export class HybridSearchProvider implements SearchProvider {
     private readonly searchCallStore: GrounnelSearchCallStore
   ) {}
 
-  async search(query: string, context?: { runId: string; claimId: string; forceFallback?: boolean }): Promise<SearchPassage[]> {
-    if (context?.forceFallback) {
+  async search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily" }): Promise<SearchPassage[]> {
+    if (context?.searchFlow === "tavily") {
       return this.runFallback(query, context);
     }
 

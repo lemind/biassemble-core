@@ -158,7 +158,7 @@ export class GrounnelPipelineService {
     const sources = await this.searchProvider.search(claim.text, {
       runId: auditId,
       claimId: claim.id,
-      forceFallback: searchEngine === "tavily",
+      searchFlow: searchEngine,
     });
     for (const s of sources) {
       if (s.status !== "ok") {
