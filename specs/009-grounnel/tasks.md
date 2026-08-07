@@ -277,9 +277,10 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
   - **Files:** `src/orchestrators/grounnel/gates.ts`, `src/orchestrators/grounnel/passage-filter.ts` (`extractKeyTerms` exported for reuse), `tests/unit/orchestrators/grounnel/gates.test.ts`, `tests/unit/orchestrators/grounnel/pipeline-service.test.ts`.
   - **Size:** S — one file + tests, same pattern as T003/T004.
 
-- [ ] **T022** Case B investigation — multi-date role misclassification (D022 §4, `g04`), investigate only, no build without checking back in
+- [x] **T022** Case B investigation — multi-date role misclassification (D022 §4, `g04`), investigate only, no build without checking back in
   - **Acceptance:** grep the golden set + any captured real fixtures for how many bare-year claims have a passage containing 2+ years in the relevant sentence. One case (just `g04`) → log as a scoped-out known limitation, no gate built. More than one → written up as its own ADR + plan, not bundled into D022.
-  - **Verify:** none (read-only investigation) unless the count triggers a build, in which case it becomes its own task list.
+  - **Done:** grepped every case's claim text in `live-eval-golden-set.json` for a year pattern — `g04` is the **only** case with a year anywhere in it; no second candidate exists in the current 11-case set to even compare against. `live-eval-fixtures/` is empty (Inngest-triggered runs don't write local fixtures, only the CLI does), so the real fetched passage text isn't cached locally, but the reason text has been identical across every real run so far: *"the passage states...began in 1939 and ended in 1945..."* — confirms the 2-year-same-sentence shape directly. Count is 1 — the "don't build" branch. Logged as a scoped-out known limitation (D022 §4), not fixed. Confirmed still reproducing in the 2026-08-07 real Inngest run (`correctRate: 0`, `below_correct_rate` violation) — not resolved, still open, just not being built against right now.
+  - **Verify:** none (read-only investigation) unless the count triggers a build, in which case it becomes its own task list. Count was 1 — no build triggered.
   - **Dependencies:** None (read-only, can run any time; `reconcileTemporalVerdict` already checked and confirmed out of scope — `QUARTER_RE`-only, doesn't cover bare-year claims).
   - **Files:** None expected; a new ADR if the count triggers a build.
   - **Size:** XS — investigation step only.
