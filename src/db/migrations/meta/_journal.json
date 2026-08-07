@@ -57,6 +57,13 @@
       "when": 1784665496642,
       "tag": "0010_supreme_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786083276649,
+      "tag": "0011_swift_spiral",
+      "breakpoints": true
     }
   ]
 }
