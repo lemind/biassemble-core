@@ -30,9 +30,11 @@ export interface RedisHashClient {
 }
 
 // Deliberately excludes `status`/`progress` (derived from claims each read, no drift) and takes `truncated` as the caller's own signal, not `total>=maxClaims` — rationale: D019 §4.
+// createdAt optional — audits written before this field existed have no value here.
 interface Meta {
   total: number;
   truncated: boolean;
+  createdAt?: string;
 }
 
 /** Adapts @upstash/redis's `Redis` to `RedisHashClient`. Build it with `automaticDeserialization: false` — this store parses JSON itself; the SDK's auto-parse would return objects, not strings. */
@@ -89,7 +91,7 @@ export class RedisGrounnelStore implements GrounnelStore {
   }): Promise<{ id: string }> {
     const id = data.id ?? randomUUID();
     const key = `audit:${id}`;
-    const meta: Meta = { total: data.claims.length, truncated: data.truncated };
+    const meta: Meta = { total: data.claims.length, truncated: data.truncated, createdAt: new Date().toISOString() };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };
     for (const claim of data.claims) {
       const full: Claim = {
@@ -148,6 +150,9 @@ export class RedisGrounnelStore implements GrounnelStore {
     const eligible = grounded_n + unclear_n + no_evidence_n + contradicted_n + not_checked_n;
     const grounded_pct = eligible === 0 ? 0 : Math.round((grounded_n / eligible) * 100);
 
+    const startedAt = meta.createdAt ?? null;
+    const elapsedSeconds = startedAt ? Math.round((Date.now() - new Date(startedAt).getTime()) / 1000) : null;
+
     return {
       id,
       status,
@@ -155,6 +160,8 @@ export class RedisGrounnelStore implements GrounnelStore {
       claims,
       score: { grounded_pct, grounded_n, unclear_n, no_evidence_n, contradicted_n, not_checked_n, eligible },
       caps_hit: meta.truncated,
+      started_at: startedAt,
+      elapsed_seconds: elapsedSeconds,
     };
   }
 }

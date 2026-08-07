@@ -114,6 +114,9 @@ export const StatusResponseSchema = z.object({
   claims: z.array(ClaimSchema),
   score: ScoreSchema,
   caps_hit: z.boolean(),
+  // null for audits created before this field existed — no createdAt on their Redis meta hash.
+  started_at: z.string().datetime().nullable(),
+  elapsed_seconds: z.number().int().nonnegative().nullable(),
 });
 
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
