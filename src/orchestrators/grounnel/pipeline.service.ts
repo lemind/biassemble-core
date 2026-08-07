@@ -4,11 +4,13 @@ import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
 import { applyContradictionEvidenceGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
 import { RateLimitError } from "../../providers/gemini.js";
+import { env } from "../../lib/env.js";
 import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource } from "../../contracts/grounnel.schemas.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
+import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { SearchProvider, SearchPassage } from "../../providers/search/search-provider.js";
 
 const MODULE = "grounnel-pipeline-service";
@@ -76,7 +78,8 @@ export class GrounnelPipelineService {
     private readonly provider: Provider,
     private readonly prompts: PromptRegistry,
     private readonly grounnelStore: GrounnelStore,
-    private readonly historyStore: GrounnelHistoryStore
+    private readonly historyStore: GrounnelHistoryStore,
+    private readonly llmCallStore: GrounnelLlmCallStore
   ) {}
 
   async run(auditId: string, claims: PipelineClaimInput[]): Promise<void> {
@@ -222,6 +225,11 @@ export class GrounnelPipelineService {
       threshold: String(CONFIDENCE_THRESHOLD),
     });
 
+    const verifyVersion = this.prompts.getGrounnelVerifyVersion();
+    // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
+    // than tracking "already stamped" across an arbitrary number of batches for one run.
+    void this.historyStore.updateRun(auditId, { promptVersionVerify: verifyVersion });
+
     let parsed: z.infer<typeof VerifyResponseSchema>;
     try {
       parsed = await callLlmForJson({
@@ -236,6 +244,14 @@ export class GrounnelPipelineService {
         // repair.ts nulls out a field it can't salvage rather than throwing (D018 §5.15) — without
         // this, a null `results` sails past callLlmForJson and crashes .map() below, uncaught.
         isValid: (result) => Array.isArray(result.results),
+        onComplete: this.llmCallStore.recordCall({
+          runId: auditId,
+          stage: "verify",
+          callType: "primary",
+          provider: this.provider.mode,
+          model: env.GEMINI_MODEL,
+          promptVersion: verifyVersion,
+        }),
       });
     } catch (err) {
       if (err instanceof RateLimitError) {

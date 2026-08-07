@@ -18,6 +18,7 @@ export interface GrounnelHistoryStore {
     runId: string,
     data: Partial<{
       status: "extracting" | "verifying" | "done" | "failed";
+      truncated: boolean;
       promptVersionExtract: string;
       promptVersionVerify: string;
       score: unknown;

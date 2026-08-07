@@ -12,6 +12,7 @@ import {
   claimPassages,
   grounnelRuns,
   grounnelClaims,
+  grounnelLlmCalls,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
 import type { LlmCall } from "./schema";
@@ -632,6 +633,7 @@ export async function updateGrounnelRun(
   runId: string,
   data: Partial<{
     status: "extracting" | "verifying" | "done" | "failed";
+    truncated: boolean;
     promptVersionExtract: string;
     promptVersionVerify: string;
     score: unknown;
@@ -653,5 +655,28 @@ export async function insertGrounnelClaim(data: {
   status: "done" | "failed";
 }) {
   const [row] = await db().insert(grounnelClaims).values(data).returning();
+  return row;
+}
+
+export async function insertGrounnelLlmCall(data: {
+  runId: string;
+  stage: "extract" | "verify";
+  callType: "primary" | "fallback";
+  provider: string;
+  model: string;
+  promptVersion: string;
+  rawResponse: string | null;
+  parsedOutput: unknown;
+  status: "success" | "timeout" | "error";
+  failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  startedAt: Date;
+  endedAt: Date;
+  durationMs: number;
+  errorMessage: string | null;
+}) {
+  const [row] = await db().insert(grounnelLlmCalls).values(data).returning();
   return row;
 }

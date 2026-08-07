@@ -8,6 +8,7 @@ const AUDIT_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export interface GrounnelStore {
   createAudit(data: {
+    id?: string;
     text: string;
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text">>;
@@ -80,12 +81,13 @@ export class RedisGrounnelStore implements GrounnelStore {
   constructor(private readonly redis: RedisHashClient) {}
 
   async createAudit(data: {
+    id?: string;
     text: string;
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text">>;
     truncated: boolean;
   }): Promise<{ id: string }> {
-    const id = randomUUID();
+    const id = data.id ?? randomUUID();
     const key = `audit:${id}`;
     const meta: Meta = { total: data.claims.length, truncated: data.truncated };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };

@@ -1,5 +1,6 @@
 import { RedisGrounnelStore, type RedisHashClient } from "../persistence/grounnel-store.js";
 import { DrizzleGrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
+import { DrizzleGrounnelLlmCallStore } from "../persistence/grounnel-llm-call-store.js";
 import { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import { evaluateGrounnelRun, type GrounnelRun, type LiveEvalSpec, type Violation } from "./grounnel-live-gate.js";
@@ -87,8 +88,9 @@ export async function runGrounnelEvalCase(
   // Real DrizzleGrounnelHistoryStore, not a no-op — golden-set runs are exactly what source: "eval"
   // exists to tag (D023 §3), so this real-call eval harness should exercise the real write path too.
   const historyStore = new DrizzleGrounnelHistoryStore();
-  const extractService = new GrounnelExtractService(provider, prompts, grounnelStore, historyStore);
-  const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore);
+  const llmCallStore = new DrizzleGrounnelLlmCallStore();
+  const extractService = new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore);
+  const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore);
 
   try {
     const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
