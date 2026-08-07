@@ -50,6 +50,11 @@ function sanitizeErrorMessage(err: unknown): string {
 
 export interface GoldenCase extends LiveEvalSpec {
   text: string;
+  // Per-case override, not a LiveEvalSpec field — this is a run-input concern (how the pipeline
+  // resolves evidence), not a scoring concern. Real search results are non-deterministic (which
+  // URLs Gemini's grounding returns isn't controllable), so "tavily" lets a case like
+  // g11-bloomberg-fallback actually guarantee it exercises that path instead of gambling on it.
+  searchEngine?: "defaultFlow" | "tavily";
 }
 
 export interface GrounnelEvalDeps {
@@ -97,7 +102,7 @@ export async function runGrounnelEvalCase(
   try {
     const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
     if (pendingClaims.length > 0) {
-      await pipelineService.run(id, pendingClaims);
+      await pipelineService.run(id, pendingClaims, goldenCase.searchEngine ?? "defaultFlow");
     }
     const status = await grounnelStore.getStatus(id);
     const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };
