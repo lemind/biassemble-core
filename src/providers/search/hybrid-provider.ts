@@ -15,6 +15,10 @@ const FETCH_USER_AGENT =
 const DISCOVERY_ATTEMPTS = 2;
 const CANDIDATE_FETCH_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 500;
+// No timeout previously — a hanging (not erroring, not timing out at the TCP level) candidate
+// URL blocked Promise.all indefinitely, up to Vercel's 300s hard kill. Confirmed in production.
+const DISCOVERY_TIMEOUT_MS = 15_000;
+const CANDIDATE_FETCH_TIMEOUT_MS = 10_000;
 
 // Blocks obvious private/loopback/link-local targets before a server-side fetch — not a full SSRF defense (no DNS resolution), but closes the direct-IP-literal case for an LLM-returned URL.
 const BLOCKED_HOSTNAME_RE =
@@ -161,6 +165,7 @@ export class HybridSearchProvider implements SearchProvider {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
         });
         if (!response.ok) {
           logger.warn(
@@ -206,7 +211,11 @@ export class HybridSearchProvider implements SearchProvider {
     for (let attempt = 1; attempt <= CANDIDATE_FETCH_ATTEMPTS; attempt++) {
       let response: Response;
       try {
-        response = await fetch(candidate.url, { headers: { "User-Agent": FETCH_USER_AGENT }, redirect: "follow" });
+        response = await fetch(candidate.url, {
+          headers: { "User-Agent": FETCH_USER_AGENT },
+          redirect: "follow",
+          signal: AbortSignal.timeout(CANDIDATE_FETCH_TIMEOUT_MS),
+        });
       } catch (err) {
         lastNetworkError = err;
         logger.warn(
