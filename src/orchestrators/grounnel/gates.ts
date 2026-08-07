@@ -100,6 +100,27 @@ function normalizeForSubstringCheck(text: string): string {
   return text.toLowerCase().replace(PUNCTUATION_RE, "").replace(/\s+/g, " ").trim();
 }
 
+// Matches "..." or the single-character "…" the model sometimes uses to join two real, non-adjacent
+// excerpts from the same passage into one evidence string (a live-eval finding, 2026-08-07, g04:
+// "Germany invades Poland ... Japan formally surrenders", both real, ~1000 words apart in the
+// source's dated timeline). Splitting on it, not just stripping it, matters — PUNCTUATION_RE alone
+// would collapse the gap and require the two genuinely non-adjacent fragments to be contiguous.
+const EVIDENCE_ELLIPSIS_RE = /\.{3,}|…/g;
+
+/**
+ * Every fragment (split on an ellipsis) must independently be a real, contiguous substring of the
+ * passage — still rejects a single fabricated fragment, doesn't weaken gate #1's hallucination
+ * check, just stops requiring multi-excerpt evidence to be one unbroken span (D019 §2, live-eval).
+ */
+function evidenceMatchesPassage(evidence: string, passageText: string): boolean {
+  const normalizedPassage = normalizeForSubstringCheck(passageText);
+  const fragments = evidence
+    .split(EVIDENCE_ELLIPSIS_RE)
+    .map((f) => normalizeForSubstringCheck(f))
+    .filter((f) => f.length > 0);
+  return fragments.length > 0 && fragments.every((f) => normalizedPassage.includes(f));
+}
+
 export interface GateOneInput {
   verdict: Verdict;
   evidence: string | null;
@@ -116,9 +137,7 @@ export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResu
   if (input.verdict !== "contradicted") {
     return { verdict: input.verdict, evidence: input.evidence };
   }
-  const evidenceOk =
-    !!input.evidence &&
-    normalizeForSubstringCheck(input.passageText).includes(normalizeForSubstringCheck(input.evidence));
+  const evidenceOk = !!input.evidence && evidenceMatchesPassage(input.evidence, input.passageText);
   if (evidenceOk) {
     return { verdict: input.verdict, evidence: input.evidence };
   }

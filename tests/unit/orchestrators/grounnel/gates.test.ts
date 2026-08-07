@@ -72,6 +72,33 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
     });
     expect(result.verdict).toBe("contradicted");
   });
+
+  it("real g04 case: an ellipsis joining two genuine, non-adjacent excerpts from the same passage still passes (2026-08-07 live-eval finding)", () => {
+    // Real evidence/passage pair from a live run — both halves are verbatim, ~1000 words apart
+    // in the source's dated timeline (confirmed by fetching the real page). Before this fix, gate
+    // #1 required the whole string to be one contiguous span and downgraded this to `unsupported`.
+    const result = applyContradictionEvidenceGate({
+      verdict: "contradicted",
+      evidence:
+        "September 1, 1939 Germany invades Poland, initiating World War II in Europe. ... September 2, 1945 Having agreed in principle to unconditional surrender on August 14, 1945, Japan formally surrenders, ending World War II.",
+      passageText:
+        "September 1, 1939 Germany invades Poland, initiating World War II in Europe. September 3, 1939 Great Britain and France declare war on Germany. [lots of other dated entries in between] September 2, 1945 Having agreed in principle to unconditional surrender on August 14, 1945, Japan formally surrenders, ending World War II.",
+    });
+    expect(result).toEqual({
+      verdict: "contradicted",
+      evidence:
+        "September 1, 1939 Germany invades Poland, initiating World War II in Europe. ... September 2, 1945 Having agreed in principle to unconditional surrender on August 14, 1945, Japan formally surrenders, ending World War II.",
+    });
+  });
+
+  it("still rejects an ellipsis-joined evidence string when only one fragment is real — splitting doesn't weaken the hallucination check", () => {
+    const result = applyContradictionEvidenceGate({
+      verdict: "contradicted",
+      evidence: "Germany invades Poland ... Japan launches a surprise invasion of California",
+      passageText: "Germany invades Poland in 1939. Japan formally surrenders in 1945, ending the war.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", evidence: null });
+  });
 });
 
 describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
