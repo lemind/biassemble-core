@@ -124,6 +124,26 @@ function evidenceMatchesPassage(evidence: string, passageText: string): boolean 
   return fragments.length > 0 && fragments.every((f) => normalizedPassage.includes(f));
 }
 
+export interface CounterfactIgnoredInput {
+  verdict: Verdict;
+  /** Batched LLM classifier result — see D025 §2 for what feeds this and why it can be null. */
+  reasonSupportsVerdict: boolean | null;
+}
+
+export interface CounterfactIgnoredResult {
+  flagged: boolean;
+  reason: "counterfact_ignored" | null;
+}
+
+/** Gate #5 (D025 §2) — flags only, never changes verdict itself, unlike gates #1-4. */
+export function applyCounterfactIgnoredGate(input: CounterfactIgnoredInput): CounterfactIgnoredResult {
+  // Reviewed finding: stated positively — flag only on an explicit "no", not on null/true.
+  if (input.verdict !== "contradicted" && input.reasonSupportsVerdict === false) {
+    return { flagged: true, reason: "counterfact_ignored" };
+  }
+  return { flagged: false, reason: null };
+}
+
 export interface GateOneInput {
   verdict: Verdict;
   evidence: string | null;

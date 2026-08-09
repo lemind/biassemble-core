@@ -103,7 +103,8 @@ export type GateReason =
   | "evidence_null"
   | "evidence_not_grounded"
   | "threshold_comparison"
-  | "equality_comparison";
+  | "equality_comparison"
+  | "counterfact_ignored";
 
 export interface LlmCallRecord {
   id: string;

@@ -1,9 +1,9 @@
-import { z } from "zod";
+import { z, type ZodSchema } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
-import { applyContradictionEvidenceGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
+import { applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
 import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource } from "../../contracts/grounnel.schemas.js";
@@ -14,6 +14,7 @@ import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-st
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { SearchProvider, SearchPassage } from "../../providers/search/search-provider.js";
+import type { GateReason } from "../../persistence/types.js";
 
 const MODULE = "grounnel-pipeline-service";
 // D018 §2.3 — lowered from 10 to 8 there: batch size, not verdict logic, was why VERDICT/NOTE
@@ -51,6 +52,19 @@ const VerifyResultSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 const VerifyResponseSchema = z.object({ results: z.array(VerifyResultSchema) });
+
+// D025/T035 — batched "does reason support verdict?" classifier response.
+const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
+const ConsistencyCheckResponseSchema = z.object({ results: z.array(ConsistencyCheckResultSchema) });
+
+/** One gate's finding, generalized past a single needsRetry boolean tied to one gate (D025 §2).
+ * Reviewed finding: `code` reuses `GateReason` (not a bare string) so it can't drift from what's
+ * persisted to grounnel_gate_events.reason for the same finding. */
+interface Diagnostic {
+  code: GateReason;
+  severity: "ERROR" | "WARNING" | "INFO";
+  details: string;
+}
 
 export interface PipelineClaimInput {
   id: string;
@@ -241,16 +255,19 @@ export class GrounnelPipelineService {
     );
   }
 
-  /** The 4-gate chain, extracted so T034's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
+  /** The 5-gate chain, extracted so T034/T035's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
   private runGateChain(input: {
     verdict: Verdict;
     reason: string | null;
     evidence: string | null;
     claimText: string;
     passageText: string;
-  }): { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[]; needsRetry: boolean } {
+    // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
+    reasonSupportsVerdict: boolean | null;
+  }): { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[]; diagnostics: Diagnostic[]; needsRetry: boolean } {
     let verdict = input.verdict;
     const gateEvents: GateEventInput[] = [];
+    const diagnostics: Diagnostic[] = [];
 
     // Reason-consistency gate — the model's own reason overriding a verdict that contradicts it
     // (2026-08-06 live-eval findings: g04/g05). Runs before gate #1 so a flip to `contradicted`
@@ -270,6 +287,16 @@ export class GrounnelPipelineService {
     gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
     verdict = implicitNegation.verdict;
 
+    // Gate #5 (D025 §2/§3) — chain position (between implicit_negation and gate #1) is load-bearing, see ADR.
+    const counterfact = applyCounterfactIgnoredGate({ verdict, reasonSupportsVerdict: input.reasonSupportsVerdict });
+    // overridden is always false here — this gate never changes verdict, only flags (D025 §2).
+    // Reviewed finding: unlike gates #1-4, "reason" can be non-null with overridden:false — querying
+    // this gate's activity needs `gate = 'counterfact_ignored' AND reason IS NOT NULL`, not `overridden = true`.
+    gateEvents.push({ gate: "counterfact_ignored", verdictBefore: verdict, verdictAfter: verdict, overridden: false, reason: counterfact.reason });
+    if (counterfact.flagged) {
+      diagnostics.push({ code: "counterfact_ignored", severity: "ERROR", details: "The model's own reason did not appear to support the verdict it gave for this claim." });
+    }
+
     // Captured right before gate #1 — reviewed finding: needsRetry (below) checking only
     // reasonConsistency.overridden missed a claim that arrived ALREADY "contradicted" straight from
     // VERIFY (no flip needed) but with the same missing-evidence self-inconsistency as the flipped case.
@@ -281,35 +308,52 @@ export class GrounnelPipelineService {
     verdict = gate1.verdict;
     const evidence = gate1.evidence;
 
+    // T034 (real live-eval finding, g04) — verdict was "contradicted" going into gate #1 (whether the
+    // raw VERIFY output already said so, or a gate flipped it) but gate #1 found no real evidence.
+    // Reviewed finding: details phrased generically, not "verdict was contradicted" — the
+    // reconciliation prompt shows the model its RAW pre-gate verdict (D025 §2), which may say
+    // "unsupported" if a gate did the flipping internally; asserting "was contradicted" there
+    // would contradict what the model is shown as its own previous answer.
+    if (verdictBeforeGate1 === "contradicted" && (gate1.reason === "evidence_null" || gate1.reason === "evidence_not_grounded")) {
+      diagnostics.push({
+        code: gate1.reason,
+        severity: "ERROR",
+        details:
+          gate1.reason === "evidence_null"
+            ? "A contradiction was indicated but no evidence quote was given."
+            : "A contradiction was indicated but the evidence quote wasn't found verbatim in the passage.",
+      });
+    }
+
     // Gate #2 — numeric normalization/comparison in code (D019 §2, T004).
     const gate2 = applyNumericGate({ claimText: input.claimText, verdict, evidence });
     gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
     verdict = gate2.verdict;
 
-    // T034 (real live-eval finding, g04) — verdict was "contradicted" going into gate #1 (whether the
-    // raw VERIFY output already said so, or a gate flipped it) but gate #1 found no real evidence.
-    const needsRetry = verdictBeforeGate1 === "contradicted" && (gate1.reason === "evidence_null" || gate1.reason === "evidence_not_grounded");
+    // D025 §2 — retry fires on any ERROR-severity diagnostic; today that's every diagnostic this
+    // chain produces, but the field exists so a future WARNING/INFO-only gate doesn't force a retry.
+    const needsRetry = diagnostics.some((d) => d.severity === "ERROR");
 
-    return { verdict, evidence, gateEvents, needsRetry };
+    return { verdict, evidence, gateEvents, diagnostics, needsRetry };
   }
 
-  /** Shared by runBatch's primary call and retryVerifyClaim's single-claim call — reviewed finding: these two were near-duplicated inline before, risking drift if the call shape ever changes. */
-  private async callVerify(
+  /** Reviewed finding: shared by callVerify and checkReasonVerdictConsistency — both had near-identical
+   * callLlmForJson invocations (expectedKeys/attempts/module/isValid/onComplete), the same drift risk
+   * callVerify was originally extracted to prevent (T034), now recurring one level up. */
+  private async callGrounnelJson<T extends { results: unknown[] }>(
     auditId: string,
-    pairs: Array<{ id: string; claim: string; passage: string | null; source_url: string }>,
+    system: string,
+    user: string,
+    schema: ZodSchema<T>,
     operation: string,
-    callType: "primary" | "consistency_retry",
-    verifyVersion: string
-  ): Promise<z.infer<typeof VerifyResponseSchema>> {
-    const system = this.prompts.render("grounnel-verify", {
-      claim_passage_pairs: JSON.stringify(pairs),
-      threshold: String(CONFIDENCE_THRESHOLD),
-    });
+    callType: "primary" | "consistency_retry" | "consistency_check",
+    promptVersion: string
+  ): Promise<T> {
     return callLlmForJson({
       provider: this.provider,
       system,
-      user: "Return the JSON now.",
-      schema: VerifyResponseSchema,
+      user,
+      schema,
       expectedKeys: ["results"],
       attempts: VERIFY_ATTEMPTS,
       module: MODULE,
@@ -323,20 +367,59 @@ export class GrounnelPipelineService {
         callType,
         provider: this.provider.mode,
         model: env.GEMINI_MODEL,
-        promptVersion: verifyVersion,
+        promptVersion,
       }),
     });
   }
 
-  /** T034 — one bounded retry for a single claim, fired only when runGateChain flags a self-inconsistent VERIFY output. Never blocks the batch: a retry failure just keeps the original (already gate-processed) result. */
+  /** Shared by runBatch's primary call and retryVerifyClaim's single-claim call — reviewed finding: these two were near-duplicated inline before, risking drift if the call shape ever changes. */
+  private async callVerify(
+    auditId: string,
+    pairs: Array<{ id: string; claim: string; passage: string | null; source_url: string }>,
+    operation: string,
+    callType: "primary" | "consistency_retry",
+    verifyVersion: string,
+    // D025 §2 — the reconciliation retry needs a dynamic message (previous answer + diagnostics),
+    // not the primary call's fixed trigger phrase. Same `grounnel-verify` system prompt either way.
+    user: string = "Return the JSON now."
+  ): Promise<z.infer<typeof VerifyResponseSchema>> {
+    const system = this.prompts.render("grounnel-verify", {
+      claim_passage_pairs: JSON.stringify(pairs),
+      threshold: String(CONFIDENCE_THRESHOLD),
+    });
+    return this.callGrounnelJson(auditId, system, user, VerifyResponseSchema, operation, callType, verifyVersion);
+  }
+
+  /** D025 §2 — one shared reconciliation prompt for every diagnostic, not one prompt per diagnostic code. Shows the model its own previous answer plainly, instructs deterministic repair, not a second guess. */
+  private buildReconciliationUser(previous: { verdict: Verdict; evidence: string | null; reason: string | null }, diagnostics: Diagnostic[]): string {
+    const diagnosticsText = diagnostics.map((d) => `- ${d.code}: ${d.details}`).join("\n");
+    return [
+      "Your previous answer for this claim was:",
+      `verdict: ${previous.verdict}`,
+      `evidence: ${previous.evidence ?? "null"}`,
+      `reason: ${previous.reason ?? "null"}`,
+      "",
+      "Diagnostics:",
+      diagnosticsText,
+      "",
+      "Treat the passage as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with the passage. If contradicted, evidence must be an exact quote from the passage; otherwise evidence must be null.",
+      "",
+      "Return the JSON now.",
+    ].join("\n");
+  }
+
+  /** T034/D025 — one bounded retry for a single claim, fired only when runGateChain flags a self-inconsistent VERIFY output. Never blocks the batch: a retry failure just keeps the original (already gate-processed) result. */
   private async retryVerifyClaim(
     auditId: string,
     item: ResolvedWithPassage,
-    verifyVersion: string
+    verifyVersion: string,
+    previous: { verdict: Verdict; evidence: string | null; reason: string | null },
+    diagnostics: Diagnostic[]
   ): Promise<z.infer<typeof VerifyResultSchema> | RateLimitError | null> {
     const pairs = [{ id: item.claim.id, claim: item.claim.text, passage: item.passage.text, source_url: item.passage.url }];
+    const user = this.buildReconciliationUser(previous, diagnostics);
     try {
-      const parsed = await this.callVerify(auditId, pairs, "retryVerifyClaim", "consistency_retry", verifyVersion);
+      const parsed = await this.callVerify(auditId, pairs, "retryVerifyClaim", "consistency_retry", verifyVersion, user);
       return parsed.results.find((r) => r.id === item.claim.id) ?? null;
     } catch (err) {
       // Reviewed finding: propagate, don't swallow — runBatch's primary call stops the whole run
@@ -348,6 +431,37 @@ export class GrounnelPipelineService {
       }
       logger.warn({ module: MODULE, operation: "retryVerifyClaim", auditId, claimId: item.claim.id, err }, "VERIFY retry failed — keeping the original gate-processed result");
       return null;
+    }
+  }
+
+  /** One batched call per VERIFY batch, not one per claim — a safety net, so any failure just skips this batch's check rather than blocking the run (D025 §2). */
+  private async checkReasonVerdictConsistency(
+    auditId: string,
+    items: Array<{ id: string; claim: string; reason: string | null; verdict: Verdict }>
+  ): Promise<Map<string, boolean>> {
+    if (items.length === 0) return new Map();
+    const pairs = items.map((i) => ({ id: i.id, claim: i.claim, reason: i.reason, verdict: i.verdict }));
+    const system = this.prompts.render("grounnel-consistency-check", { reason_verdict_pairs: JSON.stringify(pairs) });
+    try {
+      const parsed = await this.callGrounnelJson(
+        auditId,
+        system,
+        "Return the JSON now.",
+        ConsistencyCheckResponseSchema,
+        "checkReasonVerdictConsistency",
+        "consistency_check",
+        this.prompts.getGrounnelConsistencyCheckVersion()
+      );
+      // Reviewed finding: schema-valid but empty is indistinguishable from "the model ignored every
+      // candidate" — worth a log line, unlike a genuine failure (caught below), since callLlmForJson's
+      // isValid only checks Array.isArray, not that every requested id got answered.
+      if (parsed.results.length === 0) {
+        logger.warn({ module: MODULE, operation: "checkReasonVerdictConsistency", auditId, requested: items.length }, "Consistency check returned zero results for a non-empty candidate batch");
+      }
+      return new Map(parsed.results.map((r) => [r.id, r.consistent]));
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "checkReasonVerdictConsistency", auditId, err }, "Consistency check failed — skipping this batch's reconciliation check, gate #1 still covers evidence-groundedness");
+      return new Map();
     }
   }
 
@@ -382,30 +496,69 @@ export class GrounnelPipelineService {
     // An object, not a bare `let`: TS doesn't narrow a closure's mutation of an outer `let` across
     // an `await`, so `if (retryRateLimit)` below would otherwise wrongly type-narrow to `never`.
     const retryState: { rateLimit: RateLimitError | null } = { rateLimit: null };
+
+    // Reviewed finding: initialVerdict (the value the gate chain actually operates on, e.g.
+    // confidence-downgraded to "unverifiable") must be computed once here, before the classifier
+    // call — the classifier was previously judging the raw pre-downgrade verdict while gate #5
+    // applied its answer to a different, already-downgraded one.
+    const knownResults = parsed.results
+      .filter((r) => byId.has(r.id))
+      .map((r) => ({
+        result: r,
+        initialVerdict: (r.confidence < CONFIDENCE_THRESHOLD && r.verdict !== "unverifiable" ? "unverifiable" : r.verdict) as Verdict,
+      }));
+
+    // D025 §2 — one batched classifier call up front, covering every claim not already
+    // "contradicted", so runGateChain (still pure/sync) can just read the result per claim below.
+    const consistencyCandidates = knownResults.filter((k) => k.initialVerdict !== "contradicted");
+    const consistencyMap = await this.checkReasonVerdictConsistency(
+      auditId,
+      consistencyCandidates.map((k) => ({ id: k.result.id, claim: byId.get(k.result.id)!.claim.text, reason: k.result.reason, verdict: k.initialVerdict }))
+    );
+
     await Promise.all(
-      parsed.results.map(async (result) => {
-        const item = byId.get(result.id);
-        if (!item) return; // model echoed an id we didn't send — ignore, don't persist (matches audit's own precedent)
+      knownResults.map(async ({ result, initialVerdict }) => {
+        const item = byId.get(result.id)!; // safe — knownResults is already filtered by byId.has
         answeredIds.add(item.claim.id);
 
         let reason = result.reason;
         let confidence = result.confidence;
-        const initialVerdict = confidence < CONFIDENCE_THRESHOLD && result.verdict !== "unverifiable" ? "unverifiable" : result.verdict;
 
-        const firstPass = this.runGateChain({ verdict: initialVerdict, reason, evidence: result.evidence, claimText: item.claim.text, passageText: item.passage.text! });
+        const firstPass = this.runGateChain({
+          verdict: initialVerdict,
+          reason,
+          evidence: result.evidence,
+          claimText: item.claim.text,
+          passageText: item.passage.text!,
+          reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
+        });
         let chain = firstPass;
 
-        // T034 — a self-inconsistent VERIFY output (reason narrates a contradiction, but gate #1
-        // found no real evidence backing the flip) gets one retry before the degraded result stands.
+        // T034/D025 — a self-inconsistent VERIFY output (evidence-groundedness gate #1, or the new
+        // reason/verdict classifier) gets one retry before the degraded result stands.
         if (firstPass.needsRetry) {
-          const retried = await this.retryVerifyClaim(auditId, item, verifyVersion);
+          const retried = await this.retryVerifyClaim(
+            auditId,
+            item,
+            verifyVersion,
+            { verdict: initialVerdict, evidence: result.evidence, reason },
+            firstPass.diagnostics
+          );
           if (retried instanceof RateLimitError) {
             retryState.rateLimit = retried;
           } else if (retried) {
             reason = retried.reason;
             confidence = retried.confidence;
             const retryVerdict = confidence < CONFIDENCE_THRESHOLD && retried.verdict !== "unverifiable" ? "unverifiable" : retried.verdict;
-            const retryPass = this.runGateChain({ verdict: retryVerdict, reason, evidence: retried.evidence, claimText: item.claim.text, passageText: item.passage.text! });
+            // Capped at one attempt, not re-classified (D025 §2) — deterministic gates still apply.
+            const retryPass = this.runGateChain({
+              verdict: retryVerdict,
+              reason,
+              evidence: retried.evidence,
+              claimText: item.claim.text,
+              passageText: item.passage.text!,
+              reasonSupportsVerdict: null,
+            });
             // Reviewed finding: concatenate, don't replace — the original self-inconsistent pass
             // (the override that triggered this retry) stays in the audit trail, not just the retry's.
             chain = { ...retryPass, gateEvents: [...firstPass.gateEvents, ...retryPass.gateEvents] };

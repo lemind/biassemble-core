@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applyContradictionEvidenceGate,
+  applyCounterfactIgnoredGate,
   applyImplicitNegationGate,
   applyNumericGate,
   applyReasonConsistencyGate,
@@ -411,5 +412,32 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
         "Einstein won the 1921 Nobel Prize in Physics for his services to theoretical physics, and especially for his discovery of the law of the photoelectric effect.",
     });
     expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+});
+
+describe("gate #5 — counterfact-ignored, LLM-classifier-driven (D025, real live-eval finding: g04 recurrence)", () => {
+  it("flags when the classifier says the reason doesn't support the verdict", () => {
+    const result = applyCounterfactIgnoredGate({ verdict: "unsupported", reasonSupportsVerdict: false });
+    expect(result).toEqual({ flagged: true, reason: "counterfact_ignored" });
+  });
+
+  it("does nothing when the classifier says the reason does support the verdict", () => {
+    const result = applyCounterfactIgnoredGate({ verdict: "unsupported", reasonSupportsVerdict: true });
+    expect(result).toEqual({ flagged: false, reason: null });
+  });
+
+  it("does nothing when the classifier result is null (skipped upstream or the call failed)", () => {
+    const result = applyCounterfactIgnoredGate({ verdict: "unsupported", reasonSupportsVerdict: null });
+    expect(result).toEqual({ flagged: false, reason: null });
+  });
+
+  it("never fires on a verdict already 'contradicted' — mutually exclusive with gate #1 (D025 §3)", () => {
+    const result = applyCounterfactIgnoredGate({ verdict: "contradicted", reasonSupportsVerdict: false });
+    expect(result).toEqual({ flagged: false, reason: null });
+  });
+
+  it("never changes the verdict itself, unlike gates #1-4 — only ever flags for a reconciliation retry", () => {
+    const result = applyCounterfactIgnoredGate({ verdict: "unsupported", reasonSupportsVerdict: false });
+    expect(result).not.toHaveProperty("verdict");
   });
 });

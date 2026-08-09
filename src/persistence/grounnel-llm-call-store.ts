@@ -9,7 +9,7 @@ export interface GrounnelLlmCallStore {
   recordCall(data: {
     runId: string;
     stage: "extract" | "verify";
-    callType: "primary" | "fallback" | "consistency_retry";
+    callType: "primary" | "fallback" | "consistency_retry" | "consistency_check";
     provider: string;
     model: string;
     promptVersion: string;
@@ -25,7 +25,7 @@ export class DrizzleGrounnelLlmCallStore implements GrounnelLlmCallStore {
   recordCall(context: {
     runId: string;
     stage: "extract" | "verify";
-    callType: "primary" | "fallback" | "consistency_retry";
+    callType: "primary" | "fallback" | "consistency_retry" | "consistency_check";
     provider: string;
     model: string;
     promptVersion: string;

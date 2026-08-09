@@ -41,11 +41,26 @@ function idsFromRequest(request: CompletionRequest): string[] {
   return pairs.map((p) => p.id);
 }
 
+// D025/T035 — same idea as idsFromRequest, for the batched consistency-check classifier's own marker.
+function idsFromConsistencyRequest(request: CompletionRequest): string[] {
+  const match = request.system.match(/REASON_VERDICT_PAIRS: (\[.*\])/s);
+  if (!match) return [];
+  const pairs = JSON.parse(match[1]!) as Array<{ id: string }>;
+  return pairs.map((p) => p.id);
+}
+
 describe("GrounnelPipelineService (T010)", () => {
   let provider: MockProvider;
 
   beforeEach(() => {
     provider = new MockProvider();
+    // D025/T035 — default "everything is consistent" so existing tests (none of which are about
+    // this new classifier) don't have to configure it themselves or hit a retry-storm from an
+    // unconfigured mock response. Tests that specifically exercise gate #5 override this.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: true })) };
+    });
   });
 
   it("writes 'unsupported: no evidence found' directly, without any VERIFY call, when no source resolves to usable text", async () => {
@@ -197,7 +212,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(provider.getCallCount()).toBe(2); // proves the retry actually fired, not just that the final verdict looks right
+    expect(provider.getCallCount()).toBe(3); // primary VERIFY + D025 consistency-check classifier + the T034 retry
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("ended in 1945");
   });
@@ -229,7 +244,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(provider.getCallCount()).toBe(2); // one retry attempted, exactly one — no loop
+    expect(provider.getCallCount()).toBe(3); // primary + classifier + one retry attempted, exactly one — no loop
     expect(claim.verdict).toBe("unsupported"); // degrades safely, doesn't fabricate evidence on the second miss either
     expect(claim.evidence).toBeNull();
   });
@@ -269,6 +284,52 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBe("ended in 1945");
   });
 
+  it("D025: batched classifier flags a self-inconsistent 'unsupported' verdict with no explicit contradiction wording (nothing reason_consistency/implicit_negation catch), triggering a reconciliation retry — the real g04 recurrence, 2026-08-09", async () => {
+    const claimId = uuid(1);
+    const claimText = "World War II ended in 1943.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "World War II began on September 1, 1939 and ended on September 2, 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      // Real g04 recurrence shape (run 2e755218, 2026-08-09): the model read the real end date
+      // (proven by its own reason) but never reflected that in verdict/evidence — no "contradicts"/
+      // "conflict"/", not Y" wording for the existing gates to catch. First call reproduces this
+      // exact reason text; the retry gets it right.
+      const firstPass = verifyCalls === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: firstPass ? "unsupported" : "contradicted",
+          evidence: firstPass ? null : "ended on September 2, 1945",
+          reason: firstPass
+            ? "The passage mentions the dates of World War II as September 1, 1939 to September 2, 1945, but does not state that it ended in 1943."
+            : "The passage states World War II ended on September 2, 1945, which conflicts with the claimed 1943 end date.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    // Overrides the beforeEach default — this specific claim's reason does NOT support its verdict.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(verifyCalls).toBe(2); // primary VERIFY + the reconciliation retry — fired purely from gate #5, not gate #1
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).toBe("ended on September 2, 1945");
+  });
+
   it("T034 (reviewed finding): a successful retry appends its gate events to the original pass's, instead of discarding the original trace", async () => {
     const claimId = uuid(1);
     const claimText = "World War II ended in 1943.";
@@ -297,12 +358,13 @@ describe("GrounnelPipelineService (T010)", () => {
 
     expect(gateEventStore.calls).toHaveLength(1);
     const events = gateEventStore.calls[0]!.events;
-    expect(events).toHaveLength(8); // 4 gates x 2 passes — the original inconsistent pass is not lost
+    expect(events).toHaveLength(10); // 5 gates x 2 passes (D025 added counterfact_ignored) — the original inconsistent pass is not lost
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
-    expect(events[2]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
+    // Index 3, not 2: counterfact_ignored (D025) now sits between implicit_negation and contradiction_evidence.
+    expect(events[3]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    expect(events[6]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    expect(events[8]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -325,13 +387,18 @@ describe("GrounnelPipelineService (T010)", () => {
       mode: "mock",
       completeJson: async (request) => {
         calls++;
-        const ids = idsFromRequest(request);
-        // First real call is the whole 8-claim batch 1 (self-inconsistent for inconsistentClaim,
-        // ordinary "supported" for the rest). Second call is T034's single-claim retry for
+        // D025 §2 — this batch now makes 3 real calls before batch 2: (1) primary VERIFY, (2) the
+        // batched consistency-check classifier (every claim here is "supported"/"unsupported", none
+        // "contradicted", so all 8 are candidates), (3) T034's single-claim retry for
         // inconsistentClaim — that one hits the rate limit. Batch 2 must never be attempted.
-        if (calls === 2) {
+        if (calls === 3) {
           throw new RateLimitError("daily quota exceeded", "daily", "2026-08-07T00:00:00Z");
         }
+        if (request.system.includes("You are a consistency auditor")) {
+          const ids = idsFromConsistencyRequest(request);
+          return { result: { results: ids.map((id) => ({ id, consistent: true })) } };
+        }
+        const ids = idsFromRequest(request);
         return {
           result: {
             results: ids.map((id) => ({
@@ -352,7 +419,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const service = new GrounnelPipelineService(search, provider2, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, allClaims);
 
-    expect(calls).toBe(2); // batch 1's primary call + inconsistentClaim's retry — batch 2 never called
+    expect(calls).toBe(3); // batch 1's primary call + classifier + inconsistentClaim's retry — batch 2 never called
     const status = await store.getStatus(auditId);
     const flagged = status!.claims.find((c) => c.id === inconsistentClaim.id)!;
     expect(flagged.verdict).toBe("unsupported"); // kept the pre-retry degraded result, didn't crash
@@ -668,12 +735,20 @@ describe("GrounnelPipelineService (T010)", () => {
     const service = new GrounnelPipelineService(search, provider, prompts, store, new NoopGrounnelHistoryStore(), llmCallStore, new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
-    expect(llmCallStore.recordCallContexts).toHaveLength(1);
+    // Two rows now: the primary VERIFY call, plus D025's batched consistency-check classifier call
+    // (fires because this claim's verdict — "supported" — isn't already "contradicted").
+    expect(llmCallStore.recordCallContexts).toHaveLength(2);
     expect(llmCallStore.recordCallContexts[0]).toMatchObject({
       runId: auditId,
       stage: "verify",
       callType: "primary",
       promptVersion: prompts.getGrounnelVerifyVersion(),
+    });
+    expect(llmCallStore.recordCallContexts[1]).toMatchObject({
+      runId: auditId,
+      stage: "verify",
+      callType: "consistency_check",
+      promptVersion: prompts.getGrounnelConsistencyCheckVersion(),
     });
     expect(llmCallStore.completions[0]!.info.status).toBe("success");
   });
@@ -715,10 +790,11 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(gateEventStore.calls[0]!.events.map((e) => e.gate)).toEqual([
       "reason_consistency",
       "implicit_negation",
+      "counterfact_ignored",
       "contradiction_evidence",
       "numeric",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the four gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the five gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 

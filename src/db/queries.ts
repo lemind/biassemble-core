@@ -663,7 +663,7 @@ export async function insertGrounnelClaim(data: {
 export async function insertGrounnelLlmCall(data: {
   runId: string;
   stage: "extract" | "verify";
-  callType: "primary" | "fallback" | "consistency_retry";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check";
   provider: string;
   model: string;
   promptVersion: string;
@@ -703,7 +703,7 @@ export async function insertGrounnelGateEvents(
   rows: Array<{
     runId: string;
     claimId: string;
-    gate: "reason_consistency" | "implicit_negation" | "contradiction_evidence" | "numeric";
+    gate: "reason_consistency" | "implicit_negation" | "counterfact_ignored" | "contradiction_evidence" | "numeric";
     verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     overridden: boolean;

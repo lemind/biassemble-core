@@ -363,11 +363,13 @@ export const grounnelClaims = grounnel.table("grounnel_claims", {
 // callType defaults to "primary". "fallback" matches core.llm_calls' meaning (parse-failure retry,
 // D018 §5.15). "consistency_retry" (T034) is deliberately a separate value, not reused "fallback" —
 // a different trigger (gate-caught self-inconsistency, not a parse failure) a shared metric shouldn't conflate.
+// "consistency_check" (D025/T035) is the batched classifier call ("does reason support verdict?")
+// that decides whether a "consistency_retry" fires — a distinct call, not the retry itself.
 export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
-  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry"] }).notNull().default("primary"),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check"] }).notNull().default("primary"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),
@@ -429,7 +431,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id").notNull().references(() => grounnelClaims.claimId, { onDelete: "cascade" }),
-  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "contradiction_evidence", "numeric"] }).notNull(),
+  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "counterfact_ignored", "contradiction_evidence", "numeric"] }).notNull(),
   verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   verdictAfter: text("verdict_after", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   overridden: boolean("overridden").notNull(),
@@ -442,6 +444,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
       "evidence_not_grounded",
       "threshold_comparison",
       "equality_comparison",
+      "counterfact_ignored",
     ],
   }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
