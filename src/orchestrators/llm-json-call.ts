@@ -56,7 +56,9 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
     let outputTokens: number | null = null;
     let totalTokens: number | null = null;
     try {
-      const response = await provider.completeJson<unknown>({ system, user, options: { temperature: 0 } });
+      // Reviewed finding (2026-08-09) — schema is already mandatory here, so every caller gets
+      // Gemini's structural output constraint for free, not just callers that opt in.
+      const response = await provider.completeJson<unknown>({ system, user, responseSchema: schema, options: { temperature: 0 } });
       raw = response.result;
       inputTokens = response.usage?.inputTokens ?? null;
       outputTokens = response.usage?.outputTokens ?? null;

@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../lib/env";
 import { logger } from "../observability/logger";
 import { extractJson } from "../parsers/json-from-llm";
+import { zodToGeminiSchema } from "./gemini-schema";
 import type { Provider, CompletionRequest, ProviderResponse, TokenUsage } from "./types";
 import { TimeoutError } from "./types";
 
@@ -40,12 +41,17 @@ export class GeminiProvider implements Provider {
   async completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>> {
     const timeoutMs = request.options?.timeoutMs ?? env.AI_TIMEOUT_MS;
 
+    // Reviewed finding (2026-08-09): structural fix, not a prompt-wording one — constrains
+    // token generation to the actual schema instead of just asking for it in prose. See
+    // gemini-schema.ts's doc comment for the real production case this fixes.
+    const responseSchema = request.responseSchema ? zodToGeminiSchema(request.responseSchema) : undefined;
     const model = this.client.getGenerativeModel(
       {
         model: env.GEMINI_MODEL,
         generationConfig: {
           temperature: request.options?.temperature ?? DEFAULT_TEMPERATURE,
           maxOutputTokens: request.options?.maxTokens,
+          ...(responseSchema ? { responseMimeType: "application/json", responseSchema } : {}),
         },
       },
       { timeout: timeoutMs }
