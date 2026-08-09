@@ -29,6 +29,11 @@ export interface LlmJsonCallOptions<T> {
   user: string;
   schema: ZodSchema<T>;
   expectedKeys: string[];
+  /** Field names holding verbatim external quotes (e.g. VERIFY's `evidence`) — excluded from the
+   * injection-marker scan, since that content is supposed to be arbitrary copied text, not the
+   * model's own words. A real production case ("You are now subscribed" newsletter boilerplate
+   * quoted as evidence) false-positived an entire batch before this existed. */
+  quotedFields?: string[];
   attempts: number;
   module: string;
   operation: string;
@@ -40,7 +45,7 @@ export interface LlmJsonCallOptions<T> {
 
 /** Retry + injection-guard + repair skeleton, shared by audit and Grounnel EXTRACT/VERIFY. Cost recording is opt-in via `onComplete` (D023 §4), not built in — see that file's own doc comment for why. */
 export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise<T> {
-  const { provider, system, user, schema, expectedKeys, attempts, module, operation, isValid, onComplete } = options;
+  const { provider, system, user, schema, expectedKeys, quotedFields, attempts, module, operation, isValid, onComplete } = options;
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -93,7 +98,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       continue;
     }
 
-    if (isSuspectedInjection(JSON.stringify(raw), expectedKeys)) {
+    if (isSuspectedInjection(JSON.stringify(raw), expectedKeys, quotedFields)) {
       logger.error({ module, operation, raw }, "response flagged as injection-suspected — hard stop, not repaired");
       onComplete?.({
         raw,

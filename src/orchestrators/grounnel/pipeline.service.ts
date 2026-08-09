@@ -347,7 +347,10 @@ export class GrounnelPipelineService {
     schema: ZodSchema<T>,
     operation: string,
     callType: "primary" | "consistency_retry" | "consistency_check",
-    promptVersion: string
+    promptVersion: string,
+    // Reviewed finding: real production case — a scraped page's "You are now subscribed" boilerplate,
+    // quoted verbatim as VERIFY's `evidence`, false-positived the injection guard for a whole batch.
+    quotedFields: string[] = []
   ): Promise<T> {
     return callLlmForJson({
       provider: this.provider,
@@ -355,6 +358,7 @@ export class GrounnelPipelineService {
       user,
       schema,
       expectedKeys: ["results"],
+      quotedFields,
       attempts: VERIFY_ATTEMPTS,
       module: MODULE,
       operation,
@@ -387,7 +391,7 @@ export class GrounnelPipelineService {
       claim_passage_pairs: JSON.stringify(pairs),
       threshold: String(CONFIDENCE_THRESHOLD),
     });
-    return this.callGrounnelJson(auditId, system, user, VerifyResponseSchema, operation, callType, verifyVersion);
+    return this.callGrounnelJson(auditId, system, user, VerifyResponseSchema, operation, callType, verifyVersion, ["evidence"]);
   }
 
   /** D025 §2 — one shared reconciliation prompt for every diagnostic, not one prompt per diagnostic code. Shows the model its own previous answer plainly, instructs deterministic repair, not a second guess. */
