@@ -6,6 +6,10 @@ const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 // 16, not 3 — one Tavily API call either way, so this costs nothing extra; consumers already take
 // the first "ok" result in ranked order, so a bigger pool needs no new grouping logic (D024 §2, T031).
 const MAX_RESULTS = 16;
+// Reviewed finding: this fetch had no timeout at all — the same class of bug hybrid-provider.ts's
+// DIY fetches were fixed for after a real hang incident, now reachable here too since 16 full-content
+// results (include_raw_content) means more server-side work per call than the original 3 ever did.
+const TAVILY_TIMEOUT_MS = 20_000;
 
 interface TavilyResult {
   url: string;
@@ -37,6 +41,7 @@ export class TavilySearchProvider implements SearchProvider {
         method: "POST",
         headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ query, max_results: MAX_RESULTS, include_raw_content: true }),
+        signal: AbortSignal.timeout(TAVILY_TIMEOUT_MS),
       });
     } catch (err) {
       logger.warn({ module: MODULE, operation: "search", query, err }, "Tavily request failed");

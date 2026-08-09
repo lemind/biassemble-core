@@ -234,6 +234,133 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBeNull();
   });
 
+  it("T034 (reviewed finding): retries even when VERIFY's raw output already says contradicted, not just when reason_consistency had to flip it", async () => {
+    const claimId = uuid(1);
+    const claimText = "World War II ended in 1943.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // First call: verdict is ALREADY "contradicted" (not flipped by reason_consistency — its own
+      // overridden stays false here), but evidence is null. Old needsRetry (reasonConsistency.overridden
+      // only) would have missed this entirely. Second call (retry): real evidence.
+      const selfInconsistent = provider.getCallCount() === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "contradicted",
+          evidence: selfInconsistent ? null : "ended in 1945",
+          reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(provider.getCallCount()).toBe(2); // proves the retry fired despite reason_consistency never flipping anything
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).toBe("ended in 1945");
+  });
+
+  it("T034 (reviewed finding): a successful retry appends its gate events to the original pass's, instead of discarding the original trace", async () => {
+    const claimId = uuid(1);
+    const claimText = "World War II ended in 1943.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const selfInconsistent = provider.getCallCount() === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: selfInconsistent ? "unsupported" : "contradicted",
+          evidence: selfInconsistent ? null : "ended in 1945",
+          reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(gateEventStore.calls).toHaveLength(1);
+    const events = gateEventStore.calls[0]!.events;
+    expect(events).toHaveLength(8); // 4 gates x 2 passes — the original inconsistent pass is not lost
+    expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
+    // The original pass's downgrade (the reason this retried at all) is still present.
+    expect(events[2]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
+    // The retry pass's success is also present, distinguishable by looking further into the array.
+    expect(events[6]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+  });
+
+  it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
+    const inconsistentClaim = { id: uuid(0), text: "World War II ended in 1943." };
+    const otherClaims = Array.from({ length: 7 }, (_, i) => ({ id: uuid(i + 1), text: `Claim number ${i + 1} about something.` }));
+    const lastBatchClaim = { id: uuid(9), text: "A claim in the second batch." };
+    const allClaims = [inconsistentClaim, ...otherClaims, lastBatchClaim]; // 9 claims: BATCH_MAX 8 + 1
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: allClaims, truncated: false });
+
+    const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const responses = new Map<string, SearchPassage[]>([[inconsistentClaim.text, [webSource({ text: passageText })]]]);
+    for (const c of [...otherClaims, lastBatchClaim]) {
+      responses.set(c.text, [webSource({ url: `https://example.com/${c.id}`, text: (c.text + " ").repeat(20) })]);
+    }
+    const search = new FakeSearchProvider(responses);
+
+    let calls = 0;
+    const provider2: Provider = {
+      mode: "mock",
+      completeJson: async (request) => {
+        calls++;
+        const ids = idsFromRequest(request);
+        // First real call is the whole 8-claim batch 1 (self-inconsistent for inconsistentClaim,
+        // ordinary "supported" for the rest). Second call is T034's single-claim retry for
+        // inconsistentClaim — that one hits the rate limit. Batch 2 must never be attempted.
+        if (calls === 2) {
+          throw new RateLimitError("daily quota exceeded", "daily", "2026-08-07T00:00:00Z");
+        }
+        return {
+          result: {
+            results: ids.map((id) => ({
+              id,
+              verdict: id === inconsistentClaim.id ? "unsupported" : "supported",
+              evidence: id === inconsistentClaim.id ? null : "ordinary evidence",
+              reason:
+                id === inconsistentClaim.id
+                  ? "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943."
+                  : "The passage confirms this.",
+              confidence: 0.9,
+            })),
+          },
+        };
+      },
+    };
+
+    const service = new GrounnelPipelineService(search, provider2, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, allClaims);
+
+    expect(calls).toBe(2); // batch 1's primary call + inconsistentClaim's retry — batch 2 never called
+    const status = await store.getStatus(auditId);
+    const flagged = status!.claims.find((c) => c.id === inconsistentClaim.id)!;
+    expect(flagged.verdict).toBe("unsupported"); // kept the pre-retry degraded result, didn't crash
+    const secondBatchClaim = status!.claims.find((c) => c.id === lastBatchClaim.id)!;
+    expect(secondBatchClaim.status).toBe("failed"); // degraded, never actually verified
+    expect(secondBatchClaim.reason).toContain("We've hit today's AI usage limit");
+  });
+
   it("Case A gate forces contradicted on a bare 'X, not Y' negation applyReasonConsistencyGate misses (real live-eval finding, g05)", async () => {
     const claimId = uuid(1);
     const claimText = "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.";

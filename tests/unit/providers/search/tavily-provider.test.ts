@@ -47,6 +47,17 @@ describe("TavilySearchProvider (T008)", () => {
     expect(init.headers.Authorization).toBe("Bearer fake-key");
   });
 
+  it("reviewed finding: sends a timeout signal, so a hanging request doesn't block indefinitely", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ results: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new TavilySearchProvider("fake-key");
+
+    await provider.search("some query");
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("returns an empty array (not a throw) when Tavily returns a non-OK status", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) }));
     const provider = new TavilySearchProvider("bad-key");

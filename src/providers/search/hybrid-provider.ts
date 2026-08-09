@@ -141,13 +141,13 @@ export class HybridSearchProvider implements SearchProvider {
     context?: { runId: string; claimId: string }
   ): Promise<SearchPassage[]> {
     const fallbackT0 = Date.now();
-    const fallbackResults: SearchPassage[] = (await this.fallback.search(query)).map((p) => ({ ...p, retrievalMethod: "tavily_fallback" }));
+    const allResults: SearchPassage[] = (await this.fallback.search(query)).map((p) => ({ ...p, retrievalMethod: "tavily_fallback" }));
     if (context) {
-      // One row for the whole fallback call — Tavily's own HTTP call already returns multiple
-      // results per call, not per-URL attempts the way DIY fetches are (D023 §6/T026).
-      const fallbackStatus: SourceStatus = fallbackResults.some((p) => p.status === "rate_limited")
+      // One row for the whole fallback call, resultCount reflecting everything Tavily actually
+      // returned (T031: up to 16) — telemetry, not what gets stored/returned below.
+      const fallbackStatus: SourceStatus = allResults.some((p) => p.status === "rate_limited")
         ? "rate_limited"
-        : fallbackResults.some((p) => p.status === "ok")
+        : allResults.some((p) => p.status === "ok")
           ? "ok"
           : "unreachable";
       this.searchCallStore.recordSearchCall({
@@ -156,12 +156,16 @@ export class HybridSearchProvider implements SearchProvider {
         query,
         callType: "tavily_fallback",
         url: null,
-        resultCount: fallbackResults.length,
+        resultCount: allResults.length,
         status: fallbackStatus,
         durationMs: Date.now() - fallbackT0,
       });
     }
-    return fallbackResults;
+    // Reviewed finding: T031 raised Tavily's own request to 16 results so an "ok" one further down
+    // its ranking isn't missed, but storing/returning all 16 unfiltered bloated every claim's
+    // sources (up to 19 with DIY's own 3) with entries nothing ever uses. "ok" sorted first, then
+    // capped at MAX_CANDIDATES — same cap DIY already uses, any real "ok" result survives the cut.
+    return [...allResults].sort((a, b) => Number(b.status === "ok") - Number(a.status === "ok")).slice(0, MAX_CANDIDATES);
   }
 
   private async discoverUrls(query: string): Promise<Array<{ url: string; title: string }>> {

@@ -270,6 +270,11 @@ export class GrounnelPipelineService {
     gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
     verdict = implicitNegation.verdict;
 
+    // Captured right before gate #1 — reviewed finding: needsRetry (below) checking only
+    // reasonConsistency.overridden missed a claim that arrived ALREADY "contradicted" straight from
+    // VERIFY (no flip needed) but with the same missing-evidence self-inconsistency as the flipped case.
+    const verdictBeforeGate1 = verdict;
+
     // Gate #1 — never reaches the store without passing this (D019 §2, T003, tasks.md acceptance).
     const gate1 = applyContradictionEvidenceGate({ verdict, evidence: input.evidence, passageText: input.passageText });
     gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.overridden, reason: gate1.reason });
@@ -281,12 +286,46 @@ export class GrounnelPipelineService {
     gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
     verdict = gate2.verdict;
 
-    // T034 (real live-eval finding, g04) — reason_consistency flipped this to contradicted based on
-    // the model's own reason text, but gate #1 immediately reverted it: no real evidence backed the
-    // flip. Worth one retry — the model may have simply omitted `evidence`, not lacked it entirely.
-    const needsRetry = reasonConsistency.overridden && (gate1.reason === "evidence_null" || gate1.reason === "evidence_not_grounded");
+    // T034 (real live-eval finding, g04) — verdict was "contradicted" going into gate #1 (whether the
+    // raw VERIFY output already said so, or a gate flipped it) but gate #1 found no real evidence.
+    const needsRetry = verdictBeforeGate1 === "contradicted" && (gate1.reason === "evidence_null" || gate1.reason === "evidence_not_grounded");
 
     return { verdict, evidence, gateEvents, needsRetry };
+  }
+
+  /** Shared by runBatch's primary call and retryVerifyClaim's single-claim call — reviewed finding: these two were near-duplicated inline before, risking drift if the call shape ever changes. */
+  private async callVerify(
+    auditId: string,
+    pairs: Array<{ id: string; claim: string; passage: string | null; source_url: string }>,
+    operation: string,
+    callType: "primary" | "consistency_retry",
+    verifyVersion: string
+  ): Promise<z.infer<typeof VerifyResponseSchema>> {
+    const system = this.prompts.render("grounnel-verify", {
+      claim_passage_pairs: JSON.stringify(pairs),
+      threshold: String(CONFIDENCE_THRESHOLD),
+    });
+    return callLlmForJson({
+      provider: this.provider,
+      system,
+      user: "Return the JSON now.",
+      schema: VerifyResponseSchema,
+      expectedKeys: ["results"],
+      attempts: VERIFY_ATTEMPTS,
+      module: MODULE,
+      operation,
+      // repair.ts nulls out a field it can't salvage rather than throwing (D018 §5.15) — without
+      // this, a null `results` sails past callLlmForJson and crashes .map() below, uncaught.
+      isValid: (result) => Array.isArray(result.results),
+      onComplete: this.llmCallStore.recordCall({
+        runId: auditId,
+        stage: "verify",
+        callType,
+        provider: this.provider.mode,
+        model: env.GEMINI_MODEL,
+        promptVersion: verifyVersion,
+      }),
+    });
   }
 
   /** T034 — one bounded retry for a single claim, fired only when runGateChain flags a self-inconsistent VERIFY output. Never blocks the batch: a retry failure just keeps the original (already gate-processed) result. */
@@ -294,34 +333,19 @@ export class GrounnelPipelineService {
     auditId: string,
     item: ResolvedWithPassage,
     verifyVersion: string
-  ): Promise<z.infer<typeof VerifyResultSchema> | null> {
+  ): Promise<z.infer<typeof VerifyResultSchema> | RateLimitError | null> {
     const pairs = [{ id: item.claim.id, claim: item.claim.text, passage: item.passage.text, source_url: item.passage.url }];
-    const system = this.prompts.render("grounnel-verify", {
-      claim_passage_pairs: JSON.stringify(pairs),
-      threshold: String(CONFIDENCE_THRESHOLD),
-    });
     try {
-      const parsed = await callLlmForJson({
-        provider: this.provider,
-        system,
-        user: "Return the JSON now.",
-        schema: VerifyResponseSchema,
-        expectedKeys: ["results"],
-        attempts: VERIFY_ATTEMPTS,
-        module: MODULE,
-        operation: "retryVerifyClaim",
-        isValid: (result) => Array.isArray(result.results),
-        onComplete: this.llmCallStore.recordCall({
-          runId: auditId,
-          stage: "verify",
-          callType: "fallback",
-          provider: this.provider.mode,
-          model: env.GEMINI_MODEL,
-          promptVersion: verifyVersion,
-        }),
-      });
+      const parsed = await this.callVerify(auditId, pairs, "retryVerifyClaim", "consistency_retry", verifyVersion);
       return parsed.results.find((r) => r.id === item.claim.id) ?? null;
     } catch (err) {
+      // Reviewed finding: propagate, don't swallow — runBatch's primary call stops the whole run
+      // early on a rate limit; a retry hitting the same limit needs the same fail-fast treatment,
+      // not a silent fallback to the degraded result while every other claim keeps hammering Gemini.
+      if (err instanceof RateLimitError) {
+        logger.error({ module: MODULE, operation: "retryVerifyClaim", auditId, claimId: item.claim.id, limitType: err.limitType }, "Gemini rate-limited during a T034 retry");
+        return err;
+      }
       logger.warn({ module: MODULE, operation: "retryVerifyClaim", auditId, claimId: item.claim.id, err }, "VERIFY retry failed — keeping the original gate-processed result");
       return null;
     }
@@ -330,11 +354,6 @@ export class GrounnelPipelineService {
   /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
   private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
     const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text, source_url: b.passage.url }));
-    const system = this.prompts.render("grounnel-verify", {
-      claim_passage_pairs: JSON.stringify(pairs),
-      threshold: String(CONFIDENCE_THRESHOLD),
-    });
-
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
     // than tracking "already stamped" across an arbitrary number of batches for one run.
@@ -342,27 +361,7 @@ export class GrounnelPipelineService {
 
     let parsed: z.infer<typeof VerifyResponseSchema>;
     try {
-      parsed = await callLlmForJson({
-        provider: this.provider,
-        system,
-        user: "Return the JSON now.",
-        schema: VerifyResponseSchema,
-        expectedKeys: ["results"],
-        attempts: VERIFY_ATTEMPTS,
-        module: MODULE,
-        operation: "runBatch",
-        // repair.ts nulls out a field it can't salvage rather than throwing (D018 §5.15) — without
-        // this, a null `results` sails past callLlmForJson and crashes .map() below, uncaught.
-        isValid: (result) => Array.isArray(result.results),
-        onComplete: this.llmCallStore.recordCall({
-          runId: auditId,
-          stage: "verify",
-          callType: "primary",
-          provider: this.provider.mode,
-          model: env.GEMINI_MODEL,
-          promptVersion: verifyVersion,
-        }),
-      });
+      parsed = await this.callVerify(auditId, pairs, "runBatch", "primary", verifyVersion);
     } catch (err) {
       if (err instanceof RateLimitError) {
         logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: err.limitType }, "Gemini rate-limited during VERIFY — stopping");
@@ -378,6 +377,11 @@ export class GrounnelPipelineService {
 
     const byId = new Map(batch.map((b) => [b.claim.id, b]));
     const answeredIds = new Set<string>();
+    // Set by a claim's retry hitting the same rate limit runBatch's own primary call already
+    // special-cases — checked after Promise.all so it stops remaining batches the same way (below).
+    // An object, not a bare `let`: TS doesn't narrow a closure's mutation of an outer `let` across
+    // an `await`, so `if (retryRateLimit)` below would otherwise wrongly type-narrow to `never`.
+    const retryState: { rateLimit: RateLimitError | null } = { rateLimit: null };
     await Promise.all(
       parsed.results.map(async (result) => {
         const item = byId.get(result.id);
@@ -388,17 +392,23 @@ export class GrounnelPipelineService {
         let confidence = result.confidence;
         const initialVerdict = confidence < CONFIDENCE_THRESHOLD && result.verdict !== "unverifiable" ? "unverifiable" : result.verdict;
 
-        let chain = this.runGateChain({ verdict: initialVerdict, reason, evidence: result.evidence, claimText: item.claim.text, passageText: item.passage.text! });
+        const firstPass = this.runGateChain({ verdict: initialVerdict, reason, evidence: result.evidence, claimText: item.claim.text, passageText: item.passage.text! });
+        let chain = firstPass;
 
         // T034 — a self-inconsistent VERIFY output (reason narrates a contradiction, but gate #1
         // found no real evidence backing the flip) gets one retry before the degraded result stands.
-        if (chain.needsRetry) {
+        if (firstPass.needsRetry) {
           const retried = await this.retryVerifyClaim(auditId, item, verifyVersion);
-          if (retried) {
+          if (retried instanceof RateLimitError) {
+            retryState.rateLimit = retried;
+          } else if (retried) {
             reason = retried.reason;
             confidence = retried.confidence;
             const retryVerdict = confidence < CONFIDENCE_THRESHOLD && retried.verdict !== "unverifiable" ? "unverifiable" : retried.verdict;
-            chain = this.runGateChain({ verdict: retryVerdict, reason, evidence: retried.evidence, claimText: item.claim.text, passageText: item.passage.text! });
+            const retryPass = this.runGateChain({ verdict: retryVerdict, reason, evidence: retried.evidence, claimText: item.claim.text, passageText: item.passage.text! });
+            // Reviewed finding: concatenate, don't replace — the original self-inconsistent pass
+            // (the override that triggered this retry) stays in the audit trail, not just the retry's.
+            chain = { ...retryPass, gateEvents: [...firstPass.gateEvents, ...retryPass.gateEvents] };
           }
         }
 
@@ -422,6 +432,11 @@ export class GrounnelPipelineService {
         this.gateEventStore.recordGateEvents(auditId, item.claim.id, gateEvents);
       })
     );
+
+    if (retryState.rateLimit) {
+      logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: retryState.rateLimit.limitType }, "Gemini rate-limited during a T034 retry — stopping remaining batches");
+      return retryState.rateLimit;
+    }
 
     const missing = batch.filter((b) => !answeredIds.has(b.claim.id));
     if (missing.length > 0) {

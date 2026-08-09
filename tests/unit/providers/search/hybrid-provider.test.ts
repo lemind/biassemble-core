@@ -77,6 +77,37 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results).toContainEqual({ ...fallbackResult, retrievalMethod: "tavily_fallback" });
   });
 
+  it("reviewed finding (T031): caps Tavily's fallback results instead of storing/returning all 16 unfiltered, keeping any 'ok' result even if it's ranked late", async () => {
+    // Simulates Tavily's real max_results:16 response — 15 unusable, one real "ok" result buried
+    // at position 11. Before the fix, all 16 were stored/returned (up to 19 total with 3 DIY
+    // attempts); the fix caps this like DIY's own MAX_CANDIDATES, but must not lose the real one.
+    const okResult: SearchPassage = { url: "https://real-source.example", title: "Real", domain: "real-source.example", status: "ok", text: "the real content" };
+    const unusableResults: SearchPassage[] = Array.from({ length: 15 }, (_, i) => ({
+      url: `https://unusable-${i}.example`,
+      title: `Unusable ${i}`,
+      domain: `unusable-${i}.example`,
+      status: "unreachable",
+      text: null,
+    }));
+    const sixteenResults = [...unusableResults.slice(0, 10), okResult, ...unusableResults.slice(10)];
+    const fallback = new StubFallback(sixteenResults);
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://blocked.example", title: "Blocked" }]));
+      }
+      return Promise.resolve({ ok: false, status: 403, url });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("some claim");
+
+    const fallbackResults = results.filter((r) => r.retrievalMethod === "tavily_fallback");
+    expect(fallbackResults.length).toBeLessThanOrEqual(3); // capped, not all 16
+    expect(fallbackResults).toContainEqual({ ...okResult, retrievalMethod: "tavily_fallback" }); // but the real one survives the cut
+  });
+
   it("marks a suspiciously short 200 response as paywalled, not ok", async () => {
     const fallback = new StubFallback([]);
     const fetchMock = vi.fn().mockImplementation((url: string) => {

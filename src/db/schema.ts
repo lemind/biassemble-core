@@ -360,15 +360,14 @@ export const grounnelClaims = grounnel.table("grounnel_claims", {
 ]);
 
 // Gemini EXTRACT/VERIFY calls — mirrors core.llm_calls' shape (D023 §3), own table, not shared.
-// callType defaults to "primary" (core.llm_calls has no default) — deliberate deviation: Grounnel
-// has no LLM-level fallback provider today (only HybridSearchProvider's *search*-level fallback,
-// a different table below), so requiring every call site to pass the literal "primary" explicitly
-// would be pure boilerplate with zero signal.
+// callType defaults to "primary". "fallback" matches core.llm_calls' meaning (parse-failure retry,
+// D018 §5.15). "consistency_retry" (T034) is deliberately a separate value, not reused "fallback" —
+// a different trigger (gate-caught self-inconsistency, not a parse failure) a shared metric shouldn't conflate.
 export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
-  callType: text("call_type", { enum: ["primary", "fallback"] }).notNull().default("primary"),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry"] }).notNull().default("primary"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),
