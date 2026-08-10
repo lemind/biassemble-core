@@ -105,6 +105,34 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results.map((r) => r.url)).toEqual(["https://a.example", "https://b.example"]);
   });
 
+  it("reviewed finding (g05-statue-of-liberty, T050): inserts a hard boundary at block-tag edges so a punctuation-less nav block doesn't fuse onto the next real sentence", async () => {
+    const navJunk = "Sign In Blog Categories ALL CULTURE TRAVEL HISTORY";
+    const donorSentence = "The Statue of Liberty, a gift from the people of France to the United States, arrived in 1885.";
+    const filler = "It has stood on Liberty Island ever since welcoming visitors. ".repeat(15);
+    const html = `<html><body><nav>${navJunk}</nav><p>${donorSentence} ${filler}</p></body></html>`;
+
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://liberty.example", title: "Liberty" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => html });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("The Statue of Liberty was a gift from Canada to the United States.");
+
+    expect(results[0]!.text).toContain(navJunk);
+    expect(results[0]!.text).toContain(donorSentence);
+    // The bug: without a boundary, the nav text and donor sentence become ONE run-on "sentence" —
+    // splitting on the real sentence-ending period after "1885." must isolate the donor sentence
+    // from the nav junk that precedes it, not keep them fused together.
+    const sentences = results[0]!.text.split(/(?<=[.!?])\s+(?=[A-Z0-9"'“])|\n+/);
+    const donorOnly = sentences.find((s: string) => s.includes(donorSentence));
+    expect(donorOnly).toBe(donorSentence);
+  });
+
   it("falls back to Tavily/Exa only when every DIY candidate fails, combining attempted + fallback results", async () => {
     const fallbackResult: SearchPassage = { url: "https://tavily-found.example", title: "T", domain: "tavily-found.example", status: "ok", text: "fallback text" };
     const fallback = new StubFallback([fallbackResult]);
@@ -220,7 +248,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     // degrade Gemini's own grounding-search reasoning, so it must still get the full sentence.
     expect(geminiRequestText).toContain(claimText);
     // The real Tavily API call, by contrast, should get the keyword-rewritten query, not the raw sentence.
-    expect(fallback.queries).toEqual(["Apple's $3.5 2024"]);
+    expect(fallback.queries).toEqual(["Apple's market capitalization surpassed $3.5 trillion 2024"]);
   });
 
   it("marks a suspiciously short 200 response as paywalled, not ok", async () => {

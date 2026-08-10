@@ -71,6 +71,12 @@ function sanitizeErrorForLogging(err: unknown): unknown {
   return err;
 }
 
+// Block-level tags whose edges are real content boundaries — a nav/menu block has no terminal
+// punctuation, so without a boundary marker here it merges into the next paragraph as one giant
+// "sentence" that buries the real content (confirmed in production, g05-statue-of-liberty: the
+// donor-attribution sentence landed fused to a page's nav menu text, deprioritizing it downstream).
+const BLOCK_BOUNDARY_RE = /<\/(?:p|div|li|h[1-6]|header|nav|footer|section|article|tr|td|th|blockquote)>|<(?:br|hr)\s*\/?>/gi;
+
 // Strips <script>/<style> and tags, decodes common entities — no HTML-parsing dependency added; the dependency-free TS equivalent of D021's BeautifulSoup script (MVP-good, not a general parser).
 function extractTextFromHtml(html: string): string {
   const withoutScripts = html
@@ -78,7 +84,8 @@ function extractTextFromHtml(html: string): string {
     .replace(/<script[^>]*>[\s\S]*$/gi, " ")
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
     .replace(/<style[^>]*>[\s\S]*$/gi, " ");
-  const withoutTags = withoutScripts.replace(/<[^>]+>/g, " ");
+  const withBlockBoundaries = withoutScripts.replace(BLOCK_BOUNDARY_RE, "\n");
+  const withoutTags = withBlockBoundaries.replace(/<[^>]+>/g, " ");
   return withoutTags
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
@@ -86,7 +93,8 @@ function extractTextFromHtml(html: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n+ */g, "\n")
     .trim();
 }
 

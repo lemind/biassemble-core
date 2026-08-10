@@ -21,24 +21,26 @@ describe("claim-terms (D026 §6, T039) — shared scorer for gate #4 and candida
   });
 });
 
-describe("buildSearchQuery (D026 §8, T046) — deterministic entities+numbers query, no LLM call", () => {
-  it("drops filler words, keeps entities and numbers in original case and order", () => {
-    expect(buildSearchQuery("The Eiffel Tower was completed in 1889.")).toBe("Eiffel Tower 1889");
+describe("buildSearchQuery (D026 §8, T046/T050) — deterministic stopword-dropping query, no LLM call", () => {
+  it("drops function words, keeps content words in original case and order", () => {
+    expect(buildSearchQuery("The Eiffel Tower was completed in 1889.")).toBe("Eiffel Tower completed 1889");
   });
 
-  it("keeps a possessive entity and a currency figure, preserving original case", () => {
-    expect(buildSearchQuery("Apple's market capitalization surpassed $3.5 trillion in 2024.")).toBe("Apple's $3.5 2024");
+  it("reviewed finding (g11-bloomberg-fallback): keeps ordinary topical nouns, not just entities/numbers", () => {
+    expect(buildSearchQuery("Apple's market capitalization surpassed $3.5 trillion in 2024.")).toBe(
+      "Apple's market capitalization surpassed $3.5 trillion 2024"
+    );
   });
 
-  it("keeps a claim's subject even when it's the first word, not just a common sentence-starter", () => {
-    expect(buildSearchQuery("Shakespeare wrote sonnets.")).toBe("Shakespeare");
+  it("keeps a claim's subject even when it's the first word", () => {
+    expect(buildSearchQuery("Shakespeare wrote sonnets.")).toBe("Shakespeare wrote sonnets");
   });
 
-  it("falls back to the raw claim text when nothing key-worthy is found — fail-open, same convention as isPassageRelevant", () => {
-    expect(buildSearchQuery("the weather was nice that day")).toBe("the weather was nice that day");
+  it("falls back to the raw claim text when nothing survives stopword removal — fail-open, same convention as isPassageRelevant", () => {
+    expect(buildSearchQuery("it was that")).toBe("it was that");
   });
 
-  it("deduplicates a repeated entity, keeping only its first occurrence", () => {
-    expect(buildSearchQuery("Apple's rivals said Apple's growth was strong.")).toBe("Apple's");
+  it("deduplicates a repeated word, keeping only its first occurrence", () => {
+    expect(buildSearchQuery("Apple's rivals said Apple's growth was strong.")).toBe("Apple's rivals said growth strong");
   });
 });

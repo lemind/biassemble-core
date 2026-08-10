@@ -14,6 +14,13 @@ describe("splitIntoSentences (D026 §7, T043)", () => {
   it("drops empty fragments from leading/trailing whitespace or repeated punctuation", () => {
     expect(splitIntoSentences("  One sentence.   ")).toEqual(["One sentence."]);
   });
+
+  it("reviewed finding (g05-statue-of-liberty, T050): splits on a newline boundary even with no preceding punctuation — extractTextFromHtml inserts one at HTML block-tag edges", () => {
+    expect(splitIntoSentences("Sign In Blog Categories\nThe statue was a gift from France.")).toEqual([
+      "Sign In Blog Categories",
+      "The statue was a gift from France.",
+    ]);
+  });
 });
 
 describe("buildPassageSentences (D026 §7, T043)", () => {

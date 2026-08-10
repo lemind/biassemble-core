@@ -5,7 +5,10 @@ import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 const MAX_SENTENCES = 20;
 
 // Naive splitter — grounding safety doesn't depend on split quality, only citation readability does. D026 §7.
-const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+(?=[A-Z0-9"'“])/;
+// The "\n" alternative is a hard split regardless of next-char case — hybrid-provider.ts's
+// extractTextFromHtml inserts one at every HTML block-tag boundary (T050), since a punctuation-less
+// nav/menu block otherwise fuses onto the next real sentence with no boundary to split on at all.
+const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+(?=[A-Z0-9"'“])|\n+/;
 
 export function splitIntoSentences(text: string): string[] {
   return text

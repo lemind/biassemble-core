@@ -9,14 +9,27 @@
 // subjects ("Shakespeare wrote sonnets." -> zero terms, gate #4 silently disabled).
 const COMMON_FIRST_WORDS = new Set(["the", "a", "an", "this", "that", "these", "those", "it", "he", "she", "they", "there", "here"]);
 
+// Function words to drop from a search query — deliberately NOT the same classification as
+// extractKeyTerms's entities+numbers filter (see buildSearchQuery). A stopword list keeps ordinary
+// topical nouns ("market capitalization", "trillion") that carry the real search signal.
+const STOPWORDS = new Set([
+  "a", "an", "the", "was", "is", "are", "were", "be", "been", "being", "of", "in", "on", "at", "to",
+  "for", "from", "by", "with", "as", "that", "this", "these", "those", "it", "its", "he", "she",
+  "they", "them", "there", "here", "and", "or", "but", "not", "no", "has", "have", "had", "do",
+  "does", "did", "will", "would", "can", "could", "should", "may", "might", "must", "than", "then",
+  "so", "such", "which", "who", "whom", "whose", "what", "when", "where", "why", "how", "if", "into",
+  "onto", "about", "over", "under", "between", "during", "after", "before", "up", "down", "out",
+  "off", "again", "further", "once", "also", "just",
+]);
+
 interface CleanWord {
   clean: string;
   isKey: boolean;
 }
 
-// Shared tokenizer: trims punctuation and classifies each word as a "key" one (digit-bearing, or
-// a capitalized word that isn't just a common sentence-starter) or not. extractKeyTerms and
-// buildSearchQuery both build on this single classification so they can't drift apart.
+// Tokenizer for extractKeyTerms: trims punctuation and classifies each word as a "key" one
+// (digit-bearing, or a capitalized word that isn't just a common sentence-starter) or not — a
+// narrow, entity+number classification tuned for relevance SCORING against a candidate passage.
 function tokenize(text: string): CleanWord[] {
   const out: CleanWord[] = [];
   text.split(/\s+/).forEach((word, i) => {
@@ -51,19 +64,22 @@ export function scoreKeyTermMatches(terms: string[], text: string): number {
 }
 
 /**
- * D026 §8 (T046) — a deterministic, no-LLM search query: entities + numbers, in original case and
- * order, instead of the claim's full declarative sentence. Search engines are keyword-optimized,
- * not sentence-optimized; a raw claim sentence carries filler words ("was", "in", "the") a search
- * index gets no signal from. Falls back to the raw claim text when nothing key-worthy is found —
- * same fail-open convention as extractKeyTerms/isPassageRelevant.
+ * D026 §8 (T046) — a deterministic, no-LLM search query: drop stopwords, keep everything else in
+ * original case and order. Deliberately NOT built on extractKeyTerms's entities+numbers filter —
+ * that classification is for relevance SCORING and drops ordinary topical nouns, which broke real
+ * search recall (confirmed in production, g11-bloomberg-fallback): "Apple's market capitalization
+ * surpassed $3.5 trillion in 2024" reduced to "Apple's $3.5 2024", losing "market capitalization"/
+ * "trillion" — the words a search index actually needed. Falls back to the raw claim text if
+ * nothing survives stopword removal — same fail-open convention as extractKeyTerms/isPassageRelevant.
  */
 export function buildSearchQuery(claimText: string): string {
   const seen = new Set<string>();
   const words: string[] = [];
-  for (const { clean, isKey } of tokenize(claimText)) {
-    if (!isKey) continue;
+  for (const word of claimText.split(/\s+/)) {
+    const clean = word.replace(/^[.,!?;:"'()]+/, "").replace(/[.,!?;:"'()]+$/, "");
+    if (!clean) continue;
     const lower = clean.toLowerCase();
-    if (seen.has(lower)) continue;
+    if (STOPWORDS.has(lower) || seen.has(lower)) continue;
     seen.add(lower);
     words.push(clean);
   }
