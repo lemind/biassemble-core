@@ -264,6 +264,18 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "equality_comparison" });
   });
 
+  it("abstains when evidence contains more than one number — whole-sentence evidence (D026 §7) can contain an unrelated earlier figure extractNumericFact would grab instead", () => {
+    const result = applyNumericGate({
+      claimText: "UC Riverside's grant reached $50 million.",
+      verdict: "unsupported",
+      // extractNumericFact would greedily match "$40 million" (the FIRST figure), not the $50
+      // million the claim and evidence both actually agree on — must abstain, not force a verdict
+      // off the wrong number.
+      evidence: "UC Riverside's grant grew from $40 million to $50 million over three years.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
   it("leaves a threshold claim unchanged when code and VERIFY already agree", () => {
     const result = applyNumericGate({
       claimText: "Revenue exceeded $1 million.",

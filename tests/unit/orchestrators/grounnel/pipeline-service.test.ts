@@ -13,6 +13,22 @@ import { NoopGrounnelGateEventStore } from "../../../mocks/noop-grounnel-gate-ev
 import { FakeGrounnelGateEventStore } from "../../../mocks/fake-grounnel-gate-event-store.js";
 import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
 import type { CompletionRequest, Provider } from "../../../../src/providers/types.js";
+import { buildPassageSentences } from "../../../../src/orchestrators/grounnel/passage-sentences.js";
+
+// D026 §7 (T043) — VERIFY now cites sentence NUMBERS, not free text. Finds the id(s) whose real,
+// code-extracted text equals `expectedEvidence` (a single sentence, or several joined by " ... "),
+// so tests can keep expressing intent as "the resolved evidence should read X" instead of hand-
+// counting buildPassageSentences' internal numbering.
+function sentenceIdsFor(claimText: string, passageText: string, expectedEvidence: string): number[] {
+  const sentences = buildPassageSentences(claimText, passageText);
+  return expectedEvidence.split(" ... ").map((part) => {
+    const match = sentences.find((s) => s.text === part);
+    if (!match) {
+      throw new Error(`sentenceIdsFor: no sentence exactly matches "${part}". Available: ${JSON.stringify(sentences.map((s) => s.text))}`);
+    }
+    return match.n;
+  });
+}
 
 class FakeSearchProvider implements SearchProvider {
   calls: Array<{ query: string; context?: { runId: string; claimId: string } }> = [];
@@ -116,7 +132,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "Wikipedia confirms it.", confidence: 0.95 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "Bukowski attended Los Angeles City College for two years, per Wikipedia."), reason: "Wikipedia confirms it.", confidence: 0.95 })) };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -142,7 +158,7 @@ describe("GrounnelPipelineService (T010)", () => {
     provider.setResponseFn("You are a verification engine", (request) => {
       capturedSystem = request.system;
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "Confirmed.", confidence: 0.95 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "Bukowski attended Los Angeles City College for two years, per Wikipedia."), reason: "Confirmed.", confidence: 0.95 })) };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -166,7 +182,15 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "The Eiffel Tower in Paris was completed in 1889", reason: "Matches.", confidence: 0.9 })) };
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceSentenceIds: sentenceIdsFor(claimText, relevantSource.text!, "The Eiffel Tower in Paris was completed in 1889 as an iron lattice structure."),
+          reason: "Matches.",
+          confidence: 0.9,
+        })),
+      };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -179,7 +203,7 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.sources.map((s) => s.url)).toEqual(["https://irrelevant.example", "https://relevant.example"]);
   });
 
-  it("gate #1 downgrades a contradicted verdict whose evidence isn't a real substring of the passage", async () => {
+  it("gate #1 downgrades a contradicted verdict citing a sentence number that doesn't exist (D026 §7: the model can no longer fabricate quote TEXT, so this is the new equivalent of the old free-text fabrication case)", async () => {
     const claimId = uuid(1);
     const claimText = "Bukowski attended Harvard.";
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
@@ -189,8 +213,10 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      // Evidence is fabricated — not present in the actual passage sent.
-      return { results: ids.map((id) => ({ id, verdict: "contradicted", evidence: "attended Harvard University", reason: "fabricated", confidence: 0.9 })) };
+      // Cites a sentence number well outside the numbered list actually given for this pair —
+      // resolveEvidenceFromSentenceIds nulls the whole answer, same "ungrounded" outcome gate #1 used
+      // to catch from typed fabrication, now catching a malformed/invalid index instead.
+      return { results: ids.map((id) => ({ id, verdict: "contradicted", evidenceSentenceIds: [999], reason: "fabricated", confidence: 0.9 })) };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -216,7 +242,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: "unsupported",
-          evidence: "ended in 1945",
+          evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan."),
           reason: "The passage states that World War II ended in 1945, directly contradicting the claim that it ended in 1943.",
           confidence: 0.9,
         })),
@@ -249,7 +275,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: selfInconsistent ? "unsupported" : "contradicted",
-          evidence: selfInconsistent ? null : "ended in 1945",
+          evidenceSentenceIds: selfInconsistent ? null : sentenceIdsFor(claimText, passageText, "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan."),
           reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
           confidence: 0.9,
         })),
@@ -263,7 +289,38 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(provider.getCallCount()).toBe(3); // primary VERIFY + D025 consistency-check classifier + the T034 retry
     expect(claim.verdict).toBe("contradicted");
-    expect(claim.evidence).toBe("ended in 1945");
+    expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
+  });
+
+  it("D026 §7 (reviewed finding): the reconciliation retry's user message describes evidence_sentence_ids, not the old free-text quote contract", async () => {
+    const claimId = uuid(1);
+    const claimText = "World War II ended in 1943.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let retryUserMessage = "";
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const selfInconsistent = provider.getCallCount() === 1;
+      if (!selfInconsistent) retryUserMessage = request.user;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: selfInconsistent ? "unsupported" : "contradicted",
+          evidenceSentenceIds: selfInconsistent ? null : sentenceIdsFor(claimText, passageText, "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan."),
+          reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(retryUserMessage).toContain("evidence_sentence_ids");
+    expect(retryUserMessage).not.toContain("exact quote");
   });
 
   it("T034: keeps the original degraded verdict when the retry also comes back self-inconsistent — never loops", async () => {
@@ -281,7 +338,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: "unsupported",
-          evidence: null,
+          evidenceSentenceIds: null,
           reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
           confidence: 0.9,
         })),
@@ -316,7 +373,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: "contradicted",
-          evidence: selfInconsistent ? null : "ended in 1945",
+          evidenceSentenceIds: selfInconsistent ? null : sentenceIdsFor(claimText, passageText, "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan."),
           reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
           confidence: 0.9,
         })),
@@ -330,7 +387,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(provider.getCallCount()).toBe(2); // proves the retry fired despite reason_consistency never flipping anything
     expect(claim.verdict).toBe("contradicted");
-    expect(claim.evidence).toBe("ended in 1945");
+    expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
   });
 
   it("D025: batched classifier flags a self-inconsistent 'unsupported' verdict with no explicit contradiction wording (nothing reason_consistency/implicit_negation catch), triggering a reconciliation retry — the real g04 recurrence, 2026-08-09", async () => {
@@ -354,7 +411,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: firstPass ? "unsupported" : "contradicted",
-          evidence: firstPass ? null : "ended on September 2, 1945",
+          evidenceSentenceIds: firstPass ? null : sentenceIdsFor(claimText, passageText, "World War II began on September 1, 1939 and ended on September 2, 1945 with the surrender of Germany and Japan."),
           reason: firstPass
             ? "The passage mentions the dates of World War II as September 1, 1939 to September 2, 1945, but does not state that it ended in 1943."
             : "The passage states World War II ended on September 2, 1945, which conflicts with the claimed 1943 end date.",
@@ -376,7 +433,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(verifyCalls).toBe(2); // primary VERIFY + the reconciliation retry — fired purely from gate #5, not gate #1
     expect(claim.verdict).toBe("contradicted");
-    expect(claim.evidence).toBe("ended on September 2, 1945");
+    expect(claim.evidence).toBe("World War II began on September 1, 1939 and ended on September 2, 1945 with the surrender of Germany and Japan.");
   });
 
   it("T034 (reviewed finding): a successful retry appends its gate events to the original pass's, instead of discarding the original trace", async () => {
@@ -394,7 +451,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: selfInconsistent ? "unsupported" : "contradicted",
-          evidence: selfInconsistent ? null : "ended in 1945",
+          evidenceSentenceIds: selfInconsistent ? null : sentenceIdsFor(claimText, passageText, "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan."),
           reason: "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943.",
           confidence: 0.9,
         })),
@@ -453,7 +510,7 @@ describe("GrounnelPipelineService (T010)", () => {
             results: ids.map((id) => ({
               id,
               verdict: id === inconsistentClaim.id ? "unsupported" : "supported",
-              evidence: id === inconsistentClaim.id ? null : "ordinary evidence",
+              evidenceSentenceIds: id === inconsistentClaim.id ? null : [1],
               reason:
                 id === inconsistentClaim.id
                   ? "The passage states that World War II ended in 1945, which contradicts the claim that it ended in 1943."
@@ -494,7 +551,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: "unsupported",
-          evidence: "a gift from France to the United States",
+          evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "The Statue of Liberty was a gift from France to the United States, dedicated in 1886 to celebrate the friendship between the two nations."),
           reason: "The passage states the statue was a gift from France, not Canada.",
           confidence: 0.9,
         })),
@@ -519,7 +576,15 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "$350,000 grant", reason: "matches", confidence: 0.9 })) };
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "The NEH awarded UC Riverside a $350,000 grant to expand the project."),
+          reason: "matches",
+          confidence: 0.9,
+        })),
+      };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -539,7 +604,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: claimText, reason: "weak match", confidence: 0.3 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceSentenceIds: [1], reason: "weak match", confidence: 0.3 })) };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -604,7 +669,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", () => ({
       // Only answers c1, silently omits c2.
-      results: [{ id: uuid(1), verdict: "supported", evidence: "First claim about Wikipedia.", reason: "ok", confidence: 0.9 }],
+      results: [{ id: uuid(1), verdict: "supported", evidenceSentenceIds: [1], reason: "ok", confidence: 0.9 }],
     }));
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -628,7 +693,7 @@ describe("GrounnelPipelineService (T010)", () => {
       batchCount++;
       const ids = idsFromRequest(request);
       batchSizes.push(ids.length);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "long enough text", reason: "ok", confidence: 0.9 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceSentenceIds: [1], reason: "ok", confidence: 0.9 })) };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -734,7 +799,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "Wikipedia confirms it.", confidence: 0.95 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "Bukowski attended Los Angeles City College for two years, per Wikipedia."), reason: "Wikipedia confirms it.", confidence: 0.95 })) };
     });
 
     const historyStore = new FakeGrounnelHistoryStore();
@@ -776,7 +841,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "confirmed", confidence: 0.9 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "Bukowski attended Los Angeles City College for two years, per Wikipedia."), reason: "confirmed", confidence: 0.9 })) };
     });
 
     const prompts = new PromptRegistry();
@@ -826,7 +891,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "confirmed", confidence: 0.9 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "Bukowski attended Los Angeles City College for two years, per Wikipedia."), reason: "confirmed", confidence: 0.9 })) };
     });
 
     const gateEventStore = new FakeGrounnelGateEventStore();
@@ -864,7 +929,7 @@ describe("GrounnelPipelineService (T010)", () => {
         results: ids.map((id) => ({
           id,
           verdict: "unsupported",
-          evidence: "a gift from France to the United States",
+          evidenceSentenceIds: sentenceIdsFor(claimText, passageText, "The Statue of Liberty was a gift from France to the United States, dedicated in 1886 to celebrate the friendship between the two nations."),
           reason: "The passage states the statue was a gift from France, not Canada.",
           confidence: 0.9,
         })),

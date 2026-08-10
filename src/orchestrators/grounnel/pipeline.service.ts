@@ -3,6 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
+import { buildPassageSentences, resolveEvidenceFromSentenceIds, type PassageSentence } from "./passage-sentences.js";
 import { applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -52,6 +53,14 @@ const VerifyResultSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 const VerifyResponseSchema = z.object({ results: z.array(VerifyResultSchema) });
+
+// D026 §7 — model-facing shape: cites sentence NUMBERS (passage-sentences.ts), never free-text
+// quotes. Derived from VerifyResultSchema (not copy-pasted) so id/reason/confidence can't drift.
+// callVerify resolves this to the shape above before anything else in the pipeline sees it.
+const VerifyRawResultSchema = VerifyResultSchema.omit({ evidence: true }).extend({
+  evidenceSentenceIds: z.array(z.number().int()).nullable().optional().transform((v) => v ?? null),
+});
+const VerifyRawResponseSchema = z.object({ results: z.array(VerifyRawResultSchema) });
 
 // D025/T035 — batched "does reason support verdict?" classifier response.
 const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
@@ -391,11 +400,26 @@ export class GrounnelPipelineService {
     // not the primary call's fixed trigger phrase. Same `grounnel-verify` system prompt either way.
     user: string = "Return the JSON now."
   ): Promise<z.infer<typeof VerifyResponseSchema>> {
+    // D026 §7 — each passage becomes a numbered subset of its own sentences (claim-relevant ones,
+    // capped) instead of raw text; the model cites a number, never generates a quote.
+    const sentencesByClaim = new Map<string, PassageSentence[]>(pairs.map((p) => [p.id, p.passage ? buildPassageSentences(p.claim, p.passage) : []]));
+    const renderedPairs = pairs.map((p) => ({ id: p.id, claim: p.claim, passage_sentences: sentencesByClaim.get(p.id) ?? [] }));
     const system = this.prompts.render("grounnel-verify", {
-      claim_passage_pairs: JSON.stringify(pairs),
+      claim_passage_pairs: JSON.stringify(renderedPairs),
       threshold: String(CONFIDENCE_THRESHOLD),
     });
-    return this.callGrounnelJson(auditId, system, user, VerifyResponseSchema, operation, callType, verifyVersion, ["evidence"]);
+    // No quotedFields needed here (unlike the pre-T043 free-text evidence field): the raw response
+    // only ever contains sentence numbers, so there's no scraped-text-in-output case left to blank.
+    const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion);
+    return {
+      results: raw.results.map((r) => ({
+        id: r.id,
+        verdict: r.verdict,
+        evidence: resolveEvidenceFromSentenceIds(r.evidenceSentenceIds, sentencesByClaim.get(r.id) ?? []),
+        reason: r.reason,
+        confidence: r.confidence,
+      })),
+    };
   }
 
   /** D025 §2 — one shared reconciliation prompt for every diagnostic, not one prompt per diagnostic code. Shows the model its own previous answer plainly, instructs deterministic repair, not a second guess. */
@@ -410,7 +434,7 @@ export class GrounnelPipelineService {
       "Diagnostics:",
       diagnosticsText,
       "",
-      "Treat the passage as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with the passage. If contradicted, evidence must be an exact quote from the passage; otherwise evidence must be null.",
+      "Treat the passage_sentences given below as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with those sentences. If contradicted, evidence_sentence_ids must cite real sentence number(s) from the list given for this pair; otherwise evidence_sentence_ids must be null.",
       "",
       "Return the JSON now.",
     ].join("\n");

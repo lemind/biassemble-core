@@ -215,6 +215,14 @@ function yearsConflict(claimText: string, evidenceText: string): boolean {
   return (evidenceText.match(YEAR_RE) ?? []).some((y) => !claimYears.has(y));
 }
 
+// Reviewed finding (D026 §7) — extractNumericFact only ever returns its FIRST match; whole-sentence
+// evidence (T043) makes a second, unrelated number in the same sentence common. Abstain when
+// ambiguous rather than risk comparing against the wrong one, same precedent as yearsConflict.
+const NUMERIC_TOKEN_RE = /\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%/g;
+function hasAmbiguousNumericEvidence(evidenceText: string): boolean {
+  return (evidenceText.match(NUMERIC_TOKEN_RE) ?? []).length > 1;
+}
+
 /**
  * Gate #2 — numeric normalization/comparison in code (D019 §2, T004). Row/table-matching and full
  * structured period detection are out of scope, see T004/D026 §5 for why.
@@ -230,6 +238,10 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
   if (!comparison.comparable) return { verdict: input.verdict, overridden: false, reason: null };
 
   if (yearsConflict(input.claimText, input.evidence)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  if (hasAmbiguousNumericEvidence(input.evidence)) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
 
