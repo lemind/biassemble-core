@@ -772,3 +772,14 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** T053 (the feature this fixes a bug in).
   - **Files:** `src/persistence/grounnel-store.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§14 addendum).
   - **Size:** S.
+
+## Phase 22 — §14's fix still had a narrower race window (D026 §15, real live-test recurrence, 2026-08-10)
+
+- [x] **T055** Close the remaining "done"-too-early race left by T054
+  - **Brief:** Live re-poll of the same run twice in quick succession showed `"done"` then `"verifying"` moments later, same claims. T054's `setEscalating(true)` ran just before `escalateUnresolved` — after the main verify loop's last `writeClaimResult` could already make `checked === total` true, leaving a narrow window where a poll still read the stale premature `"done"`.
+  - **Done:** Moved `setEscalating(true)` to the very top of `run()`, before `resolveAllEvidence` starts. Made `setEscalating(false)` unconditional cleanup via a `finally` wrapping the whole method body (not just around `escalateUnresolved`), so it fires on normal completion, the rate-limit skip-escalation path, and a thrown error alike. Outer `catch`/Postgres-`"failed"`/rethrow behavior unchanged.
+  - **Verify:** Existing `pipeline-service.test.ts`/`grounnel-store.test.ts` coverage of the escalating flag re-run clean (48 tests). No new test added — pure control-flow reordering of already-tested branches, per the coverage-ceiling policy.
+  - **Dependencies:** T054.
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, `docs/decisions/026-verify-retrieval-first-grounding.md` (§15 addendum).
+  - **Size:** XS.
+

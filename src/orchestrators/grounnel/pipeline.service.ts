@@ -123,43 +123,50 @@ export class GrounnelPipelineService {
 
   async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<void> {
     try {
-      const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine);
+      // D026 §14/§15 (reviewed finding, real live-test recurrence 2026-08-10): set BEFORE the main
+      // verify loop, not just around escalateUnresolved — the main loop's LAST writeClaimResult can
+      // make checked===total true before an await-wrapped setEscalating(true) call after it has
+      // actually landed in Redis, leaving a real (if narrow) window where a poll still sees the old
+      // premature "done". Setting it here means the flag is already true long before any claim could
+      // finish — but it must stay inside this try, not before it, or a Redis failure on this exact
+      // call would skip the catch below and never mark the run "failed" in Postgres.
+      await this.grounnelStore.setEscalating(auditId, true);
+      try {
+        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine);
 
-      const noEvidence = resolved.filter((r) => !hasPassage(r));
-      await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
+        const noEvidence = resolved.filter((r) => !hasPassage(r));
+        await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
 
-      const needsVerify = resolved.filter(hasPassage);
-      let rateLimitedMidRun = false;
-      for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
-        const batch = needsVerify.slice(i, i + BATCH_MAX);
-        const geminiRateLimit = await this.runBatch(auditId, batch);
-        if (geminiRateLimit) {
-          rateLimitedMidRun = true;
-          const remaining = needsVerify.slice(i + BATCH_MAX);
-          if (remaining.length > 0) {
-            logger.warn(
-              { module: MODULE, operation: "run", auditId, remaining: remaining.length },
-              "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
-            );
-            await this.degradeBatch(auditId, remaining, buildGeminiRateLimitMessage(geminiRateLimit));
+        const needsVerify = resolved.filter(hasPassage);
+        let rateLimitedMidRun = false;
+        for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
+          const batch = needsVerify.slice(i, i + BATCH_MAX);
+          const geminiRateLimit = await this.runBatch(auditId, batch);
+          if (geminiRateLimit) {
+            rateLimitedMidRun = true;
+            const remaining = needsVerify.slice(i + BATCH_MAX);
+            if (remaining.length > 0) {
+              logger.warn(
+                { module: MODULE, operation: "run", auditId, remaining: remaining.length },
+                "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
+              );
+              await this.degradeBatch(auditId, remaining, buildGeminiRateLimitMessage(geminiRateLimit));
+            }
+            break;
           }
-          break;
         }
-      }
 
-      // D026 §13 — escalation needs more Gemini calls; if the primary pass already hit a rate
-      // limit, escalating would just fail the same way, so skip it entirely rather than retry into it.
-      if (!rateLimitedMidRun) {
-        // D026 §14 — "done" must wait for this too (getStatus gates on it); the finally is load-
-        // bearing — without it, a crash mid-escalation leaves the run stuck reporting "verifying" forever.
-        const escalationT0 = Date.now();
-        await this.grounnelStore.setEscalating(auditId, true);
-        try {
+        // D026 §13 — escalation needs more Gemini calls; if the primary pass already hit a rate
+        // limit, escalating would just fail the same way, so skip it entirely rather than retry into it.
+        if (!rateLimitedMidRun) {
+          const escalationT0 = Date.now();
           await this.escalateUnresolved(auditId, claims, searchEngine);
-        } finally {
-          await this.grounnelStore.setEscalating(auditId, false);
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
+      } finally {
+        // D026 §15 — must clear on every path (success, rate-limit-skip, or throw below), since
+        // setEscalating(true) above is now unconditional; without this the run sticks at "verifying" forever.
+        await this.grounnelStore.setEscalating(auditId, false);
       }
     } catch (err) {
       // Reviewed finding: status otherwise never reaches "failed" on an uncaught error here
