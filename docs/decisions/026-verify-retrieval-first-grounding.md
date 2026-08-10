@@ -107,3 +107,15 @@ This bug predates T039 — `tavily-provider.ts` never validated `r.url` — but 
 ## Consequences (§9)
 
 - T047: real code change — `src/providers/search/tavily-provider.ts` gains `isAbsoluteHttpUrl()` and filters `data.results` through it before mapping to `SearchPassage[]`. New regression test reproducing the exact real relative-URL shape from production. No schema/DB/prompt change. Full suite 934/935 (1 pre-existing unrelated `it.todo`), clean typecheck.
+
+## §10. Addendum (2026-08-10) — the same T039 fix, extended to the path it was never applied to (T048)
+
+Live-test recurrence: the identical claim ("Napoleon Bonaparte was five feet two inches tall.") landed `supported` on one run and `unsupported` on another. Confirmed via `grounnel_search_calls`, not guessed: both runs fetched the exact same 2 real DIY candidates (`ripleys.com/stories/tall-napoleon-bonaparte`, `en.wikipedia.org/wiki/Napoleon_complex`) — only their order differed, because Gemini's live discovery search returns candidates in a non-deterministic order call to call, and `resolveEvidence` took the first "ok" one unconditionally. This is exactly the problem T039 (§6) already solved — for the Tavily *fallback* path only. DIY discovery, the path every claim hits first, was never given the same treatment.
+
+**Decision:** extract the scoring/sort logic T039 added inline to `runFallback` into one shared `rankByRelevance(query, results)`, used by both the DIY branch and `runFallback`. Same comparator, same behavior, one implementation instead of two that could drift apart — a second review pass of the original T039-extension proposal specifically flagged this as the right shape (provider owns "fetch, rank, return" as one contract, not two paths with different semantics). No new fetches, no new cost: `MAX_CANDIDATES` (what actually gets fetched) is unchanged, only the order of the already-fetched results.
+
+**Considered and not done:** an additive/weighted score (entity match + numeric match + year match, weighted separately) instead of the existing flat "count of matched key-terms." `extractKeyTerms` already blends entity and numeric tokens into one term set, so a candidate matching both already scores higher than one matching only one — the same practical effect the weighting proposal wanted, without a second scoring dimension to maintain. Kept the existing scorer as-is, consistent with this file's own repeated precedent (D026 §6, §8) of preferring the simplest mechanism that closes the observed gap over a more elaborate one with no demonstrated need yet.
+
+## Consequences (§10)
+
+- T048: real code change — `src/providers/search/hybrid-provider.ts` gains `rankByRelevance()`, called from both the DIY `search()` branch and `runFallback` (which now delegates to it instead of an inline copy). 2 new tests: the real Napoleon reorder case, and a stable-sort tie-preservation case. All 17 pre-existing tests pass unchanged — confirms the `runFallback` extraction is behavior-preserving. No schema/DB/prompt change. Full suite 936/937 (1 pre-existing unrelated `it.todo`), clean typecheck.

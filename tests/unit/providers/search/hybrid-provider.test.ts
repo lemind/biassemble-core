@@ -52,6 +52,59 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(fallbackSpy).not.toHaveBeenCalled();
   });
 
+  it("reviewed finding (D026 §10, T048): ranks DIY candidates by relevance to the claim, not just Gemini's discovery order — the real Napoleon variance", async () => {
+    const claimText = "Napoleon Bonaparte was five feet two inches tall.";
+    const irrelevantText = "The Great Wall of China spans thousands of miles. ".repeat(30);
+    const relevantText = "Napoleon Bonaparte was estimated to have been five feet two inches tall in pre-metric French measures. ".repeat(10);
+
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        // Discovery order deliberately puts the irrelevant page first — ranking must not just trust it.
+        return Promise.resolve(
+          geminiGroundingResponse([
+            { uri: "https://irrelevant.example", title: "Irrelevant" },
+            { uri: "https://relevant.example", title: "Relevant" },
+          ])
+        );
+      }
+      const text = url.includes("irrelevant.example") ? irrelevantText : relevantText;
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${text}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search(claimText);
+
+    expect(results[0]).toMatchObject({ url: "https://relevant.example" });
+  });
+
+  it("preserves original discovery order when two DIY candidates tie in relevance score (stable sort)", async () => {
+    const claimText = "Napoleon Bonaparte was five feet two inches tall.";
+    const textA = "Napoleon Bonaparte is discussed here in some detail about his life. ".repeat(15);
+    const textB = "Napoleon Bonaparte is discussed here in some detail about his campaigns. ".repeat(15);
+
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(
+          geminiGroundingResponse([
+            { uri: "https://a.example", title: "A" },
+            { uri: "https://b.example", title: "B" },
+          ])
+        );
+      }
+      const text = url.includes("a.example") ? textA : textB;
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${text}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search(claimText);
+
+    expect(results.map((r) => r.url)).toEqual(["https://a.example", "https://b.example"]);
+  });
+
   it("falls back to Tavily/Exa only when every DIY candidate fails, combining attempted + fallback results", async () => {
     const fallbackResult: SearchPassage = { url: "https://tavily-found.example", title: "T", domain: "tavily-found.example", status: "ok", text: "fallback text" };
     const fallback = new StubFallback([fallbackResult]);

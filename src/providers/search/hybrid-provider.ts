@@ -127,16 +127,32 @@ export class HybridSearchProvider implements SearchProvider {
       })
     );
 
-    if (attempted.some((p) => p.status === "ok")) {
-      return attempted;
+    // D026 §10 — rank before picking, same as runFallback (D026 §6): discovery order isn't a
+    // relevance signal, just whatever order Gemini's grounding search happened to return.
+    const ranked = this.rankByRelevance(query, attempted);
+
+    if (ranked.some((p) => p.status === "ok")) {
+      return ranked;
     }
 
     logger.info(
-      { module: MODULE, operation: "search", query, attempted: attempted.length },
+      { module: MODULE, operation: "search", query, attempted: ranked.length },
       "DIY fetch failed for every candidate — falling back"
     );
     const fallbackResults = await this.runFallback(query, context);
-    return [...attempted, ...fallbackResults];
+    return [...ranked, ...fallbackResults];
+  }
+
+  /** Sorts by relevance to `query` ("ok" first, then key-term score, stable). Shared by both search paths (D026 §10). */
+  private rankByRelevance(query: string, results: SearchPassage[]): SearchPassage[] {
+    const terms = extractKeyTerms(query);
+    const scored = results.map((r) => ({ r, score: r.status === "ok" && r.text ? scoreKeyTermMatches(terms, r.text) : 0 }));
+    return scored
+      .sort((a, b) => {
+        const okDelta = Number(b.r.status === "ok") - Number(a.r.status === "ok");
+        return okDelta !== 0 ? okDelta : b.score - a.score;
+      })
+      .map(({ r }) => r);
   }
 
   /** Shared by the natural "every DIY candidate failed" path and `forceFallback` (test/debug escape hatch). */
@@ -169,16 +185,7 @@ export class HybridSearchProvider implements SearchProvider {
       });
     }
     // D026 §6 — rank "ok" results by relevance to this claim, not just Tavily's raw order.
-    // Score computed once per candidate (not inside the comparator) before sorting.
-    const terms = extractKeyTerms(query);
-    const scored = allResults.map((r) => ({ r, score: r.status === "ok" && r.text ? scoreKeyTermMatches(terms, r.text) : 0 }));
-    return scored
-      .sort((a, b) => {
-        const okDelta = Number(b.r.status === "ok") - Number(a.r.status === "ok");
-        return okDelta !== 0 ? okDelta : b.score - a.score;
-      })
-      .map(({ r }) => r)
-      .slice(0, FALLBACK_RETAINED_CANDIDATES);
+    return this.rankByRelevance(query, allResults).slice(0, FALLBACK_RETAINED_CANDIDATES);
   }
 
   private async discoverUrls(query: string): Promise<Array<{ url: string; title: string }>> {
