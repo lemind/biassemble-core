@@ -25,8 +25,19 @@ A real live-eval failure (g05-statue-of-liberty, 2026-08-10, run `c858ef85-...`)
 - A new gate, a second retry layer, or any code change — this stays prompt-only.
 - Building dashboards/metrics on first-pass-vs-retry grounding recovery rate now — the query is cheap (`grounnel_gate_events` already has everything needed) but not worth building until this recurs at a rate that actually matters. Noted for later, not now.
 
+## §5. Addendum (2026-08-10) — the temporal-scope lesson didn't reach the deterministic numeric gate
+
+v2.2.0 (this same file's own history) taught VERIFY's own reasoning that a narrower-period snapshot doesn't contradict a broader-period threshold claim. It never touched `applyNumericGate` (gate #2, `gates.ts`) — pure code, no LLM involved, which independently compares a claim's number against whatever number appears in `evidence` and forces `supported`/`contradicted` for threshold language ("surpassed", "exceeded") with zero period awareness.
+
+Real recurrence, g11, confirmed via `grounnel_gate_events`: VERIFY's raw verdict was `partially_supported`; gate #2 saw claim "$3.5T" vs. evidence "$3.2T (July 2025)" and forced `contradicted` via pure numeric comparison, oblivious to the mismatched period. A reconciliation retry fired for an *unrelated* reason (gate #5 flagged the original answer), and the retry's evidence happened to come back `null` — gate #2's own `if (!evidence) return no-op` guard is what actually prevented a false accusation, not anything that understood the period mismatch. Had the retry's evidence been non-null, gate #2 would have forced `contradicted` again, and — capped at one retry — that would have shipped as a real false accusation. This was luck, not a fix.
+
+**Decision:** add one new guard to `applyNumericGate` — before any threshold/equality override (either direction), extract years from `claimText` and `evidence` (reusing the year-regex pattern the B2B audit reconciler's `passagePeriodConflicts` already established for the same concern, adapted to read years from free text since Grounnel's `ClaimSchema` has no structured `period` field to feed a direct reuse). If both sides name at least one year and none overlap, the gate abstains — no override, either direction — and existing behavior (same-period or no-year-mentioned claims) is unchanged. Two prompt-consultation sync passes independently converged on this exact shape (comparability as a precondition for *any* override, not a separate asymmetric-direction rule) and both explicitly rejected a new retry path for this: it's a deterministic-logic bug, not a case for asking the model again.
+
+**Explicitly not doing:** narrowing gate #2 to equality-only claims (would remove real, working capability for the common same-period case); an asymmetric-only-toward-"supported" override rule as a separate mechanism (redundant once the comparability guard exists); any new gate in the chain (gate count stays 5) or new retry layer.
+
 ## Consequences
 
 - `verify/system.json` version bumps to 2.3.0 — same "UNVALIDATED against a real model as of this commit" caveat every prior bump carries; a prompt change can't be unit-tested for correctness, only for valid JSON/structure. Real verification is a live-eval re-run.
 - No code changes, no schema changes, no new tests beyond confirming the JSON is well-formed and nothing hardcodes the old version string.
 - Accepted, explicitly: a residual false-negative rate on this failure class remains, bounded by the existing safety net. Not chasing zero.
+- §5 addendum: `applyNumericGate` (`gates.ts`) gains one new comparability guard — real code change, unlike §1-4. New unit tests reproducing the exact g11 case plus confirming existing same-period gate #2 tests are unaffected. No schema/DB/prompt change.

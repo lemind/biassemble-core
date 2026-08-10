@@ -215,6 +215,36 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "threshold_comparison" });
   });
 
+  it("abstains (does not force contradicted) on the real g11 near-miss — evidence spans multiple years for unrelated figures, only one of which overlaps the claim's year (D026 §5, 2026-08-10)", () => {
+    // Verbatim real evidence: a $3.2T figure "as of July 2025", plus unrelated 2022/2023 mentions —
+    // none of it actually confirms or denies the claimed 2024 threshold crossing.
+    const result = applyNumericGate({
+      claimText: "Apple's market capitalization surpassed $3.5 trillion in 2024",
+      verdict: "partially_supported",
+      evidence:
+        "As of July 2025, Apple Inc. (AAPL), listed on the NASDAQ, has a market capitalization of approximately $3.2 trillion, per Yahoo Finance.\n\nApple first touched $3 trillion intraday on January 3, 2022, but did not close at that level and subsequently pulled back amid rising interest rate concerns.\n\nApple crossed and held the $3 trillion threshold more reliably beginning in June 2023, and maintained it through 2024.",
+    });
+    expect(result).toEqual({ verdict: "partially_supported", overridden: false, reason: null });
+  });
+
+  it("still overrides normally when the claim's year and evidence's year genuinely match, even though a year is present in both (guard doesn't over-trigger)", () => {
+    const result = applyNumericGate({
+      claimText: "The company's revenue surpassed $10 million in 2024.",
+      verdict: "supported",
+      evidence: "In 2024 filings, the company reported revenue of $8 million.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "threshold_comparison" });
+  });
+
+  it("abstains when the claim names a year the evidence doesn't confirm at all, even outside threshold language (equality path)", () => {
+    const result = applyNumericGate({
+      claimText: "In 2024, UC Riverside received a $350,000 grant.",
+      verdict: "unsupported",
+      evidence: "In 2019, the NEH awarded UC Riverside a $350,000 grant to expand the project.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
   it("leaves a threshold claim unchanged when code and VERIFY already agree", () => {
     const result = applyNumericGate({
       claimText: "Revenue exceeded $1 million.",
