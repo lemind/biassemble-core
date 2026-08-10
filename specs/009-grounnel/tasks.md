@@ -683,3 +683,13 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** None — orthogonal to T039-T045.
   - **Files:** `src/lib/claim-terms.ts`, `src/providers/search/hybrid-provider.ts`, tests.
   - **Size:** S.
+
+## Phase 14 — Production crash: unvalidated Tavily URL (D026 §9, real golden-set + reproduced-live failure, 2026-08-10)
+
+- [x] **T047** Drop Tavily results whose `url` isn't a real absolute URL, before they become candidates
+  - **Brief:** g10-fabricated-silence (a deliberately nonsense claim, testing correct "silence" reporting) 500'd — `run: null`, `sources[1..7].url` all failed `invalid_format`. Reproduced directly via a live `/status/:id` call, not eval-only. Root cause via `grounnel_claims.sources`, not guessed: Tavily returned `url: "/goto?url=CAESWwHuR6pN..."` — a relative Google redirect artifact — for 2 of 8 retained results. `tavily-provider.ts` passed `r.url` through unvalidated; serializing it against `ClaimSource.url`'s `.url()` format check 500'd the WHOLE request, not just that one source. Predates this session's changes (`tavily-provider.ts` never validated `r.url`), but T039 raising the retained pool 3→8 (D026 §6) measurably raised the odds of a bad result surviving, especially for exactly this claim shape (a fabricated topic where Tavily is more likely to return low-quality/redirect results).
+  - **Done:** New `isAbsoluteHttpUrl()` in `tavily-provider.ts`; `data.results` filtered through it before mapping to `SearchPassage[]` — same precedent `hybrid-provider.ts`'s DIY discovery already applies via `parseSafeUrl` (filter before candidate, not downgrade-after), minus the private-host/SSRF check DIY needs and Tavily doesn't (we never fetch `r.url` ourselves).
+  - **Verify:** new regression test reproducing the exact real relative-URL shape from production, alongside one real result — asserts the malformed one is dropped entirely, not just downgraded. All existing `tavily-provider.test.ts` tests unaffected. Full suite: 934/935 (1 pre-existing unrelated `it.todo`), clean typecheck.
+  - **Dependencies:** None — provider-layer only, orthogonal to T039-T046.
+  - **Files:** `src/providers/search/tavily-provider.ts`, tests.
+  - **Size:** S.

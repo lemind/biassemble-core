@@ -30,6 +30,21 @@ function domainOf(url: string): string {
   }
 }
 
+// Reviewed finding (D026 §9) — Tavily occasionally returns a relative tracking/redirect link
+// ("/goto?url=...") instead of a real absolute URL. Passed through unfiltered, it fails
+// ClaimSource.url's format check downstream and 500s the whole /status response — not just this
+// one claim. Same "drop it before it becomes a candidate" precedent hybrid-provider.ts's DIY
+// discovery already applies via parseSafeUrl, just without the SSRF/private-host check we don't
+// need here (we never fetch r.url ourselves; Tavily already supplied the content).
+function isAbsoluteHttpUrl(url: string): boolean {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** Shape checked against T001's real captured response (tests/mocks/tavily-search-response.fixture.json), not guessed. */
 export class TavilySearchProvider implements SearchProvider {
   constructor(private readonly apiKey: string) {}
@@ -59,7 +74,14 @@ export class TavilySearchProvider implements SearchProvider {
     }
 
     const data = (await response.json()) as TavilySearchResponse;
-    return data.results.map((r) => {
+    const validResults = data.results.filter((r) => {
+      const valid = isAbsoluteHttpUrl(r.url);
+      if (!valid) {
+        logger.warn({ module: MODULE, operation: "search", query, url: r.url }, "Dropping a Tavily result with a non-absolute URL");
+      }
+      return valid;
+    });
+    return validResults.map((r) => {
       const text = r.raw_content ?? r.content ?? null;
       return { url: r.url, title: r.title, domain: domainOf(r.url), status: text ? "ok" : "unreachable", text };
     });
