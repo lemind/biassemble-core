@@ -245,6 +245,25 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
     expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
+  it("reviewed finding: still detects a year mismatch when BOTH the claim and evidence end their sentence right after the year — the original regex silently missed this, the most ordinary claim phrasing", () => {
+    const result = applyNumericGate({
+      claimText: "Bloomberg reported that Apple's market capitalization surpassed $3.5 trillion in 2024.",
+      verdict: "contradicted",
+      evidence: "Apple's market capitalization was $3.2 trillion in 2025.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("reviewed finding: a dollar-prefixed number in the same numeric range as a year is not misread as a year", () => {
+    const result = applyNumericGate({
+      claimText: "The foundation awarded a $2000 stipend in 2024.",
+      verdict: "unsupported",
+      evidence: "In 2024, the foundation awarded a $1998 stipend.",
+    });
+    // Years match (2024=2024); the guard must not treat "$1998" as a competing year 1998.
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "equality_comparison" });
+  });
+
   it("leaves a threshold claim unchanged when code and VERIFY already agree", () => {
     const result = applyNumericGate({
       claimText: "Revenue exceeded $1 million.",

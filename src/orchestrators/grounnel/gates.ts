@@ -204,30 +204,20 @@ function detectThreshold(claimText: string): "at_least" | "at_most" | null {
   return null;
 }
 
-// D026 §5 — real g11 near-miss: this gate forced "contradicted" comparing a claim's threshold value
-// against evidence from a different, narrower period ($3.2T "as of July 2025" vs. a claim about
-// 2024), with zero period awareness. Conservative on purpose: abstains if evidence names ANY year
-// the claim doesn't, even if a matching year ALSO appears elsewhere in the text — the real case had
-// evidence spanning 2022-2025 across different, unrelated figures, so "some overlap exists somewhere"
-// isn't a safe enough test. Reads years from free text (same concern verify-reconcilers.ts's
-// passagePeriodConflicts already solved via a structured claim.period field Grounnel doesn't have).
-const YEAR_RE = /(?<![\d.])(?:19|20)\d{2}(?![\d.])/g;
+// Reviewed finding — excludes a decimal ("2024.5") but not a sentence-ending period, and excludes
+// a preceding "$" so "$1998" isn't misread as a year (D026 §5).
+const YEAR_RE = /(?<![\d.$])(?:19|20)\d{2}(?!\d)(?!\.\d)/g;
 
+// Gate #2's temporal-comparability guard — deliberately conservative, known duplication/cost tradeoffs. See D026 §5.
 function yearsConflict(claimText: string, evidenceText: string): boolean {
-  const claimYears = claimText.match(YEAR_RE);
-  if (!claimYears?.length) return false;
-  const evidenceYears = evidenceText.match(YEAR_RE);
-  if (!evidenceYears?.length) return false;
-  return evidenceYears.some((y) => !claimYears.includes(y));
+  const claimYears = new Set(claimText.match(YEAR_RE) ?? []);
+  if (claimYears.size === 0) return false;
+  return (evidenceText.match(YEAR_RE) ?? []).some((y) => !claimYears.has(y));
 }
 
 /**
- * Gate #2 — numeric normalization/comparison in code (D019 §2, tasks.md T004). Near-direct port of
- * the equal/inverted/wrong-scale decision logic in verify-reconcilers.ts's reconcileNumericVerdict —
- * the row/table-matching machinery is deliberately not ported (tasks.md T004 scope note: web prose
- * has no rows to match). Full structured wrong-period detection remains out of scope for the same
- * reason (relies on a `claim.period` field D018's B2B claims have and Grounnel's ClaimSchema does
- * not) — `yearsConflict` above is a narrower, free-text-only guard for the specific case D026 §5 found.
+ * Gate #2 — numeric normalization/comparison in code (D019 §2, T004). Row/table-matching and full
+ * structured period detection are out of scope, see T004/D026 §5 for why.
  */
 export function applyNumericGate(input: GateTwoInput): GateTwoResult {
   if (!input.evidence) return { verdict: input.verdict, overridden: false, reason: null };
