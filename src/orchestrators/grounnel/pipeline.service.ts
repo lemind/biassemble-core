@@ -5,6 +5,7 @@ import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
 import { applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
+import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
 import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource } from "../../contracts/grounnel.schemas.js";
@@ -526,6 +527,53 @@ export class GrounnelPipelineService {
   }
 
   /**
+   * D025 §5 addendum — the reconciliation retry's own output was otherwise the least-scrutinized
+   * path capable of a false accusation (real live-test finding: a retry flipped to `contradicted`
+   * by conflating two sub-facts of a compound claim). Re-runs the same §2 classifier, single-claim,
+   * only when the retry lands on `contradicted` — the one verdict where being wrong costs more than
+   * a false miss. A `false` downgrades straight to `unsupported` (never `unverifiable` — the claim
+   * wasn't unverifiable, the contradiction just failed validation) with no second retry.
+   */
+  private async checkRetryContradiction(
+    auditId: string,
+    item: ResolvedWithPassage,
+    chain: { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[] },
+    reason: string | null,
+    previousEvidence: string | null,
+    previousReason: string | null
+  ): Promise<{ verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[] }> {
+    if (chain.verdict !== "contradicted") return chain;
+
+    const consistencyMap = await this.checkReasonVerdictConsistency(auditId, [
+      { id: item.claim.id, claim: item.claim.text, reason, verdict: chain.verdict },
+    ]);
+    // Fail-open on a classifier error, same convention as D025 §2's own catch-and-skip.
+    const consistent = consistencyMap.get(item.claim.id) ?? true;
+
+    // Logged only, not gated on yet (D025 §5 addendum) — a same-evidence-new-label or
+    // near-identical-reasoning-different-verdict retry smells like relabeling, not re-reasoning.
+    const evidenceChanged = (chain.evidence ?? "").trim() !== (previousEvidence ?? "").trim();
+    const previousTerms = extractKeyTerms(previousReason ?? "");
+    const reasonSimilarity = previousTerms.length > 0 ? scoreKeyTermMatches(previousTerms, reason ?? "") / previousTerms.length : null;
+    logger.info(
+      { module: MODULE, operation: "checkRetryContradiction", auditId, claimId: item.claim.id, consistent, evidenceChanged, reasonSimilarity },
+      "Retry landed on contradicted — logged reconciliation-quality signals"
+    );
+
+    const gateEvent: GateEventInput = {
+      gate: "retry_reconciliation",
+      verdictBefore: chain.verdict,
+      verdictAfter: consistent ? chain.verdict : "unsupported",
+      overridden: !consistent,
+      reason: consistent ? null : "retry_contradiction_invalidated",
+    };
+    if (consistent) {
+      return { ...chain, gateEvents: [...chain.gateEvents, gateEvent] };
+    }
+    return { verdict: "unsupported", evidence: null, gateEvents: [...chain.gateEvents, gateEvent] };
+  }
+
+  /**
    * Runs the gate chain + T034 retry + persistence for one VERIFY response against `items` — shared
    * by runBatch's primary pass and its fill-in pass (D026 §8, T045), so a fill-in claim gets exactly
    * the same treatment (gates, consistency classifier, one retry) as a normally-answered one, not a
@@ -609,6 +657,8 @@ export class GrounnelPipelineService {
             // Reviewed finding: concatenate, don't replace — the original self-inconsistent pass
             // (the override that triggered this retry) stays in the audit trail, not just the retry's.
             chain = { ...retryPass, gateEvents: [...firstPass.gateEvents, ...retryPass.gateEvents] };
+            // D025 §5 addendum — the retry itself gets one bounded check when it lands on `contradicted`.
+            chain = { ...chain, ...(await this.checkRetryContradiction(auditId, item, chain, reason, result.evidence, result.reason)) };
           }
         }
 

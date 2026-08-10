@@ -339,7 +339,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(provider.getCallCount()).toBe(3); // primary VERIFY + D025 consistency-check classifier + the T034 retry
+    expect(provider.getCallCount()).toBe(4); // primary VERIFY + D025 consistency-check classifier + T034 retry + D025 §5's retry-contradiction check
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
   });
@@ -437,7 +437,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(provider.getCallCount()).toBe(2); // proves the retry fired despite reason_consistency never flipping anything
+    expect(provider.getCallCount()).toBe(3); // primary + retry (proves it fired despite reason_consistency never flipping anything) + D025 §5's retry-contradiction check
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
   });
@@ -472,10 +472,17 @@ describe("GrounnelPipelineService (T010)", () => {
       };
     });
 
-    // Overrides the beforeEach default — this specific claim's reason does NOT support its verdict.
+    // Overrides the beforeEach default — the FIRST classifier call (pass 1) says this claim's reason
+    // does NOT support its verdict, triggering the retry. The retry's own result is genuinely correct
+    // this time (real evidence, reason matches "contradicted"), so D025 §5's post-retry check — the
+    // SECOND classifier call, over the retry's output — must say "consistent" or this test's own
+    // premise (the retry actually fixes g04) can't be told apart from a false accusation.
+    let consistencyCalls = 0;
     provider.setResponseFn("You are a consistency auditor", (request) => {
+      consistencyCalls++;
       const ids = idsFromConsistencyRequest(request);
-      return { results: ids.map((id) => ({ id, consistent: false })) };
+      const consistent = consistencyCalls > 1;
+      return { results: ids.map((id) => ({ id, consistent })) };
     });
 
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
@@ -486,6 +493,62 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(verifyCalls).toBe(2); // primary VERIFY + the reconciliation retry — fired purely from gate #5, not gate #1
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began on September 1, 1939 and ended on September 2, 1945 with the surrender of Germany and Japan.");
+  });
+
+  it("D025 §5 addendum: downgrades a retry that lands on contradicted to unsupported when the post-retry classifier says its reason still doesn't support it (real live-test finding, the Emu War 'within days' claim, 2026-08-10)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The campaign was declared a total failure within days.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The campaign failed most miserably, bringing its target its most complete victory. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      const firstPass = verifyCalls === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: firstPass ? "unsupported" : "contradicted",
+          // The retry's evidence is real and gate #1-grounded — the bug isn't a fabricated quote,
+          // it's the retry's own REASONING wrongly treating "confirmed failure" as also confirming
+          // the claim's separate, never-evidenced "within days" timing.
+          evidenceCitations: firstPass ? null : citationsFor(claimText, passageText, "The campaign failed most miserably, bringing its target its most complete victory."),
+          reason: firstPass
+            ? "The passage confirms the campaign failed but says nothing about the timing."
+            : "The passage states the campaign failed most miserably, directly contradicting the claim that it was not declared a total failure.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    // Pass 1's classifier call catches the initial unsupported/reason mismatch (triggers the retry).
+    // Pass 2's classifier call (D025 §5) catches that the retry's OWN reason — despite landing on
+    // contradicted — still doesn't actually support contradicting the claim's "within days" timing.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported"); // not unverifiable — the contradiction failed validation, the claim wasn't unverifiable
+    expect(claim.evidence).toBeNull();
+
+    const events = gateEventStore.calls[0]!.events;
+    const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
+    expect(retryReconciliation).toMatchObject({
+      verdictBefore: "contradicted",
+      verdictAfter: "unsupported",
+      overridden: true,
+      reason: "retry_contradiction_invalidated",
+    });
   });
 
   it("T034 (reviewed finding): a successful retry appends its gate events to the original pass's, instead of discarding the original trace", async () => {
@@ -516,13 +579,18 @@ describe("GrounnelPipelineService (T010)", () => {
 
     expect(gateEventStore.calls).toHaveLength(1);
     const events = gateEventStore.calls[0]!.events;
-    expect(events).toHaveLength(10); // 5 gates x 2 passes (D025 added counterfact_ignored) — the original inconsistent pass is not lost
+    // 5 gates x 2 passes (D025 added counterfact_ignored), plus D025 §5's retry-contradiction check
+    // (the retry landed on contradicted, so it ran) — the original inconsistent pass is not lost.
+    expect(events).toHaveLength(11);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
     // Index 3, not 2: counterfact_ignored (D025) now sits between implicit_negation and contradiction_evidence.
     expect(events[3]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
     expect(events[8]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
+    // says "consistent", so it validates the retry's contradiction rather than downgrading it.
+    expect(events[10]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {

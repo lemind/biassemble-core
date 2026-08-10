@@ -8,7 +8,7 @@ import type { z } from "zod";
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
 
 export interface GateEventInput {
-  gate: "reason_consistency" | "implicit_negation" | "counterfact_ignored" | "contradiction_evidence" | "numeric";
+  gate: "reason_consistency" | "implicit_negation" | "counterfact_ignored" | "contradiction_evidence" | "numeric" | "retry_reconciliation";
   verdictBefore: Verdict | null;
   verdictAfter: Verdict | null;
   overridden: boolean;
