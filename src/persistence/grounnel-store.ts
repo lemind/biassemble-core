@@ -16,6 +16,9 @@ export interface GrounnelStore {
   }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
+  /** D026 §14 — run-level, not claim-level: escalation shouldn't revert an already-resolved claim's
+   * status back to "pending" (visible UI regression), but "done" must still wait for it to finish. */
+  setEscalating(auditId: string, escalating: boolean): Promise<void>;
 }
 
 /** The subset of @upstash/redis's client this store needs — narrow enough to fake in tests without a live connection. */
@@ -30,11 +33,13 @@ export interface RedisHashClient {
 }
 
 // Deliberately excludes `status`/`progress` (derived from claims each read, no drift) and takes `truncated` as the caller's own signal, not `total>=maxClaims` — rationale: D019 §4.
-// createdAt optional — audits written before this field existed have no value here.
+// createdAt/escalating optional — audits written before those fields existed have no value here;
+// `!meta.escalating` reads undefined the same as false (D026 §14).
 interface Meta {
   total: number;
   truncated: boolean;
   createdAt?: string;
+  escalating?: boolean;
 }
 
 /** Adapts @upstash/redis's `Redis` to `RedisHashClient`. Build it with `automaticDeserialization: false` — this store parses JSON itself; the SDK's auto-parse would return objects, not strings. */
@@ -92,7 +97,7 @@ export class RedisGrounnelStore implements GrounnelStore {
   }): Promise<{ id: string }> {
     const id = data.id ?? randomUUID();
     const key = `audit:${id}`;
-    const meta: Meta = { total: data.claims.length, truncated: data.truncated, createdAt: new Date().toISOString() };
+    const meta: Meta = { total: data.claims.length, truncated: data.truncated, createdAt: new Date().toISOString(), escalating: false };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };
     for (const claim of data.claims) {
       const full: Claim = {
@@ -128,6 +133,15 @@ export class RedisGrounnelStore implements GrounnelStore {
     await this.redis.hset(key, { [claimField(claimId)]: JSON.stringify(merged), [LAST_ACTIVITY_FIELD]: new Date().toISOString() });
   }
 
+  /** D026 §14 — run-level flag, read-merge-write same as writeClaimResult; independent of every claim's own field. */
+  async setEscalating(auditId: string, escalating: boolean): Promise<void> {
+    const key = `audit:${auditId}`;
+    const existingRaw = await this.redis.hget(key, META_FIELD);
+    if (!existingRaw) return; // audit expired/missing — nothing to flag, matches getStatus's own null-on-missing convention
+    const meta = JSON.parse(existingRaw) as Meta;
+    await this.redis.hset(key, { [META_FIELD]: JSON.stringify({ ...meta, escalating }) });
+  }
+
   async getStatus(id: string): Promise<StatusResponse | null> {
     const key = `audit:${id}`;
     const raw = await this.redis.hgetall(key);
@@ -142,8 +156,11 @@ export class RedisGrounnelStore implements GrounnelStore {
 
     const checked = claims.filter((c) => c.status !== "pending").length;
     const total = meta.total;
+    // D026 §14 — "done" must also wait for escalation, not just every claim leaving "pending":
+    // escalateUnresolved runs after the main pass, inside the same run(), without touching claim
+    // status (kept monotonic — an already-shown verdict never visibly reverts to "pending").
     const status: StatusResponse["status"] =
-      total === 0 || checked === total ? "done" : checked === 0 ? "extracting" : "verifying";
+      (total === 0 || checked === total) && !meta.escalating ? "done" : checked === 0 ? "extracting" : "verifying";
 
     const grounded_n = claims.filter((c) => c.verdict === "supported").length;
     const unclear_n = claims.filter((c) => c.verdict === "partially_supported" || c.verdict === "unverifiable").length;

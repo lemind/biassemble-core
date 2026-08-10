@@ -675,6 +675,34 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBe("The blue whale is the largest animal ever to have lived on Earth.");
     // Base pass (no maxCandidates), then tier 5 finds it — tier 8 never needed.
     expect(searchCalls).toEqual([undefined, 5]);
+    // D026 §14 — escalation finished cleanly, so the run-level flag is back to false and the
+    // aggregate status correctly reads "done", not stuck reporting "verifying".
+    expect(status!.status).toBe("done");
+  });
+
+  it("D026 §14: clears meta.escalating via finally even when escalation itself throws — a crash mid-escalation must not leave the run permanently stuck reporting 'verifying'", async () => {
+    const claimId = uuid(1);
+    const claimText = "Some claim needing escalation.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if ((context?.maxCandidates ?? 3) <= 3) {
+          return [webSource({ status: "unreachable", text: null })]; // base pass: no evidence, triggers escalation
+        }
+        throw new Error("search provider exploded mid-escalation");
+      },
+    };
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await expect(service.run(auditId, [{ id: claimId, text: claimText }])).rejects.toThrow("search provider exploded mid-escalation");
+
+    // The crash propagated (not swallowed), but the flag was still cleared by the finally —
+    // a later poll sees "done" (the claim itself is done, from the base pass), not stuck "verifying".
+    const status = await store.getStatus(auditId);
+    expect(status!.status).toBe("done");
+    expect(status!.claims[0]!.verdict).toBe("unsupported");
   });
 
   it("D026 §13: downgrades an escalation round's fresh 'contradicted' verdict when the reason-consistency check says it doesn't hold up — the same false-accusation risk T051 closed for retries, now closed for escalation", async () => {

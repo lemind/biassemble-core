@@ -150,7 +150,16 @@ export class GrounnelPipelineService {
       // D026 §13 — escalation needs more Gemini calls; if the primary pass already hit a rate
       // limit, escalating would just fail the same way, so skip it entirely rather than retry into it.
       if (!rateLimitedMidRun) {
-        await this.escalateUnresolved(auditId, claims, searchEngine);
+        // D026 §14 — "done" must wait for this too (getStatus gates on it); the finally is load-
+        // bearing — without it, a crash mid-escalation leaves the run stuck reporting "verifying" forever.
+        const escalationT0 = Date.now();
+        await this.grounnelStore.setEscalating(auditId, true);
+        try {
+          await this.escalateUnresolved(auditId, claims, searchEngine);
+        } finally {
+          await this.grounnelStore.setEscalating(auditId, false);
+          logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
+        }
       }
     } catch (err) {
       // Reviewed finding: status otherwise never reaches "failed" on an uncaught error here

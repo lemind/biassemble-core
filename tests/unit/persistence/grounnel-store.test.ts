@@ -117,7 +117,7 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status!.status).toBe("done");
   });
 
-  it("computes status/progress/score entirely from claim state, never from a separately stored flag", async () => {
+  it("computes progress/score entirely from claim state; status also gates on meta.escalating (D026 §14) once that exists", async () => {
     const store = makeStore();
     const claimA = "11111111-1111-4111-8111-111111111111";
     const claimB = "22222222-2222-4222-8222-222222222222";
@@ -185,5 +185,28 @@ describe("RedisGrounnelStore (T007)", () => {
     });
     const status = await store.getStatus(id);
     expect(status!.caps_hit).toBe(false);
+  });
+
+  it("D026 §14: stays 'verifying', not 'done', while escalating is true — even once every claim is non-pending (the real bug: a client polling for 'done' must not read pre-escalation results)", async () => {
+    const store = makeStore();
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: "Claim A" }], truncated: false });
+
+    await store.writeClaimResult(id, claimId, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
+    let status = await store.getStatus(id);
+    expect(status!.status).toBe("done"); // pre-fix behavior, confirmed still correct when nothing is escalating
+
+    await store.setEscalating(id, true);
+    status = await store.getStatus(id);
+    expect(status!.status).toBe("verifying"); // every claim is "done", but the run itself isn't
+
+    await store.setEscalating(id, false);
+    status = await store.getStatus(id);
+    expect(status!.status).toBe("done"); // flips back once escalation genuinely finishes
+  });
+
+  it("D026 §14: setEscalating on a missing/expired audit is a silent no-op, matching getStatus's own null-on-missing convention", async () => {
+    const store = makeStore();
+    await expect(store.setEscalating("00000000-0000-0000-0000-000000000000", true)).resolves.toBeUndefined();
   });
 });
