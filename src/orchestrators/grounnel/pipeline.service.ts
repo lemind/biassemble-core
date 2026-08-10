@@ -3,7 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
-import { buildPassageSentences, resolveEvidenceFromSentenceIds, type PassageSentence } from "./passage-sentences.js";
+import { buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
 import { applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -27,6 +27,8 @@ const SEARCH_CONCURRENCY = 20;
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 const CONFIDENCE_THRESHOLD = 0.6;
+// D026 §11 (T049) — Phase 1 multi-passage evidence, fixed cap, no adaptive escalation yet (deferred).
+const MAX_VERIFY_PASSAGES = 3;
 
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
 
@@ -54,11 +56,14 @@ const VerifyResultSchema = z.object({
 });
 const VerifyResponseSchema = z.object({ results: z.array(VerifyResultSchema) });
 
-// D026 §7 — model-facing shape: cites sentence NUMBERS (passage-sentences.ts), never free-text
-// quotes. Derived from VerifyResultSchema (not copy-pasted) so id/reason/confidence can't drift.
-// callVerify resolves this to the shape above before anything else in the pipeline sees it.
+// D026 §7/§11 — cites {source, n} pairs, never free-text quotes. Derived from VerifyResultSchema
+// (not copy-pasted) so fields can't drift. `source` names which pooled passage a citation is from.
 const VerifyRawResultSchema = VerifyResultSchema.omit({ evidence: true }).extend({
-  evidenceSentenceIds: z.array(z.number().int()).nullable().optional().transform((v) => v ?? null),
+  evidenceCitations: z
+    .array(z.object({ source: z.string(), n: z.number().int() }))
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
 });
 const VerifyRawResponseSchema = z.object({ results: z.array(VerifyRawResultSchema) });
 
@@ -82,16 +87,18 @@ export interface PipelineClaimInput {
 
 interface ResolvedEvidence {
   claim: PipelineClaimInput;
-  passage: SearchPassage | null;
+  // D026 §11 — up to MAX_VERIFY_PASSAGES ranked sources; array order is rank order, which
+  // callVerify's label assignment depends on being meaningful.
+  passages: SearchPassage[];
   sources: SearchPassage[];
 }
 
 interface ResolvedWithPassage extends ResolvedEvidence {
-  passage: SearchPassage;
+  passages: SearchPassage[]; // guaranteed non-empty by hasPassage below
 }
 
 function hasPassage(r: ResolvedEvidence): r is ResolvedWithPassage {
-  return r.passage !== null;
+  return r.passages.length > 0;
 }
 
 function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
@@ -167,7 +174,7 @@ export class GrounnelPipelineService {
             "Tavily rate-limited mid-run — stopping remaining search calls instead of attempting each one"
           );
           const rateLimitedSource: SearchPassage = { url: "https://tavily.com", title: "Tavily", domain: "tavily.com", status: "rate_limited", text: null };
-          resolved.push(...remaining.map((claim) => ({ claim, passage: null, sources: [rateLimitedSource] })));
+          resolved.push(...remaining.map((claim) => ({ claim, passages: [], sources: [rateLimitedSource] })));
         }
         break;
       }
@@ -202,21 +209,22 @@ export class GrounnelPipelineService {
     const okSources = sources.filter((s) => s.status === "ok" && s.text);
     if (okSources.length === 0) {
       logger.info({ module: MODULE, operation: "resolveEvidence", claimId: claim.id }, "No source resolved to usable text — no evidence found");
-      return { claim, passage: null, sources };
+      return { claim, passages: [], sources };
     }
 
-    // D026 §6 — try each already-fetched "ok" source (pre-ranked by T039) instead of giving up
-    // the moment the first fails gate #4; a later candidate can still be relevant at no extra cost.
-    const relevantSource = okSources.find((s) => isPassageRelevant(claim.text, s.text!));
-    if (!relevantSource) {
+    // D026 §6/§11 — check every already-fetched source (ranked by T048), pooling up to
+    // MAX_VERIFY_PASSAGES relevant ones instead of stopping at the first — a claim's fact can
+    // span more than one page.
+    const relevantSources = okSources.filter((s) => isPassageRelevant(claim.text, s.text!)).slice(0, MAX_VERIFY_PASSAGES);
+    if (relevantSources.length === 0) {
       logger.info(
         { module: MODULE, operation: "resolveEvidence", claimId: claim.id, checkedUrls: okSources.map((s) => s.url) },
         "No already-fetched source passed gate #4's relevance filter"
       );
-      return { claim, passage: null, sources };
+      return { claim, passages: [], sources };
     }
 
-    return { claim, passage: relevantSource, sources };
+    return { claim, passages: relevantSources, sources };
   }
 
   private async writeNoEvidence(auditId: string, r: ResolvedEvidence): Promise<void> {
@@ -396,7 +404,8 @@ export class GrounnelPipelineService {
   private async callVerify(
     auditId: string,
     // D026 §6 — deliberately no source_url: it's a page-identity memory cue the model doesn't need.
-    pairs: Array<{ id: string; claim: string; passage: string | null }>,
+    // D026 §11 — up to MAX_VERIFY_PASSAGES texts, already rank-ordered (label assignment depends on it).
+    pairs: Array<{ id: string; claim: string; passages: Array<{ text: string }> }>,
     operation: string,
     callType: "primary" | "consistency_retry" | "fill_in",
     verifyVersion: string,
@@ -404,22 +413,37 @@ export class GrounnelPipelineService {
     // not the primary call's fixed trigger phrase. Same `grounnel-verify` system prompt either way.
     user: string = "Return the JSON now."
   ): Promise<z.infer<typeof VerifyResponseSchema>> {
-    // D026 §7 — each passage becomes a numbered subset of its own sentences (claim-relevant ones,
-    // capped) instead of raw text; the model cites a number, never generates a quote.
-    const sentencesByClaim = new Map<string, PassageSentence[]>(pairs.map((p) => [p.id, p.passage ? buildPassageSentences(p.claim, p.passage) : []]));
-    const renderedPairs = pairs.map((p) => ({ id: p.id, claim: p.claim, passage_sentences: sentencesByClaim.get(p.id) ?? [] }));
+    // D026 §7/§11 — each pooled passage becomes a source-labeled, numbered subset of its own
+    // sentences; the model cites {source, n}, never generates a quote.
+    const sentencesByClaim = new Map<string, Record<string, PassageSentence[]>>(
+      pairs.map((p) => [p.id, buildPassageSentencesMulti(p.claim, p.passages.map((passage, i) => ({ label: String.fromCharCode(65 + i), text: passage.text })))])
+    );
+    const renderedPairs = pairs.map((p) => ({ id: p.id, claim: p.claim, passage_sentences: sentencesByClaim.get(p.id) ?? {} }));
+    // Telemetry (reviewed finding) — lets a later recall check distinguish "pooling didn't help"
+    // from "few passages were ever pooled." Log line, not a new DB column.
+    logger.info(
+      {
+        module: MODULE,
+        operation: "callVerify",
+        auditId,
+        claimCount: pairs.length,
+        totalPassages: pairs.reduce((sum, p) => sum + p.passages.length, 0),
+        totalSentences: [...sentencesByClaim.values()].reduce((sum, bySource) => sum + Object.values(bySource).reduce((s, arr) => s + arr.length, 0), 0),
+      },
+      "VERIFY call built — passage/sentence pooling stats"
+    );
     const system = this.prompts.render("grounnel-verify", {
       claim_passage_pairs: JSON.stringify(renderedPairs),
       threshold: String(CONFIDENCE_THRESHOLD),
     });
     // No quotedFields needed here (unlike the pre-T043 free-text evidence field): the raw response
-    // only ever contains sentence numbers, so there's no scraped-text-in-output case left to blank.
+    // only ever contains citations, so there's no scraped-text-in-output case left to blank.
     const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion);
     return {
       results: raw.results.map((r) => ({
         id: r.id,
         verdict: r.verdict,
-        evidence: resolveEvidenceFromSentenceIds(r.evidenceSentenceIds, sentencesByClaim.get(r.id) ?? []),
+        evidence: resolveEvidenceFromCitations(r.evidenceCitations, sentencesByClaim.get(r.id) ?? {}),
         reason: r.reason,
         confidence: r.confidence,
       })),
@@ -438,7 +462,7 @@ export class GrounnelPipelineService {
       "Diagnostics:",
       diagnosticsText,
       "",
-      "Treat the passage_sentences given below as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with those sentences. If contradicted, evidence_sentence_ids must cite real sentence number(s) from the list given for this pair; otherwise evidence_sentence_ids must be null.",
+      "Treat the passage_sentences given below as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with those sentences. If contradicted, evidence_citations must cite real {source, n} pairs from the passage_sentences given for this pair; otherwise evidence_citations must be null.",
       "",
       "Return the JSON now.",
     ].join("\n");
@@ -452,7 +476,7 @@ export class GrounnelPipelineService {
     previous: { verdict: Verdict; evidence: string | null; reason: string | null },
     diagnostics: Diagnostic[]
   ): Promise<z.infer<typeof VerifyResultSchema> | RateLimitError | null> {
-    const pairs = [{ id: item.claim.id, claim: item.claim.text, passage: item.passage.text }];
+    const pairs = [{ id: item.claim.id, claim: item.claim.text, passages: item.passages.map((p) => ({ text: p.text! })) }];
     const user = this.buildReconciliationUser(previous, diagnostics);
     try {
       const parsed = await this.callVerify(auditId, pairs, "retryVerifyClaim", "consistency_retry", verifyVersion, user);
@@ -543,13 +567,16 @@ export class GrounnelPipelineService {
 
         let reason = result.reason;
         let confidence = result.confidence;
+        // D026 §11 — gate #1's backstop runs on the joined text of every pooled passage; evidence
+        // is already grounded per-source by construction, this just answers "is it real text."
+        const passageText = item.passages.map((p) => p.text!).join("\n\n");
 
         const firstPass = this.runGateChain({
           verdict: initialVerdict,
           reason,
           evidence: result.evidence,
           claimText: item.claim.text,
-          passageText: item.passage.text!,
+          passageText,
           reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
         });
         let chain = firstPass;
@@ -576,7 +603,7 @@ export class GrounnelPipelineService {
               reason,
               evidence: retried.evidence,
               claimText: item.claim.text,
-              passageText: item.passage.text!,
+              passageText,
               reasonSupportsVerdict: null,
             });
             // Reviewed finding: concatenate, don't replace — the original self-inconsistent pass
@@ -609,7 +636,7 @@ export class GrounnelPipelineService {
 
   /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
   private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
-    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text }));
+    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passages: b.passages.map((p) => ({ text: p.text! })) }));
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
     // than tracking "already stamped" across an arbitrary number of batches for one run.
@@ -654,7 +681,7 @@ export class GrounnelPipelineService {
         { module: MODULE, operation: "runBatch", auditId, missingIds: missing.map((m) => m.claim.id) },
         "VERIFY response omitted some claims — firing a fill-in retry for exactly those"
       );
-      const fillInPairs = missing.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text }));
+      const fillInPairs = missing.map((b) => ({ id: b.claim.id, claim: b.claim.text, passages: b.passages.map((p) => ({ text: p.text! })) }));
       try {
         const fillIn = await this.callVerify(auditId, fillInPairs, "runBatch.fillIn", "fill_in", verifyVersion);
         await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds);
