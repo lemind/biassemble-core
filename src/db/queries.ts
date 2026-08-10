@@ -703,7 +703,7 @@ export async function insertGrounnelGateEvents(
   rows: Array<{
     runId: string;
     claimId: string;
-    gate: "reason_consistency" | "implicit_negation" | "counterfact_ignored" | "contradiction_evidence" | "numeric" | "retry_reconciliation";
+    gate: "reason_consistency" | "implicit_negation" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "retry_reconciliation";
     verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     overridden: boolean;

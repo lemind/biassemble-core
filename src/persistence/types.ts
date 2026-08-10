@@ -105,7 +105,8 @@ export type GateReason =
   | "threshold_comparison"
   | "equality_comparison"
   | "counterfact_ignored"
-  | "retry_contradiction_invalidated";
+  | "retry_contradiction_invalidated"
+  | "claim_reason_no_overlap";
 
 export interface LlmCallRecord {
   id: string;

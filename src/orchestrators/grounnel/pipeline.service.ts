@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
-import { applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
+import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -331,7 +331,7 @@ export class GrounnelPipelineService {
     const gate1 = applyContradictionEvidenceGate({ verdict, evidence: input.evidence, passageText: input.passageText });
     gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.overridden, reason: gate1.reason });
     verdict = gate1.verdict;
-    const evidence = gate1.evidence;
+    let evidence = gate1.evidence;
 
     // T034 (real live-eval finding, g04) — verdict was "contradicted" going into gate #1 (whether the
     // raw VERIFY output already said so, or a gate flipped it) but gate #1 found no real evidence.
@@ -348,6 +348,19 @@ export class GrounnelPipelineService {
             ? "A contradiction was indicated but no evidence quote was given."
             : "A contradiction was indicated but the evidence quote wasn't found verbatim in the passage.",
       });
+    }
+
+    // Gate #1b (D026 §12) — cross-claim contamination backstop: a batched VERIFY call can answer one
+    // claim's id with a DIFFERENT claim's reasoning while still citing real (but topically unrelated)
+    // evidence, which gate #1 alone can't catch since the evidence really is grounded. A single-claim
+    // retry structurally can't suffer this (nothing else in that request to cross-wire with), so this
+    // also gets an ERROR diagnostic — same retry path as gate #1's own downgrade.
+    const gate1b = applyClaimReasonOverlapGate({ verdict, reason: input.reason, claimText: input.claimText });
+    gateEvents.push({ gate: "claim_reason_overlap", verdictBefore: verdict, verdictAfter: gate1b.verdict, overridden: gate1b.overridden, reason: gate1b.reason });
+    verdict = gate1b.verdict;
+    if (gate1b.overridden) {
+      evidence = null; // stale — it was only meaningful attached to the discarded contradicted verdict.
+      diagnostics.push({ code: "claim_reason_no_overlap", severity: "ERROR", details: "The model's reason for this contradiction shares no key terms with the claim itself — likely cross-claim contamination in a batched VERIFY call." });
     }
 
     // Gate #2 — numeric normalization/comparison in code (D019 §2, T004).

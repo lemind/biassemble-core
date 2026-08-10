@@ -1,6 +1,6 @@
 import { compare } from "../../numbers/compare.js";
 import { extractNumericFact, CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
-import { extractKeyTerms } from "../../lib/claim-terms.js";
+import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import type { GrounnelVerdictEnum } from "../../contracts/grounnel.schemas.js";
 import type { z } from "zod";
 
@@ -142,6 +142,38 @@ export function applyCounterfactIgnoredGate(input: CounterfactIgnoredInput): Cou
     return { flagged: true, reason: "counterfact_ignored" };
   }
   return { flagged: false, reason: null };
+}
+
+export interface ClaimReasonOverlapInput {
+  verdict: Verdict;
+  reason: string | null;
+  claimText: string;
+}
+
+export interface ClaimReasonOverlapResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "claim_reason_no_overlap" | null;
+}
+
+/**
+ * Gate #1b — cross-claim contamination backstop, deterministic (real live-test finding, 2026-08-10:
+ * a batched VERIFY call answered the Marie Curie claim with Camp David Accords' reasoning verbatim,
+ * citing real — but topically unrelated — evidence resolved from Marie Curie's OWN passage, so
+ * gate #1's verbatim-grounding check passed it clean). Reuses extractKeyTerms/scoreKeyTermMatches
+ * (D026 §6) rather than a new heuristic — same fail-open convention: no key terms extracted from the
+ * claim, nothing to check, gate abstains. `contradicted`-only, same asymmetric scope as gate #1.
+ */
+export function applyClaimReasonOverlapGate(input: ClaimReasonOverlapInput): ClaimReasonOverlapResult {
+  if (input.verdict !== "contradicted" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  const terms = extractKeyTerms(input.claimText);
+  if (terms.length === 0) return { verdict: input.verdict, overridden: false, reason: null };
+  if (scoreKeyTermMatches(terms, input.reason) > 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  return { verdict: "unsupported", overridden: true, reason: "claim_reason_no_overlap" };
 }
 
 export interface GateOneInput {

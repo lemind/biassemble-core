@@ -551,6 +551,93 @@ describe("GrounnelPipelineService (T010)", () => {
     });
   });
 
+  it("D026 §12: gate #1b catches cross-claim contamination in a batched VERIFY call — one claim's id answered with a DIFFERENT claim's reasoning (real live-test finding, Marie Curie / Camp David Accords, 2026-08-10)", async () => {
+    const curieId = uuid(1);
+    const curieText = "Marie Curie won Nobel Prizes in chemistry and physics.";
+    const curiePassage = "She shared the 1903 Nobel Prize in Physics with her husband. She won the 1911 Nobel Prize in Chemistry. ".repeat(3);
+    const campDavidId = uuid(2);
+    const campDavidText = "The Camp David Accords were signed in 1998.";
+    const campDavidPassage = "The Camp David Accords were signed on 17 September 1978, ending the state of war between Egypt and Israel. ".repeat(3);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({
+      text: "article",
+      maxClaims: 100,
+      claims: [
+        { id: curieId, text: curieText },
+        { id: campDavidId, text: campDavidText },
+      ],
+      truncated: false,
+    });
+    const search = new FakeSearchProvider(
+      new Map([
+        [curieText, [webSource({ url: "https://a.example", text: curiePassage })]],
+        [campDavidText, [webSource({ url: "https://b.example", text: campDavidPassage })]],
+      ])
+    );
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      if (ids.length === 1 && ids[0] === curieId) {
+        // The T034 retry — single-claim, so cross-contamination is structurally impossible; gets it right.
+        return {
+          results: [
+            {
+              id: curieId,
+              verdict: "supported",
+              evidenceCitations: citationsFor(curieText, curiePassage, "She won the 1911 Nobel Prize in Chemistry."),
+              reason: "Sentence A2 states she won the 1911 Nobel Prize in Chemistry, and A1 states she shared the 1903 Nobel Prize in Physics.",
+              confidence: 0.9,
+            },
+          ],
+        };
+      }
+      // The real batched primary call — Marie Curie's id gets Camp David's reasoning, verbatim, while
+      // still citing a REAL sentence from her own pooled passage (gate #1 alone would pass this clean).
+      return {
+        results: ids.map((id) =>
+          id === curieId
+            ? {
+                id,
+                verdict: "contradicted",
+                evidenceCitations: citationsFor(curieText, curiePassage, "She won the 1911 Nobel Prize in Chemistry."),
+                reason: "Sentence A1 states the Camp David Accords were signed on 17 September 1978, not 1998.",
+                confidence: 1,
+              }
+            : {
+                id,
+                verdict: "contradicted",
+                evidenceCitations: citationsFor(campDavidText, campDavidPassage, "The Camp David Accords were signed on 17 September 1978, ending the state of war between Egypt and Israel."),
+                reason: "Sentence A1 states the Camp David Accords were signed on 17 September 1978, not 1998.",
+                confidence: 1,
+              }
+        ),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [
+      { id: curieId, text: curieText },
+      { id: campDavidId, text: campDavidText },
+    ]);
+
+    const status = await store.getStatus(auditId);
+    const curie = status!.claims.find((c) => c.id === curieId)!;
+    const campDavid = status!.claims.find((c) => c.id === campDavidId)!;
+
+    // The contaminated claim gets caught and retried into a correct answer — not a false accusation.
+    expect(curie.verdict).toBe("supported");
+    // The real Camp David claim is untouched by the new gate — its reason genuinely is about itself.
+    expect(campDavid.verdict).toBe("contradicted");
+
+    const curieEvents = gateEventStore.calls.find((c) => c.claimId === curieId)!.events;
+    const overlapEvent = curieEvents.find((e) => e.gate === "claim_reason_overlap")!;
+    expect(overlapEvent).toMatchObject({ verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "claim_reason_no_overlap" });
+
+    const campDavidEvents = gateEventStore.calls.find((c) => c.claimId === campDavidId)!.events;
+    expect(campDavidEvents.find((e) => e.gate === "claim_reason_overlap")).toMatchObject({ overridden: false, reason: null });
+  });
+
   it("T034 (reviewed finding): a successful retry appends its gate events to the original pass's, instead of discarding the original trace", async () => {
     const claimId = uuid(1);
     const claimText = "World War II ended in 1943.";
@@ -579,18 +666,20 @@ describe("GrounnelPipelineService (T010)", () => {
 
     expect(gateEventStore.calls).toHaveLength(1);
     const events = gateEventStore.calls[0]!.events;
-    // 5 gates x 2 passes (D025 added counterfact_ignored), plus D025 §5's retry-contradiction check
-    // (the retry landed on contradicted, so it ran) — the original inconsistent pass is not lost.
-    expect(events).toHaveLength(11);
+    // 6 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap),
+    // plus D025 §5's retry-contradiction check (the retry landed on contradicted, so it ran) —
+    // the original inconsistent pass is not lost.
+    expect(events).toHaveLength(13);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
     // Index 3, not 2: counterfact_ignored (D025) now sits between implicit_negation and contradiction_evidence.
     expect(events[3]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    expect(events[8]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 9, not 8: each pass is now 6 gates (contradiction_evidence is offset 3 within a pass).
+    expect(events[9]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
-    expect(events[10]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    expect(events[12]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -1067,9 +1156,10 @@ describe("GrounnelPipelineService (T010)", () => {
       "implicit_negation",
       "counterfact_ignored",
       "contradiction_evidence",
+      "claim_reason_overlap",
       "numeric",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the five gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the six gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 

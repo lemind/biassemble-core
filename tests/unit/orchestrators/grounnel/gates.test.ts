@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
   applyImplicitNegationGate,
@@ -112,6 +113,65 @@ describe("gate #1 — contradiction evidence gate (T003)", () => {
       passageText: "Germany invades Poland in 1939. Japan formally surrenders in 1945, ending the war.",
     });
     expect(result).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_not_grounded" });
+  });
+});
+
+describe("gate #1b — claim/reason key-term overlap, cross-claim contamination backstop (D026 §12, real live-test finding, 2026-08-10)", () => {
+  it("passes through non-contradicted verdicts unchanged", () => {
+    const result = applyClaimReasonOverlapGate({
+      verdict: "unsupported",
+      reason: "totally unrelated text",
+      claimText: "Marie Curie won Nobel Prizes in chemistry and physics.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
+  it("real cross-claim contamination case: reason shares zero key terms with the claim it's attached to", () => {
+    // Real production shape (2026-08-10): a batched VERIFY call answered the Marie Curie claim's id
+    // with the Camp David Accords claim's reasoning. The citation still resolved to real, grounded
+    // text (Marie Curie's own passage), so gate #1 alone passed it — this gate catches the reason.
+    const result = applyClaimReasonOverlapGate({
+      verdict: "contradicted",
+      reason: "Sentence A5 explicitly states the Camp David Accords were signed on 17 September 1978.",
+      claimText: "Marie Curie won Nobel Prizes in chemistry and physics.",
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: true, reason: "claim_reason_no_overlap" });
+  });
+
+  it("keeps a contradicted verdict whose reason shares at least one of the claim's own key terms", () => {
+    const result = applyClaimReasonOverlapGate({
+      verdict: "contradicted",
+      reason: "Sentence A5 states the Camp David Accords were signed on 17 September 1978, not 1998.",
+      claimText: "The Camp David Accords were signed in 1998.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("real g05 shape: a paraphrase-heavy reason that quotes the passage instead of the claim's exact wording still keeps its key terms and isn't flagged", () => {
+    const result = applyClaimReasonOverlapGate({
+      verdict: "contradicted",
+      reason: 'Sentence 18 states that the Emu War "failed most miserably, and which brought for the bird its most complete victory", directly contradicting the claim that it was not declared a total failure.',
+      claimText: "The Emu War campaign was declared a total failure within days.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("fail-open: a claim with no extractable key terms (no capitalized entities or numbers) abstains rather than flagging every such claim", () => {
+    const result = applyClaimReasonOverlapGate({
+      verdict: "contradicted",
+      reason: "totally unrelated text sharing nothing with the claim",
+      claimText: "the sky is blue and the grass is green",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("abstains on a null reason — nothing to check overlap against", () => {
+    const result = applyClaimReasonOverlapGate({
+      verdict: "contradicted",
+      reason: null,
+      claimText: "Marie Curie won Nobel Prizes in chemistry and physics.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
   });
 });
 
