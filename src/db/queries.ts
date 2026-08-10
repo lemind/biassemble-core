@@ -656,7 +656,17 @@ export async function insertGrounnelClaim(data: {
   sources: unknown;
   status: "done" | "failed";
 }) {
-  const [row] = await db().insert(grounnelClaims).values(data).returning();
+  // D026 §13 — escalation re-processes an already-written claim (upsert, not a fresh row): a plain
+  // INSERT would hit claimId's PK conflict and, since callers swallow the error (D023 §7, Redis
+  // stays authoritative), silently leave this analytics row stuck at the pre-escalation verdict.
+  const [row] = await db()
+    .insert(grounnelClaims)
+    .values(data)
+    .onConflictDoUpdate({
+      target: grounnelClaims.claimId,
+      set: { verdict: data.verdict, evidence: data.evidence, confidence: data.confidence, reason: data.reason, sources: data.sources, status: data.status },
+    })
+    .returning();
   return row;
 }
 

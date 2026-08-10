@@ -107,16 +107,20 @@ export class HybridSearchProvider implements SearchProvider {
     private readonly searchCallStore: GrounnelSearchCallStore
   ) {}
 
-  async search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily" }): Promise<SearchPassage[]> {
+  async search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily"; maxCandidates?: number }): Promise<SearchPassage[]> {
     if (context?.searchFlow === "tavily") {
       return this.runFallback(query, context);
     }
 
     const candidates = await this.discoverUrls(query);
+    // D026 §13 — escalation-only override of MAX_CANDIDATES; a fresh discoverUrls() call above,
+    // so a higher tier may surface different/more candidates than a prior tier's discovery did
+    // (live search isn't deterministic — same reason every other variance in this pipeline exists).
+    const fetchCap = context?.maxCandidates ?? MAX_CANDIDATES;
     // Granularity, decided (D023 §6): one row per attempted DIY candidate — real per-URL
     // status/timing, matching this method's own "returns every attempted source" contract.
     const attempted = await Promise.all(
-      candidates.slice(0, MAX_CANDIDATES).map(async (candidate) => {
+      candidates.slice(0, fetchCap).map(async (candidate) => {
         const t0 = Date.now();
         const result: SearchPassage = { ...(await this.fetchCandidate(candidate)), retrievalMethod: "diy_fetch" };
         if (context) {

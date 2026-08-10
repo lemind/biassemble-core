@@ -28,8 +28,11 @@ const SEARCH_CONCURRENCY = 20;
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 const CONFIDENCE_THRESHOLD = 0.6;
-// D026 §11 (T049) — Phase 1 multi-passage evidence, fixed cap, no adaptive escalation yet (deferred).
+// D026 §11 (T049) — Phase 1 multi-passage evidence, fixed cap; §13 (T053) built the escalation this deferred.
 const MAX_VERIFY_PASSAGES = 3;
+// D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
+// gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
+const ESCALATION_TIERS = [5, 8];
 
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
 
@@ -126,10 +129,12 @@ export class GrounnelPipelineService {
       await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
 
       const needsVerify = resolved.filter(hasPassage);
+      let rateLimitedMidRun = false;
       for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
         const batch = needsVerify.slice(i, i + BATCH_MAX);
         const geminiRateLimit = await this.runBatch(auditId, batch);
         if (geminiRateLimit) {
+          rateLimitedMidRun = true;
           const remaining = needsVerify.slice(i + BATCH_MAX);
           if (remaining.length > 0) {
             logger.warn(
@@ -141,6 +146,12 @@ export class GrounnelPipelineService {
           break;
         }
       }
+
+      // D026 §13 — escalation needs more Gemini calls; if the primary pass already hit a rate
+      // limit, escalating would just fail the same way, so skip it entirely rather than retry into it.
+      if (!rateLimitedMidRun) {
+        await this.escalateUnresolved(auditId, claims, searchEngine);
+      }
     } catch (err) {
       // Reviewed finding: status otherwise never reaches "failed" on an uncaught error here
       // (e.g. a SearchProvider bug) — the row would stay stuck at its prior status forever.
@@ -151,6 +162,120 @@ export class GrounnelPipelineService {
     // Best-effort (D023 §7) — this run's Redis state is already fully settled by this point
     // (every claim above has already been written to Redis); Postgres just needs to catch up.
     await this.historyStore.updateRun(auditId, { status: "done", completedAt: new Date() });
+  }
+
+  /**
+   * D026 §13 (T053, real measured gap — the blue whale live-test finding, 2026-08-10: the DIY
+   * discovery step returned 7 real candidates, but only the first 3 ever got fetched; the one page
+   * that actually stated the fact wasn't among them). Re-tries a claim against a wider DIY candidate
+   * pool ONLY when it's still `unsupported`/`unverifiable` (or found zero evidence) after the normal
+   * pipeline — the majority of claims resolve confidently on the first pass and never reach here.
+   * Reuses `resolveEvidence`/`runBatch` unchanged (same gate chain, same T034/T051/T052 safety net) —
+   * this widens the EVIDENCE pool, it doesn't add new verification logic. Bounded at 2 escalations
+   * (`ESCALATION_TIERS`), stops early once a tier resolves a claim or the whole run gets rate-limited.
+   */
+  private async escalateUnresolved(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily"): Promise<void> {
+    const byId = new Map(claims.map((c) => [c.id, c]));
+    let pending = await this.findUnresolvedClaims(auditId, byId);
+
+    for (const tier of ESCALATION_TIERS) {
+      if (pending.length === 0) return;
+      logger.info({ module: MODULE, operation: "escalateUnresolved", auditId, tier, claimCount: pending.length }, "Escalating unresolved claims to a wider candidate pool");
+
+      // Waved by SEARCH_CONCURRENCY, same as resolveAllEvidence — an unbounded flat Promise.all
+      // here would fire one concurrent search() per unresolved claim, which for a large article
+      // could be most of it. Stops the tier early on a fresh Tavily rate limit, same convention.
+      const reResolved: ResolvedEvidence[] = [];
+      let tavilyRateLimitedThisTier = false;
+      for (let i = 0; i < pending.length; i += SEARCH_CONCURRENCY) {
+        const chunk = pending.slice(i, i + SEARCH_CONCURRENCY);
+        const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, tier)));
+        reResolved.push(...chunkResolved);
+        if (chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"))) {
+          tavilyRateLimitedThisTier = true;
+          break;
+        }
+      }
+
+      const needsVerify = reResolved.filter(hasPassage);
+      // Still zero evidence at this tier — nothing new to write; the pre-escalation result already
+      // stands (writeNoEvidence's original "unsupported: no evidence found" remains accurate).
+
+      for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
+        const geminiRateLimit = await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX));
+        if (geminiRateLimit) {
+          logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Gemini rate-limited during escalation — stopping further tiers");
+          return;
+        }
+      }
+
+      // D026 §13 — an escalation round's VERIFY call is a fresh PRIMARY call, not a T034 retry, so
+      // a verdict that arrives "contradicted" straight off the wire gets none of D025 §2/§5's
+      // scrutiny (that machinery only re-checks retries). A claim escalation flips TO contradicted
+      // deserves the same one-shot reason check before it ships as a new false accusation.
+      await this.guardEscalatedContradictions(auditId, needsVerify.map((v) => v.claim));
+
+      if (tavilyRateLimitedThisTier) {
+        logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Tavily rate-limited during escalation — stopping further tiers");
+        return;
+      }
+
+      pending = await this.findUnresolvedClaims(auditId, byId);
+    }
+  }
+
+  /** Reads current Redis state (source of truth) rather than tracking in-memory — escalation runs
+   * after every claim in this run has already been written at least once. Excludes claims degraded
+   * by a rate limit (Tavily's fixed reason string, or Gemini's mid-run stop) — escalating those
+   * would just hit the same wall again, not surface new evidence. */
+  private async findUnresolvedClaims(auditId: string, byId: Map<string, PipelineClaimInput>): Promise<PipelineClaimInput[]> {
+    const status = await this.grounnelStore.getStatus(auditId);
+    if (!status) return [];
+    return status.claims
+      .filter(
+        (c) =>
+          c.status === "done" &&
+          (c.verdict === "unsupported" || c.verdict === "unverifiable") &&
+          c.reason !== TAVILY_RATE_LIMITED_REASON &&
+          !c.reason?.includes("AI usage limit") &&
+          !c.reason?.includes("being rate-limited")
+      )
+      .map((c) => byId.get(c.id))
+      .filter((c): c is PipelineClaimInput => c !== undefined);
+  }
+
+  /**
+   * D026 §13 — an escalation round's VERIFY call is a fresh primary call (not a T034 retry), so a
+   * `contradicted` verdict arriving straight off the wire gets none of D025 §2/§5's scrutiny — that
+   * machinery only re-checks retries. Reuses the same batched classifier + downgrade-only-to-
+   * `unsupported` convention as D025 §5's `checkRetryContradiction`, scoped to exactly the claims
+   * this escalation round just flipped to `contradicted` — bounded, doesn't touch the normal
+   * (non-escalated) primary-pass cost model at all.
+   */
+  private async guardEscalatedContradictions(auditId: string, escalated: PipelineClaimInput[]): Promise<void> {
+    const status = await this.grounnelStore.getStatus(auditId);
+    if (!status) return;
+    const byId = new Map(escalated.map((c) => [c.id, c]));
+    const nowContradicted = status.claims.filter((c) => byId.has(c.id) && c.status === "done" && c.verdict === "contradicted");
+    if (nowContradicted.length === 0) return;
+
+    const consistencyMap = await this.checkReasonVerdictConsistency(
+      auditId,
+      nowContradicted.map((c) => ({ id: c.id, claim: c.text, reason: c.reason, verdict: "contradicted" as const }))
+    );
+
+    await Promise.all(
+      nowContradicted.map(async (c) => {
+        const consistent = consistencyMap.get(c.id) ?? true; // fail-open, same convention as D025 §2/§5
+        if (consistent) return;
+        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        this.gateEventStore.recordGateEvents(auditId, c.id, [
+          { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
+        ]);
+        logger.info({ module: MODULE, operation: "guardEscalatedContradictions", auditId, claimId: c.id }, "Escalation's fresh contradicted verdict failed reason-consistency — downgraded to unsupported");
+      })
+    );
   }
 
   /** Waves of SEARCH_CONCURRENCY, not one flat Promise.all — lets a Tavily rate limit detected in
@@ -183,7 +308,13 @@ export class GrounnelPipelineService {
     return resolved;
   }
 
-  private async resolveEvidence(auditId: string, claim: PipelineClaimInput, searchEngine: "defaultFlow" | "tavily"): Promise<ResolvedEvidence> {
+  private async resolveEvidence(
+    auditId: string,
+    claim: PipelineClaimInput,
+    searchEngine: "defaultFlow" | "tavily",
+    // D026 §13 — escalation-only; omitted on the normal pass (HybridSearchProvider defaults it).
+    maxCandidates?: number
+  ): Promise<ResolvedEvidence> {
     // context (D023 §6) is additive/optional on SearchProvider.search — only HybridSearchProvider
     // reads it, to attribute grounnel_search_calls rows to this real run/claim. forceFallback lets
     // a caller exercise the Tavily path on demand (searchEngine request param), instead of gambling
@@ -196,6 +327,7 @@ export class GrounnelPipelineService {
       runId: auditId,
       claimId: claim.id,
       searchFlow: searchEngine,
+      maxCandidates,
     });
     for (const s of sources) {
       if (s.status !== "ok") {

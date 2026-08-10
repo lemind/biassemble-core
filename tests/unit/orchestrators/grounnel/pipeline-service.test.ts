@@ -402,7 +402,10 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(provider.getCallCount()).toBe(3); // primary + classifier + one retry attempted, exactly one — no loop
+    // 3 calls (primary + classifier + one retry, exactly one — no loop) per pass, x3 passes: the
+    // main pipeline plus both D026 §13 escalation tiers (still unsupported after each, so both fire;
+    // the mock always answers the same way regardless of candidate count, same result every tier).
+    expect(provider.getCallCount()).toBe(9);
     expect(claim.verdict).toBe("unsupported"); // degrades safely, doesn't fabricate evidence on the second miss either
     expect(claim.evidence).toBeNull();
   });
@@ -636,6 +639,94 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const campDavidEvents = gateEventStore.calls.find((c) => c.claimId === campDavidId)!.events;
     expect(campDavidEvents.find((e) => e.gate === "claim_reason_overlap")).toMatchObject({ overridden: false, reason: null });
+  });
+
+  it("D026 §13: escalates a claim still unsupported after the normal pipeline to a wider candidate pool, and finds real evidence there (the blue whale live-test shape, 2026-08-10)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The blue whale is the largest animal known to have ever existed.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The blue whale is the largest animal ever to have lived on Earth. ".repeat(10);
+
+    const searchCalls: Array<number | undefined> = [];
+    const search: SearchProvider = {
+      async search(_query, context) {
+        searchCalls.push(context?.maxCandidates);
+        // Real shape: the base 3-candidate pool never surfaces the one page that states the fact;
+        // a wider pool (tier 5+) does — no code path here cares about the exact number past 3.
+        if ((context?.maxCandidates ?? 3) <= 3) {
+          return [webSource({ status: "unreachable", text: null })];
+        }
+        return [webSource({ text: passageText })];
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: citationsFor(claimText, passageText, "The blue whale is the largest animal ever to have lived on Earth."), reason: "The passage confirms this directly.", confidence: 0.95 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+    expect(claim.evidence).toBe("The blue whale is the largest animal ever to have lived on Earth.");
+    // Base pass (no maxCandidates), then tier 5 finds it — tier 8 never needed.
+    expect(searchCalls).toEqual([undefined, 5]);
+  });
+
+  it("D026 §13: downgrades an escalation round's fresh 'contradicted' verdict when the reason-consistency check says it doesn't hold up — the same false-accusation risk T051 closed for retries, now closed for escalation", async () => {
+    const claimId = uuid(1);
+    // Reason deliberately shares key terms with the claim ("Marie"/"Curie") so gate #1b (D026 §12)
+    // passes it through unflagged — this test isolates the NEW escalation guard specifically, not
+    // the lexical-overlap gate that already happens to catch some of the same shape.
+    const claimText = "Marie Curie discovered radium in 1898.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "Marie Curie worked extensively on radioactivity throughout her career. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if ((context?.maxCandidates ?? 3) <= 3) {
+          return [webSource({ status: "unreachable", text: null })];
+        }
+        return [webSource({ text: passageText })];
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "contradicted",
+          evidenceCitations: citationsFor(claimText, passageText, "Marie Curie worked extensively on radioactivity throughout her career."),
+          reason: "The passage discusses Marie Curie's general work but does not mention radium or the year 1898.",
+          confidence: 0.9,
+        })),
+      };
+    });
+    // Every consistency-check call says the reason doesn't hold up for this claim.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported"); // not a false accusation, despite the escalation round answering "contradicted"
+    expect(claim.evidence).toBeNull();
+
+    // Fires once per escalation tier (5, then 8) — the claim stays unresolved after each downgrade,
+    // so it's still eligible for the next tier, and each tier's fresh "contradicted" gets caught again.
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.filter((e) => e.gate === "retry_reconciliation" && e.overridden)).toHaveLength(2);
   });
 
   it("T034 (reviewed finding): a successful retry appends its gate events to the original pass's, instead of discarding the original trace", async () => {
@@ -1127,8 +1218,12 @@ describe("GrounnelPipelineService (T010)", () => {
 
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
-    expect(search.calls).toHaveLength(1);
-    expect(search.calls[0]).toMatchObject({ query: claimText, context: { runId: auditId, claimId } });
+    // 3 calls: the primary pass plus both D026 §13 escalation tiers — this claim never resolves
+    // (search always returns the same unreachable source), so it stays eligible at every tier.
+    expect(search.calls).toHaveLength(3);
+    for (const call of search.calls) {
+      expect(call).toMatchObject({ query: claimText, context: { runId: auditId, claimId } });
+    }
   });
 
   it("T027/D023 §5: records exactly one grounnel_gate_events batch per claim, one entry per gate, in chain order", async () => {

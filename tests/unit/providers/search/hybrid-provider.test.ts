@@ -52,6 +52,47 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(fallbackSpy).not.toHaveBeenCalled();
   });
 
+  it("D026 §13: context.maxCandidates widens how many discovered candidates get fetched, past the default of 3", async () => {
+    const fallback = new StubFallback([]);
+    const fetchedUrls: string[] = [];
+    // 7 candidates discovered in one call — matches the real live-verified count for a typical
+    // claim (2026-08-10 probe against the actual Gemini grounding API, D026 §13).
+    const discovered = Array.from({ length: 7 }, (_, i) => ({ uri: `https://example${i}.com/page`, title: `Page ${i}` }));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse(discovered));
+      }
+      fetchedUrls.push(url);
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    await provider.search("Bukowski attended Los Angeles City College.", { runId: "r1", claimId: "c1", maxCandidates: 5 });
+
+    expect(fetchedUrls).toHaveLength(5); // not the default 3
+    expect(fetchedUrls).toEqual(discovered.slice(0, 5).map((d) => d.uri));
+  });
+
+  it("D026 §13: omitting context.maxCandidates keeps the default cap of 3", async () => {
+    const fallback = new StubFallback([]);
+    const fetchedUrls: string[] = [];
+    const discovered = Array.from({ length: 7 }, (_, i) => ({ uri: `https://example${i}.com/page`, title: `Page ${i}` }));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse(discovered));
+      }
+      fetchedUrls.push(url);
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    await provider.search("Bukowski attended Los Angeles City College.");
+
+    expect(fetchedUrls).toHaveLength(3);
+  });
+
   it("reviewed finding (D026 §10, T048): ranks DIY candidates by relevance to the claim, not just Gemini's discovery order — the real Napoleon variance", async () => {
     const claimText = "Napoleon Bonaparte was five feet two inches tall.";
     const irrelevantText = "The Great Wall of China spans thousands of miles. ".repeat(30);

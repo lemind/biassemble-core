@@ -25,5 +25,8 @@ export interface SearchProvider {
    * demand (POST /extract's `searchEngine` param) instead of gambling on which URLs a live
    * grounding search happens to return.
    */
-  search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily" }): Promise<SearchPassage[]>;
+  /** `maxCandidates` (D026 §13) — how many DIY discovery candidates to actually fetch; only
+   * `HybridSearchProvider` reads it, escalation-only (default MAX_CANDIDATES when omitted). Tavily's
+   * fallback already retains FALLBACK_RETAINED_CANDIDATES (8) regardless, so it ignores this field. */
+  search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily"; maxCandidates?: number }): Promise<SearchPassage[]>;
 }
