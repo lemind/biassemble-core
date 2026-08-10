@@ -793,3 +793,13 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** none (independent of T055).
   - **Files:** `src/providers/search/hybrid-provider.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§16 addendum).
   - **Size:** S.
+
+## Phase 24 — Escalation eligibility widened to contradicted/partially_supported (D026 §17, real live-test recurrence, 2026-08-10)
+
+- [x] **T057** Escalate `contradicted`/`partially_supported` verdicts to a wider candidate pool, not just `unsupported`/`unverifiable`
+  - **Brief:** Live-test review of the deployed T056 fix showed 2 of 3 diverging claims never got a wider search pool because their verdict was `contradicted`/`partially_supported`, not `unsupported` — the exact narrow-3-candidate-pool failure mode T053 already fixed, just gated on the wrong verdict set.
+  - **Done:** `findUnresolvedClaims`'s verdict filter (`pipeline.service.ts`) now includes `contradicted` and `partially_supported` alongside `unsupported`/`unverifiable`. Medium-effort review before landing surfaced a real gap this opens: a correct `contradicted` verdict can now flip to an incorrect `supported`/`partially_supported` off a noisier wider pool, with nothing checking that direction (`guardEscalatedContradictions` only checks the reverse). New `guardEscalatedContradictionReversals`, symmetric to `guardEscalatedContradictions`: snapshots each claim's pre-tier verdict, re-checks any `contradicted` → `supported`/`partially_supported` flip via the same D025 §2 classifier, downgrades to `unsupported` on failure.
+  - **Verify:** 4 pre-existing D025/T034 tests updated for the new escalation call counts their `contradicted`-landing scenarios now trigger (hand-traced, not guessed). One test's message-capture logic hardened against a later escalation call silently overwriting it. Two new tests: `partially_supported` escalates and resolves to `supported` with a wider pool; a bogus flip away from `contradicted` gets caught and downgraded. Full suite 962/962, clean typecheck.
+  - **Dependencies:** T053, T056.
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§17 addendum).
+  - **Size:** XS.

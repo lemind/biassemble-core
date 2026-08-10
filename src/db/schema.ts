@@ -450,6 +450,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
       "counterfact_ignored",
       "retry_contradiction_invalidated",
       "claim_reason_no_overlap",
+      "escalation_reversal_invalidated",
     ],
   }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

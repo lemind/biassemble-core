@@ -339,7 +339,12 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(provider.getCallCount()).toBe(4); // primary VERIFY + D025 consistency-check classifier + T034 retry + D025 §5's retry-contradiction check
+    // D026 §17 — the claim lands on "contradicted", which is now escalation-eligible too. Main pass
+    // is unchanged at 4 (verify + classifier + T034 retry + D025 §5 check). Each of the 2 escalation
+    // tiers adds 2 more: a fresh verify (contradicted with real evidence straight off the wire, so no
+    // classifier — consistencyCandidates skips already-"contradicted" verdicts — and no retry needed)
+    // plus guardEscalatedContradictions' own consistency-check call on that fresh "contradicted". 4 + 2×2 = 8.
+    expect(provider.getCallCount()).toBe(8);
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
   });
@@ -352,11 +357,14 @@ describe("GrounnelPipelineService (T010)", () => {
     const passageText = "World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan. ".repeat(5);
     const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
 
+    // D026 §17: this claim's final verdict is "contradicted", so escalation now also re-verifies it —
+    // capture only the FIRST non-self-inconsistent call (T034's own retry), not the last one, or a
+    // later escalation-round call would silently overwrite what this test actually means to check.
     let retryUserMessage = "";
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
       const selfInconsistent = provider.getCallCount() === 1;
-      if (!selfInconsistent) retryUserMessage = request.user;
+      if (!selfInconsistent && retryUserMessage === "") retryUserMessage = request.user;
       return {
         results: ids.map((id) => ({
           id,
@@ -440,7 +448,11 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(provider.getCallCount()).toBe(3); // primary + retry (proves it fired despite reason_consistency never flipping anything) + D025 §5's retry-contradiction check
+    // Main pass: 3 (primary + retry, proving it fired despite reason_consistency never flipping
+    // anything + D025 §5's retry-contradiction check). D026 §17: final verdict is "contradicted", so
+    // both escalation tiers fire; each adds 2 (a fresh verify landing straight on "contradicted" with
+    // real evidence, no classifier/retry needed, plus guardEscalatedContradictions' own check). 3 + 2×2 = 7.
+    expect(provider.getCallCount()).toBe(7);
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
   });
@@ -493,7 +505,11 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(verifyCalls).toBe(2); // primary VERIFY + the reconciliation retry — fired purely from gate #5, not gate #1
+    // Main pass: 2 (primary VERIFY + the reconciliation retry — fired purely from gate #5, not gate
+    // #1). D026 §17: final verdict is "contradicted", so both escalation tiers fire; each adds exactly
+    // 1 fresh verify call (mock answers "contradicted" with real evidence on every call past the
+    // first, so no further retry is ever needed). 2 + 1 + 1 = 4.
+    expect(verifyCalls).toBe(4);
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began on September 1, 1939 and ended on September 2, 1945 with the surrender of Germany and Japan.");
   });
@@ -680,6 +696,112 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(status!.status).toBe("done");
   });
 
+  it("D026 §17: escalates a claim still 'partially_supported' (not just 'unsupported') after the normal pipeline, and finds full evidence in a wider pool", async () => {
+    const claimId = uuid(1);
+    const claimText = "Mount Kilimanjaro's summit is 5,895 meters above sea level.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const partialPassage = "Mount Kilimanjaro is one of Africa's tallest peaks. ".repeat(10);
+    const fullPassage = "Mount Kilimanjaro's summit, Uhuru Peak, sits at 5,895 meters above sea level. ".repeat(10);
+
+    let lastMaxCandidates: number | undefined;
+    const searchCalls: Array<number | undefined> = [];
+    const search: SearchProvider = {
+      async search(_query, context) {
+        lastMaxCandidates = context?.maxCandidates;
+        searchCalls.push(context?.maxCandidates);
+        // Base 3-candidate pool only turns up a page naming the mountain, not the exact figure;
+        // a wider pool (tier 5+) turns up the page with the precise elevation.
+        if ((context?.maxCandidates ?? 3) <= 3) return [webSource({ text: partialPassage })];
+        return [webSource({ text: fullPassage })];
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = (lastMaxCandidates ?? 3) > 3;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "supported" : "partially_supported",
+          evidenceCitations: wide
+            ? citationsFor(claimText, fullPassage, "Mount Kilimanjaro's summit, Uhuru Peak, sits at 5,895 meters above sea level.")
+            : citationsFor(claimText, partialPassage, "Mount Kilimanjaro is one of Africa's tallest peaks."),
+          reason: wide ? "The passage states the exact summit elevation." : "The passage confirms it's a tall peak but doesn't state the exact elevation.",
+          confidence: 0.85,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+    expect(claim.evidence).toBe("Mount Kilimanjaro's summit, Uhuru Peak, sits at 5,895 meters above sea level.");
+    // Base pass (no maxCandidates), then tier 5 finds the precise figure — tier 8 never needed.
+    expect(searchCalls).toEqual([undefined, 5]);
+  });
+
+  it("D026 §17: downgrades an escalation round's flip AWAY from a correct 'contradicted' verdict when the reason-consistency check says the new answer doesn't hold up", async () => {
+    const claimId = uuid(1);
+    const claimText = "The Eiffel Tower was completed in 1889.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const contradictingPassage = "The Eiffel Tower was actually completed in 1887, two years before the date usually cited. ".repeat(10);
+    const noisyPassage = "The Eiffel Tower is one of the most visited paid monuments in the world. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        const cap = context?.maxCandidates ?? 3;
+        if (cap <= 3) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
+        if (cap === 5) return [webSource({ text: noisyPassage })]; // tier 5: noisier, off-topic page
+        return [webSource({ status: "unreachable", text: null })]; // tier 8: nothing further, never needed
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = provider.getCallCount() > 1; // first call is the base pool; the only later call is tier 5
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "supported" : "contradicted",
+          evidenceCitations: wide
+            ? citationsFor(claimText, noisyPassage, "The Eiffel Tower is one of the most visited paid monuments in the world.")
+            : citationsFor(claimText, contradictingPassage, "The Eiffel Tower was actually completed in 1887, two years before the date usually cited."),
+          reason: wide
+            ? "The passage confirms the Eiffel Tower is a major landmark, supporting the claim." // never actually addresses 1889
+            : "The passage states the tower was completed in 1887, contradicting the claimed 1889 date.",
+          confidence: 0.9,
+        })),
+      };
+    });
+    // First classifier call is the normal in-batch check on tier 5's fresh "supported" verdict (says
+    // consistent, so T034's own retry never fires — isolating this test to the NEW escalation guard).
+    // Second is guardEscalatedContradictionReversals' own check, which correctly flags it as bogus.
+    let consistencyCalls = 0;
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      consistencyCalls++;
+      const ids = idsFromConsistencyRequest(request);
+      const consistent = consistencyCalls === 1;
+      return { results: ids.map((id) => ({ id, consistent })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported"); // not a false positive, despite escalation flipping to "supported"
+    expect(claim.evidence).toBeNull();
+
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.some((e) => e.gate === "retry_reconciliation" && e.overridden && e.verdictBefore === "supported" && e.verdictAfter === "unsupported")).toBe(true);
+  });
+
   it("D026 §14: clears meta.escalating via finally even when escalation itself throws — a crash mid-escalation must not leave the run permanently stuck reporting 'verifying'", async () => {
     const claimId = uuid(1);
     const claimText = "Some claim needing escalation.";
@@ -783,7 +905,10 @@ describe("GrounnelPipelineService (T010)", () => {
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
-    expect(gateEventStore.calls).toHaveLength(1);
+    // D026 §17: final verdict is "contradicted", so both escalation tiers also re-verify this claim,
+    // each recording its own gate-events call — 1 (main pass) + 1 (tier 5) + 1 (tier 8) = 3. The
+    // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
+    expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
     // 6 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap),
     // plus D025 §5's retry-contradiction check (the retry landed on contradicted, so it ran) —

@@ -184,8 +184,8 @@ export class GrounnelPipelineService {
    * D026 §13 (T053, real measured gap — the blue whale live-test finding, 2026-08-10: the DIY
    * discovery step returned 7 real candidates, but only the first 3 ever got fetched; the one page
    * that actually stated the fact wasn't among them). Re-tries a claim against a wider DIY candidate
-   * pool ONLY when it's still `unsupported`/`unverifiable` (or found zero evidence) after the normal
-   * pipeline — the majority of claims resolve confidently on the first pass and never reach here.
+   * pool ONLY when it's still `unsupported`/`unverifiable`/`contradicted`/`partially_supported` (D026
+   * §17) after the normal pipeline — the majority of claims resolve `supported` and never reach here.
    * Reuses `resolveEvidence`/`runBatch` unchanged (same gate chain, same T034/T051/T052 safety net) —
    * this widens the EVIDENCE pool, it doesn't add new verification logic. Bounded at 2 escalations
    * (`ESCALATION_TIERS`), stops early once a tier resolves a claim or the whole run gets rate-limited.
@@ -197,6 +197,11 @@ export class GrounnelPipelineService {
     for (const tier of ESCALATION_TIERS) {
       if (pending.length === 0) return;
       logger.info({ module: MODULE, operation: "escalateUnresolved", auditId, tier, claimCount: pending.length }, "Escalating unresolved claims to a wider candidate pool");
+
+      // D026 §17 — snapshot each claim's verdict before this tier's runBatch overwrites it;
+      // guardEscalatedContradictionReversals needs to know which ones WERE `contradicted` going in.
+      const preTierStatus = await this.grounnelStore.getStatus(auditId);
+      const preVerdictById = new Map((preTierStatus?.claims ?? []).map((c) => [c.id, c.verdict]));
 
       // Waved by SEARCH_CONCURRENCY, same as resolveAllEvidence — an unbounded flat Promise.all
       // here would fire one concurrent search() per unresolved claim, which for a large article
@@ -230,6 +235,9 @@ export class GrounnelPipelineService {
       // scrutiny (that machinery only re-checks retries). A claim escalation flips TO contradicted
       // deserves the same one-shot reason check before it ships as a new false accusation.
       await this.guardEscalatedContradictions(auditId, needsVerify.map((v) => v.claim));
+      // D026 §17 — symmetric check: a claim that WAS `contradicted` can flip to `supported`/
+      // `partially_supported` off this tier's noisier pool; re-verify that flip the same way.
+      await this.guardEscalatedContradictionReversals(auditId, needsVerify.map((v) => v.claim), preVerdictById);
 
       if (tavilyRateLimitedThisTier) {
         logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Tavily rate-limited during escalation — stopping further tiers");
@@ -243,7 +251,8 @@ export class GrounnelPipelineService {
   /** Reads current Redis state (source of truth) rather than tracking in-memory — escalation runs
    * after every claim in this run has already been written at least once. Excludes claims degraded
    * by a rate limit (Tavily's fixed reason string, or Gemini's mid-run stop) — escalating those
-   * would just hit the same wall again, not surface new evidence. */
+   * would just hit the same wall again, not surface new evidence. D026 §17 — verdict set widened to
+   * also include `contradicted`/`partially_supported`; see the ADR for why and for the risk this adds. */
   private async findUnresolvedClaims(auditId: string, byId: Map<string, PipelineClaimInput>): Promise<PipelineClaimInput[]> {
     const status = await this.grounnelStore.getStatus(auditId);
     if (!status) return [];
@@ -251,7 +260,7 @@ export class GrounnelPipelineService {
       .filter(
         (c) =>
           c.status === "done" &&
-          (c.verdict === "unsupported" || c.verdict === "unverifiable") &&
+          (c.verdict === "unsupported" || c.verdict === "unverifiable" || c.verdict === "contradicted" || c.verdict === "partially_supported") &&
           c.reason !== TAVILY_RATE_LIMITED_REASON &&
           !c.reason?.includes("AI usage limit") &&
           !c.reason?.includes("being rate-limited")
@@ -290,6 +299,50 @@ export class GrounnelPipelineService {
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
         logger.info({ module: MODULE, operation: "guardEscalatedContradictions", auditId, claimId: c.id }, "Escalation's fresh contradicted verdict failed reason-consistency — downgraded to unsupported");
+      })
+    );
+  }
+
+  /**
+   * D026 §17 — symmetric counterpart to guardEscalatedContradictions: a claim correctly
+   * `contradicted` before this tier can flip to `supported`/`partially_supported` off a noisier
+   * wider pool, and nothing else re-checks a flip AWAY from `contradicted`. Same one-shot classifier,
+   * same downgrade-only-to-`unsupported` convention (never reverts to the stale prior verdict —
+   * that's just trusting an equally-unconfirmed answer instead of this round's unconfirmed one).
+   */
+  private async guardEscalatedContradictionReversals(
+    auditId: string,
+    escalated: PipelineClaimInput[],
+    preVerdictById: Map<string, Verdict | null>
+  ): Promise<void> {
+    const status = await this.grounnelStore.getStatus(auditId);
+    if (!status) return;
+    const byId = new Map(escalated.map((c) => [c.id, c]));
+    const flippedAway = status.claims.filter(
+      (c) =>
+        byId.has(c.id) &&
+        c.status === "done" &&
+        preVerdictById.get(c.id) === "contradicted" &&
+        (c.verdict === "supported" || c.verdict === "partially_supported")
+    );
+    if (flippedAway.length === 0) return;
+
+    const consistencyMap = await this.checkReasonVerdictConsistency(
+      auditId,
+      flippedAway.map((c) => ({ id: c.id, claim: c.text, reason: c.reason, verdict: c.verdict as Verdict }))
+    );
+
+    await Promise.all(
+      flippedAway.map(async (c) => {
+        const consistent = consistencyMap.get(c.id) ?? true; // fail-open, same convention as D025 §2/§5
+        if (consistent) return;
+        const verdictBefore = c.verdict as Verdict;
+        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        this.gateEventStore.recordGateEvents(auditId, c.id, [
+          { gate: "retry_reconciliation", verdictBefore, verdictAfter: "unsupported", overridden: true, reason: "escalation_reversal_invalidated" },
+        ]);
+        logger.info({ module: MODULE, operation: "guardEscalatedContradictionReversals", auditId, claimId: c.id }, "Escalation's flip away from a prior contradicted verdict failed reason-consistency — downgraded to unsupported");
       })
     );
   }
