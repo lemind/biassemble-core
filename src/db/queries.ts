@@ -663,7 +663,7 @@ export async function insertGrounnelClaim(data: {
 export async function insertGrounnelLlmCall(data: {
   runId: string;
   stage: "extract" | "verify";
-  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in";
   provider: string;
   model: string;
   promptVersion: string;

@@ -653,7 +653,7 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(status!.score.not_checked_n).toBe(1);
   });
 
-  it("degrades only the claims VERIFY's response omitted, not the whole batch", async () => {
+  it("degrades only the claims VERIFY's response omitted even after a D026 §8 fill-in retry, not the whole batch", async () => {
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const claims = [
       { id: uuid(1), text: "First claim about Wikipedia." },
@@ -668,7 +668,8 @@ describe("GrounnelPipelineService (T010)", () => {
     );
 
     provider.setResponseFn("You are a verification engine", () => ({
-      // Only answers c1, silently omits c2.
+      // Every call (primary AND the fill-in retry) only ever answers c1, silently omits c2 —
+      // the fill-in genuinely can't recover it this time, so c2 must still degrade in the end.
       results: [{ id: uuid(1), verdict: "supported", evidenceSentenceIds: [1], reason: "ok", confidence: 0.9 }],
     }));
 
@@ -677,7 +678,47 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     expect(status!.claims.find((c) => c.id === uuid(1))!.status).toBe("done");
-    expect(status!.claims.find((c) => c.id === uuid(2))!.status).toBe("failed");
+    const c2 = status!.claims.find((c) => c.id === uuid(2))!;
+    expect(c2.status).toBe("failed");
+    expect(c2.reason).toContain("even after a fill-in retry");
+  });
+
+  it("D026 §8 (T045): recovers a claim VERIFY's response omitted via a fill-in retry, instead of degrading it", async () => {
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const claims = [
+      { id: uuid(1), text: "First claim about Wikipedia." },
+      { id: uuid(2), text: "Second claim about Wikipedia." },
+    ];
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims, truncated: false });
+    const search = new FakeSearchProvider(
+      new Map([
+        ["First claim about Wikipedia.", [webSource({ url: "https://a.example", text: "First claim about Wikipedia. ".repeat(20) })]],
+        ["Second claim about Wikipedia.", [webSource({ url: "https://b.example", text: "Second claim about Wikipedia. ".repeat(20) })]],
+      ])
+    );
+
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      if (verifyCalls === 1) {
+        // Primary call: only answers c1, silently omits c2 — the ids requested prove c2 WAS asked.
+        expect(ids).toEqual([uuid(1), uuid(2)]);
+        return { results: [{ id: uuid(1), verdict: "supported", evidenceSentenceIds: [1], reason: "ok", confidence: 0.9 }] };
+      }
+      // Fill-in call: requested only c2 this time (never re-asks the whole batch), and answers it.
+      expect(ids).toEqual([uuid(2)]);
+      return { results: [{ id: uuid(2), verdict: "supported", evidenceSentenceIds: [1], reason: "ok", confidence: 0.9 }] };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, claims);
+
+    const status = await store.getStatus(auditId);
+    expect(status!.claims.find((c) => c.id === uuid(1))!.status).toBe("done");
+    const c2 = status!.claims.find((c) => c.id === uuid(2))!;
+    expect(c2.status).toBe("done");
+    expect(c2.verdict).toBe("supported");
   });
 
   it("splits more than 8 claims into multiple VERIFY batches", async () => {

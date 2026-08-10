@@ -18,8 +18,10 @@ function geminiGroundingResponse(urls: Array<{ uri: string; title: string }>) {
 }
 
 class StubFallback implements SearchProvider {
+  queries: string[] = [];
   constructor(private results: SearchPassage[]) {}
-  async search(): Promise<SearchPassage[]> {
+  async search(query: string): Promise<SearchPassage[]> {
+    this.queries.push(query);
     return this.results;
   }
 }
@@ -142,6 +144,30 @@ describe("HybridSearchProvider (T008, D021)", () => {
 
     const fallbackResults = results.filter((r) => r.retrievalMethod === "tavily_fallback");
     expect(fallbackResults[0]).toMatchObject({ url: "https://numeric.example" });
+  });
+
+  it("reviewed finding (D026 §8): sends a keyword query to the Tavily fallback but the full claim sentence to Gemini's own discovery call", async () => {
+    const claimText = "Apple's market capitalization surpassed $3.5 trillion in 2024.";
+    const fallback = new StubFallback([]);
+
+    let geminiRequestText = "";
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        geminiRequestText = JSON.parse(init!.body as string).contents[0].parts[0].text;
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://blocked.example", title: "Blocked" }]));
+      }
+      return Promise.resolve({ ok: false, status: 403, url });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    await provider.search(claimText);
+
+    // discoverUrls embeds the query in "check this claim: ..." — a keyword fragment there would
+    // degrade Gemini's own grounding-search reasoning, so it must still get the full sentence.
+    expect(geminiRequestText).toContain(claimText);
+    // The real Tavily API call, by contrast, should get the keyword-rewritten query, not the raw sentence.
+    expect(fallback.queries).toEqual(["Apple's $3.5 2024"]);
   });
 
   it("marks a suspiciously short 200 response as paywalled, not ok", async () => {

@@ -180,6 +180,10 @@ export class GrounnelPipelineService {
     // reads it, to attribute grounnel_search_calls rows to this real run/claim. forceFallback lets
     // a caller exercise the Tavily path on demand (searchEngine request param), instead of gambling
     // on whether Gemini's grounding search happens to return only unfetchable URLs.
+    // Reviewed finding (D026 §8) — the full claim sentence, NOT a keyword rewrite: HybridSearchProvider's
+    // DIY path embeds this in "check this claim: ..." for Gemini's own grounding search, which needs a
+    // real claim, not keywords. The keyword rewrite (buildSearchQuery, T046) is scoped to the Tavily
+    // fallback call specifically, inside hybrid-provider.ts, where it's a real search-API query string.
     const sources = await this.searchProvider.search(claim.text, {
       runId: auditId,
       claimId: claim.id,
@@ -358,7 +362,7 @@ export class GrounnelPipelineService {
     user: string,
     schema: ZodSchema<T>,
     operation: string,
-    callType: "primary" | "consistency_retry" | "consistency_check",
+    callType: "primary" | "consistency_retry" | "consistency_check" | "fill_in",
     promptVersion: string,
     // Reviewed finding: real production case — a scraped page's "You are now subscribed" boilerplate,
     // quoted verbatim as VERIFY's `evidence`, false-positived the injection guard for a whole batch.
@@ -394,7 +398,7 @@ export class GrounnelPipelineService {
     // D026 §6 — deliberately no source_url: it's a page-identity memory cue the model doesn't need.
     pairs: Array<{ id: string; claim: string; passage: string | null }>,
     operation: string,
-    callType: "primary" | "consistency_retry",
+    callType: "primary" | "consistency_retry" | "fill_in",
     verifyVersion: string,
     // D025 §2 — the reconciliation retry needs a dynamic message (previous answer + diagnostics),
     // not the primary call's fixed trigger phrase. Same `grounnel-verify` system prompt either way.
@@ -497,37 +501,21 @@ export class GrounnelPipelineService {
     }
   }
 
-  /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
-  private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
-    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text }));
-    const verifyVersion = this.prompts.getGrounnelVerifyVersion();
-    // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
-    // than tracking "already stamped" across an arbitrary number of batches for one run.
-    waitUntil(this.historyStore.updateRun(auditId, { promptVersionVerify: verifyVersion }));
-
-    let parsed: z.infer<typeof VerifyResponseSchema>;
-    try {
-      parsed = await this.callVerify(auditId, pairs, "runBatch", "primary", verifyVersion);
-    } catch (err) {
-      if (err instanceof RateLimitError) {
-        logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: err.limitType }, "Gemini rate-limited during VERIFY — stopping");
-        await this.degradeBatch(auditId, batch, buildGeminiRateLimitMessage(err));
-        return err;
-      }
-      // A failed VERIFY batch marks its claims not_checked (status: "failed") and the run
-      // continues — never fails the whole audit over one bad batch (spec.md Success Criteria).
-      logger.error({ module: MODULE, operation: "runBatch", auditId, err }, "VERIFY batch failed after retries — degrading to not_checked");
-      await this.degradeBatch(auditId, batch, "VERIFY failed after retries (provider/parse error) — see grounnel_llm_calls for detail.");
-      return null;
-    }
-
-    const byId = new Map(batch.map((b) => [b.claim.id, b]));
-    const answeredIds = new Set<string>();
-    // Set by a claim's retry hitting the same rate limit runBatch's own primary call already
-    // special-cases — checked after Promise.all so it stops remaining batches the same way (below).
-    // An object, not a bare `let`: TS doesn't narrow a closure's mutation of an outer `let` across
-    // an `await`, so `if (retryRateLimit)` below would otherwise wrongly type-narrow to `never`.
-    const retryState: { rateLimit: RateLimitError | null } = { rateLimit: null };
+  /**
+   * Runs the gate chain + T034 retry + persistence for one VERIFY response against `items` — shared
+   * by runBatch's primary pass and its fill-in pass (D026 §8, T045), so a fill-in claim gets exactly
+   * the same treatment (gates, consistency classifier, one retry) as a normally-answered one, not a
+   * cut-down path. Mutates `answeredIds`/`retryState` (shared across both passes by the caller).
+   */
+  private async processVerifyResults(
+    auditId: string,
+    items: ResolvedWithPassage[],
+    parsed: z.infer<typeof VerifyResponseSchema>,
+    verifyVersion: string,
+    retryState: { rateLimit: RateLimitError | null },
+    answeredIds: Set<string>
+  ): Promise<void> {
+    const byId = new Map(items.map((b) => [b.claim.id, b]));
 
     // Reviewed finding: initialVerdict (the value the gate chain actually operates on, e.g.
     // confidence-downgraded to "unverifiable") must be computed once here, before the classifier
@@ -617,19 +605,93 @@ export class GrounnelPipelineService {
         this.gateEventStore.recordGateEvents(auditId, item.claim.id, gateEvents);
       })
     );
+  }
+
+  /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
+  private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
+    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text }));
+    const verifyVersion = this.prompts.getGrounnelVerifyVersion();
+    // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
+    // than tracking "already stamped" across an arbitrary number of batches for one run.
+    waitUntil(this.historyStore.updateRun(auditId, { promptVersionVerify: verifyVersion }));
+
+    let parsed: z.infer<typeof VerifyResponseSchema>;
+    try {
+      parsed = await this.callVerify(auditId, pairs, "runBatch", "primary", verifyVersion);
+    } catch (err) {
+      if (err instanceof RateLimitError) {
+        logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: err.limitType }, "Gemini rate-limited during VERIFY — stopping");
+        await this.degradeBatch(auditId, batch, buildGeminiRateLimitMessage(err));
+        return err;
+      }
+      // A failed VERIFY batch marks its claims not_checked (status: "failed") and the run
+      // continues — never fails the whole audit over one bad batch (spec.md Success Criteria).
+      logger.error({ module: MODULE, operation: "runBatch", auditId, err }, "VERIFY batch failed after retries — degrading to not_checked");
+      await this.degradeBatch(auditId, batch, "VERIFY failed after retries (provider/parse error) — see grounnel_llm_calls for detail.");
+      return null;
+    }
+
+    const answeredIds = new Set<string>();
+    // Set by a claim's retry hitting the same rate limit runBatch's own primary call already
+    // special-cases — checked after each processVerifyResults pass so it stops remaining batches
+    // the same way (below). An object, not a bare `let`: TS doesn't narrow a closure's mutation of
+    // an outer `let` across an `await`, so `if (retryRateLimit)` would otherwise wrongly narrow to `never`.
+    const retryState: { rateLimit: RateLimitError | null } = { rateLimit: null };
+
+    await this.processVerifyResults(auditId, batch, parsed, verifyVersion, retryState, answeredIds);
 
     if (retryState.rateLimit) {
       logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: retryState.rateLimit.limitType }, "Gemini rate-limited during a T034 retry — stopping remaining batches");
       return retryState.rateLimit;
     }
 
-    const missing = batch.filter((b) => !answeredIds.has(b.claim.id));
+    // D026 §8 (T045) — response completion: never trust a batch answered every claim it was asked.
+    // Diff requested vs. answered ids, unconditionally, and fire exactly one fill-in call for
+    // whatever's missing (never the whole batch again — a small, targeted follow-up).
+    let missing = batch.filter((b) => !answeredIds.has(b.claim.id));
     if (missing.length > 0) {
       logger.warn(
         { module: MODULE, operation: "runBatch", auditId, missingIds: missing.map((m) => m.claim.id) },
-        "VERIFY response omitted some claims in this batch — degrading them to not_checked"
+        "VERIFY response omitted some claims — firing a fill-in retry for exactly those"
       );
-      await this.degradeBatch(auditId, missing, "VERIFY's response omitted this claim from its batch — not a provider/parse error, the model simply didn't answer for it.");
+      const fillInPairs = missing.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text }));
+      try {
+        const fillIn = await this.callVerify(auditId, fillInPairs, "runBatch.fillIn", "fill_in", verifyVersion);
+        await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds);
+        // Cast, not a plain read — the earlier check above narrowed retryState.rateLimit to null,
+        // and TS carries that narrowing across the mutating processVerifyResults() call, so an
+        // unannotated re-read here type-checks as `never` even with an explicit variable annotation.
+        const fillInRateLimit = retryState.rateLimit as RateLimitError | null;
+        if (fillInRateLimit) {
+          logger.error(
+            { module: MODULE, operation: "runBatch", auditId, limitType: fillInRateLimit.limitType },
+            "Gemini rate-limited during a T034 retry fired from the fill-in pass — stopping remaining batches"
+          );
+          return fillInRateLimit;
+        }
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: err.limitType }, "Gemini rate-limited during the fill-in retry — stopping");
+          await this.degradeBatch(auditId, missing, buildGeminiRateLimitMessage(err));
+          return err;
+        }
+        // Falls through to the generic "still missing" degrade below — same message either way,
+        // whether the fill-in call errored outright or just didn't answer everything either.
+        logger.warn({ module: MODULE, operation: "runBatch", auditId, err }, "Fill-in retry call itself failed");
+      }
+      missing = batch.filter((b) => !answeredIds.has(b.claim.id));
+    }
+
+    if (missing.length > 0) {
+      logger.warn(
+        { module: MODULE, operation: "runBatch", auditId, missingIds: missing.map((m) => m.claim.id) },
+        "VERIFY response omitted some claims even after a fill-in retry — degrading them to not_checked"
+      );
+      await this.degradeBatch(
+        auditId,
+        missing,
+        "VERIFY's response omitted this claim, even after a fill-in retry — not a provider/parse error, the model simply didn't answer for it."
+      );
     }
     return null;
   }

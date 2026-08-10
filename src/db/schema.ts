@@ -365,11 +365,14 @@ export const grounnelClaims = grounnel.table("grounnel_claims", {
 // a different trigger (gate-caught self-inconsistency, not a parse failure) a shared metric shouldn't conflate.
 // "consistency_check" (D025/T035) is the batched classifier call ("does reason support verdict?")
 // that decides whether a "consistency_retry" fires — a distinct call, not the retry itself.
+// "fill_in" (D026 §8, T045) — a follow-up VERIFY call for exactly the claim(s) a batch's response
+// silently omitted; distinct from "consistency_retry" (that's a self-inconsistency repair, this is
+// response completion for a batch that was simply short an answer).
 export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
-  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check"] }).notNull().default("primary"),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in"] }).notNull().default("primary"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),

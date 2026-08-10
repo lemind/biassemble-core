@@ -1,5 +1,5 @@
 import { logger } from "../../observability/logger.js";
-import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
+import { extractKeyTerms, scoreKeyTermMatches, buildSearchQuery } from "../../lib/claim-terms.js";
 import type { SearchProvider, SearchPassage, SourceStatus } from "./search-provider.js";
 import type { GrounnelSearchCallStore } from "../../persistence/grounnel-search-call-store.js";
 
@@ -145,7 +145,10 @@ export class HybridSearchProvider implements SearchProvider {
     context?: { runId: string; claimId: string }
   ): Promise<SearchPassage[]> {
     const fallbackT0 = Date.now();
-    const allResults: SearchPassage[] = (await this.fallback.search(query)).map((p) => ({ ...p, retrievalMethod: "tavily_fallback" }));
+    // D026 §8 (T046, reviewed finding) — a keyword query for the real Tavily search API call only;
+    // `query` itself stays the full claim text for telemetry/ranking and for discoverUrls' Gemini
+    // "check this claim" framing (a keyword fragment there degrades Gemini's own grounding search).
+    const allResults: SearchPassage[] = (await this.fallback.search(buildSearchQuery(query))).map((p) => ({ ...p, retrievalMethod: "tavily_fallback" }));
     if (context) {
       // One row for the whole fallback call, resultCount reflecting everything Tavily actually
       // returned (T031: up to 16) — telemetry, not what gets stored/returned below.
