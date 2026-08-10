@@ -77,13 +77,23 @@ function sanitizeErrorForLogging(err: unknown): unknown {
 // donor-attribution sentence landed fused to a page's nav menu text, deprioritizing it downstream).
 const BLOCK_BOUNDARY_RE = /<\/(?:p|div|li|h[1-6]|header|nav|footer|section|article|tr|td|th|blockquote)>|<(?:br|hr)\s*\/?>/gi;
 
+// D026 §16 — Parsoid (MediaWiki's REST HTML API, e.g. Wikipedia) embeds full citation-template
+// wikitext as a JSON blob in data-mw="..."/data-parsoid="..." attributes on citation <span>/<sup>
+// elements (confirmed in production: raw `{{cite journal|...}}` + escaped JSON leaking into a
+// claim's evidence text). That JSON value can contain a literal '>', which defeats the generic
+// `<[^>]+>` stripper below — it stops at the first '>' it sees, leaving the rest of the attribute
+// (and the tag's real close) as visible text. Strip these attributes first, by quote delimiter
+// rather than by '>', so the generic stripper only ever sees '>'-free attributes afterward.
+const DATA_MW_ATTR_RE = /\sdata-(?:mw|parsoid)\s*=\s*("[^"]*"|'[^']*')/gi;
+
 // Strips <script>/<style> and tags, decodes common entities — no HTML-parsing dependency added; the dependency-free TS equivalent of D021's BeautifulSoup script (MVP-good, not a general parser).
 function extractTextFromHtml(html: string): string {
   const withoutScripts = html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<script[^>]*>[\s\S]*$/gi, " ")
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<style[^>]*>[\s\S]*$/gi, " ");
+    .replace(/<style[^>]*>[\s\S]*$/gi, " ")
+    .replace(DATA_MW_ATTR_RE, "");
   const withBlockBoundaries = withoutScripts.replace(BLOCK_BOUNDARY_RE, "\n");
   const withoutTags = withBlockBoundaries.replace(/<[^>]+>/g, " ");
   return withoutTags

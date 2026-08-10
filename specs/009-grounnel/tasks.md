@@ -783,3 +783,13 @@ T023 (grounnel pg schema — 5 tables)
   - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, `docs/decisions/026-verify-retrieval-first-grounding.md` (§15 addendum).
   - **Size:** XS.
 
+## Phase 23 — Citation-template/JSON leakage into evidence text (D026 §16, real live-test failure, 2026-08-10)
+
+- [x] **T056** Strip Parsoid `data-mw`/`data-parsoid` citation-JSON attributes before generic tag-stripping
+  - **Brief:** A claim's `evidence` field contained raw `{{cite journal|...}}` wikitext plus a stray JSON fragment instead of the real supporting sentence; separately, two claims verified against the identical fetched Wikipedia page in the same batch landed different verdicts for facts stated on that same page. Root cause: MediaWiki's Parsoid HTML embeds citation-template wikitext as JSON inside `data-mw="..."` attributes; when that JSON contains a literal `>`, `extractTextFromHtml`'s naive `<[^>]+>` tag stripper closes the "tag" early and leaks the rest of the attribute as visible text. That malformed "sentence" then competes unpredictably in `buildPassageSentences`'s per-claim top-20 ranking, the likely cause of the cross-claim inconsistency.
+  - **Done:** New `DATA_MW_ATTR_RE` strips `data-mw="..."`/`data-parsoid="..."` by quote delimiter (not by `>`) before the generic stripper runs, in `hybrid-provider.ts`'s `extractTextFromHtml`.
+  - **Verify:** New `hybrid-provider.test.ts` case reproducing the exact production shape (a `data-mw` attribute whose JSON contains an embedded `>`), asserting none of `cite journal`/`data-mw`/`"parts"` leak into extracted text. Full suite 960/960, clean typecheck.
+  - **Explicitly deferred:** re-testing the same live story to confirm the cross-claim sentence-selection inconsistency is actually gone (not just the markup symptom) — next step before touching `buildPassageSentences` itself. A general `evidence`/`reason` overlap gate (generalizing T052 to all verdicts, for the separate citation-number-mismatch class of bug) — not yet implemented.
+  - **Dependencies:** none (independent of T055).
+  - **Files:** `src/providers/search/hybrid-provider.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§16 addendum).
+  - **Size:** S.

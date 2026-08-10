@@ -440,6 +440,31 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results[0]!.text).not.toContain("should not appear in evidence");
   });
 
+  it("D026 §16: strips a data-mw citation-template JSON blob (Parsoid/Wikipedia) whose embedded '>' would otherwise defeat the generic tag stripper", async () => {
+    const fallback = new StubFallback([]);
+    // Real production shape: a citation <sup> whose data-mw value contains an unescaped '>' inside
+    // its JSON, so a naive `<[^>]+>` stripper closes the "tag" early at that inner '>' and leaks the
+    // rest of the attribute — including raw `{{cite journal|...}}` wikitext — as visible text.
+    const malformedHtml =
+      `<html><body>${LONG_TEXT}` +
+      `<sup id="cite_note-1" data-mw='{"parts":[{"template":{"target":{"wt":"cite journal"},"params":{"title":{"wt":"A > B study"}}}}],"i":0}'>` +
+      `[1]</sup>${LONG_TEXT}</body></html>`;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/Example", title: "E" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => malformedHtml });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("some claim");
+
+    expect(results[0]!.text).not.toContain("cite journal");
+    expect(results[0]!.text).not.toContain("data-mw");
+    expect(results[0]!.text).not.toContain('"parts"');
+  });
+
   it("T026/D023 §6: writes zero grounnel_search_calls rows when no context is given (backward compatible)", async () => {
     const fallback = new StubFallback([]);
     const fetchMock = vi.fn().mockImplementation((url: string) => {
