@@ -77,10 +77,11 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results).toContainEqual({ ...fallbackResult, retrievalMethod: "tavily_fallback" });
   });
 
-  it("reviewed finding (T031): caps Tavily's fallback results instead of storing/returning all 16 unfiltered, keeping any 'ok' result even if it's ranked late", async () => {
+  it("reviewed finding (T031/T039): caps Tavily's fallback results instead of storing/returning all 16 unfiltered, keeping any 'ok' result even if it's ranked late", async () => {
     // Simulates Tavily's real max_results:16 response — 15 unusable, one real "ok" result buried
-    // at position 11. Before the fix, all 16 were stored/returned (up to 19 total with 3 DIY
-    // attempts); the fix caps this like DIY's own MAX_CANDIDATES, but must not lose the real one.
+    // at position 11. Before the T031 fix, all 16 were stored/returned (up to 19 total with 3 DIY
+    // attempts); capped at FALLBACK_RETAINED_CANDIDATES (8, raised from 3 by T039 since the pool
+    // is already-fetched and free to retain more of) — but must not lose the real one.
     const okResult: SearchPassage = { url: "https://real-source.example", title: "Real", domain: "real-source.example", status: "ok", text: "the real content" };
     const unusableResults: SearchPassage[] = Array.from({ length: 15 }, (_, i) => ({
       url: `https://unusable-${i}.example`,
@@ -104,8 +105,43 @@ describe("HybridSearchProvider (T008, D021)", () => {
     const results = await provider.search("some claim");
 
     const fallbackResults = results.filter((r) => r.retrievalMethod === "tavily_fallback");
-    expect(fallbackResults.length).toBeLessThanOrEqual(3); // capped, not all 16
+    expect(fallbackResults.length).toBeLessThanOrEqual(8); // capped, not all 16
     expect(fallbackResults).toContainEqual({ ...okResult, retrievalMethod: "tavily_fallback" }); // but the real one survives the cut
+  });
+
+  it("T039 (D026 §6): ranks 'ok' fallback results by relevance to the claim, not just Tavily's raw order", async () => {
+    const claimText = "Apple's market capitalization surpassed $3.5 trillion in 2024.";
+    const topicalOnly: SearchPassage = {
+      url: "https://topical.example",
+      title: "Topical",
+      domain: "topical.example",
+      status: "ok",
+      text: "Apple released several new products in 2024, including updated iPads.",
+    };
+    const numericMatch: SearchPassage = {
+      url: "https://numeric.example",
+      title: "Numeric",
+      domain: "numeric.example",
+      status: "ok",
+      text: "Apple's market cap crossed $3.5 trillion in 2024, according to filings.",
+    };
+    // Raw Tavily order deliberately puts the merely-topical result first — ranking must not just
+    // trust that order, the way the pre-T039 status-only sort did.
+    const fallback = new StubFallback([topicalOnly, numericMatch]);
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://blocked.example", title: "Blocked" }]));
+      }
+      return Promise.resolve({ ok: false, status: 403, url });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search(claimText);
+
+    const fallbackResults = results.filter((r) => r.retrievalMethod === "tavily_fallback");
+    expect(fallbackResults[0]).toMatchObject({ url: "https://numeric.example" });
   });
 
   it("marks a suspiciously short 200 response as paywalled, not ok", async () => {

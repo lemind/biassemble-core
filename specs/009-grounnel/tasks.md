@@ -601,3 +601,41 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** None — modifies existing gate #2 logic in place, orthogonal to T029-T037.
   - **Files:** `src/orchestrators/grounnel/gates.ts`, tests.
   - **Size:** S.
+
+## Phase 11 — Upstream-of-VERIFY fixes: candidate selection and a memory anchor (D026 §6, review synthesis, 2026-08-10)
+
+**Purpose:** Two-pass review of the g05/g11 recurrences (T037/T038) concluded the highest-value remaining fixes sit upstream of VERIFY's own reasoning — which candidate passage gets chosen, and what identifying metadata VERIFY sees about it — not another prompt/gate iteration on VERIFY itself. See D026 §6 for the full diagnosis and ordering rationale.
+
+- [x] **T039** Rank Tavily-fallback candidates by relevance before selecting, instead of fetch-status-only
+  - **Brief:** T031 already gets all 16 Tavily results fetched with full text in one API call, but `hybrid-provider.ts`'s `runFallback` only ever sorted by `status === "ok"` and sliced to `MAX_CANDIDATES` (3) — no ranking by relevance to the specific claim. `resolveEvidence` then took the first "ok" one unconditionally. Real g11 case: the selected passage never contained the claimed $3.5T figure, while other already-fetched, already-paid-for candidates were never considered.
+  - **Done:** Moved `extractKeyTerms` from `passage-filter.ts` to new `src/lib/claim-terms.ts` (shared home so `providers/` doesn't depend on `orchestrators/`), added `scoreKeyTermMatches(terms, text)` — count of distinct claim key-terms present in a candidate's text, reusing gate #4's own term definition rather than a second implementation. `runFallback` now scores every fetched result against the claim text and sorts by `(status === "ok" desc, score desc)` before slicing.
+  - **Verify:** new unit tests — `claim-terms.test.ts` (3, scorer prefers a numeric-match candidate, returns 0 for no overlap, counts distinct matches) and `hybrid-provider.test.ts` (ranking places a numeric-match result ahead of a merely-topical one Tavily returned first). Full suite: 914/915, clean typecheck.
+  - **Reviewed (medium effort, 2026-08-10, 4 findings, all fixed):** (1) `scoreKeyTermMatches` was called inside `runFallback`'s sort comparator, recomputing each candidate's score on every comparison instead of once — switched to a precompute-then-sort (Schwartzian transform) pass. (2) `gates.ts` still imported `extractKeyTerms` through `passage-filter.ts`'s re-export instead of the new `src/lib/claim-terms.ts` directly — updated the import and deleted the now-pointless re-export. (3)+(4) four new/touched comments (this task and T040/T041) exceeded CLAUDE.md's ~200-char convention by restating D026 §6's rationale inline — trimmed to point at the ADR, same fix pattern T038's own review already established in this file.
+  - **Dependencies:** None.
+  - **Files:** `src/lib/claim-terms.ts` (new), `src/orchestrators/grounnel/passage-filter.ts`, `src/orchestrators/grounnel/gates.ts`, `src/providers/search/hybrid-provider.ts`, tests.
+  - **Size:** S.
+
+- [x] **T040** Stop sending `source_url` to VERIFY — remove the page-identity memory cue
+  - **Brief:** `pipeline.service.ts`'s `callVerify` serializes `pairs[].source_url` directly into `claim_passage_pairs`, reaching the model — but nothing in the prompt asks the model to use it, and it's never read back from the response. For a page the model recognizes from training (real g05 case: `en.wikipedia.org/wiki/Statue_of_Liberty`, confirmed as one of the 3 actually-fetched sources), the URL is a free memory-activation cue that costs nothing to remove.
+  - **Done:** Dropped `source_url` from the `pairs` type/construction in both `callVerify` call sites (`runBatch`, `retryVerifyClaim`). Pure subtraction — confirmed nothing downstream reads it back from the model's response (matching is by `id` only).
+  - **Verify:** existing `pipeline-service.test.ts` tests pass unchanged (no assertion depended on `source_url` reaching the model); new test asserts the rendered VERIFY prompt contains neither `source_url` nor the passage's actual URL.
+  - **Dependencies:** None.
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, tests.
+  - **Size:** S.
+
+- [x] **T041** `resolveEvidence` tries the next already-fetched "ok" source when the first fails gate #4's relevance check
+  - **Brief:** `resolveEvidence` took `sources.find(s => s.status === "ok" && s.text)` — the single first "ok" source — and if that one failed `isPassageRelevant` (gate #4), returned no evidence, even when a later already-fetched "ok" source (now available in greater number thanks to T039) would have passed. No new fetches needed — this is the "bounded escalation" both review passes recommended, implemented as reuse of an already-fetched pool.
+  - **Done:** `resolveEvidence` now iterates all "ok" sources in ranked order, returning the first that also passes `isPassageRelevant`, instead of stopping at the first "ok" regardless of relevance. Tavily fallback's retained pool raised from `MAX_CANDIDATES` (3) to a separate constant (8) for the already-fetched, no-extra-cost pool only — DIY's pre-fetch slice (real network cost) stays at 3.
+  - **Verify:** new `pipeline-service.test.ts` case — first "ok" source irrelevant, second relevant, evidence is now found (`verdict: supported`) instead of dropped to "no relevant source"; existing single-source tests unaffected.
+  - **Reviewed (medium effort, 2026-08-10):** the "no relevant source" log had regressed to only reporting `candidatesChecked: <count>` — the single-source version logged the failing URL, but the new multi-source loop dropped per-URL detail, a real debuggability step backward for exactly the multi-candidate failures this task targets. Fixed: logs `checkedUrls: okSources.map(s => s.url)` instead of a bare count.
+  - **Dependencies:** T039 (needs the larger ranked pool to have anything to escalate into).
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, `src/providers/search/hybrid-provider.ts`, tests.
+  - **Size:** S.
+
+- [x] **T042** VERIFY prompt v2.4.0 — further STEP 1 reinforcement (small, low-confidence nudge; not the fix for this class)
+  - **Brief:** A further wording pass on STEP 1, same category as v2.1.0/v2.3.0's prior nudges — name the exact passage sentence explicitly before writing evidence. Deliberately not the offset/character-index mechanical-extraction approach raised in review (would need a schema change — new start/end fields, gate #1 updated to prefer them); deferred until T039-T041 are validated against a live-eval re-run and shown to leave a residual worth that scope.
+  - **Done:** Reworded STEP 1's quote-first instruction; version bump only, no schema/gate change.
+  - **Verify:** prompt-only — no unit test for correctness possible, same "UNVALIDATED against a real model as of this commit" convention as every prior version bump. Real verification is a live-eval re-run.
+  - **Dependencies:** None — prompt-layer only.
+  - **Files:** `src/prompts/grounnel/verify/system.json`.
+  - **Size:** S.

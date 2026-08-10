@@ -186,21 +186,24 @@ export class GrounnelPipelineService {
       }
     }
 
-    const okSource = sources.find((s) => s.status === "ok" && s.text);
-    if (!okSource) {
+    const okSources = sources.filter((s) => s.status === "ok" && s.text);
+    if (okSources.length === 0) {
       logger.info({ module: MODULE, operation: "resolveEvidence", claimId: claim.id }, "No source resolved to usable text — no evidence found");
       return { claim, passage: null, sources };
     }
 
-    if (!isPassageRelevant(claim.text, okSource.text!)) {
+    // D026 §6 — try each already-fetched "ok" source (pre-ranked by T039) instead of giving up
+    // the moment the first fails gate #4; a later candidate can still be relevant at no extra cost.
+    const relevantSource = okSources.find((s) => isPassageRelevant(claim.text, s.text!));
+    if (!relevantSource) {
       logger.info(
-        { module: MODULE, operation: "resolveEvidence", claimId: claim.id, url: okSource.url },
-        "Passage dropped by gate #4 relevance filter"
+        { module: MODULE, operation: "resolveEvidence", claimId: claim.id, checkedUrls: okSources.map((s) => s.url) },
+        "No already-fetched source passed gate #4's relevance filter"
       );
       return { claim, passage: null, sources };
     }
 
-    return { claim, passage: okSource, sources };
+    return { claim, passage: relevantSource, sources };
   }
 
   private async writeNoEvidence(auditId: string, r: ResolvedEvidence): Promise<void> {
@@ -379,7 +382,8 @@ export class GrounnelPipelineService {
   /** Shared by runBatch's primary call and retryVerifyClaim's single-claim call — reviewed finding: these two were near-duplicated inline before, risking drift if the call shape ever changes. */
   private async callVerify(
     auditId: string,
-    pairs: Array<{ id: string; claim: string; passage: string | null; source_url: string }>,
+    // D026 §6 — deliberately no source_url: it's a page-identity memory cue the model doesn't need.
+    pairs: Array<{ id: string; claim: string; passage: string | null }>,
     operation: string,
     callType: "primary" | "consistency_retry",
     verifyVersion: string,
@@ -420,7 +424,7 @@ export class GrounnelPipelineService {
     previous: { verdict: Verdict; evidence: string | null; reason: string | null },
     diagnostics: Diagnostic[]
   ): Promise<z.infer<typeof VerifyResultSchema> | RateLimitError | null> {
-    const pairs = [{ id: item.claim.id, claim: item.claim.text, passage: item.passage.text, source_url: item.passage.url }];
+    const pairs = [{ id: item.claim.id, claim: item.claim.text, passage: item.passage.text }];
     const user = this.buildReconciliationUser(previous, diagnostics);
     try {
       const parsed = await this.callVerify(auditId, pairs, "retryVerifyClaim", "consistency_retry", verifyVersion, user);
@@ -471,7 +475,7 @@ export class GrounnelPipelineService {
 
   /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
   private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
-    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text, source_url: b.passage.url }));
+    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passage: b.passage.text }));
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
     // than tracking "already stamped" across an arbitrary number of batches for one run.

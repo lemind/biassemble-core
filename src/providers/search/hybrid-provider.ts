@@ -1,10 +1,14 @@
 import { logger } from "../../observability/logger.js";
+import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import type { SearchProvider, SearchPassage, SourceStatus } from "./search-provider.js";
 import type { GrounnelSearchCallStore } from "../../persistence/grounnel-search-call-store.js";
 
 const MODULE = "hybrid-search-provider";
 const GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const MAX_CANDIDATES = 3;
+// D026 §6 — Tavily's results are already fetched with text (T031), free to retain more than
+// MAX_CANDIDATES, which still gates DIY's real per-URL network fetches.
+const FALLBACK_RETAINED_CANDIDATES = 8;
 // D021's research methodology bar — below this, a 200 is more likely a paywall/consent-wall
 // stub than real content (a common pattern: short "subscribe to continue" pages still return 200).
 const MIN_TEXT_LENGTH = 800;
@@ -161,11 +165,17 @@ export class HybridSearchProvider implements SearchProvider {
         durationMs: Date.now() - fallbackT0,
       });
     }
-    // Reviewed finding: T031 raised Tavily's own request to 16 results so an "ok" one further down
-    // its ranking isn't missed, but storing/returning all 16 unfiltered bloated every claim's
-    // sources (up to 19 with DIY's own 3) with entries nothing ever uses. "ok" sorted first, then
-    // capped at MAX_CANDIDATES — same cap DIY already uses, any real "ok" result survives the cut.
-    return [...allResults].sort((a, b) => Number(b.status === "ok") - Number(a.status === "ok")).slice(0, MAX_CANDIDATES);
+    // D026 §6 — rank "ok" results by relevance to this claim, not just Tavily's raw order.
+    // Score computed once per candidate (not inside the comparator) before sorting.
+    const terms = extractKeyTerms(query);
+    const scored = allResults.map((r) => ({ r, score: r.status === "ok" && r.text ? scoreKeyTermMatches(terms, r.text) : 0 }));
+    return scored
+      .sort((a, b) => {
+        const okDelta = Number(b.r.status === "ok") - Number(a.r.status === "ok");
+        return okDelta !== 0 ? okDelta : b.score - a.score;
+      })
+      .map(({ r }) => r)
+      .slice(0, FALLBACK_RETAINED_CANDIDATES);
   }
 
   private async discoverUrls(query: string): Promise<Array<{ url: string; title: string }>> {

@@ -130,6 +130,55 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.sources[0]).toMatchObject({ url: "https://en.wikipedia.org/wiki/Bukowski" });
   });
 
+  it("T040 (D026 §6): never sends the passage's source_url to VERIFY — no page-identity memory cue", async () => {
+    const claimId = uuid(1);
+    const claimText = "Bukowski attended Los Angeles City College.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "Bukowski attended Los Angeles City College for two years, per Wikipedia. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ url: "https://en.wikipedia.org/wiki/Bukowski", text: passageText })]]]));
+
+    let capturedSystem = "";
+    provider.setResponseFn("You are a verification engine", (request) => {
+      capturedSystem = request.system;
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Bukowski attended Los Angeles City College", reason: "Confirmed.", confidence: 0.95 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(capturedSystem).not.toContain("en.wikipedia.org");
+    expect(capturedSystem).not.toContain("source_url");
+  });
+
+  it("T041 (D026 §6): tries the next already-fetched 'ok' source when the first fails gate #4's relevance filter, instead of giving up", async () => {
+    const claimId = uuid(1);
+    const claimText = "The Eiffel Tower was completed in 1889.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const irrelevantSource = webSource({ url: "https://irrelevant.example", text: "The Great Wall of China spans thousands of miles. ".repeat(20) });
+    const relevantSource = webSource({
+      url: "https://relevant.example",
+      text: "The Eiffel Tower in Paris was completed in 1889 as an iron lattice structure. ".repeat(5),
+    });
+    const search = new FakeSearchProvider(new Map([[claimText, [irrelevantSource, relevantSource]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "The Eiffel Tower in Paris was completed in 1889", reason: "Matches.", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+    expect(claim.reason).not.toBe("No relevant source found for this claim.");
+    expect(claim.sources.map((s) => s.url)).toEqual(["https://irrelevant.example", "https://relevant.example"]);
+  });
+
   it("gate #1 downgrades a contradicted verdict whose evidence isn't a real substring of the passage", async () => {
     const claimId = uuid(1);
     const claimText = "Bukowski attended Harvard.";

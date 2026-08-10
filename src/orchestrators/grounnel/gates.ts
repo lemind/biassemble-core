@@ -1,6 +1,6 @@
 import { compare } from "../../numbers/compare.js";
 import { extractNumericFact, CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
-import { extractKeyTerms } from "./passage-filter.js";
+import { extractKeyTerms } from "../../lib/claim-terms.js";
 import type { GrounnelVerdictEnum } from "../../contracts/grounnel.schemas.js";
 import type { z } from "zod";
 
