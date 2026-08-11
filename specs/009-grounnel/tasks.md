@@ -858,3 +858,14 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** none (found via self-review, not a live-test recurrence).
   - **Files:** `src/orchestrators/grounnel/gates.ts`, `src/prompts/grounnel/consistency-check/system.json`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§22 addendum).
   - **Size:** S.
+
+## Phase 30 — VERIFY's STEP 2 relationship classification unstable on qualified-rank-vs-absolute-superlative claims (real live-test finding, 3 fresh Nauru runs, 2026-08-11)
+
+- [x] **T063** Add an explicit QUALIFIED RANK VS ABSOLUTE SUPERLATIVE rule to `grounnel-verify`'s STEP 2 procedure
+  - **Brief:** Ran the Nauru claim ("world's smallest island nation by population", evidence: "third-smallest... after Tuvalu and Vatican City") 3 fresh times against production and got 3 different verdicts (unsupported/supported/partially_supported). Traced with full telemetry (`grounnel_gate_events`, `grounnel_llm_calls`), not a guess: the deterministic gates behaved correctly in every run — run 1's `reason_consistency` gate correctly caught a genuine self-inconsistency and the `retry_reconciliation` backstop correctly invalidated a bad retry; runs 2/3 correctly abstained since nothing was internally inconsistent. The instability is entirely upstream, in VERIFY's own STEP 2 relationship classification: the model treated the same "third-smallest" evidence as SAME (run 2, incorrectly rounding a qualified rank up to an absolute superlative — the prompt's own INFERENCE TOLERANCE rule 3 already forbids this, the model just didn't apply it here), ABSENT (run 3 wave 2), and PARTIAL (run 3 wave 3, run 1's earlier passes) at different points.
+  - **Done:** New named section in `grounnel-verify` (v4.1.0), same structural pattern as the existing TEMPORAL SCOPE section: a qualified/ranked evidence value ("third-smallest", "second-largest") against a claim asserting the unqualified extreme classifies as PARTIAL, never SAME or CONFLICT, with the real Nauru example and explicit illegal-verdict callouts.
+  - **Verify:** LLM-behavior-shaped prompt change, no new unit test per CLAUDE.md's coverage philosophy. Full suite unaffected (no code touched). Live re-verification of this exact case is the applicable check — pending deploy.
+  - **Explicitly deferred:** no ADR addendum for this one (user direction — small, targeted prompt-only change; full trace lives in this task entry and the prompt's own version notes). Not treated as "the fix" — run 3 already shows VERIFY can still land on `partially_supported` after reconciliation, and a self-consistent-but-semantically-wrong answer (run 2's shape) is by design not something the consistency gates can catch; this narrows one specific classification gap, not a general stability guarantee.
+  - **Dependencies:** T062 (same investigation thread; confirmed the gates aren't the cause before locating the actual one).
+  - **Files:** `src/prompts/grounnel/verify/system.json`.
+  - **Size:** XS.
