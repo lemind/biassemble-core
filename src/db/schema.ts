@@ -368,11 +368,13 @@ export const grounnelClaims = grounnel.table("grounnel_claims", {
 // "fill_in" (D026 §8, T045) — a follow-up VERIFY call for exactly the claim(s) a batch's response
 // silently omitted; distinct from "consistency_retry" (that's a self-inconsistency repair, this is
 // response completion for a batch that was simply short an answer).
+// "passage_rerank" (D026 §18) — scores fetched candidates by relevance before VERIFY sees them;
+// bucketed under stage "verify" same as "consistency_check", distinguished by callType alone.
 export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
-  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in"] }).notNull().default("primary"),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank"] }).notNull().default("primary"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),

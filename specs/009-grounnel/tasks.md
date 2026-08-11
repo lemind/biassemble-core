@@ -803,3 +803,14 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** T053, T056.
   - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§17 addendum).
   - **Size:** XS.
+
+## Phase 25 — Semantic reranking between retrieval and VERIFY (D026 §18, real live-test root-cause fix, 2026-08-11)
+
+- [x] **T058** Insert a semantic reranker between search and VERIFY, augmenting T048's lexical ranking
+  - **Brief:** Root cause of the Nauru/Vatican-City live-test bug: gate #4 (`isPassageRelevant`) is lexical-presence only, so an off-topic page that merely name-drops the claim's subject passes it. VERIFY then reasons correctly over the wrong page. Fixed at the retrieval layer (where the wrong page enters the pipeline), not by adding more correction logic after VERIFY runs.
+  - **Done:** One new batched LLM call per claim in `resolveEvidence`, scoring each fetched candidate (title + short excerpt) by usefulness for verifying the claim (0–100), not topic classification. Combined with the candidate's existing lexical rank position (T048, unchanged) via a simple average — augments, doesn't replace. Fails open to the old `isPassageRelevant` filter on any error (per-call) or missing per-candidate answer (per-candidate). Skips the call entirely with ≤1 candidate. New prompt (`grounnel-passage-rerank`), schema, `callType: "passage_rerank"`.
+  - **Verify:** New tests — the real Nauru/Vatican-City shape (correct source promoted past lexically-better-ranked off-topic ones), fail-open path, single-candidate skip (proven via call count, not absence of a thrown error). Full suite 965/965, clean typecheck.
+  - **Explicitly deferred:** batching the reranker call across claims (VERIFY-style `BATCH_MAX` batching) — a call-volume optimization, not a correctness concern; today's per-claim call means up to N new LLM calls per run, multiplied per escalation tier for escalating claims. Feeding EXTRACT-generated claim tags into the reranker prompt — the reranker already sees full claim text, tags would be a lossy summary of information it already has.
+  - **Dependencies:** T048 (lexical ranking, unchanged and reused), T053/T057 (escalation shares `resolveEvidence`, gets reranking for free).
+  - **Files:** `src/prompts/grounnel/passage-rerank/system.json`, `src/prompts/registry.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, `src/persistence/grounnel-llm-call-store.ts`, `src/db/queries.ts`, `src/db/schema.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§18 addendum).
+  - **Size:** M.

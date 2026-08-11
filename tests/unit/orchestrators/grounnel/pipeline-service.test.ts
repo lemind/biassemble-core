@@ -255,6 +255,142 @@ describe("GrounnelPipelineService (T010)", () => {
     );
   });
 
+  it("D026 §18: semantic reranking promotes the correct source over off-topic ones that only outrank it lexically — the real Nauru/Vatican-City live-test shape, 2026-08-10", async () => {
+    const claimId = uuid(1);
+    const claimText = "Nauru has a resident population of approximately 12,000 people.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+
+    const vaticanPassage1 = "Vatican City is governed by the Pope as an absolute monarchy within Rome. ".repeat(5);
+    const vaticanPassage2 = "Vatican City uses the Euro as its official currency despite not being an EU member. ".repeat(5);
+    const vaticanPassage3 = "Vatican City's Swiss Guard has protected the Pope since the sixteenth century. ".repeat(5);
+    const nauruPassage = "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states. ".repeat(5);
+
+    // Array order simulates T048's lexical rank order (already applied before pipeline.service.ts
+    // ever sees these) — the real Nauru page ranked WORST lexically here, same as the live-test bug,
+    // because "Nauru" happens to appear more sparsely in its own page than incidental Vatican mentions do.
+    const search = new FakeSearchProvider(
+      new Map([
+        [
+          claimText,
+          [
+            webSource({ url: "https://vatican-1.example", title: "Vatican City — governance", text: vaticanPassage1 }),
+            webSource({ url: "https://vatican-2.example", title: "Vatican City — economy", text: vaticanPassage2 }),
+            webSource({ url: "https://vatican-3.example", title: "Vatican City — Swiss Guard", text: vaticanPassage3 }),
+            webSource({ url: "https://nauru.example", title: "Nauru — population", text: nauruPassage }),
+          ],
+        ],
+      ])
+    );
+
+    // Real reranker behavior: score by whether the candidate is actually about the claim's subject.
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string; title: string }>;
+      return { results: candidates.map((c) => ({ id: c.id, score: c.title.includes("Nauru") ? 95 : 5 })) };
+    });
+
+    let capturedSystem = "";
+    provider.setResponseFn("You are a verification engine", (request) => {
+      capturedSystem = request.system;
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, nauruPassage, "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states."),
+          reason: "The passage confirms Nauru's population.",
+          confidence: 0.95,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    // Nauru's page — ranked worst lexically (4th) — was pulled into the top MAX_VERIFY_PASSAGES (3)
+    // pool by its semantic score, and the worst-scoring irrelevant page (Vatican's Swiss Guard one)
+    // was the one excluded by the slice, not Nauru's.
+    const sentPayload = JSON.parse(capturedSystem.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)![1]!);
+    const pooledText = JSON.stringify(sentPayload[0].passage_sentences);
+    expect(pooledText).toContain("resident population of approximately 12,000");
+    expect(pooledText).not.toContain("Swiss Guard");
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+    expect(claim.evidence).toBe("Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states.");
+  });
+
+  it("D026 §18: falls back to gate #4's lexical filter, unchanged, when the reranker call itself fails", async () => {
+    const claimId = uuid(1);
+    const claimText = "Nauru has a resident population of approximately 12,000 people.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const nauruPassage = "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states. ".repeat(5);
+    const irrelevantPassage = "This page has nothing to do with the claim at all, just filler text about something else. ".repeat(5);
+
+    const search = new FakeSearchProvider(
+      new Map([[claimText, [webSource({ url: "https://nauru.example", title: "Nauru", text: nauruPassage }), webSource({ url: "https://other.example", title: "Other", text: irrelevantPassage })]]])
+    );
+    // No "You are a passage relevance ranker" handler registered at all — MockProvider throws
+    // "no response configured", exhausting retries, so rerankPassages must catch it and fall back.
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, nauruPassage, "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states."),
+          reason: "The passage confirms Nauru's population.",
+          confidence: 0.95,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // gate #4 (isPassageRelevant) still passes both sources (each contains a claim key term) — the
+    // pipeline degrades to today's exact pre-§18 behavior, it doesn't drop the claim entirely.
+    expect(claim.verdict).toBe("supported");
+    expect(claim.evidence).toBe("Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states.");
+  });
+
+  it("D026 §18: skips the reranker call entirely when at most one candidate was fetched — nothing to rank", async () => {
+    const claimId = uuid(1);
+    const claimText = "Nauru has a resident population of approximately 12,000 people.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const nauruPassage = "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: nauruPassage })]]]));
+    // No reranker handler registered — if rerankPassages called the provider anyway, this would
+    // throw ("no response configured") and get silently swallowed by the fail-open catch, which
+    // would mask the bug this test exists to catch. Asserting the call count instead: VERIFY + D025
+    // §2's consistency classifier (fires for every non-"contradicted" verdict, unrelated to §18) is
+    // the existing 2-call baseline; a 3rd call would mean the reranker fired despite one candidate.
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, nauruPassage, "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states."),
+          reason: "Confirmed.",
+          confidence: 0.95,
+        })),
+      };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(provider.getCallCount()).toBe(2); // VERIFY + consistency classifier only — no reranker call attempted
+  });
+
   it("gate #1 downgrades a contradicted verdict citing a sentence number that doesn't exist (D026 §7: the model can no longer fabricate quote TEXT, so this is the new equivalent of the old free-text fabrication case)", async () => {
     const claimId = uuid(1);
     const claimText = "Bukowski attended Harvard.";

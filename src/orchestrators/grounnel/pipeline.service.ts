@@ -33,6 +33,9 @@ const MAX_VERIFY_PASSAGES = 3;
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
 // gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
 const ESCALATION_TIERS = [5, 8];
+// D026 §18 — kept short deliberately: the reranker only needs enough of each candidate to judge
+// its subject, not the whole page (that's what VERIFY's own passage pooling reads afterward).
+const RERANK_EXCERPT_LENGTH = 500;
 
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
 
@@ -74,6 +77,11 @@ const VerifyRawResponseSchema = z.object({ results: z.array(VerifyRawResultSchem
 // D025/T035 — batched "does reason support verdict?" classifier response.
 const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
 const ConsistencyCheckResponseSchema = z.object({ results: z.array(ConsistencyCheckResultSchema) });
+
+// D026 §18 — batched passage-relevance reranker response; score only, no free-text field (nothing
+// downstream reads an explanation, so the prompt doesn't ask for one).
+const PassageRerankResultSchema = z.object({ id: z.string(), score: z.number().min(0).max(100) });
+const PassageRerankResponseSchema = z.object({ results: z.array(PassageRerankResultSchema) });
 
 /** One gate's finding, generalized past a single needsRetry boolean tied to one gate (D025 §2).
  * Reviewed finding: `code` reuses `GateReason` (not a bare string) so it can't drift from what's
@@ -414,10 +422,11 @@ export class GrounnelPipelineService {
       return { claim, passages: [], sources };
     }
 
-    // D026 §6/§11 — check every already-fetched source (ranked by T048), pooling up to
+    // D026 §6/§11/§18 — check every already-fetched source (ranked by T048), pooling up to
     // MAX_VERIFY_PASSAGES relevant ones instead of stopping at the first — a claim's fact can
-    // span more than one page.
-    const relevantSources = okSources.filter((s) => isPassageRelevant(claim.text, s.text!)).slice(0, MAX_VERIFY_PASSAGES);
+    // span more than one page. rerankPassages augments T048's lexical order with a semantic score;
+    // it falls back to gate #4's lexical filter itself on error, so no separate fallback needed here.
+    const relevantSources = (await this.rerankPassages(auditId, claim, okSources)).slice(0, MAX_VERIFY_PASSAGES);
     if (relevantSources.length === 0) {
       logger.info(
         { module: MODULE, operation: "resolveEvidence", claimId: claim.id, checkedUrls: okSources.map((s) => s.url) },
@@ -427,6 +436,70 @@ export class GrounnelPipelineService {
     }
 
     return { claim, passages: relevantSources, sources };
+  }
+
+  /**
+   * D026 §18, real live-test finding: a claim about Nauru's population let a Vatican City page
+   * through gate #4 (isPassageRelevant, lexical presence only) because that page mentioned Nauru
+   * once in a comparison list while actually being about Vatican City. Lexical presence can't tell
+   * "about X" from "mentions X in passing" — this asks the model to score exactly that, per
+   * candidate, in one batched call. Augments T048's existing lexical order (hybrid-provider.ts's
+   * rankByRelevance already ran before `sources` reached here) rather than replacing it: each
+   * candidate's array position becomes a normalized lexical score, averaged with the LLM's score.
+   * Fails open to gate #4's lexical filter alone on any error — same convention as
+   * checkReasonVerdictConsistency (D025 §2): a broken signal degrades to the old behavior, it never
+   * blocks the claim.
+   */
+  private async rerankPassages(auditId: string, claim: PipelineClaimInput, sources: SearchPassage[]): Promise<SearchPassage[]> {
+    // Nothing to rank with at most one candidate — same fallback either way, skip the call entirely.
+    if (sources.length <= 1) {
+      return sources.filter((s) => isPassageRelevant(claim.text, s.text!));
+    }
+
+    const labeled = sources.map((s, i) => ({ label: String.fromCharCode(65 + i), source: s }));
+    try {
+      const candidates = labeled.map(({ label, source }) => ({
+        id: label,
+        title: source.title,
+        excerpt: (source.text ?? "").slice(0, RERANK_EXCERPT_LENGTH),
+      }));
+      const system = this.prompts.render("grounnel-passage-rerank", {
+        claim: claim.text,
+        candidates: JSON.stringify(candidates),
+      });
+      const parsed = await this.callGrounnelJson(
+        auditId,
+        system,
+        "Return the JSON now.",
+        PassageRerankResponseSchema,
+        "rerankPassages",
+        "passage_rerank",
+        this.prompts.getGrounnelPassageRerankVersion()
+      );
+      const llmScoreByLabel = new Map(parsed.results.map((r) => [r.id, r.score]));
+
+      const scored = labeled.map(({ label, source }, i) => {
+        const lexicalScore = 100 * (1 - i / labeled.length);
+        // Missing answer for this label (a short/malformed LLM response) falls back to the lexical
+        // score alone for just this candidate — fail-open per-candidate, not per-call.
+        const llmScore = llmScoreByLabel.get(label) ?? lexicalScore;
+        return { source, combined: (lexicalScore + llmScore) / 2 };
+      });
+      return scored.sort((a, b) => b.combined - a.combined).map((s) => s.source);
+    } catch (err) {
+      // Reviewed finding: unlike every other Gemini call site in this file, a RateLimitError here
+      // doesn't stop other in-flight claims from also hitting the same wall — fixing that needs a
+      // per-run signal threaded through resolveAllEvidence's AND escalateUnresolved's wave loops,
+      // not proportionate to the cost (fail-open still degrades correctly; RateLimitError isn't
+      // retried internally, so this is one wasted attempt per already-in-flight claim, not a storm).
+      // Tagged distinctly here so it's at least observable rather than silently identical to any
+      // other failure.
+      logger.warn(
+        { module: MODULE, operation: "rerankPassages", auditId, claimId: claim.id, rateLimited: err instanceof RateLimitError, err },
+        "Passage reranking failed — falling back to lexical order + gate #4's relevance filter"
+      );
+      return sources.filter((s) => isPassageRelevant(claim.text, s.text!));
+    }
   }
 
   private async writeNoEvidence(auditId: string, r: ResolvedEvidence): Promise<void> {
@@ -585,7 +658,7 @@ export class GrounnelPipelineService {
     user: string,
     schema: ZodSchema<T>,
     operation: string,
-    callType: "primary" | "consistency_retry" | "consistency_check" | "fill_in",
+    callType: "primary" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank",
     promptVersion: string,
     // Reviewed finding: real production case — a scraped page's "You are now subscribed" boilerplate,
     // quoted verbatim as VERIFY's `evidence`, false-positived the injection guard for a whole batch.
