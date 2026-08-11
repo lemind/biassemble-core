@@ -8,6 +8,9 @@ const MODULE = "grounnel-llm-call-store";
 export interface GrounnelLlmCallStore {
   recordCall(data: {
     runId: string;
+    // D026 §19 — omit for a batched call covering multiple claims (primary VERIFY, batched
+    // consistency_check); only genuinely single-claim calls should ever pass this.
+    claimId?: string;
     stage: "extract" | "verify";
     callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank";
     provider: string;
@@ -24,6 +27,7 @@ export interface GrounnelLlmCallStore {
 export class DrizzleGrounnelLlmCallStore implements GrounnelLlmCallStore {
   recordCall(context: {
     runId: string;
+    claimId?: string;
     stage: "extract" | "verify";
     callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank";
     provider: string;

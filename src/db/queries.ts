@@ -14,6 +14,8 @@ import {
   grounnelClaims,
   grounnelLlmCalls,
   grounnelSearchCalls,
+  grounnelSearchPages,
+  grounnelRerankDecisions,
   grounnelGateEvents,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus, GateReason } from "../persistence/types";
@@ -672,6 +674,7 @@ export async function insertGrounnelClaim(data: {
 
 export async function insertGrounnelLlmCall(data: {
   runId: string;
+  claimId?: string | null;
   stage: "extract" | "verify";
   callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank";
   provider: string;
@@ -700,11 +703,27 @@ export async function insertGrounnelSearchCall(data: {
   callType: "diy_fetch" | "tavily_fallback";
   url: string | null;
   resultCount: number;
-  status: "ok" | "paywalled" | "unreachable" | "blocked" | "rate_limited";
+  status: "ok" | "paywalled" | "unreachable" | "blocked" | "rate_limited" | "not_attempted";
   durationMs: number;
 }) {
   const [row] = await db().insert(grounnelSearchCalls).values(data).returning();
   return row;
+}
+
+// D026 §19 — the cleaned excerpt a successful DIY fetch produced; see schema.ts's table comment
+// for why this is a separate table, not a column on grounnel_search_calls.
+export async function insertGrounnelSearchPage(data: { runId: string; claimId: string; url: string; excerpt: string }) {
+  const [row] = await db().insert(grounnelSearchPages).values(data).returning();
+  return row;
+}
+
+// D026 §19 — batch, not one insert per candidate, same convention as insertGrounnelGateEvents:
+// every candidate a rerankPassages call scored is written together, right after scoring finishes.
+export async function insertGrounnelRerankDecisions(
+  rows: Array<{ runId: string; claimId: string; url: string; lexicalScore: number; llmScore: number; combinedScore: number; selected: boolean }>
+) {
+  if (rows.length === 0) return [];
+  return await db().insert(grounnelRerankDecisions).values(rows).returning();
 }
 
 // Batch, not one insert per gate — the 4 (or however many) gate decisions for one claim are

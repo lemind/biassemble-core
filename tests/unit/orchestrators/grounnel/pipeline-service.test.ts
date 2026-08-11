@@ -11,6 +11,7 @@ import { NoopGrounnelLlmCallStore } from "../../../mocks/noop-grounnel-llm-call-
 import { FakeGrounnelLlmCallStore } from "../../../mocks/fake-grounnel-llm-call-store.js";
 import { NoopGrounnelGateEventStore } from "../../../mocks/noop-grounnel-gate-event-store.js";
 import { FakeGrounnelGateEventStore } from "../../../mocks/fake-grounnel-gate-event-store.js";
+import { FakeGrounnelRerankDecisionStore } from "../../../mocks/fake-grounnel-rerank-decision-store.js";
 import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
 import type { CompletionRequest, Provider } from "../../../../src/providers/types.js";
 import { buildPassageSentences } from "../../../../src/orchestrators/grounnel/passage-sentences.js";
@@ -319,6 +320,136 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("supported");
     expect(claim.evidence).toBe("Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states.");
+  });
+
+  it("D026 §19: records lexical/llm/combined scores and which candidates were selected, one row per candidate", async () => {
+    const claimId = uuid(1);
+    const claimText = "Nauru has a resident population of approximately 12,000 people.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+
+    const vaticanPassage1 = "Vatican City is governed by the Pope as an absolute monarchy within Rome. ".repeat(5);
+    const vaticanPassage2 = "Vatican City uses the Euro as its official currency despite not being an EU member. ".repeat(5);
+    const vaticanPassage3 = "Vatican City's Swiss Guard has protected the Pope since the sixteenth century. ".repeat(5);
+    const nauruPassage = "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states. ".repeat(5);
+
+    const search = new FakeSearchProvider(
+      new Map([
+        [
+          claimText,
+          [
+            webSource({ url: "https://vatican-1.example", title: "Vatican City — governance", text: vaticanPassage1 }),
+            webSource({ url: "https://vatican-2.example", title: "Vatican City — economy", text: vaticanPassage2 }),
+            webSource({ url: "https://vatican-3.example", title: "Vatican City — Swiss Guard", text: vaticanPassage3 }),
+            webSource({ url: "https://nauru.example", title: "Nauru — population", text: nauruPassage }),
+          ],
+        ],
+      ])
+    );
+
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string; title: string }>;
+      return { results: candidates.map((c) => ({ id: c.id, score: c.title.includes("Nauru") ? 95 : 5 })) };
+    });
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, nauruPassage, "Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states."),
+          reason: "The passage confirms Nauru's population.",
+          confidence: 0.95,
+        })),
+      };
+    });
+
+    const rerankDecisionStore = new FakeGrounnelRerankDecisionStore();
+    const service = new GrounnelPipelineService(
+      search,
+      provider,
+      new PromptRegistry(),
+      store,
+      new NoopGrounnelHistoryStore(),
+      new NoopGrounnelLlmCallStore(),
+      new NoopGrounnelGateEventStore(),
+      rerankDecisionStore
+    );
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(rerankDecisionStore.calls).toHaveLength(1);
+    const { runId, claimId: recordedClaimId, decisions } = rerankDecisionStore.calls[0]!;
+    expect(runId).toBe(auditId);
+    expect(recordedClaimId).toBe(claimId);
+    expect(decisions).toHaveLength(4);
+
+    const nauru = decisions.find((d) => d.url === "https://nauru.example")!;
+    const vatican3 = decisions.find((d) => d.url === "https://vatican-3.example")!;
+    // Nauru was 4th (worst) lexically but scored 95 by the LLM; Vatican's Swiss Guard page was
+    // 3rd lexically but scored only 5 — the combined average flips their relative order.
+    expect(nauru.lexicalScore).toBeCloseTo(25); // 100 * (1 - 3/4)
+    expect(nauru.llmScore).toBe(95);
+    expect(nauru.combinedScore).toBeCloseTo(60);
+    expect(nauru.selected).toBe(true);
+    expect(vatican3.lexicalScore).toBeCloseTo(50); // 100 * (1 - 2/4)
+    expect(vatican3.llmScore).toBe(5);
+    expect(vatican3.selected).toBe(false); // excluded by the MAX_VERIFY_PASSAGES=3 slice
+    expect(decisions.filter((d) => d.selected)).toHaveLength(3);
+  });
+
+  it("D026 §19: attributes claimId to single-claim LLM calls (rerank, retry) but leaves it unset for a genuinely batched VERIFY call", async () => {
+    const claimA = uuid(1);
+    const claimB = uuid(2);
+    const claimTextA = "Nauru has a resident population of approximately 12,000 people.";
+    const claimTextB = "Mount Everest is 8,849 meters tall.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({
+      text: "article",
+      maxClaims: 100,
+      claims: [
+        { id: claimA, text: claimTextA },
+        { id: claimB, text: claimTextB },
+      ],
+      truncated: false,
+    });
+
+    const nauruPassage1 = "Some page about Nauru's history and government. ".repeat(5);
+    const nauruPassage2 = "Nauru has a resident population of approximately 12,000 people. ".repeat(5);
+    const everestPassage = "Mount Everest is 8,849 meters tall. ".repeat(5);
+    const search = new FakeSearchProvider(
+      new Map([
+        [claimTextA, [webSource({ url: "https://a1.example", text: nauruPassage1 }), webSource({ url: "https://a2.example", text: nauruPassage2 })]],
+        [claimTextB, [webSource({ url: "https://b1.example", text: everestPassage })]],
+      ])
+    );
+
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string }>;
+      return { results: candidates.map((c) => ({ id: c.id, score: 80 })) };
+    });
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: [{ source: "A", n: 1 }], reason: "Confirmed.", confidence: 0.95 })),
+      };
+    });
+
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore, new NoopGrounnelGateEventStore());
+    await service.run(auditId, [
+      { id: claimA, text: claimTextA },
+      { id: claimB, text: claimTextB },
+    ]);
+
+    // The batched primary VERIFY call covers both claims — no single claimId can honestly describe it.
+    const primaryCalls = llmCallStore.recordCallContexts.filter((c) => c.callType === "primary");
+    expect(primaryCalls).toHaveLength(1);
+    expect(primaryCalls[0]!.claimId).toBeUndefined();
+
+    // claimA had 2 candidates, so it genuinely went through the single-claim rerank path.
+    const rerankCalls = llmCallStore.recordCallContexts.filter((c) => c.callType === "passage_rerank");
+    expect(rerankCalls).toHaveLength(1);
+    expect(rerankCalls[0]!.claimId).toBe(claimA);
   });
 
   it("D026 §18: falls back to gate #4's lexical filter, unchanged, when the reranker call itself fails", async () => {

@@ -12,6 +12,10 @@ const FALLBACK_RETAINED_CANDIDATES = 8;
 // D021's research methodology bar — below this, a 200 is more likely a paywall/consent-wall
 // stub than real content (a common pattern: short "subscribe to continue" pages still return 200).
 const MIN_TEXT_LENGTH = 800;
+// D026 §19 — a debug snapshot of what a fetch actually produced, not the full page; separate
+// concern from pipeline.service.ts's RERANK_EXCERPT_LENGTH (prompt-cost capped), coincidentally
+// similar in scale but tuned for "enough to debug a claim later," not "cheap enough to prompt with."
+const SEARCH_PAGE_EXCERPT_LENGTH = 3000;
 const FETCH_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 // D021 "Do not" — real rate-limit handling required. Applies to both the Gemini discovery call
@@ -127,6 +131,23 @@ export class HybridSearchProvider implements SearchProvider {
     // so a higher tier may surface different/more candidates than a prior tier's discovery did
     // (live search isn't deterministic — same reason every other variance in this pipeline exists).
     const fetchCap = context?.maxCandidates ?? MAX_CANDIDATES;
+    // D026 §19 — everything discoverUrls() returned beyond fetchCap was never fetched at all and,
+    // until now, was silently discarded — closing the gap T053's own trigger first named
+    // ("discovery returned 7 candidates, only 3 ever got fetched") without a way to see the other 4.
+    if (context) {
+      for (const skipped of candidates.slice(fetchCap)) {
+        this.searchCallStore.recordSearchCall({
+          runId: context.runId,
+          claimId: context.claimId,
+          query,
+          callType: "diy_fetch",
+          url: skipped.url,
+          resultCount: 1,
+          status: "not_attempted",
+          durationMs: 0,
+        });
+      }
+    }
     // Granularity, decided (D023 §6): one row per attempted DIY candidate — real per-URL
     // status/timing, matching this method's own "returns every attempted source" contract.
     const attempted = await Promise.all(
@@ -143,6 +164,7 @@ export class HybridSearchProvider implements SearchProvider {
             resultCount: 1,
             status: result.status,
             durationMs: Date.now() - t0,
+            excerpt: result.status === "ok" && result.text ? result.text.slice(0, SEARCH_PAGE_EXCERPT_LENGTH) : undefined,
           });
         }
         return result;

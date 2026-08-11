@@ -15,6 +15,7 @@ import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
+import { NoopGrounnelRerankDecisionStore, type GrounnelRerankDecisionStore } from "../../persistence/grounnel-rerank-decision-store.js";
 import type { SearchProvider, SearchPassage } from "../../providers/search/search-provider.js";
 import type { GateReason } from "../../persistence/types.js";
 
@@ -126,7 +127,11 @@ export class GrounnelPipelineService {
     private readonly grounnelStore: GrounnelStore,
     private readonly historyStore: GrounnelHistoryStore,
     private readonly llmCallStore: GrounnelLlmCallStore,
-    private readonly gateEventStore: GrounnelGateEventStore
+    private readonly gateEventStore: GrounnelGateEventStore,
+    // D026 §19 — defaulted, not required: keeps every pre-existing call site (production wiring in
+    // server.ts/run-grounnel-eval.ts aside) compiling unchanged; only tests that specifically assert
+    // on rerank-decision telemetry need to pass a real one.
+    private readonly rerankDecisionStore: GrounnelRerankDecisionStore = new NoopGrounnelRerankDecisionStore()
   ) {}
 
   async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<void> {
@@ -474,7 +479,9 @@ export class GrounnelPipelineService {
         PassageRerankResponseSchema,
         "rerankPassages",
         "passage_rerank",
-        this.prompts.getGrounnelPassageRerankVersion()
+        this.prompts.getGrounnelPassageRerankVersion(),
+        [],
+        claim.id
       );
       const llmScoreByLabel = new Map(parsed.results.map((r) => [r.id, r.score]));
 
@@ -483,9 +490,17 @@ export class GrounnelPipelineService {
         // Missing answer for this label (a short/malformed LLM response) falls back to the lexical
         // score alone for just this candidate — fail-open per-candidate, not per-call.
         const llmScore = llmScoreByLabel.get(label) ?? lexicalScore;
-        return { source, combined: (lexicalScore + llmScore) / 2 };
+        return { source, lexicalScore, llmScore, combined: (lexicalScore + llmScore) / 2 };
       });
-      return scored.sort((a, b) => b.combined - a.combined).map((s) => s.source);
+      const ranked = scored.sort((a, b) => b.combined - a.combined);
+      // D026 §19 — "selected" mirrors resolveEvidence's own MAX_VERIFY_PASSAGES slice on whatever
+      // this method returns; kept in sync here since this is the one place that owns the sort order.
+      this.rerankDecisionStore.recordRerankDecisions(
+        auditId,
+        claim.id,
+        ranked.map((r, i) => ({ url: r.source.url, lexicalScore: r.lexicalScore, llmScore: r.llmScore, combinedScore: r.combined, selected: i < MAX_VERIFY_PASSAGES }))
+      );
+      return ranked.map((s) => s.source);
     } catch (err) {
       // Reviewed finding: unlike every other Gemini call site in this file, a RateLimitError here
       // doesn't stop other in-flight claims from also hitting the same wall — fixing that needs a
@@ -662,7 +677,10 @@ export class GrounnelPipelineService {
     promptVersion: string,
     // Reviewed finding: real production case — a scraped page's "You are now subscribed" boilerplate,
     // quoted verbatim as VERIFY's `evidence`, false-positived the injection guard for a whole batch.
-    quotedFields: string[] = []
+    quotedFields: string[] = [],
+    // D026 §19 — only ever set by a caller that's genuinely single-claim; a batched call (primary
+    // VERIFY, multi-claim consistency_check) passes undefined rather than picking one arbitrarily.
+    claimId?: string
   ): Promise<T> {
     return callLlmForJson({
       provider: this.provider,
@@ -679,6 +697,7 @@ export class GrounnelPipelineService {
       isValid: (result) => Array.isArray(result.results),
       onComplete: this.llmCallStore.recordCall({
         runId: auditId,
+        claimId,
         stage: "verify",
         callType,
         provider: this.provider.mode,
@@ -726,7 +745,10 @@ export class GrounnelPipelineService {
     });
     // No quotedFields needed here (unlike the pre-T043 free-text evidence field): the raw response
     // only ever contains citations, so there's no scraped-text-in-output case left to blank.
-    const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion);
+    // D026 §19 — a single-claim call (retryVerifyClaim) attributes claimId; a batch (runBatch's
+    // primary call) can't, so it stays undefined rather than picking one of the batch arbitrarily.
+    const claimId = pairs.length === 1 ? pairs[0]!.id : undefined;
+    const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion, [], claimId);
     return {
       results: raw.results.map((r) => ({
         id: r.id,
@@ -790,6 +812,9 @@ export class GrounnelPipelineService {
     if (items.length === 0) return new Map();
     const pairs = items.map((i) => ({ id: i.id, claim: i.claim, reason: i.reason, verdict: i.verdict }));
     const system = this.prompts.render("grounnel-consistency-check", { reason_verdict_pairs: JSON.stringify(pairs) });
+    // D026 §19 — same convention as callVerify: single-item batch attributes claimId, a real
+    // multi-claim batch stays undefined.
+    const claimId = items.length === 1 ? items[0]!.id : undefined;
     try {
       const parsed = await this.callGrounnelJson(
         auditId,
@@ -798,7 +823,9 @@ export class GrounnelPipelineService {
         ConsistencyCheckResponseSchema,
         "checkReasonVerdictConsistency",
         "consistency_check",
-        this.prompts.getGrounnelConsistencyCheckVersion()
+        this.prompts.getGrounnelConsistencyCheckVersion(),
+        [],
+        claimId
       );
       // Reviewed finding: schema-valid but empty is indistinguishable from "the model ignored every
       // candidate" — worth a log line, unlike a genuine failure (caught below), since callLlmForJson's

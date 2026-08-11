@@ -513,6 +513,64 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(fallbackCalls[0]).toMatchObject({ runId: "r1", claimId: "c1", url: null, status: "ok", resultCount: 1 });
   });
 
+  it("D026 §19: logs a 'not_attempted' row for every discovered candidate beyond fetchCap, not just the ones actually fetched", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(
+          geminiGroundingResponse([
+            { uri: "https://one.example", title: "One" },
+            { uri: "https://two.example", title: "Two" },
+            { uri: "https://three.example", title: "Three" },
+            { uri: "https://four.example", title: "Four" },
+            { uri: "https://five.example", title: "Five" },
+          ])
+        );
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const searchCallStore = new FakeGrounnelSearchCallStore();
+    // Default MAX_CANDIDATES is 3 — discovery returned 5, so 2 should be logged as not_attempted
+    // without ever being fetched (the real T053 trigger gap, now made queryable).
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    const notAttempted = searchCallStore.calls.filter((c) => c.status === "not_attempted");
+    expect(notAttempted).toHaveLength(2);
+    expect(notAttempted.map((c) => c.url).sort()).toEqual(["https://five.example", "https://four.example"]);
+    expect(notAttempted.every((c) => c.durationMs === 0 && c.excerpt === undefined)).toBe(true);
+    // The first 3 (fetchCap) were genuinely attempted, not also logged as not_attempted.
+    expect(searchCallStore.calls.filter((c) => c.status === "ok")).toHaveLength(3);
+  });
+
+  it("D026 §19: stores the cleaned excerpt actually extracted for a successful DIY fetch, not for a failed one", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(
+          geminiGroundingResponse([
+            { uri: "https://ok.example", title: "OK" },
+            { uri: "https://blocked.example", title: "Blocked" },
+          ])
+        );
+      }
+      if (url.includes("blocked.example")) return Promise.resolve({ ok: false, status: 403, url });
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const searchCallStore = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    const okCall = searchCallStore.calls.find((c) => c.url === "https://ok.example")!;
+    const blockedCall = searchCallStore.calls.find((c) => c.url === "https://blocked.example")!;
+    expect(okCall.excerpt).toContain("Bukowski attended Los Angeles City College");
+    expect(blockedCall.excerpt).toBeUndefined();
+  });
+
   it("T026/D023 §6: no tavily_fallback row is written when the first DIY candidate already succeeds", async () => {
     const fallback = new StubFallback([]);
     const fetchMock = vi.fn().mockImplementation((url: string) => {
