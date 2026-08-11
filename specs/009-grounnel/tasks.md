@@ -825,3 +825,14 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** T048, T053, T058 (this is observability into all three).
   - **Files:** `src/db/schema.ts`, `src/db/queries.ts`, `src/persistence/grounnel-llm-call-store.ts`, `src/persistence/grounnel-search-call-store.ts`, `src/persistence/grounnel-rerank-decision-store.ts` (new), `src/providers/search/hybrid-provider.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, `src/server.ts`, `src/evaluation/run-grounnel-eval.ts`, `src/db/migrations/0013_petite_mikhail_rasputin.sql`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§19 addendum).
   - **Size:** L.
+
+## Phase 27 — Relevance-selected excerpts, chrome-tag stripping (D026 §20, real bug in §19's own debug tool, 2026-08-11)
+
+- [x] **T060** Replace blind character-prefix excerpts with relevance-selected text; strip nav/footer/aside entirely
+  - **Brief:** Using T059's new telemetry to investigate a live blue-whale failure, the stored debug excerpt for Wikipedia's own page was almost entirely navigation chrome ("Jump to content / Main menu") — both the reranker's prompt excerpt and the new debug excerpt took a blind `.slice(0, N)` prefix of unfiltered extracted text, and neither `extractTextFromHtml` nor the truncation distinguished real content from chrome.
+  - **Done:** `RERANK_EXCERPT_LENGTH`/`SEARCH_PAGE_EXCERPT_LENGTH` char-cap constants removed. Both excerpts now built via `buildPassageSentences` (claim-key-term relevance scoring, already used for VERIFY's own passage pooling) — bounded by sentence count, never character position. `extractTextFromHtml` strips `<nav>`/`<footer>`/`<aside>` blocks entirely, same treatment `<script>`/`<style>` already got. Reviewed finding caught before landing: `<header>` deliberately excluded — it's legitimately used for an article's own title+byline in semantic HTML5, not just site chrome.
+  - **Verify:** T050's nav-boundary test updated (nav junk now absent entirely, not just isolated — strictly stronger than the original fix). New tests: footer/aside stripped, `<header>` explicitly proven to survive; both excerpts find a claim-relevant sentence buried well past the old character caps in a long page. Full suite 972/972, clean typecheck.
+  - **Explicitly deferred:** re-running the original blue-whale live case against the deployed fix to confirm Wikipedia's excerpt now actually surfaces the fact — next step, same convention as every fix this session.
+  - **Dependencies:** T058 (reranker), T059 (debug excerpt this fixes).
+  - **Files:** `src/providers/search/hybrid-provider.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§20 addendum).
+  - **Size:** S.

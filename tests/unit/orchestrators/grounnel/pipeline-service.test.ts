@@ -322,6 +322,42 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBe("Nauru has a resident population of approximately 12,000 people, making it one of the least populous sovereign states.");
   });
 
+  it("D026 §20: the reranker's own LLM-facing excerpt is relevance-selected, not a character prefix — finds the claim-relevant sentence even buried deep in a candidate's text", async () => {
+    const claimId = uuid(1);
+    const claimText = "Nauru has a resident population of approximately 12,000 people.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+
+    const donorSentence = "Nauru has a resident population of approximately 12,000 people, according to the census.";
+    const unrelatedFiller = "This paragraph discusses unrelated topics like weather patterns and shipping routes. ".repeat(80);
+    const buriedPassage = `${unrelatedFiller}${donorSentence} ${unrelatedFiller}`;
+    const otherPassage = "A short, unrelated page about something else entirely. ".repeat(5);
+
+    const search = new FakeSearchProvider(
+      new Map([[claimText, [webSource({ url: "https://buried.example", text: buriedPassage }), webSource({ url: "https://other.example", text: otherPassage })]]])
+    );
+
+    let capturedRerankSystem = "";
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      capturedRerankSystem = request.system;
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string }>;
+      return { results: candidates.map((c) => ({ id: c.id, score: 80 })) };
+    });
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: [{ source: "A", n: 1 }], reason: "Confirmed.", confidence: 0.95 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const candidates = JSON.parse(capturedRerankSystem.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string; excerpt: string }>;
+    const buried = candidates.find((c) => c.excerpt.includes(donorSentence));
+    expect(buried).toBeDefined();
+    // Well past the old 500-char prefix cap — proves this isn't a lucky prefix hit.
+    expect(unrelatedFiller.length).toBeGreaterThan(500);
+  });
+
   it("D026 §19: records lexical/llm/combined scores and which candidates were selected, one row per candidate", async () => {
     const claimId = uuid(1);
     const claimText = "Nauru has a resident population of approximately 12,000 people.";

@@ -1,5 +1,9 @@
 import { logger } from "../../observability/logger.js";
 import { extractKeyTerms, scoreKeyTermMatches, buildSearchQuery } from "../../lib/claim-terms.js";
+// D026 §20 — a shared, dependency-free utility (only imports from lib/claim-terms.js itself,
+// nothing orchestrator-specific), reused here rather than duplicated: same relevance-selection
+// logic pipeline.service.ts's rerankPassages uses for its own LLM-facing excerpt.
+import { buildPassageSentences } from "../../orchestrators/grounnel/passage-sentences.js";
 import type { SearchProvider, SearchPassage, SourceStatus } from "./search-provider.js";
 import type { GrounnelSearchCallStore } from "../../persistence/grounnel-search-call-store.js";
 
@@ -12,10 +16,6 @@ const FALLBACK_RETAINED_CANDIDATES = 8;
 // D021's research methodology bar — below this, a 200 is more likely a paywall/consent-wall
 // stub than real content (a common pattern: short "subscribe to continue" pages still return 200).
 const MIN_TEXT_LENGTH = 800;
-// D026 §19 — a debug snapshot of what a fetch actually produced, not the full page; separate
-// concern from pipeline.service.ts's RERANK_EXCERPT_LENGTH (prompt-cost capped), coincidentally
-// similar in scale but tuned for "enough to debug a claim later," not "cheap enough to prompt with."
-const SEARCH_PAGE_EXCERPT_LENGTH = 3000;
 const FETCH_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 // D021 "Do not" — real rate-limit handling required. Applies to both the Gemini discovery call
@@ -90,13 +90,27 @@ const BLOCK_BOUNDARY_RE = /<\/(?:p|div|li|h[1-6]|header|nav|footer|section|artic
 // rather than by '>', so the generic stripper only ever sees '>'-free attributes afterward.
 const DATA_MW_ATTR_RE = /\sdata-(?:mw|parsoid)\s*=\s*("[^"]*"|'[^']*')/gi;
 
-// Strips <script>/<style> and tags, decodes common entities — no HTML-parsing dependency added; the dependency-free TS equivalent of D021's BeautifulSoup script (MVP-good, not a general parser).
+// D026 §20 — chrome tags, not content: stripped with their content entirely (same treatment as
+// script/style below), not just their own tag boundary. Without this, nav/footer/sidebar text
+// competes for a slot in buildPassageSentences' relevance-scored pool on equal footing with the
+// real article, and dominates any excerpt built from "the first N characters of the page".
+// Reviewed finding: deliberately excludes <header> — semantic HTML5 uses <header> for both
+// site-level chrome AND an article's own title+byline (<article><header><h1>...`), and stripping
+// it unconditionally risks deleting exactly the high-relevance text this fix exists to surface.
+// nav/footer/aside don't carry that same risk in practice.
+const CHROME_TAGS = "nav|footer|aside";
+const CHROME_BLOCK_RE = new RegExp(`<(?:${CHROME_TAGS})[^>]*>[\\s\\S]*?<\\/(?:${CHROME_TAGS})>`, "gi");
+const CHROME_UNCLOSED_RE = new RegExp(`<(?:${CHROME_TAGS})[^>]*>[\\s\\S]*$`, "gi");
+
+// Strips <script>/<style>/chrome tags and tags, decodes common entities — no HTML-parsing dependency added; the dependency-free TS equivalent of D021's BeautifulSoup script (MVP-good, not a general parser).
 function extractTextFromHtml(html: string): string {
   const withoutScripts = html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<script[^>]*>[\s\S]*$/gi, " ")
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
     .replace(/<style[^>]*>[\s\S]*$/gi, " ")
+    .replace(CHROME_BLOCK_RE, " ")
+    .replace(CHROME_UNCLOSED_RE, " ")
     .replace(DATA_MW_ATTR_RE, "");
   const withBlockBoundaries = withoutScripts.replace(BLOCK_BOUNDARY_RE, "\n");
   const withoutTags = withBlockBoundaries.replace(/<[^>]+>/g, " ");
@@ -155,6 +169,16 @@ export class HybridSearchProvider implements SearchProvider {
         const t0 = Date.now();
         const result: SearchPassage = { ...(await this.fetchCandidate(candidate)), retrievalMethod: "diy_fetch" };
         if (context) {
+          // D026 §20 — reviewed finding: a blind `.slice(0, N)` character prefix captured mostly
+          // nav chrome on long pages (Wikipedia's "Jump to content / Main menu" before any real
+          // text). Select by relevance instead — the same claim-key-term sentence scoring VERIFY's
+          // own passage pooling uses — bounded by sentence count, never by character position.
+          const excerpt =
+            result.status === "ok" && result.text
+              ? buildPassageSentences(query, result.text)
+                  .map((s) => s.text)
+                  .join(" ")
+              : undefined;
           this.searchCallStore.recordSearchCall({
             runId: context.runId,
             claimId: context.claimId,
@@ -164,7 +188,7 @@ export class HybridSearchProvider implements SearchProvider {
             resultCount: 1,
             status: result.status,
             durationMs: Date.now() - t0,
-            excerpt: result.status === "ok" && result.text ? result.text.slice(0, SEARCH_PAGE_EXCERPT_LENGTH) : undefined,
+            excerpt,
           });
         }
         return result;

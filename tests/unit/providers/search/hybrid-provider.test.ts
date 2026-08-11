@@ -146,7 +146,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results.map((r) => r.url)).toEqual(["https://a.example", "https://b.example"]);
   });
 
-  it("reviewed finding (g05-statue-of-liberty, T050): inserts a hard boundary at block-tag edges so a punctuation-less nav block doesn't fuse onto the next real sentence", async () => {
+  it("reviewed finding (g05-statue-of-liberty, T050 / D026 §20): a <nav> block is stripped entirely, not just boundary-separated, so it can't fuse onto or corrupt the next real sentence", async () => {
     const navJunk = "Sign In Blog Categories ALL CULTURE TRAVEL HISTORY";
     const donorSentence = "The Statue of Liberty, a gift from the people of France to the United States, arrived in 1885.";
     const filler = "It has stood on Liberty Island ever since welcoming visitors. ".repeat(15);
@@ -164,11 +164,11 @@ describe("HybridSearchProvider (T008, D021)", () => {
     const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     const results = await provider.search("The Statue of Liberty was a gift from Canada to the United States.");
 
-    expect(results[0]!.text).toContain(navJunk);
+    // D026 §20 — stronger than T050's original fix: <nav> content is removed entirely now, not
+    // just kept-but-boundary-separated, so it never competes for a slot in any relevance scoring
+    // downstream. The old assertion (nav junk present, just isolated) no longer applies.
+    expect(results[0]!.text).not.toContain(navJunk);
     expect(results[0]!.text).toContain(donorSentence);
-    // The bug: without a boundary, the nav text and donor sentence become ONE run-on "sentence" —
-    // splitting on the real sentence-ending period after "1885." must isolate the donor sentence
-    // from the nav junk that precedes it, not keep them fused together.
     const sentences = results[0]!.text.split(/(?<=[.!?])\s+(?=[A-Z0-9"'“])|\n+/);
     const donorOnly = sentences.find((s: string) => s.includes(donorSentence));
     expect(donorOnly).toBe(donorSentence);
@@ -463,6 +463,56 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results[0]!.text).not.toContain("cite journal");
     expect(results[0]!.text).not.toContain("data-mw");
     expect(results[0]!.text).not.toContain('"parts"');
+  });
+
+  it("D026 §20: strips <footer>/<aside> content entirely, same treatment as <nav> — but deliberately NOT <header>, which can legitimately hold an article's own title/byline", async () => {
+    const headerContent = "The blue whale story — by a Marine Biologist"; // simulates a real <article><header> title/byline, not site chrome
+    const footerJunk = "© 2026 Acme News. Privacy Policy. Terms of Service.";
+    const asideJunk = "Related: 10 Ocean Facts You Never Knew";
+    const donorSentence = "The blue whale is the largest animal known to have ever existed.";
+    const html = `<html><body><header>${headerContent}</header><aside>${asideJunk}</aside><p>${donorSentence} ${LONG_TEXT}</p><footer>${footerJunk}</footer></body></html>`;
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://example.com/blue-whale", title: "Blue whale" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => html });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("some claim");
+
+    expect(results[0]!.text).not.toContain(footerJunk);
+    expect(results[0]!.text).not.toContain(asideJunk);
+    expect(results[0]!.text).toContain(headerContent);
+    expect(results[0]!.text).toContain(donorSentence);
+  });
+
+  it("D026 §20: the stored excerpt is relevance-selected, not a character prefix — finds the claim-relevant sentence even buried deep in a long page", async () => {
+    const donorSentence = "Nauru has a resident population of approximately 12,000 people.";
+    // Thousands of characters of unrelated filler BEFORE the relevant sentence — a blind
+    // `.slice(0, N)` prefix would never reach it; relevance-based selection doesn't care where
+    // in the page it sits.
+    const unrelatedFiller = "This paragraph discusses unrelated topics like weather patterns and shipping routes. ".repeat(80);
+    const html = `<html><body><p>${unrelatedFiller}${donorSentence} ${unrelatedFiller}</p></body></html>`;
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://example.com/nauru", title: "Nauru" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => html });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const searchCallStore = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
+    await provider.search("Nauru has a resident population of approximately 12,000 people.", { runId: "r1", claimId: "c1" });
+
+    const call = searchCallStore.calls.find((c) => c.status === "ok")!;
+    expect(call.excerpt).toContain(donorSentence);
+    // Well past the old 3000-char cap — proves this isn't a lucky prefix hit.
+    expect(unrelatedFiller.length).toBeGreaterThan(3000);
   });
 
   it("T026/D023 §6: writes zero grounnel_search_calls rows when no context is given (backward compatible)", async () => {

@@ -3,7 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
-import { buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
+import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
 import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
@@ -34,10 +34,6 @@ const MAX_VERIFY_PASSAGES = 3;
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
 // gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
 const ESCALATION_TIERS = [5, 8];
-// D026 §18 — kept short deliberately: the reranker only needs enough of each candidate to judge
-// its subject, not the whole page (that's what VERIFY's own passage pooling reads afterward).
-const RERANK_EXCERPT_LENGTH = 500;
-
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
 
 const NO_EVIDENCE_REASON = "No relevant source found for this claim.";
@@ -463,10 +459,16 @@ export class GrounnelPipelineService {
 
     const labeled = sources.map((s, i) => ({ label: String.fromCharCode(65 + i), source: s }));
     try {
+      // D026 §20 — reviewed finding: a blind character-prefix excerpt captured mostly nav chrome
+      // on long pages (Wikipedia's own "Jump to content / Main menu" before any real text). Select
+      // by relevance instead — the same claim-key-term sentence scoring VERIFY's own passage
+      // pooling uses — bounded by sentence count, never by character position.
       const candidates = labeled.map(({ label, source }) => ({
         id: label,
         title: source.title,
-        excerpt: (source.text ?? "").slice(0, RERANK_EXCERPT_LENGTH),
+        excerpt: buildPassageSentences(claim.text, source.text ?? "")
+          .map((s) => s.text)
+          .join(" "),
       }));
       const system = this.prompts.render("grounnel-passage-rerank", {
         claim: claim.text,
