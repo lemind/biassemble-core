@@ -20,8 +20,10 @@ describe("gate #4 — passage relevance pre-filter (T006)", () => {
     expect(isPassageRelevant(claim, passage)).toBe(true);
   });
 
-  it("does not drop a claim with no extractable entities/numbers — fails open, nothing to check", () => {
-    const claim = "the weather was nice that day";
+  it("does not drop a claim with no extractable key terms — fails open, nothing to check", () => {
+    // D026 §21 — extractKeyTerms now falls back to stopword-filtered common nouns/adjectives when
+    // there's no entity/number, so a genuinely empty term set needs an all-stopword claim to test.
+    const claim = "It was there before that.";
     const passage = "completely unrelated text";
     expect(isPassageRelevant(claim, passage)).toBe(true);
   });

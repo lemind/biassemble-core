@@ -156,11 +156,13 @@ describe("gate #1b — claim/reason key-term overlap, cross-claim contamination 
     expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
   });
 
-  it("fail-open: a claim with no extractable key terms (no capitalized entities or numbers) abstains rather than flagging every such claim", () => {
+  it("fail-open: a claim with no extractable key terms at all abstains rather than flagging every such claim", () => {
+    // D026 §21 — extractKeyTerms now falls back to stopword-filtered common nouns/adjectives when
+    // there's no entity/number, so a genuinely empty term set needs an all-stopword claim to test.
     const result = applyClaimReasonOverlapGate({
       verdict: "contradicted",
       reason: "totally unrelated text sharing nothing with the claim",
-      claimText: "the sky is blue and the grass is green",
+      claimText: "It was there before that.",
     });
     expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
   });

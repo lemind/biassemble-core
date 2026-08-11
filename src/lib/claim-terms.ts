@@ -43,6 +43,23 @@ function tokenize(text: string): CleanWord[] {
   return out;
 }
 
+// Shared by buildSearchQuery and extractKeyTerms's D026 §21 fallback — same trim/stopword-drop/
+// dedup logic either way, just original case (buildSearchQuery's own query string) vs lowercase
+// (extractKeyTerms' scoring terms). Returns both per word so each caller picks what it needs.
+function stopwordFilteredWords(text: string): Array<{ clean: string; lower: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ clean: string; lower: string }> = [];
+  for (const word of text.split(/\s+/)) {
+    const clean = word.replace(/^[.,!?;:"'()]+/, "").replace(/[.,!?;:"'()]+$/, "");
+    if (!clean) continue;
+    const lower = clean.toLowerCase();
+    if (STOPWORDS.has(lower) || seen.has(lower)) continue;
+    seen.add(lower);
+    out.push({ clean, lower });
+  }
+  return out;
+}
+
 /** Exported for reuse by gate #4 (`passage-filter.ts`) and gates.ts's Case A gate (D022 §4) — one definition, no drift risk. */
 export function extractKeyTerms(claimText: string): string[] {
   const seen = new Set<string>();
@@ -54,7 +71,16 @@ export function extractKeyTerms(claimText: string): string[] {
     seen.add(lower);
     terms.push(lower);
   }
-  return terms;
+  if (terms.length > 0) return terms;
+  // D026 §21, real live-test bug: a claim built entirely from ordinary lowercase nouns/adjectives
+  // with no proper noun or number ("the blue whale is the largest animal known to have ever
+  // existed") produced ZERO key terms above, silently disabling relevance scoring for every
+  // consumer — buildPassageSentences' own fail-open then reverted to "take the first 20 sentences
+  // of the page," i.e. its site header/chrome, not the article. Fall back to the same stopword-
+  // based classification buildSearchQuery already proved in production (g11-bloomberg-fallback) —
+  // ONLY when the stricter entity/number pass found nothing, so claims that already have real
+  // entity coverage keep today's narrower, more precise term set unchanged.
+  return stopwordFilteredWords(claimText).map((w) => w.lower);
 }
 
 /** Count of distinct claim key-terms present in `text` — the ranking signal for candidate selection (D026 §6, T039). */
@@ -73,15 +99,6 @@ export function scoreKeyTermMatches(terms: string[], text: string): number {
  * nothing survives stopword removal — same fail-open convention as extractKeyTerms/isPassageRelevant.
  */
 export function buildSearchQuery(claimText: string): string {
-  const seen = new Set<string>();
-  const words: string[] = [];
-  for (const word of claimText.split(/\s+/)) {
-    const clean = word.replace(/^[.,!?;:"'()]+/, "").replace(/[.,!?;:"'()]+$/, "");
-    if (!clean) continue;
-    const lower = clean.toLowerCase();
-    if (STOPWORDS.has(lower) || seen.has(lower)) continue;
-    seen.add(lower);
-    words.push(clean);
-  }
+  const words = stopwordFilteredWords(claimText).map((w) => w.clean);
   return words.length > 0 ? words.join(" ") : claimText;
 }

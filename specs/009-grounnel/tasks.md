@@ -836,3 +836,14 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** T058 (reranker), T059 (debug excerpt this fixes).
   - **Files:** `src/providers/search/hybrid-provider.ts`, `src/orchestrators/grounnel/pipeline.service.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§20 addendum).
   - **Size:** S.
+
+## Phase 28 — extractKeyTerms returned zero terms for claims with no proper noun or number (D026 §21, real live-test bug, 2026-08-11)
+
+- [x] **T061** Stopword-based fallback in `extractKeyTerms` when the entity/number classifier finds nothing
+  - **Brief:** Traced §20's fix with the actual function: `extractKeyTerms` returned `[]` for "The blue whale is the largest animal known to have ever existed" (no proper noun, no number) — its classifier only counts capitalized/digit-bearing words as "key." Zero terms silently disabled `buildPassageSentences`' relevance scoring, reverting it to "take the first N sentences of the page" (site chrome, not the article) — the real reason §20's own fix still failed on Wikipedia.
+  - **Done:** `extractKeyTerms` falls back to `buildSearchQuery`'s already-proven stopword-based classification (g11-bloomberg-fallback) *only* when the entity/number pass returns empty. Claims with real entity coverage are completely unaffected — narrower, more precise term set preserved.
+  - **Verify:** Two pre-existing tests updated (their example claims no longer hit the true empty-set case; replaced with a genuinely all-stopword claim, same test intent preserved). Four new tests: real blue-whale claim now scores correctly; a real sentence now clearly outscores a title/nav fragment (the actual bug); Nauru-shaped claims unchanged; genuinely all-stopword claims still return empty. Full suite 976/976, clean typecheck.
+  - **Explicitly deferred:** VERIFY's own reasoning-consistency instability on identical evidence (found investigating Nauru while verifying this fix) — a separate, unaddressed gap, not a retrieval/extraction/key-term problem.
+  - **Dependencies:** T060 (the fix this completes — §20 alone wasn't sufficient).
+  - **Files:** `src/lib/claim-terms.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§21 addendum).
+  - **Size:** S.
