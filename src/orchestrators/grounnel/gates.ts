@@ -28,9 +28,17 @@ export interface ReasonConsistencyResult {
  * contradicted — also observed live) has no equivalent hardened detector in this codebase yet.
  * A fresh "support-language" regex now would repeat the exact under-tested-heuristic mistake
  * this file's own incident history warns against — a named, not silently dropped, gap.
+ *
+ * D026 §22, real bug: `unverifiable` is excluded for the same reason applyImplicitNegationGate
+ * already excludes it — it's the CONFIDENCE section's deliberate downgrade of a low-confidence
+ * relationship, not a different relationship judgment. The reason text still legitimately
+ * describes the underlying (possibly CONFLICT-shaped) relationship per the verify prompt's own
+ * STEP1-3 binding rule, so without this exclusion this gate was force-flipping every low-confidence
+ * conflict read straight back into a hard `contradicted` — the exact high-certainty false positive
+ * the CONFIDENCE downgrade exists to prevent.
  */
 export function applyReasonConsistencyGate(input: ReasonConsistencyInput): ReasonConsistencyResult {
-  if (input.verdict === "contradicted" || !input.reason) {
+  if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
   if (!CONTRADICTION_LANGUAGE_RE.test(input.reason) || NEGATED_CONTRADICTION_RE.test(input.reason)) {

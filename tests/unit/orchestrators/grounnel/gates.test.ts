@@ -394,6 +394,17 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
+
+  it("D026 §22, real bug: does NOT force-flip a CONFIDENCE-downgraded 'unverifiable' back to 'contradicted', even though its reason still legitimately describes the conflict it was downgraded from", () => {
+    // Same exclusion applyImplicitNegationGate already has, for the same reason — 'unverifiable' is
+    // a confidence-level downgrade of whatever relationship was found, not a different relationship
+    // judgment, so it must not be treated as a verdict this gate should override.
+    const result = applyReasonConsistencyGate({
+      verdict: "unverifiable",
+      reason: "The passage states the bridge opened in 1931, which conflicts with the claim's 1937 date, but the match is only approximate so confidence is low.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
 });
 
 describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real live-eval gap: g05)", () => {
