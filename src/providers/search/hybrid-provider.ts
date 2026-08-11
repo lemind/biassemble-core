@@ -223,10 +223,18 @@ export class HybridSearchProvider implements SearchProvider {
       .map(({ r }) => r);
   }
 
-  /** Shared by the natural "every DIY candidate failed" path and `forceFallback` (test/debug escape hatch). */
+  /**
+   * Shared by the natural "every DIY candidate failed" path and `forceFallback` (test/debug escape
+   * hatch). D026 §22/T064, real bug found in self-review: `maxCandidates` was silently dropped by
+   * this narrower context type — every escalation tier under a forced-Tavily flow re-issued the
+   * identical call and retained the identical fixed top-8, making D026 §13's 3→5→8 escalation a
+   * complete no-op here. Tavily already returns up to `MAX_RESULTS` (16) in one call, so widening
+   * how many of THOSE get retained (instead of a fixed cap) is the correct analogue of the DIY
+   * path's "fetch more" — there's no cheaper way to get more from a single search API response.
+   */
   private async runFallback(
     query: string,
-    context?: { runId: string; claimId: string }
+    context?: { runId: string; claimId: string; maxCandidates?: number }
   ): Promise<SearchPassage[]> {
     const fallbackT0 = Date.now();
     // D026 §8 (T046, reviewed finding) — a keyword query for the real Tavily search API call only;
@@ -253,7 +261,7 @@ export class HybridSearchProvider implements SearchProvider {
       });
     }
     // D026 §6 — rank "ok" results by relevance to this claim, not just Tavily's raw order.
-    return this.rankByRelevance(query, allResults).slice(0, FALLBACK_RETAINED_CANDIDATES);
+    return this.rankByRelevance(query, allResults).slice(0, context?.maxCandidates ?? FALLBACK_RETAINED_CANDIDATES);
   }
 
   private async discoverUrls(query: string): Promise<Array<{ url: string; title: string }>> {

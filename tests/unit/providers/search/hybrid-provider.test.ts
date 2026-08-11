@@ -662,4 +662,26 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(searchCallStore.calls).toHaveLength(1);
     expect(searchCallStore.calls[0]).toMatchObject({ callType: "tavily_fallback", status: "ok" });
   });
+
+  it("D026 §22/T064, real bug found in self-review: context.maxCandidates widens the Tavily fallback's retained results past the default 8, so escalation tiers actually get more evidence under the forced-Tavily flow", async () => {
+    // Before the fix, runFallback's own narrower context type silently dropped maxCandidates — every
+    // escalation tier under searchFlow: "tavily" retained the identical fixed top-8, making D026 §13's
+    // 3->5->8 escalation a complete no-op for this flow. 10 "ok" results, all real content so all rank
+    // above nothing (no non-ok filler needed) — the default cap (8) must drop 2 of them; maxCandidates: 10 must not.
+    const tenResults: SearchPassage[] = Array.from({ length: 10 }, (_, i) => ({
+      url: `https://source-${i}.example`,
+      title: `Source ${i}`,
+      domain: `source-${i}.example`,
+      status: "ok",
+      text: "some real content",
+    }));
+    const fallback = new StubFallback(tenResults);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+
+    const defaultRetention = await provider.search("some claim", { runId: "r1", claimId: "c1", searchFlow: "tavily" });
+    const widenedRetention = await provider.search("some claim", { runId: "r1", claimId: "c1", searchFlow: "tavily", maxCandidates: 10 });
+
+    expect(defaultRetention).toHaveLength(8);
+    expect(widenedRetention).toHaveLength(10);
+  });
 });

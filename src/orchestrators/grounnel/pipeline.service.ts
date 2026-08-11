@@ -239,11 +239,9 @@ export class GrounnelPipelineService {
         }
       }
 
-      // D026 §13 — an escalation round's VERIFY call is a fresh PRIMARY call, not a T034 retry, so
-      // a verdict that arrives "contradicted" straight off the wire gets none of D025 §2/§5's
-      // scrutiny (that machinery only re-checks retries). A claim escalation flips TO contradicted
-      // deserves the same one-shot reason check before it ships as a new false accusation.
-      await this.guardEscalatedContradictions(auditId, needsVerify.map((v) => v.claim));
+      // D026 §22/T064 — reconcileContradictedVerdicts now runs unconditionally inside runBatch
+      // itself (called a few lines up), so it already covered this escalation round's fresh
+      // `contradicted` verdicts — no separate call needed here anymore.
       // D026 §17 — symmetric check: a claim that WAS `contradicted` can flip to `supported`/
       // `partially_supported` off this tier's noisier pool; re-verify that flip the same way.
       await this.guardEscalatedContradictionReversals(auditId, needsVerify.map((v) => v.claim), preVerdictById);
@@ -279,17 +277,20 @@ export class GrounnelPipelineService {
   }
 
   /**
-   * D026 §13 — an escalation round's VERIFY call is a fresh primary call (not a T034 retry), so a
-   * `contradicted` verdict arriving straight off the wire gets none of D025 §2/§5's scrutiny — that
-   * machinery only re-checks retries. Reuses the same batched classifier + downgrade-only-to-
-   * `unsupported` convention as D025 §5's `checkRetryContradiction`, scoped to exactly the claims
-   * this escalation round just flipped to `contradicted` — bounded, doesn't touch the normal
-   * (non-escalated) primary-pass cost model at all.
+   * D026 §22/T064 (generalized from D026 §13's escalation-only `guardEscalatedContradictions`,
+   * self-review finding) — ANY `contradicted` verdict landing straight off a fresh primary VERIFY
+   * call (ordinary batch or an escalation round — `runBatch` is the only caller, both paths route
+   * through it) gets none of D025 §2/§5's scrutiny by default: `needsRetry` only fires from gate #1's
+   * evidence-groundedness check or gate #1b's lexical key-term overlap, neither of which catches a
+   * well-evidenced, on-topic, but logically-wrong contradiction (e.g. a nomination misread as a
+   * rejection) — exactly the false-positive shape the system's own CORE PRINCIPLE says matters most.
+   * Reuses the same batched classifier + downgrade-only-to-`unsupported` convention as D025 §5's
+   * `checkRetryContradiction`, scoped to whatever claims the caller just processed.
    */
-  private async guardEscalatedContradictions(auditId: string, escalated: PipelineClaimInput[]): Promise<void> {
+  private async reconcileContradictedVerdicts(auditId: string, scope: PipelineClaimInput[]): Promise<void> {
     const status = await this.grounnelStore.getStatus(auditId);
     if (!status) return;
-    const byId = new Map(escalated.map((c) => [c.id, c]));
+    const byId = new Map(scope.map((c) => [c.id, c]));
     const nowContradicted = status.claims.filter((c) => byId.has(c.id) && c.status === "done" && c.verdict === "contradicted");
     if (nowContradicted.length === 0) return;
 
@@ -307,13 +308,13 @@ export class GrounnelPipelineService {
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
-        logger.info({ module: MODULE, operation: "guardEscalatedContradictions", auditId, claimId: c.id }, "Escalation's fresh contradicted verdict failed reason-consistency — downgraded to unsupported");
+        logger.info({ module: MODULE, operation: "reconcileContradictedVerdicts", auditId, claimId: c.id }, "Fresh contradicted verdict failed reason-consistency — downgraded to unsupported");
       })
     );
   }
 
   /**
-   * D026 §17 — symmetric counterpart to guardEscalatedContradictions: a claim correctly
+   * D026 §17 — symmetric counterpart to reconcileContradictedVerdicts: a claim correctly
    * `contradicted` before this tier can flip to `supported`/`partially_supported` off a noisier
    * wider pool, and nothing else re-checks a flip AWAY from `contradicted`. Same one-shot classifier,
    * same downgrade-only-to-`unsupported` convention (never reverts to the stale prior verdict —
@@ -1086,6 +1087,16 @@ export class GrounnelPipelineService {
         "VERIFY's response omitted this claim, even after a fill-in retry — not a provider/parse error, the model simply didn't answer for it."
       );
     }
+
+    // D026 §22/T064 — every fresh `contradicted` verdict this batch produced (primary pass or
+    // fill-in) gets the same reason-consistency scrutiny D025 §5 already gives retries and D026 §13
+    // already gave escalation rounds — see reconcileContradictedVerdicts' own doc comment for why
+    // this was a real gap, not just a hardening pass. Covers escalation too since it calls runBatch.
+    await this.reconcileContradictedVerdicts(
+      auditId,
+      batch.map((b) => b.claim)
+    );
+
     return null;
   }
 }

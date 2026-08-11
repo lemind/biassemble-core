@@ -642,12 +642,14 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    // D026 §17 — the claim lands on "contradicted", which is now escalation-eligible too. Main pass
-    // is unchanged at 4 (verify + classifier + T034 retry + D025 §5 check). Each of the 2 escalation
-    // tiers adds 2 more: a fresh verify (contradicted with real evidence straight off the wire, so no
-    // classifier — consistencyCandidates skips already-"contradicted" verdicts — and no retry needed)
-    // plus guardEscalatedContradictions' own consistency-check call on that fresh "contradicted". 4 + 2×2 = 8.
-    expect(provider.getCallCount()).toBe(8);
+    // D026 §22/T064 — main pass is now 5, not 4: verify + classifier + T034 retry + D025 §5 check,
+    // plus reconcileContradictedVerdicts' own consistency-check call at the end of runBatch (runs
+    // for every runBatch call now, not just escalation — the claim's final verdict is "contradicted"
+    // so it fires). D026 §17 — the claim also lands on "contradicted", which is escalation-eligible.
+    // Each of the 2 escalation tiers adds 2 more: a fresh verify (contradicted with real evidence
+    // straight off the wire, so no classifier during processVerifyResults itself, no retry needed)
+    // plus reconcileContradictedVerdicts' own call at the end of that tier's runBatch. 5 + 2×2 = 9.
+    expect(provider.getCallCount()).toBe(9);
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
   });
@@ -751,11 +753,13 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    // Main pass: 3 (primary + retry, proving it fired despite reason_consistency never flipping
-    // anything + D025 §5's retry-contradiction check). D026 §17: final verdict is "contradicted", so
-    // both escalation tiers fire; each adds 2 (a fresh verify landing straight on "contradicted" with
-    // real evidence, no classifier/retry needed, plus guardEscalatedContradictions' own check). 3 + 2×2 = 7.
-    expect(provider.getCallCount()).toBe(7);
+    // D026 §22/T064 — main pass is now 4, not 3: primary + retry (proving it fired despite
+    // reason_consistency never flipping anything) + D025 §5's retry-contradiction check, plus
+    // reconcileContradictedVerdicts' own call at the end of runBatch (final verdict is "contradicted").
+    // D026 §17: both escalation tiers still fire; each adds 2 (a fresh verify landing straight on
+    // "contradicted" with real evidence, no retry needed, plus reconcileContradictedVerdicts' own
+    // call at the end of that tier's runBatch). 4 + 2×2 = 8.
+    expect(provider.getCallCount()).toBe(8);
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
   });
@@ -1180,6 +1184,51 @@ describe("GrounnelPipelineService (T010)", () => {
     // so it's still eligible for the next tier, and each tier's fresh "contradicted" gets caught again.
     const events = gateEventStore.calls.flatMap((c) => c.events);
     expect(events.filter((e) => e.gate === "retry_reconciliation" && e.overridden)).toHaveLength(2);
+  });
+
+  it("D026 §22/T064, real bug found in self-review: a fresh 'contradicted' verdict on the ORDINARY primary pass (no retry needed) now also gets reason-consistency scrutiny — previously only retries (D025 §5) and escalation rounds (D026 §13) got this check", async () => {
+    const claimId = uuid(1);
+    // Evidence is real/grounded (passes gate #1) and reason shares the claim's own key terms (passes
+    // gate #1b) — nothing else in the chain flags this, so needsRetry never fires and the OLD code
+    // shipped this false accusation untouched. Only the new end-of-runBatch check catches it.
+    const claimText = "Marie Curie discovered radium in 1898.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "Marie Curie discovered radium in 1898 alongside her husband Pierre. ".repeat(10);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "contradicted",
+          evidenceCitations: citationsFor(claimText, passageText, "Marie Curie discovered radium in 1898 alongside her husband Pierre."),
+          reason: "The passage confirms Marie Curie discovered radium in 1898.",
+          confidence: 0.9,
+        })),
+      };
+    });
+    // Every consistency-check call says this reason plainly doesn't support "contradicted" — it confirms the claim.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported"); // caught and downgraded even though no other gate flagged it
+    expect(claim.evidence).toBeNull();
+
+    // Downgraded to "unsupported" is still escalation-eligible (D026 §13), and evidence is available
+    // at every tier here, so the same wrong "contradicted" recurs and gets caught fresh each time:
+    // main pass + 2 escalation tiers = 3.
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.filter((e) => e.gate === "retry_reconciliation" && e.overridden)).toHaveLength(3);
   });
 
   it("T034 (reviewed finding): a successful retry appends its gate events to the original pass's, instead of discarding the original trace", async () => {

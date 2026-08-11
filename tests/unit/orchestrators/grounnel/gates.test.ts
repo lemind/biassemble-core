@@ -259,6 +259,24 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "threshold_comparison" });
   });
 
+  it("D026 §22/T064, real bug found in self-review: a strict 'surpassed X' claim is NOT satisfied by evidence exactly equal to X — an exact match only satisfies inclusive wording ('at least X'), never strict wording", () => {
+    const result = applyNumericGate({
+      claimText: "Apple's market capitalization exceeded $3.5 trillion in 2024.",
+      verdict: "supported",
+      evidence: "Apple's market capitalization was $3.5 trillion in 2024.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "threshold_comparison" });
+  });
+
+  it("companion to the above: inclusive 'at least X' wording IS satisfied by an exact match, unlike strict 'exceeded'", () => {
+    const result = applyNumericGate({
+      claimText: "Apple's market capitalization was at least $3.5 trillion in 2024.",
+      verdict: "contradicted",
+      evidence: "Apple's market capitalization was $3.5 trillion in 2024.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "threshold_comparison" });
+  });
+
   it("overrides to supported when an 'under X' threshold claim's evidence is below X", () => {
     const result = applyNumericGate({
       claimText: "Unemployment stayed under 5% in 2024.",

@@ -859,6 +859,17 @@ T023 (grounnel pg schema — 5 tables)
   - **Files:** `src/orchestrators/grounnel/gates.ts`, `src/prompts/grounnel/consistency-check/system.json`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§22 addendum).
   - **Size:** S.
 
+## Phase 31 — three findings from a full-branch code review, fixed before merge (D026 §23, 2026-08-11)
+
+- [x] **T064** Generalize the escalation-only reason-consistency guard to the primary pass; fix numeric threshold equality bug; fix Tavily-forced escalation no-op
+  - **Brief:** Medium-effort code review of the entire branch (`origin/main...HEAD`, 68 commits) for PR-readiness found 3 real correctness/architecture bugs (of 6 total findings). (1) A `contradicted` verdict landing straight off VERIFY's ordinary primary pass got none of D025 §2/§5's reason-consistency scrutiny — only the retry and escalation paths had that check, each independently bolted on, never generalized. (2) `gates.ts`'s numeric threshold gate treated an exact-equality value as satisfying a strict "exceeded/surpassed" claim, since strict and inclusive comparator wording shared one regex/one `holds` formula. (3) Adaptive search escalation (3→5→8) was a silent no-op under the forced-Tavily search flow — `runFallback`'s own type never declared `maxCandidates`, so every tier reissued the identical call and retained the identical fixed top-8.
+  - **Done:** (1) `guardEscalatedContradictions` generalized into `reconcileContradictedVerdicts`, called unconditionally at the end of every `runBatch` (covers primary pass + all escalation tiers for free, since escalation already calls `runBatch`); the old escalation-only call site deleted. (2) `detectThreshold` split into `at_least_strict`/`at_least_inclusive`/`at_most_strict`/`at_most_inclusive`; only inclusive wording holds on an exact match now. (3) `runFallback`'s context type widened to include `maxCandidates`, used for the final retention slice instead of the fixed `FALLBACK_RETAINED_CANDIDATES` constant.
+  - **Verify:** Two existing tests' LLM-call-count assertions updated (now correctly include the new end-of-`runBatch` check firing on the main pass). Three new tests: primary-pass contradiction blind spot (clean evidence/overlap, no retry, only the new check catches it), numeric strict-vs-inclusive threshold distinction, `maxCandidates` widening Tavily retention. Full suite 981/981 (982 incl. 1 pre-existing todo), clean typecheck.
+  - **Explicitly deferred:** the other 3 review findings (a rate-limit-path batch fill-in edge case, `claim-terms.ts`'s first-word-index-only guard, a spoofable rate-limit IP header) — lower severity/narrower conditions, tracked as follow-ups, not blockers.
+  - **Dependencies:** none (found via review, not a live-test recurrence).
+  - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, `src/orchestrators/grounnel/gates.ts`, `src/providers/search/hybrid-provider.ts`, tests, `docs/decisions/026-verify-retrieval-first-grounding.md` (§23 addendum), `README.md`.
+  - **Size:** M.
+
 ## Phase 30 — VERIFY's STEP 2 relationship classification unstable on qualified-rank-vs-absolute-superlative claims (real live-test finding, 3 fresh Nauru runs, 2026-08-11)
 
 - [x] **T063** Add an explicit QUALIFIED RANK VS ABSOLUTE SUPERLATIVE rule to `grounnel-verify`'s STEP 2 procedure

@@ -235,12 +235,22 @@ export interface GateTwoResult {
 // as confirming a mismatch, with no concept of threshold claims where a HIGHER evidence value means
 // the claim holds, not that it's wrong. `compare()`'s own `direction` field already carries what's
 // needed to fix this; it just wasn't used here before.
-const AT_LEAST_RE = /\b(surpassed|exceeded|topped|crossed|more than|greater than|over|above|at least)\b/i;
-const AT_MOST_RE = /\b(less than|fewer than|under|below|at most|no more than)\b/i;
+// D026 §22/T064, real bug found in self-review: strict comparators ("exceeded") and inclusive
+// comparators ("at least") were previously grouped under one regex/one `holds` formula, so
+// evidence exactly equal to the claimed value wrongly satisfied "exceeded" — an exact match
+// only satisfies the INCLUSIVE wording, never the strict one. Split accordingly; mirrored for at_most.
+const AT_LEAST_STRICT_RE = /\b(surpassed|exceeded|topped|crossed|more than|greater than|over|above)\b/i;
+const AT_LEAST_INCLUSIVE_RE = /\bat least\b/i;
+const AT_MOST_STRICT_RE = /\b(less than|fewer than|under|below)\b/i;
+const AT_MOST_INCLUSIVE_RE = /\b(at most|no more than)\b/i;
 
-function detectThreshold(claimText: string): "at_least" | "at_most" | null {
-  if (AT_LEAST_RE.test(claimText)) return "at_least";
-  if (AT_MOST_RE.test(claimText)) return "at_most";
+type ThresholdKind = "at_least_strict" | "at_least_inclusive" | "at_most_strict" | "at_most_inclusive";
+
+function detectThreshold(claimText: string): ThresholdKind | null {
+  if (AT_LEAST_STRICT_RE.test(claimText)) return "at_least_strict";
+  if (AT_LEAST_INCLUSIVE_RE.test(claimText)) return "at_least_inclusive";
+  if (AT_MOST_STRICT_RE.test(claimText)) return "at_most_strict";
+  if (AT_MOST_INCLUSIVE_RE.test(claimText)) return "at_most_inclusive";
   return null;
 }
 
@@ -287,9 +297,17 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
 
   const threshold = detectThreshold(input.claimText);
   if (threshold) {
-    // direction is sign(claim - source): "at_least" (claim says source >= claim) holds when
-    // claim <= source (direction <= 0); "at_most" holds when claim >= source (direction >= 0).
-    const holds = threshold === "at_least" ? comparison.direction <= 0 : comparison.direction >= 0;
+    // direction is sign(claim - source). Strict wording ("exceeded") only holds on a real
+    // difference (direction !== 0 in the required sense); inclusive wording ("at least") also
+    // holds on an exact match (direction === 0) — see the D026 §22/T064 comment above detectThreshold.
+    const holds =
+      threshold === "at_least_strict"
+        ? comparison.direction < 0
+        : threshold === "at_least_inclusive"
+          ? comparison.direction <= 0
+          : threshold === "at_most_strict"
+            ? comparison.direction > 0
+            : comparison.direction >= 0;
     if (holds && input.verdict !== "supported") return { verdict: "supported", overridden: true, reason: "threshold_comparison" };
     if (!holds && input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true, reason: "threshold_comparison" };
     return { verdict: input.verdict, overridden: false, reason: null };
