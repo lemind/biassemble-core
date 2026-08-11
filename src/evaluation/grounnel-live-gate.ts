@@ -18,6 +18,9 @@ export interface LiveEvalSpec {
 export interface GrounnelClaim {
   text: string;
   verdict: string | null;
+  /** Diagnostic only, not scored — lets a null verdict be told apart from a genuinely wrong one. */
+  status?: string;
+  reason?: string | null;
 }
 export interface GrounnelRun {
   id?: string;

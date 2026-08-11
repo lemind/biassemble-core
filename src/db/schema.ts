@@ -295,3 +295,240 @@ export type NewClaimPassage = typeof claimPassages.$inferInsert;
 
 export type ScoreSummary = typeof scoreSummaries.$inferSelect;
 export type NewScoreSummary = typeof scoreSummaries.$inferInsert;
+
+// ── Grounnel (specs/009-grounnel, D023) ──
+// Own pg schema, sibling to `core`/`audit` — D018 §2.4's per-product-schema precedent.
+// Table names are prefixed with grounnel_ (unlike core.table("runs")/auditSchema.table("audits"),
+// which don't repeat the schema name) deliberately: grounnelClaims and auditSchema's existing
+// `claims` export would otherwise collide as TS identifiers, since Drizzle export names are flat
+// across this whole module regardless of pg schema.
+export const grounnel = pgSchema("grounnel");
+
+// One row per POST /extract call. runId is application-generated — the SAME id
+// already used as the Redis hash key `audit:{id}` (D023 §3), not a second identity.
+export const grounnelRuns = grounnel.table("grounnel_runs", {
+  runId: uuid("run_id").primaryKey(),
+  // Nullable, not notNull — no code path supplies a sessionId until tasks.md T028
+  // (biassemble/backend session reuse) ships. A notNull column would either block T024
+  // entirely or force a fabricated placeholder UUID. Tighten once T028 ships and every
+  // caller genuinely has one. No FK regardless — backend-owned (D023 §2).
+  sessionId: uuid("session_id"),
+  text: text("text").notNull(),
+  // production vs eval distinguishes real user runs from golden-set runs (scripts/eval-grounnel.ts,
+  // src/jobs/eval-grounnel-run.ts — both construct a real GrounnelPipelineService/GrounnelExtractService,
+  // so without this column golden-set noise would silently corrupt "verdict distribution over time"
+  // analytics, D023 §1's own stated reopening trigger). Deliberately minimal (not
+  // benchmark/manual/cli/etc.) — a text-enum column is a one-line migration to extend later.
+  source: text("source", { enum: ["production", "eval"] }).notNull().default("production"),
+  status: text("status", { enum: ["extracting", "verifying", "done", "failed"] }).notNull().default("extracting"),
+  maxClaims: integer("max_claims").notNull(),
+  truncated: boolean("truncated").notNull().default(false),
+  promptVersionExtract: text("prompt_version_extract"),
+  promptVersionVerify: text("prompt_version_verify"),
+  score: jsonb("score"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => [
+  index("grounnel_runs_session_id_idx").on(table.sessionId),
+  index("grounnel_runs_status_idx").on(table.status),
+  index("grounnel_runs_created_at_idx").on(table.createdAt),
+  // Composite, not just the two singles above — the named "show me my past checks" query
+  // (D023 §1) is `WHERE session_id = ? ORDER BY created_at DESC`, which a single-column
+  // index on either field alone still forces a separate sort step for.
+  index("grounnel_runs_session_created_idx").on(table.sessionId, table.createdAt),
+]);
+
+// One row per claim, durable copy of what Redis holds transiently (D023 §7 — additive, not a
+// replacement). Deliberately narrower status enum than the live ClaimStatusEnum (no "pending") —
+// this table is written once a claim reaches its FINAL state only, matching D023 §7's "written
+// after Redis, once already correct" rule; Redis is where in-progress state lives.
+export const grounnelClaims = grounnel.table("grounnel_claims", {
+  claimId: uuid("claim_id").primaryKey(), // same id as the API/Redis contract
+  runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+  claimText: text("claim_text").notNull(),
+  verdict: text("verdict", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
+  evidence: text("evidence"),
+  confidence: doublePrecision("confidence"),
+  reason: text("reason"),
+  sources: jsonb("sources").notNull(), // ClaimSource[]
+  status: text("status", { enum: ["done", "failed"] }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("grounnel_claims_run_id_idx").on(table.runId),
+  index("grounnel_claims_verdict_idx").on(table.verdict),
+  index("grounnel_claims_status_idx").on(table.status),
+]);
+
+// Gemini EXTRACT/VERIFY calls — mirrors core.llm_calls' shape (D023 §3), own table, not shared.
+// callType defaults to "primary". "fallback" matches core.llm_calls' meaning (parse-failure retry,
+// D018 §5.15). "consistency_retry" (T034) is deliberately a separate value, not reused "fallback" —
+// a different trigger (gate-caught self-inconsistency, not a parse failure) a shared metric shouldn't conflate.
+// "consistency_check" (D025/T035) is the batched classifier call ("does reason support verdict?")
+// that decides whether a "consistency_retry" fires — a distinct call, not the retry itself.
+// "fill_in" (D026 §8, T045) — a follow-up VERIFY call for exactly the claim(s) a batch's response
+// silently omitted; distinct from "consistency_retry" (that's a self-inconsistency repair, this is
+// response completion for a batch that was simply short an answer).
+// "passage_rerank" (D026 §18) — scores fetched candidates by relevance before VERIFY sees them;
+// bucketed under stage "verify" same as "consistency_check", distinguished by callType alone.
+// claimId (D026 §19) — nullable, no FK (same pragmatic no-FK precedent as grounnel_search_calls'
+// own claimId below): only ever populated for genuinely single-claim calls (passage_rerank, a
+// reconciliation retry, a single-claim guard check). primary VERIFY and batched consistency_check
+// cover up to 8 claims in one call — a single column can't honestly attribute one of those to a
+// claim, so it stays NULL rather than picking one arbitrarily and misleading future telemetry reads.
+export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+  claimId: uuid("claim_id"),
+  stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank"] }).notNull().default("primary"),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  promptVersion: text("prompt_version").notNull(),
+  rawResponse: text("raw_response"),
+  parsedOutput: jsonb("parsed_output"),
+  status: text("status", { enum: ["success", "timeout", "error"] }).notNull(),
+  failureType: text("failure_type", { enum: ["schema_validation", "parse_error", "provider_error", "timeout", "other"] }),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  totalTokens: integer("total_tokens"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("grounnel_llm_calls_run_id_idx").on(table.runId),
+  index("grounnel_llm_calls_stage_idx").on(table.stage),
+  index("grounnel_llm_calls_created_at_idx").on(table.createdAt),
+  // Composite, mirroring core.llm_calls' own llm_calls_metrics_idx — same "success/failure rate
+  // by stage over time" query shape this table claims to mirror; a real mirror needs this too.
+  index("grounnel_llm_calls_metrics_idx").on(table.createdAt, table.stage, table.status),
+]);
+
+// SearchProvider calls — DIY-fetch vs Tavily-fallback (D021/D023 §6). New concept, no biassemble
+// precedent. claimId has no FK: unlike grounnel_gate_events below, search runs in an entirely
+// earlier, separate phase (resolveAllEvidence, waves of up to SEARCH_CONCURRENCY claims at once)
+// well before any claim's final write — buffering every in-flight search call across a whole run
+// until each claim's eventual write would be a much bigger restructuring than gate_events'
+// buffer-then-flush, so no-FK is the pragmatic choice here specifically, not a blanket rule.
+// Granularity: one row per attempted DIY candidate (real per-URL status/timing) plus one row for
+// the Tavily fallback call as a whole when it fires — matches search-provider.ts's own doc comment
+// ("returns every attempted source, not just the successful one"). url is null on a tavily_fallback
+// row since that call returns multiple results per HTTP call, not one URL's attempt.
+export const grounnelSearchCalls = grounnel.table("grounnel_search_calls", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+  claimId: uuid("claim_id").notNull(),
+  query: text("query").notNull(),
+  callType: text("call_type", { enum: ["diy_fetch", "tavily_fallback"] }).notNull(),
+  url: text("url"),
+  resultCount: integer("result_count").notNull(),
+  // "not_attempted" (D026 §19) — deliberately NOT added to the public-facing SourceStatusEnum
+  // (contracts/grounnel.schemas.ts): a claim's displayed sources should never show a status for a
+  // candidate we chose not to fetch at all, this is telemetry-only. Logged for every candidate
+  // discoverUrls() returned beyond fetchCap — closes the gap T053's own trigger first named
+  // ("discovery returned 7 candidates, only 3 ever got fetched") without a way to see the other 4.
+  status: text("status", { enum: ["ok", "paywalled", "unreachable", "blocked", "rate_limited", "not_attempted"] }).notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("grounnel_search_calls_run_id_idx").on(table.runId),
+  index("grounnel_search_calls_call_type_idx").on(table.callType),
+]);
+
+// D026 §19 — the cleaned, extracted text a successful DIY fetch actually produced, capped. A
+// separate table, not a column on grounnel_search_calls: that table is an attempts/telemetry log
+// (queried for status/timing, scanned often), this is an optional, heavier content snapshot only
+// ever read when actually debugging a specific claim's evidence — keeping the two apart keeps the
+// hot table lean. No FK to grounnel_search_calls (same pragmatic no-FK reasoning as claimId above,
+// and recordSearchCall is fire-and-forget with no returned id to correlate against) — correlate by
+// (runId, claimId, url) when reading, same fields grounnel_search_calls already carries. DIY only
+// for now: Tavily's fallback call has no per-URL row to attach a page snapshot to at all today.
+export const grounnelSearchPages = grounnel.table("grounnel_search_pages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+  claimId: uuid("claim_id").notNull(),
+  url: text("url").notNull(),
+  // Capped, cleaned extracted text — exactly what downstream logic (reranking, passage selection)
+  // actually received, not raw HTML and not the full page (RERANK_EXCERPT_LENGTH-scale, not a
+  // full-article dump — see pipeline.service.ts).
+  excerpt: text("excerpt").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("grounnel_search_pages_run_id_idx").on(table.runId),
+  index("grounnel_search_pages_claim_id_idx").on(table.claimId),
+]);
+
+// D026 §19 — why the reranker/lexical ranking picked what it picked, one row per candidate per
+// rerankPassages call. Without this, a "why did it choose Wikipedia" question six months from now
+// has no answer beyond "it just did." Written once the scores are computed, only on the success
+// path (a failed rerank call falls back to lexical+gate#4 alone — nothing was actually decided by
+// ranking in that case, so there's nothing meaningful to record here).
+export const grounnelRerankDecisions = grounnel.table("grounnel_rerank_decisions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+  claimId: uuid("claim_id").notNull(),
+  url: text("url").notNull(),
+  lexicalScore: doublePrecision("lexical_score").notNull(),
+  llmScore: doublePrecision("llm_score").notNull(),
+  combinedScore: doublePrecision("combined_score").notNull(),
+  // Whether this candidate survived resolveEvidence's MAX_VERIFY_PASSAGES slice, i.e. whether
+  // VERIFY actually saw it — the whole point of this table is answering "was it even considered."
+  selected: boolean("selected").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("grounnel_rerank_decisions_run_id_idx").on(table.runId),
+  index("grounnel_rerank_decisions_claim_id_idx").on(table.claimId),
+]);
+
+// Every gate evaluation (D022 §4/§2, D023 §5) — fired or not; overridden:false is itself the
+// data that answers "how often does this gate even get a chance to fire." claimId gets a real FK:
+// gates run inline in pipeline.service.ts's runBatch loop directly before that same iteration's
+// writeClaimResult call (not in an earlier separate phase the way search is), so the write path
+// buffers the gate decisions in memory while the chain runs, then flushes them AFTER the
+// corresponding grounnel_claims insert succeeds — the FK always references a real, already-written
+// row, never written eagerly per-gate.
+export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
+  claimId: uuid("claim_id").notNull().references(() => grounnelClaims.claimId, { onDelete: "cascade" }),
+  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "counterfact_ignored", "contradiction_evidence", "claim_reason_overlap", "numeric", "retry_reconciliation"] }).notNull(),
+  verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
+  verdictAfter: text("verdict_after", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
+  overridden: boolean("overridden").notNull(),
+  // Machine-readable code for why the gate acted — null when overridden is false (D023 §5).
+  reason: text("reason", {
+    enum: [
+      "contradiction_language_in_model_reason",
+      "bare_negation_matched",
+      "evidence_null",
+      "evidence_not_grounded",
+      "threshold_comparison",
+      "equality_comparison",
+      "counterfact_ignored",
+      "retry_contradiction_invalidated",
+      "claim_reason_no_overlap",
+      "escalation_reversal_invalidated",
+    ],
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index("grounnel_gate_events_run_id_idx").on(table.runId),
+  index("grounnel_gate_events_gate_idx").on(table.gate),
+  index("grounnel_gate_events_overridden_idx").on(table.overridden),
+]);
+
+export type GrounnelRun = typeof grounnelRuns.$inferSelect;
+export type NewGrounnelRun = typeof grounnelRuns.$inferInsert;
+
+export type GrounnelClaim = typeof grounnelClaims.$inferSelect;
+export type NewGrounnelClaim = typeof grounnelClaims.$inferInsert;
+
+export type GrounnelLlmCall = typeof grounnelLlmCalls.$inferSelect;
+export type NewGrounnelLlmCall = typeof grounnelLlmCalls.$inferInsert;
+
+export type GrounnelSearchCall = typeof grounnelSearchCalls.$inferSelect;
+export type NewGrounnelSearchCall = typeof grounnelSearchCalls.$inferInsert;
+
+export type GrounnelGateEvent = typeof grounnelGateEvents.$inferSelect;
+export type NewGrounnelGateEvent = typeof grounnelGateEvents.$inferInsert;

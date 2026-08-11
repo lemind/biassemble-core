@@ -19,6 +19,8 @@ Four endpoints. Structured output. Auditable reasoning.
 | `POST /v1/reflection/assessment` | User answers questions | Bias assessment + reflection prompt |
 | `POST /audit` | Submit an AI-generated text + its source documents | `202` + `audit_id` (async job) |
 | `GET /audit/:audit_id` | Poll for the result | Per-claim verdicts + groundedness scores |
+| `POST /extract` | Submit any text (no source documents required) | `202` + `id` (async job) |
+| `GET /status/:id` | Poll for the result | Per-claim fact-check verdicts, sourced from the open web |
 
 Every response is validated through Zod → JSON, stamped with `prompt_version` + `schema_version`, and goes through a 3-stage repair pipeline (parse → validate → fallback model call).
 
@@ -69,6 +71,18 @@ Every assessment records provenance to `core.retrieval_comparisons` — which si
 - **Deterministic model calls**: EXTRACT and VERIFY pass `temperature: 0` explicitly — found necessary after a real audit re-run on identical input produced three different claim sets and score patterns, making any fix unverifiable by re-running the live pipeline
 
 See `specs/008-b2b/quickstart.md` for example `curl` commands and `docs/decisions/018-audit-mode-flag.md` for the full design rationale. Out of scope for this stage: real document corpus ingestion (still a lexical stub retriever), the bias-module cross-check, and a review UI.
+
+## Grounnel — Stage 009
+
+`POST /extract` fact-checks arbitrary text against the open web — no source documents required, unlike B2B Audit Mode above. Built to answer "is this actually true?" for any claim-bearing article, not just an AI's own output.
+
+- **Claim pipeline**: EXTRACT (pull atomic, checkable factual claims) → SEARCH (Gemini `google_search` grounding for URL discovery only, DIY fetch, Tavily fallback) → semantic reranking → VERIFY (an LLM classifies each claim against its retrieved passages) → a 6-gate deterministic verdict-correction chain → adaptive escalation (3→5→8 sources) for claims still unresolved
+- **Verdicts**: `supported`, `partially_supported`, `contradicted`, `unsupported`, `unverifiable` (low-confidence downgrade)
+- **Grounded by construction**: passages are split into numbered sentences in code; VERIFY cites sentence numbers, never generates quote text — evidence can't be fabricated
+- **Deterministic gate chain**: reason/verdict consistency, evidence-groundedness, numeric threshold/equality comparison, temporal-scope comparability, implicit-negation detection, cross-claim contamination — each backed by real production incidents, see `docs/decisions/026-verify-retrieval-first-grounding.md`
+- **Recent reliability fixes** (self-review, 2026-08-11): a `contradicted` verdict landing straight off VERIFY's ordinary first pass now gets the same reason-consistency scrutiny previously only given to retries and escalation rounds, closing a false-positive gap on the pipeline's most common path; the numeric threshold gate no longer treats an exact-equality value as satisfying a strict "exceeded/surpassed" claim; adaptive search escalation now actually widens the candidate pool under the Tavily-forced search flow instead of silently re-issuing the identical call every tier
+
+See `specs/009-grounnel/` for the full spec and `docs/decisions/026-verify-retrieval-first-grounding.md` for the design history (22+ addenda, each a real traced production or live-test finding).
 
 ## Evaluation
 
@@ -141,15 +155,16 @@ Or view logs in the [Vercel Dashboard](https://vercel.com) → biassemble-core p
 
 ```
 src/
-├── contracts/       # Zod schemas (reasoning + reflection)
-├── orchestrators/   # Question + assessment services
-├── prompts/         # Markdown-based prompt templates
-├── providers/       # LLM adapter interface
+├── contracts/       # Zod schemas (reasoning + reflection + grounnel)
+├── orchestrators/   # Question/assessment services, audit VERIFY, grounnel/ (extract + pipeline + gates)
+├── prompts/         # JSON/Markdown-based prompt templates, incl. prompts/grounnel/
+├── providers/       # LLM adapter interface + providers/search/ (Gemini discovery, DIY fetch, Tavily)
 ├── parsers/         # JSON extraction + repair pipeline
 ├── catalog/         # Bias taxonomy + normalization
 ├── evaluation/      # Metrics functions
 ├── rag/             # biassemble-engine client + workspace builder (RAG integration)
 ├── observability/   # Structured logging + retrieval_comparisons provenance recorder
+├── persistence/     # Grounnel durable-write stores (runs, claims, LLM calls, search calls, gate events)
 ├── db/              # Drizzle schema + queries
 ├── jobs/            # Inngest jobs (eval runs, async RAG retrieval)
 └── routes/          # Fastify HTTP routes

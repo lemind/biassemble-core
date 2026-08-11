@@ -1,4 +1,8 @@
 import { RedisGrounnelStore, type RedisHashClient } from "../persistence/grounnel-store.js";
+import { DrizzleGrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
+import { DrizzleGrounnelLlmCallStore } from "../persistence/grounnel-llm-call-store.js";
+import { DrizzleGrounnelGateEventStore } from "../persistence/grounnel-gate-event-store.js";
+import { DrizzleGrounnelRerankDecisionStore } from "../persistence/grounnel-rerank-decision-store.js";
 import { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import { evaluateGrounnelRun, type GrounnelRun, type LiveEvalSpec, type Violation } from "./grounnel-live-gate.js";
@@ -47,6 +51,11 @@ function sanitizeErrorMessage(err: unknown): string {
 
 export interface GoldenCase extends LiveEvalSpec {
   text: string;
+  // Per-case override, not a LiveEvalSpec field — this is a run-input concern (how the pipeline
+  // resolves evidence), not a scoring concern. Real search results are non-deterministic (which
+  // URLs Gemini's grounding returns isn't controllable), so "tavily" lets a case like
+  // g11-bloomberg-fallback actually guarantee it exercises that path instead of gambling on it.
+  searchEngine?: "defaultFlow" | "tavily";
 }
 
 export interface GrounnelEvalDeps {
@@ -83,16 +92,22 @@ export async function runGrounnelEvalCase(
 ): Promise<GrounnelEvalCaseResult> {
   const { provider, prompts, searchProvider } = deps;
   const grounnelStore = new RedisGrounnelStore(new InMemoryRedisHashClient());
-  const extractService = new GrounnelExtractService(provider, prompts, grounnelStore);
-  const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore);
+  // Real DrizzleGrounnelHistoryStore, not a no-op — golden-set runs are exactly what source: "eval"
+  // exists to tag (D023 §3), so this real-call eval harness should exercise the real write path too.
+  const historyStore = new DrizzleGrounnelHistoryStore();
+  const llmCallStore = new DrizzleGrounnelLlmCallStore();
+  const gateEventStore = new DrizzleGrounnelGateEventStore();
+  const rerankDecisionStore = new DrizzleGrounnelRerankDecisionStore();
+  const extractService = new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore);
+  const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore);
 
   try {
-    const { id, pendingClaims } = await extractService.run(goldenCase.text);
+    const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
     if (pendingClaims.length > 0) {
-      await pipelineService.run(id, pendingClaims);
+      await pipelineService.run(id, pendingClaims, goldenCase.searchEngine ?? "defaultFlow");
     }
     const status = await grounnelStore.getStatus(id);
-    const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict })) };
+    const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };
 
     const spec: LiveEvalSpec = { id: goldenCase.id, claims: goldenCase.claims, minCorrectRate: minCorrectRateOverride ?? goldenCase.minCorrectRate };
     const result = evaluateGrounnelRun([run], spec);

@@ -11,6 +11,7 @@ import { GeminiProvider } from "../src/providers/gemini.js";
 import { PromptRegistry } from "../src/prompts/registry.js";
 import { HybridSearchProvider } from "../src/providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../src/providers/search/tavily-provider.js";
+import { DrizzleGrounnelSearchCallStore } from "../src/persistence/grounnel-search-call-store.js";
 import { runGrounnelEval, type GoldenCase } from "../src/evaluation/run-grounnel-eval.js";
 import { env } from "../src/lib/env.js";
 
@@ -36,7 +37,7 @@ async function main() {
   const provider = new GeminiProvider();
   const prompts = new PromptRegistry();
   const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
-  const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider);
+  const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider, new DrizzleGrounnelSearchCallStore());
 
   const summary = await runGrounnelEval({ provider, prompts, searchProvider }, golden, minCorrectRateOverride);
 

@@ -43,8 +43,19 @@ describe("TavilySearchProvider (T008)", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://api.tavily.com/search");
     const body = JSON.parse(init.body);
-    expect(body).toMatchObject({ query: "some query", max_results: 3, include_raw_content: true });
+    expect(body).toMatchObject({ query: "some query", max_results: 16, include_raw_content: true });
     expect(init.headers.Authorization).toBe("Bearer fake-key");
+  });
+
+  it("reviewed finding: sends a timeout signal, so a hanging request doesn't block indefinitely", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ results: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new TavilySearchProvider("fake-key");
+
+    await provider.search("some query");
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("returns an empty array (not a throw) when Tavily returns a non-OK status", async () => {
@@ -85,5 +96,30 @@ describe("TavilySearchProvider (T008)", () => {
 
     const results = await provider.search("query");
     expect(results[0]).toMatchObject({ status: "unreachable", text: null });
+  });
+
+  it("reviewed finding (D026 §9): drops a result whose url is a relative tracking/redirect link, not an absolute URL — the real g10-fabricated-silence production crash", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            { url: "https://real-source.example", title: "Real", raw_content: "real content here" },
+            // The exact real shape observed in production: a Google redirect artifact Tavily
+            // returned as `url` — `new URL(...)` throws on this, and unfiltered it fails
+            // ClaimSource.url's format check downstream, 500ing the whole /status response.
+            { url: "/goto?url=CAESWwHuR6pNJ0KPPzdcpBcc0V29-sqD7EspQgTctgmoIE8uIPBPdiXOT6i", title: "Redirect artifact", raw_content: "junk" },
+          ],
+        }),
+      })
+    );
+    const provider = new TavilySearchProvider("fake-key");
+
+    const results = await provider.search("Zorgonian Institute grelkin");
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ url: "https://real-source.example", status: "ok" });
   });
 });

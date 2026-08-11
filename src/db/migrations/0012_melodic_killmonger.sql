@@ -1,0 +1,1 @@
+ALTER TABLE "grounnel"."grounnel_gate_events" ADD COLUMN "reason" text;

@@ -18,8 +18,17 @@ export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "block
 
 // ─── Request schema — POST /extract ──────────────────────────
 
+// sessionId is optional — a caller that doesn't have one (e.g. a direct test call) still works,
+// same as grounnel_runs.session_id being nullable until this arrives (D023 §2/T028).
+// searchEngine lets a caller force the Tavily fallback path directly, skipping DIY fetch —
+// otherwise untestable on demand, since which URLs Gemini's grounding search returns (and
+// therefore whether DIY fetch fails for all of them) isn't something a caller controls.
+export const SearchEngineEnum = z.enum(["defaultFlow", "tavily"]);
+
 export const ExtractRequestSchema = z.object({
   text: z.string().min(1),
+  sessionId: z.string().uuid().optional(),
+  searchEngine: SearchEngineEnum.default("defaultFlow"),
 });
 
 export type ExtractRequest = z.infer<typeof ExtractRequestSchema>;
@@ -42,6 +51,9 @@ export const ClaimSourceSchema = z.discriminatedUnion("kind", [
     domain: z.string(),
     url: z.url(),
     status: SourceStatusEnum,
+    // Which path produced this source — tells DIY vs Tavily apart without a DB query. Optional:
+    // only HybridSearchProvider stamps it (D021); TavilySearchProvider used standalone doesn't.
+    retrievalMethod: z.enum(["diy_fetch", "tavily_fallback"]).optional(),
   }),
   z.object({
     kind: z.literal("attached"),
@@ -111,6 +123,9 @@ export const StatusResponseSchema = z.object({
   claims: z.array(ClaimSchema),
   score: ScoreSchema,
   caps_hit: z.boolean(),
+  // null for audits created before this field existed — no createdAt on their Redis meta hash.
+  started_at: z.string().datetime().nullable(),
+  elapsed_seconds: z.number().int().nonnegative().nullable(),
 });
 
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;

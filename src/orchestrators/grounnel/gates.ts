@@ -1,9 +1,106 @@
 import { compare } from "../../numbers/compare.js";
-import { extractNumericFact } from "../audit/verify-reconcilers.js";
+import { extractNumericFact, CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
+import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import type { GrounnelVerdictEnum } from "../../contracts/grounnel.schemas.js";
 import type { z } from "zod";
 
 type Verdict = z.infer<typeof GrounnelVerdictEnum>;
+
+export interface ReasonConsistencyInput {
+  verdict: Verdict;
+  reason: string | null;
+}
+
+export interface ReasonConsistencyResult {
+  verdict: Verdict;
+  overridden: boolean;
+  // Machine-readable code for why this gate acted — null when overridden is false (D023 §5).
+  reason: "contradiction_language_in_model_reason" | null;
+}
+
+/**
+ * Forces verdict to `contradicted` when the model's own reason asserts a contradiction but the
+ * verdict says otherwise — reuses audit's hardened CONTRADICTION_LANGUAGE_RE (D018 §5.5) rather
+ * than a fresh regex. Real live-eval failures (2026-08-06): reason explicitly said "contradicts"/
+ * "not Canada" while verdict landed on `unsupported`.
+ *
+ * One direction only, deliberately: the opposite (reason argues support, verdict says
+ * contradicted — also observed live) has no equivalent hardened detector in this codebase yet.
+ * A fresh "support-language" regex now would repeat the exact under-tested-heuristic mistake
+ * this file's own incident history warns against — a named, not silently dropped, gap.
+ *
+ * D026 §22, real bug: `unverifiable` is excluded for the same reason applyImplicitNegationGate
+ * already excludes it — it's the CONFIDENCE section's deliberate downgrade of a low-confidence
+ * relationship, not a different relationship judgment. The reason text still legitimately
+ * describes the underlying (possibly CONFLICT-shaped) relationship per the verify prompt's own
+ * STEP1-3 binding rule, so without this exclusion this gate was force-flipping every low-confidence
+ * conflict read straight back into a hard `contradicted` — the exact high-certainty false positive
+ * the CONFIDENCE downgrade exists to prevent.
+ */
+export function applyReasonConsistencyGate(input: ReasonConsistencyInput): ReasonConsistencyResult {
+  if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  if (!CONTRADICTION_LANGUAGE_RE.test(input.reason) || NEGATED_CONTRADICTION_RE.test(input.reason)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  return { verdict: "contradicted", overridden: true, reason: "contradiction_language_in_model_reason" };
+}
+
+export interface ImplicitNegationInput {
+  verdict: Verdict;
+  reason: string | null;
+  claimText: string;
+  passageText: string;
+}
+
+export interface ImplicitNegationResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "bare_negation_matched" | null;
+}
+
+// Matches a bare "X, not Y" correction with no contradiction verb — the shape
+// applyReasonConsistencyGate deliberately doesn't catch (D022 §2, real gap: g05). Y's words must
+// be capitalized (entity-shaped) so the match stops at the entity instead of swallowing trailing
+// lowercase words ("not Canada to the United States" would otherwise capture "Canada to the").
+const IMPLICIT_NEGATION_RE = /,\s*not\s+(?:the\s+)?([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})/;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Case A gate (D022 §4) — bare "X, not Y" negation applyReasonConsistencyGate misses. Condition
+ * 3 trades recall for precision by deliberate design — see D022 §4 before weakening it.
+ */
+export function applyImplicitNegationGate(input: ImplicitNegationInput): ImplicitNegationResult {
+  // Only "unsupported" is in scope: "contradicted" is already there, "unverifiable" is a
+  // confidence downgrade this gate shouldn't override, "supported" would mean firing on a
+  // narrative correction the model already resolved correctly (D022 §4 review finding).
+  if (input.verdict !== "unsupported" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const match = IMPLICIT_NEGATION_RE.exec(input.reason);
+  if (!match) return { verdict: input.verdict, overridden: false, reason: null };
+
+  const y = match[1]!.trim().toLowerCase().replace(/\s+/g, " ");
+  const yInClaim = new RegExp(`\\b${escapeRegExp(y)}\\b`, "i").test(input.claimText);
+  if (!yInClaim) return { verdict: input.verdict, overridden: false, reason: null };
+
+  // Y's own words are excluded individually, not as one string — a multi-word Y ("United
+  // Kingdom") must not let its own constituent words ("united", "states") count as the second,
+  // independent entity condition 3 requires (D022 §4 review finding).
+  const yWords = new Set(y.split(/\s+/));
+  const passageLower = input.passageText.toLowerCase();
+  const hasSecondEntity = extractKeyTerms(input.claimText)
+    .filter((term) => !yWords.has(term))
+    .some((term) => passageLower.includes(term));
+  if (!hasSecondEntity) return { verdict: input.verdict, overridden: false, reason: null };
+
+  return { verdict: "contradicted", overridden: true, reason: "bare_negation_matched" };
+}
 
 // Also strips smart quotes/dashes (’‘“”–—) — LLM JSON output commonly straightens these even
 // when quoting "verbatim" from web prose that renders them typographically.
@@ -12,6 +109,79 @@ const PUNCTUATION_RE = /[.,!?;:"'()‘’“”–—]/g;
 /** Exact substring after whitespace/punctuation normalization only — never fuzzy/semantic (D019 §2). */
 function normalizeForSubstringCheck(text: string): string {
   return text.toLowerCase().replace(PUNCTUATION_RE, "").replace(/\s+/g, " ").trim();
+}
+
+// Matches "..." or the single-character "…" the model sometimes uses to join two real, non-adjacent
+// excerpts from the same passage into one evidence string (a live-eval finding, 2026-08-07, g04:
+// "Germany invades Poland ... Japan formally surrenders", both real, ~1000 words apart in the
+// source's dated timeline). Splitting on it, not just stripping it, matters — PUNCTUATION_RE alone
+// would collapse the gap and require the two genuinely non-adjacent fragments to be contiguous.
+const EVIDENCE_ELLIPSIS_RE = /\.{3,}|…/g;
+
+/**
+ * Every fragment (split on an ellipsis) must independently be a real, contiguous substring of the
+ * passage — still rejects a single fabricated fragment, doesn't weaken gate #1's hallucination
+ * check, just stops requiring multi-excerpt evidence to be one unbroken span (D019 §2, live-eval).
+ */
+function evidenceMatchesPassage(evidence: string, passageText: string): boolean {
+  const normalizedPassage = normalizeForSubstringCheck(passageText);
+  const fragments = evidence
+    .split(EVIDENCE_ELLIPSIS_RE)
+    .map((f) => normalizeForSubstringCheck(f))
+    .filter((f) => f.length > 0);
+  return fragments.length > 0 && fragments.every((f) => normalizedPassage.includes(f));
+}
+
+export interface CounterfactIgnoredInput {
+  verdict: Verdict;
+  /** Batched LLM classifier result — see D025 §2 for what feeds this and why it can be null. */
+  reasonSupportsVerdict: boolean | null;
+}
+
+export interface CounterfactIgnoredResult {
+  flagged: boolean;
+  reason: "counterfact_ignored" | null;
+}
+
+/** Gate #5 (D025 §2) — flags only, never changes verdict itself, unlike gates #1-4. */
+export function applyCounterfactIgnoredGate(input: CounterfactIgnoredInput): CounterfactIgnoredResult {
+  // Reviewed finding: stated positively — flag only on an explicit "no", not on null/true.
+  if (input.verdict !== "contradicted" && input.reasonSupportsVerdict === false) {
+    return { flagged: true, reason: "counterfact_ignored" };
+  }
+  return { flagged: false, reason: null };
+}
+
+export interface ClaimReasonOverlapInput {
+  verdict: Verdict;
+  reason: string | null;
+  claimText: string;
+}
+
+export interface ClaimReasonOverlapResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "claim_reason_no_overlap" | null;
+}
+
+/**
+ * Gate #1b — cross-claim contamination backstop, deterministic (real live-test finding, 2026-08-10:
+ * a batched VERIFY call answered the Marie Curie claim with Camp David Accords' reasoning verbatim,
+ * citing real — but topically unrelated — evidence resolved from Marie Curie's OWN passage, so
+ * gate #1's verbatim-grounding check passed it clean). Reuses extractKeyTerms/scoreKeyTermMatches
+ * (D026 §6) rather than a new heuristic — same fail-open convention: no key terms extracted from the
+ * claim, nothing to check, gate abstains. `contradicted`-only, same asymmetric scope as gate #1.
+ */
+export function applyClaimReasonOverlapGate(input: ClaimReasonOverlapInput): ClaimReasonOverlapResult {
+  if (input.verdict !== "contradicted" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  const terms = extractKeyTerms(input.claimText);
+  if (terms.length === 0) return { verdict: input.verdict, overridden: false, reason: null };
+  if (scoreKeyTermMatches(terms, input.reason) > 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  return { verdict: "unsupported", overridden: true, reason: "claim_reason_no_overlap" };
 }
 
 export interface GateOneInput {
@@ -23,20 +193,29 @@ export interface GateOneInput {
 export interface GateOneResult {
   verdict: Verdict;
   evidence: string | null;
+  overridden: boolean;
+  // Downgrade-only: "evidence_null" (no evidence given) vs "evidence_not_grounded" (D023 §5).
+  reason: "evidence_null" | "evidence_not_grounded" | null;
 }
 
 /** Gate #1 — contradiction evidence gate (D019 §2, tasks.md T003). Only fires on `contradicted`. */
 export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResult {
   if (input.verdict !== "contradicted") {
-    return { verdict: input.verdict, evidence: input.evidence };
+    return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
   }
-  const evidenceOk =
-    !!input.evidence &&
-    normalizeForSubstringCheck(input.passageText).includes(normalizeForSubstringCheck(input.evidence));
+  // Trimmed, not just truthy — a whitespace-only string ("  ") is truthy but carries no real
+  // content, same as null (reviewed finding: naive `!!input.evidence` misclassified it as grounded).
+  const hasContent = !!input.evidence?.trim();
+  const evidenceOk = hasContent && evidenceMatchesPassage(input.evidence!, input.passageText);
   if (evidenceOk) {
-    return { verdict: input.verdict, evidence: input.evidence };
+    return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
   }
-  return { verdict: "unsupported", evidence: null };
+  return {
+    verdict: "unsupported",
+    evidence: null,
+    overridden: true,
+    reason: hasContent ? "evidence_not_grounded" : "evidence_null",
+  };
 }
 
 export interface GateTwoInput {
@@ -48,32 +227,101 @@ export interface GateTwoInput {
 export interface GateTwoResult {
   verdict: Verdict;
   overridden: boolean;
+  reason: "threshold_comparison" | "equality_comparison" | null;
+}
+
+// A real live-eval failure (g11, 2026-08-06): "surpassed $3.5 trillion" against evidence stating
+// $3.57 trillion got marked contradicted — the equality-only comparison below treated "3.5 ≠ 3.57"
+// as confirming a mismatch, with no concept of threshold claims where a HIGHER evidence value means
+// the claim holds, not that it's wrong. `compare()`'s own `direction` field already carries what's
+// needed to fix this; it just wasn't used here before.
+// D026 §22/T064, real bug found in self-review: strict comparators ("exceeded") and inclusive
+// comparators ("at least") were previously grouped under one regex/one `holds` formula, so
+// evidence exactly equal to the claimed value wrongly satisfied "exceeded" — an exact match
+// only satisfies the INCLUSIVE wording, never the strict one. Split accordingly; mirrored for at_most.
+const AT_LEAST_STRICT_RE = /\b(surpassed|exceeded|topped|crossed|more than|greater than|over|above)\b/i;
+const AT_LEAST_INCLUSIVE_RE = /\bat least\b/i;
+const AT_MOST_STRICT_RE = /\b(less than|fewer than|under|below)\b/i;
+const AT_MOST_INCLUSIVE_RE = /\b(at most|no more than)\b/i;
+
+type ThresholdKind = "at_least_strict" | "at_least_inclusive" | "at_most_strict" | "at_most_inclusive";
+
+function detectThreshold(claimText: string): ThresholdKind | null {
+  if (AT_LEAST_STRICT_RE.test(claimText)) return "at_least_strict";
+  if (AT_LEAST_INCLUSIVE_RE.test(claimText)) return "at_least_inclusive";
+  if (AT_MOST_STRICT_RE.test(claimText)) return "at_most_strict";
+  if (AT_MOST_INCLUSIVE_RE.test(claimText)) return "at_most_inclusive";
+  return null;
+}
+
+// Reviewed finding — excludes a decimal ("2024.5") but not a sentence-ending period, and excludes
+// a preceding "$" so "$1998" isn't misread as a year (D026 §5).
+const YEAR_RE = /(?<![\d.$])(?:19|20)\d{2}(?!\d)(?!\.\d)/g;
+
+// Gate #2's temporal-comparability guard — deliberately conservative, known duplication/cost tradeoffs. See D026 §5.
+function yearsConflict(claimText: string, evidenceText: string): boolean {
+  const claimYears = new Set(claimText.match(YEAR_RE) ?? []);
+  if (claimYears.size === 0) return false;
+  return (evidenceText.match(YEAR_RE) ?? []).some((y) => !claimYears.has(y));
+}
+
+// Reviewed finding (D026 §7) — extractNumericFact only ever returns its FIRST match; whole-sentence
+// evidence (T043) makes a second, unrelated number in the same sentence common. Abstain when
+// ambiguous rather than risk comparing against the wrong one, same precedent as yearsConflict.
+const NUMERIC_TOKEN_RE = /\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%/g;
+function hasAmbiguousNumericEvidence(evidenceText: string): boolean {
+  return (evidenceText.match(NUMERIC_TOKEN_RE) ?? []).length > 1;
 }
 
 /**
- * Gate #2 — numeric normalization/comparison in code (D019 §2, tasks.md T004). Near-direct port of
- * the equal/inverted/wrong-scale decision logic in verify-reconcilers.ts's reconcileNumericVerdict —
- * the row/table-matching machinery is deliberately not ported (tasks.md T004 scope note: web prose
- * has no rows to match). Wrong-period detection is also out of scope for the same reason: it relies
- * on a structured `claim.period` field D018's B2B claims have and Grounnel's ClaimSchema does not.
+ * Gate #2 — numeric normalization/comparison in code (D019 §2, T004). Row/table-matching and full
+ * structured period detection are out of scope, see T004/D026 §5 for why.
  */
 export function applyNumericGate(input: GateTwoInput): GateTwoResult {
-  if (!input.evidence) return { verdict: input.verdict, overridden: false };
+  if (!input.evidence) return { verdict: input.verdict, overridden: false, reason: null };
 
   const claimFact = extractNumericFact(input.claimText);
   const evidenceFact = extractNumericFact(input.evidence);
-  if (!claimFact || !evidenceFact) return { verdict: input.verdict, overridden: false };
+  if (!claimFact || !evidenceFact) return { verdict: input.verdict, overridden: false, reason: null };
 
   const comparison = compare(claimFact, evidenceFact);
-  if (!comparison.comparable || comparison.equal === null) {
-    return { verdict: input.verdict, overridden: false };
+  if (!comparison.comparable) return { verdict: input.verdict, overridden: false, reason: null };
+
+  if (yearsConflict(input.claimText, input.evidence)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  if (hasAmbiguousNumericEvidence(input.evidence)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const threshold = detectThreshold(input.claimText);
+  if (threshold) {
+    // direction is sign(claim - source). Strict wording ("exceeded") only holds on a real
+    // difference (direction !== 0 in the required sense); inclusive wording ("at least") also
+    // holds on an exact match (direction === 0) — see the D026 §22/T064 comment above detectThreshold.
+    const holds =
+      threshold === "at_least_strict"
+        ? comparison.direction < 0
+        : threshold === "at_least_inclusive"
+          ? comparison.direction <= 0
+          : threshold === "at_most_strict"
+            ? comparison.direction > 0
+            : comparison.direction >= 0;
+    if (holds && input.verdict !== "supported") return { verdict: "supported", overridden: true, reason: "threshold_comparison" };
+    if (!holds && input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true, reason: "threshold_comparison" };
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  if (comparison.equal === null) {
+    return { verdict: input.verdict, overridden: false, reason: null };
   }
 
   if (comparison.equal && input.verdict !== "supported") {
-    return { verdict: "supported", overridden: true };
+    return { verdict: "supported", overridden: true, reason: "equality_comparison" };
   }
   if (!comparison.equal && input.verdict !== "contradicted") {
-    return { verdict: "contradicted", overridden: true };
+    return { verdict: "contradicted", overridden: true, reason: "equality_comparison" };
   }
-  return { verdict: input.verdict, overridden: false };
+  return { verdict: input.verdict, overridden: false, reason: null };
 }

@@ -1,9 +1,21 @@
-import { ZodObject } from "zod";
+import { ZodObject, ZodArray } from "zod";
 import type { ZodSchema } from "zod";
 import { logger } from "../observability/logger";
 import { extractJson } from "./json-from-llm";
 
 const MODULE = "repair";
+
+// A real live-eval failure (Grounnel VERIFY, 2026-08-06): asked for `{results: [...]}`, Gemini
+// returned the bare array directly, 3/3 retries. Zod correctly rejects it, but partialParseObject
+// then reads the array as a keyless object and nulls the field — recoverable, not actually malformed.
+function unwrapBareArrayResponse(parsed: unknown, schema: ZodSchema): unknown {
+  if (!Array.isArray(parsed) || !(schema instanceof ZodObject)) return parsed;
+  const shape = schema.shape as Record<string, ZodSchema>;
+  const keys = Object.keys(shape);
+  if (keys.length !== 1 || !(shape[keys[0]!] instanceof ZodArray)) return parsed;
+  logger.warn({ module: MODULE, operation: "unwrapBareArrayResponse", field: keys[0] }, "Response was a bare array — wrapping into the expected single-array-field object");
+  return { [keys[0]!]: parsed };
+}
 
 /**
  * Maps known snake_case field names from LLM output to camelCase expected by Zod schemas.
@@ -104,7 +116,8 @@ function partialParseObject<T>(
  */
 export function tryRepairJson<T>(text: string, schema: ZodSchema<T>, options: RepairOptions = {}): T {
   const extracted = extractJson(text);
-  const parsed = JSON.parse(extracted) as Record<string, unknown>;
+  const rawParsed: unknown = JSON.parse(extracted);
+  const parsed = unwrapBareArrayResponse(rawParsed, schema) as Record<string, unknown>;
 
   // Normalize known snake_case → camelCase fields
   normalizeFields(parsed);

@@ -22,6 +22,11 @@ import { DrizzleRetrievalComparisonStore } from "./persistence/retrieval-compari
 import { DrizzleAuditStore } from "./persistence/audit-store";
 import { RagEngineClient } from "./rag/engine-client";
 import { UpstashRedisHashClient, RedisGrounnelStore } from "./persistence/grounnel-store";
+import { DrizzleGrounnelHistoryStore } from "./persistence/grounnel-history-store";
+import { DrizzleGrounnelLlmCallStore } from "./persistence/grounnel-llm-call-store";
+import { DrizzleGrounnelSearchCallStore } from "./persistence/grounnel-search-call-store";
+import { DrizzleGrounnelGateEventStore } from "./persistence/grounnel-gate-event-store";
+import { DrizzleGrounnelRerankDecisionStore } from "./persistence/grounnel-rerank-decision-store";
 import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service";
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
@@ -82,11 +87,18 @@ export function buildApp() {
   if (env.TAVILY_API_KEY && upstashRedisConfig) {
     const redis = new Redis({ ...upstashRedisConfig, automaticDeserialization: false });
     const grounnelStore = new RedisGrounnelStore(new UpstashRedisHashClient(redis));
+    // Best-effort Postgres history (D023 §7) — safe to construct unconditionally even without
+    // DATABASE_URL configured; every method catches and logs internally, never throws.
+    const historyStore = new DrizzleGrounnelHistoryStore();
+    const llmCallStore = new DrizzleGrounnelLlmCallStore();
+    const searchCallStore = new DrizzleGrounnelSearchCallStore();
+    const gateEventStore = new DrizzleGrounnelGateEventStore();
+    const rerankDecisionStore = new DrizzleGrounnelRerankDecisionStore();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
-    const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider);
+    const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider, searchCallStore);
     grounnel = {
-      extractService: new GrounnelExtractService(provider, prompts, grounnelStore),
-      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore),
+      extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore),
+      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore),
       grounnelStore,
       rateLimiter: new RateLimiter(),
     };

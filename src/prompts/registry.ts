@@ -5,8 +5,18 @@ import auditExtractData from "./audit/extract/system.json" with { type: "json" }
 import auditVerifyData from "./audit/verify/system.json" with { type: "json" };
 import grounnelExtractData from "./grounnel/extract/system.json" with { type: "json" };
 import grounnelVerifyData from "./grounnel/verify/system.json" with { type: "json" };
+import grounnelConsistencyCheckData from "./grounnel/consistency-check/system.json" with { type: "json" };
+import grounnelPassageRerankData from "./grounnel/passage-rerank/system.json" with { type: "json" };
 
-export type PromptTemplate = "question-batch" | "assessment" | "audit-extract" | "audit-verify" | "grounnel-extract" | "grounnel-verify";
+export type PromptTemplate =
+  | "question-batch"
+  | "assessment"
+  | "audit-extract"
+  | "audit-verify"
+  | "grounnel-extract"
+  | "grounnel-verify"
+  | "grounnel-consistency-check"
+  | "grounnel-passage-rerank";
 
 interface PromptFile {
   content: string;
@@ -49,6 +59,16 @@ export class PromptRegistry {
     return (grounnelVerifyData as PromptFile).version;
   }
 
+  /** D025/T035 — the batched "does reason support verdict?" classifier, versioned independently of VERIFY. */
+  getGrounnelConsistencyCheckVersion(): string {
+    return (grounnelConsistencyCheckData as PromptFile).version;
+  }
+
+  /** D026 §18 — the batched passage-relevance reranker, versioned independently of VERIFY. */
+  getGrounnelPassageRerankVersion(): string {
+    return (grounnelPassageRerankData as PromptFile).version;
+  }
+
   render(template: PromptTemplate, variables: Record<string, string>): string {
     let raw: string;
 
@@ -70,6 +90,12 @@ export class PromptRegistry {
         break;
       case "grounnel-verify":
         raw = grounnelVerifyData.content;
+        break;
+      case "grounnel-consistency-check":
+        raw = grounnelConsistencyCheckData.content;
+        break;
+      case "grounnel-passage-rerank":
+        raw = grounnelPassageRerankData.content;
         break;
       default:
         throw new Error(`Unknown template: ${template satisfies never}`);

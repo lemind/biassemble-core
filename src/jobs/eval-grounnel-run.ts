@@ -3,7 +3,9 @@
  * wiring — matches eval-reflection.ts's "real eval before prompt changes, never automatic" policy.
  *
  * Trigger: event "eval/grounnel-run" (scripts/trigger-eval-grounnel.ts sends it)
- * No Postgres (D019 §4) — nothing here is persisted beyond this run's Inngest step output.
+ * D019 §4 reopened by D023 — run-grounnel-eval.ts wires the real Postgres history/llm-call/
+ * search-call stores (source: "eval", D023 §3) so these runs are tagged, not silently mixed into
+ * production analytics; Inngest's own step output remains the primary way to inspect a given run.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -13,6 +15,7 @@ import { GeminiProvider } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
 import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../providers/search/tavily-provider.js";
+import { DrizzleGrounnelSearchCallStore } from "../persistence/grounnel-search-call-store.js";
 import { runGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
@@ -46,7 +49,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
     const provider = new GeminiProvider();
     const prompts = new PromptRegistry();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
-    const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider);
+    const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider, new DrizzleGrounnelSearchCallStore());
 
     const cases = [];
     for (const goldenCase of golden.cases) {
@@ -68,6 +71,19 @@ export const evalGrounnelRunJob = inngest.createFunction(
       },
       summary.passed ? "Grounnel live eval passed" : "Grounnel live eval failed"
     );
+
+    // Inngest's run status (green/red) reflects only whether this handler threw, not what it
+    // returned — without this, a real failure (e.g. below_correct_rate) still shows green.
+    // Full failed-case detail (claims/reasons/verdicts/violations) is embedded in the thrown
+    // message itself, not just referenced — step.run output isn't always where this gets read
+    // from (e.g. Vercel/Inngest error capture only shows the thrown message).
+    if (!summary.passed) {
+      const failed = summary.cases.filter((c) => !c.ok);
+      throw new Error(
+        `Grounnel live eval failed (${summary.totalCorrect}/${summary.totalMatched} correct, ` +
+          `${summary.totalFalseAccusations} false accusations):\n${JSON.stringify(failed, null, 2)}`
+      );
+    }
 
     return summary;
   }

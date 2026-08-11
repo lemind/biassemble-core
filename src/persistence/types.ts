@@ -93,6 +93,22 @@ export type LlmCallFailureType = "schema_validation" | "parse_error" | "provider
 export type LlmCallStage = "assessment" | "question" | "extract" | "verify";
 export type LlmCallType = "primary" | "fallback";
 
+// ── Grounnel Gate Events (D023 §5) ──
+// Union of every literal each of gates.ts's four gate functions can return — each gate's own
+// Result type is narrower (a specific subset), this is the persistence-layer superset all of
+// them flow into. Same pattern as LlmCallFailureType above, kept in sync with gates.ts by hand.
+export type GateReason =
+  | "contradiction_language_in_model_reason"
+  | "bare_negation_matched"
+  | "evidence_null"
+  | "evidence_not_grounded"
+  | "threshold_comparison"
+  | "equality_comparison"
+  | "counterfact_ignored"
+  | "retry_contradiction_invalidated"
+  | "claim_reason_no_overlap"
+  | "escalation_reversal_invalidated";
+
 export interface LlmCallRecord {
   id: string;
   sessionId: string | null;

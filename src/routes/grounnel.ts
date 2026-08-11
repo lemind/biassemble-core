@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
+import { waitUntil } from "@vercel/functions";
 import { ExtractRequestSchema } from "../contracts/grounnel.schemas.js";
 import { authHook } from "../lib/auth.js";
 import { logger } from "../observability/logger.js";
@@ -22,12 +23,15 @@ export function registerGrounnelRoutes(
   }
 ) {
   server.post("/extract", { preHandler: [authHook] }, async (request, reply) => {
+    // ADR-001 §4 (biassemble/backend) — request.ip is the proxy's own egress IP, not the real
+    // end-user; the header carries the real one, request.ip is the local-dev/no-proxy fallback.
+    const clientIp = (request.headers["x-grounnel-client-ip"] as string | undefined) || request.ip;
     // Defense-in-depth behind authHook, not the primary control (D020 §4, spec.md).
-    if (!services.rateLimiter.checkAndConsume(request.ip)) {
+    if (!services.rateLimiter.checkAndConsume(clientIp)) {
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 
-    let body: { text: string };
+    let body: { text: string; sessionId?: string; searchEngine: "defaultFlow" | "tavily" };
     try {
       body = ExtractRequestSchema.parse(request.body);
     } catch (error) {
@@ -39,7 +43,7 @@ export function registerGrounnelRoutes(
 
     let extracted;
     try {
-      extracted = await services.extractService.run(body.text);
+      extracted = await services.extractService.run(body.text, "production", body.sessionId ?? null);
     } catch (error) {
       if (error instanceof RateLimitError) {
         // No audit exists yet (D019 trust boundary) — nowhere to write a per-claim reason, so the message becomes the /extract response itself.
@@ -59,14 +63,20 @@ export function registerGrounnelRoutes(
 
     reply.status(202).send({ id: extracted.id });
 
-    // No external queue (D020 §3) — the pipeline runs here, after the response is flushed. vercel.json's maxDuration:300 keeps the invocation alive; the client polls GET /status/:id instead.
+    // No external queue (D020 §3) — the pipeline runs here, after the response is flushed.
+    // waitUntil (D016/assessment.service.ts's own established pattern), not a bare await: Vercel
+    // freezes the container as soon as `res` finishes, regardless of whether this handler's own
+    // promise chain is still pending — maxDuration only bounds how long work is ALLOWED to run,
+    // it does not keep the container alive to do it. waitUntil is the actual platform contract.
     if (extracted.pendingClaims.length > 0) {
-      await services.pipelineService.run(extracted.id, extracted.pendingClaims).catch((err) => {
-        logger.error(
-          { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
-          "Pipeline run failed after the 202 response was already sent"
-        );
-      });
+      waitUntil(
+        services.pipelineService.run(extracted.id, extracted.pendingClaims, body.searchEngine).catch((err) => {
+          logger.error(
+            { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
+            "Pipeline run failed after the 202 response was already sent"
+          );
+        })
+      );
     }
   });
 

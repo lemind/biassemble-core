@@ -167,7 +167,9 @@ export class VerifyService {
 
       // Injection stays a hard stop and is never retried (D018 §2.3) — this is why the shared
       // withRetry helper, which retries everything but rate limits, is not used here.
-      if (isSuspectedInjection(JSON.stringify(raw), VERIFY_RESPONSE_KEYS)) {
+      // Reviewed finding: `evidence` is a verbatim quote from arbitrary source text by design —
+      // excluded from the marker scan (see injection-guard.ts's `quotedFields` doc comment).
+      if (isSuspectedInjection(JSON.stringify(raw), VERIFY_RESPONSE_KEYS, ["evidence"])) {
         logger.error({ module: MODULE, operation: "runBatch", auditId, raw }, "VERIFY response flagged as injection-suspected — hard stop, not repaired");
         if (llmCallId) {
           await this.llmCallStore.updateFailure(llmCallId, "schema_validation", "injection-suspected response").catch(() => {});

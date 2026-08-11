@@ -5,11 +5,15 @@ import { PromptRegistry } from "../../../../src/prompts/registry.js";
 import { RateLimitError } from "../../../../src/providers/gemini.js";
 import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../../../mocks/fake-redis-hash-client.js";
+import { NoopGrounnelHistoryStore } from "../../../mocks/noop-grounnel-history-store.js";
+import { FakeGrounnelHistoryStore } from "../../../mocks/fake-grounnel-history-store.js";
+import { NoopGrounnelLlmCallStore } from "../../../mocks/noop-grounnel-llm-call-store.js";
+import { FakeGrounnelLlmCallStore } from "../../../mocks/fake-grounnel-llm-call-store.js";
 import type { Provider } from "../../../../src/providers/types.js";
 
 function makeService(provider: MockProvider) {
   const store = new RedisGrounnelStore(new FakeRedisHashClient());
-  const service = new GrounnelExtractService(provider, new PromptRegistry(), store);
+  const service = new GrounnelExtractService(provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
   return { service, store };
 }
 
@@ -80,7 +84,7 @@ describe("GrounnelExtractService (T009)", () => {
       },
     };
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
-    const service = new GrounnelExtractService(rateLimitedProvider, new PromptRegistry(), store);
+    const service = new GrounnelExtractService(rateLimitedProvider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
 
     await expect(service.run("text")).rejects.toThrow(RateLimitError);
     expect(calls).toBe(1);
@@ -143,5 +147,99 @@ describe("GrounnelExtractService (T009)", () => {
     const status = await store.getStatus(id);
     expect(status!.claims).toEqual([]);
     expect(status!.progress.total).toBe(0);
+  });
+
+  it("T024/D023 §3: defaults to source 'production' and writes the same runId used for the Redis audit", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    const { id } = await service.run("Some pasted article text.");
+
+    expect(historyStore.createRunCalls).toHaveLength(1);
+    expect(historyStore.createRunCalls[0]).toMatchObject({ runId: id, sessionId: null, source: "production", text: "Some pasted article text." });
+  });
+
+  it("T024/D023 §3: an eval-triggered run writes source 'eval' — golden-set runs must not pollute production analytics", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    await service.run("Some pasted article text.", "eval");
+
+    expect(historyStore.createRunCalls).toHaveLength(1);
+    expect(historyStore.createRunCalls[0]).toMatchObject({ source: "eval" });
+  });
+
+  it("T025/D023 §4: records one grounnel_llm_calls completion for the EXTRACT call, stamped with the real prompt version", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const prompts = new PromptRegistry();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelExtractService(provider, prompts, store, new NoopGrounnelHistoryStore(), llmCallStore);
+
+    const { id } = await service.run("Some pasted article text.");
+
+    expect(llmCallStore.recordCallContexts).toHaveLength(1);
+    expect(llmCallStore.recordCallContexts[0]).toMatchObject({
+      runId: id,
+      stage: "extract",
+      callType: "primary",
+      provider: "mock",
+      promptVersion: prompts.getGrounnelExtractVersion(),
+    });
+    expect(llmCallStore.completions).toHaveLength(1);
+    expect(llmCallStore.completions[0]!.info.status).toBe("success");
+  });
+
+  it("T025/D023 §4: records one completion per attempt, not just the final one, when a retry happens", async () => {
+    provider.failOn(1, "transient provider error");
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore);
+
+    await service.run("text");
+
+    expect(llmCallStore.completions).toHaveLength(2);
+    expect(llmCallStore.completions[0]!.info.status).toBe("error");
+    expect(llmCallStore.completions[1]!.info.status).toBe("success");
+  });
+
+  it("T028/D023 §2: a real sessionId, once the caller has one (biassemble/backend's proxy), is written to grounnel_runs", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    await service.run("Some pasted article text.", "production", "11111111-1111-4111-8111-111111111111");
+
+    expect(historyStore.createRunCalls[0]).toMatchObject({ sessionId: "11111111-1111-4111-8111-111111111111" });
+  });
+
+  it("reviewed finding: an opinion-shaped claim (gate #3) also gets a durable grounnel_claims row, not just a Redis write", async () => {
+    provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    await service.run("Some pasted article text.");
+
+    expect(historyStore.createClaimCalls).toHaveLength(1);
+    expect(historyStore.createClaimCalls[0]).toMatchObject({ verdict: "unverifiable", status: "done" });
+  });
+
+  it("reviewed finding: marks the run 'failed' in history when EXTRACT itself fails after exhausting retries", async () => {
+    provider.failAll("persistent provider error");
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    await expect(service.run("text")).rejects.toThrow();
+
+    expect(historyStore.updateRunCalls).toHaveLength(1);
+    expect(historyStore.updateRunCalls[0]!.data).toMatchObject({ status: "failed" });
   });
 });

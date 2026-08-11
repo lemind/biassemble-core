@@ -8,6 +8,9 @@ import { RateLimiter } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
+import { NoopGrounnelHistoryStore } from "../mocks/noop-grounnel-history-store.js";
+import { NoopGrounnelLlmCallStore } from "../mocks/noop-grounnel-llm-call-store.js";
+import { NoopGrounnelGateEventStore } from "../mocks/noop-grounnel-gate-event-store.js";
 import type { SearchProvider, SearchPassage } from "../../src/providers/search/search-provider.js";
 import type { Provider } from "../../src/providers/types.js";
 
@@ -18,8 +21,8 @@ function buildServer(provider: Provider, searchProvider: SearchProvider) {
   const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());
   const prompts = new PromptRegistry();
   registerGrounnelRoutes(server, {
-    extractService: new GrounnelExtractService(provider, prompts, grounnelStore),
-    pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore),
+    extractService: new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore()),
+    pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
     grounnelStore,
     rateLimiter: new RateLimiter(1000, 60_000),
   });

@@ -10,8 +10,15 @@ import {
   claims,
   sourcePassages,
   claimPassages,
+  grounnelRuns,
+  grounnelClaims,
+  grounnelLlmCalls,
+  grounnelSearchCalls,
+  grounnelSearchPages,
+  grounnelRerankDecisions,
+  grounnelGateEvents,
 } from "./schema";
-import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus } from "../persistence/types";
+import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus, GateReason } from "../persistence/types";
 import type { LlmCall } from "./schema";
 
 function db() {
@@ -607,4 +614,131 @@ export async function getClaimPassagesByAudit(auditId: string) {
     .from(claimPassages)
     .innerJoin(claims, eq(claimPassages.claimId, claims.claimId))
     .where(eq(claims.auditId, auditId));
+}
+
+// ── Grounnel (specs/009-grounnel, D023 §7) ──
+// Best-effort history/analytics only — Redis remains the source of truth (D023 §7). No
+// AuditImmutableError-style guard here: unlike audit's Postgres rows, these are never read back
+// by any production code path, so there's nothing for a stale write to corrupt.
+
+export async function insertGrounnelRun(data: {
+  runId: string;
+  sessionId: string | null;
+  text: string;
+  source: "production" | "eval";
+  maxClaims: number;
+  truncated: boolean;
+}) {
+  const [row] = await db().insert(grounnelRuns).values(data).returning();
+  return row;
+}
+
+export async function updateGrounnelRun(
+  runId: string,
+  data: Partial<{
+    status: "extracting" | "verifying" | "done" | "failed";
+    truncated: boolean;
+    promptVersionExtract: string;
+    promptVersionVerify: string;
+    score: unknown;
+    completedAt: Date;
+  }>
+): Promise<void> {
+  await db().update(grounnelRuns).set(data).where(eq(grounnelRuns.runId, runId));
+}
+
+export async function insertGrounnelClaim(data: {
+  claimId: string;
+  runId: string;
+  claimText: string;
+  verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+  evidence: string | null;
+  confidence: number | null;
+  reason: string | null;
+  sources: unknown;
+  status: "done" | "failed";
+}) {
+  // D026 §13 — escalation re-processes an already-written claim (upsert, not a fresh row): a plain
+  // INSERT would hit claimId's PK conflict and, since callers swallow the error (D023 §7, Redis
+  // stays authoritative), silently leave this analytics row stuck at the pre-escalation verdict.
+  const [row] = await db()
+    .insert(grounnelClaims)
+    .values(data)
+    .onConflictDoUpdate({
+      target: grounnelClaims.claimId,
+      set: { verdict: data.verdict, evidence: data.evidence, confidence: data.confidence, reason: data.reason, sources: data.sources, status: data.status },
+    })
+    .returning();
+  return row;
+}
+
+export async function insertGrounnelLlmCall(data: {
+  runId: string;
+  claimId?: string | null;
+  stage: "extract" | "verify";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank";
+  provider: string;
+  model: string;
+  promptVersion: string;
+  rawResponse: string | null;
+  parsedOutput: unknown;
+  status: "success" | "timeout" | "error";
+  failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  startedAt: Date;
+  endedAt: Date;
+  durationMs: number;
+  errorMessage: string | null;
+}) {
+  const [row] = await db().insert(grounnelLlmCalls).values(data).returning();
+  return row;
+}
+
+export async function insertGrounnelSearchCall(data: {
+  runId: string;
+  claimId: string;
+  query: string;
+  callType: "diy_fetch" | "tavily_fallback";
+  url: string | null;
+  resultCount: number;
+  status: "ok" | "paywalled" | "unreachable" | "blocked" | "rate_limited" | "not_attempted";
+  durationMs: number;
+}) {
+  const [row] = await db().insert(grounnelSearchCalls).values(data).returning();
+  return row;
+}
+
+// D026 §19 — the cleaned excerpt a successful DIY fetch produced; see schema.ts's table comment
+// for why this is a separate table, not a column on grounnel_search_calls.
+export async function insertGrounnelSearchPage(data: { runId: string; claimId: string; url: string; excerpt: string }) {
+  const [row] = await db().insert(grounnelSearchPages).values(data).returning();
+  return row;
+}
+
+// D026 §19 — batch, not one insert per candidate, same convention as insertGrounnelGateEvents:
+// every candidate a rerankPassages call scored is written together, right after scoring finishes.
+export async function insertGrounnelRerankDecisions(
+  rows: Array<{ runId: string; claimId: string; url: string; lexicalScore: number; llmScore: number; combinedScore: number; selected: boolean }>
+) {
+  if (rows.length === 0) return [];
+  return await db().insert(grounnelRerankDecisions).values(rows).returning();
+}
+
+// Batch, not one insert per gate — the 4 (or however many) gate decisions for one claim are
+// always written together, right after that claim's grounnel_claims row lands (T027, D023 §5).
+export async function insertGrounnelGateEvents(
+  rows: Array<{
+    runId: string;
+    claimId: string;
+    gate: "reason_consistency" | "implicit_negation" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "retry_reconciliation";
+    verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+    verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+    overridden: boolean;
+    reason: GateReason | null;
+  }>
+) {
+  if (rows.length === 0) return [];
+  return await db().insert(grounnelGateEvents).values(rows).returning();
 }

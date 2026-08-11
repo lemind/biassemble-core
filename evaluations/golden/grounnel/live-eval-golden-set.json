@@ -62,6 +62,13 @@
       "text": "The Zorgonian Institute's 1932 expedition confirmed the migratory pattern of the lesser spotted grelkin.",
       "minCorrectRate": 1.0,
       "claims": [{ "match": "Zorgonian Institute", "kind": "silence" }]
+    },
+    {
+      "id": "g11-bloomberg-fallback",
+      "text": "Bloomberg reported that Apple's market capitalization surpassed $3.5 trillion in 2024.",
+      "minCorrectRate": 1.0,
+      "searchEngine": "tavily",
+      "claims": [{ "match": "market capitalization surpassed $3.5 trillion", "kind": "true" }]
     }
   ]
 }

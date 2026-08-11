@@ -8,6 +8,7 @@ const AUDIT_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export interface GrounnelStore {
   createAudit(data: {
+    id?: string;
     text: string;
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text">>;
@@ -15,6 +16,9 @@ export interface GrounnelStore {
   }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
+  /** D026 §14 — run-level, not claim-level: escalation shouldn't revert an already-resolved claim's
+   * status back to "pending" (visible UI regression), but "done" must still wait for it to finish. */
+  setEscalating(auditId: string, escalating: boolean): Promise<void>;
 }
 
 /** The subset of @upstash/redis's client this store needs — narrow enough to fake in tests without a live connection. */
@@ -29,9 +33,13 @@ export interface RedisHashClient {
 }
 
 // Deliberately excludes `status`/`progress` (derived from claims each read, no drift) and takes `truncated` as the caller's own signal, not `total>=maxClaims` — rationale: D019 §4.
+// createdAt/escalating optional — audits written before those fields existed have no value here;
+// `!meta.escalating` reads undefined the same as false (D026 §14).
 interface Meta {
   total: number;
   truncated: boolean;
+  createdAt?: string;
+  escalating?: boolean;
 }
 
 /** Adapts @upstash/redis's `Redis` to `RedisHashClient`. Build it with `automaticDeserialization: false` — this store parses JSON itself; the SDK's auto-parse would return objects, not strings. */
@@ -70,6 +78,7 @@ export class UpstashRedisHashClient implements RedisHashClient {
 }
 
 const META_FIELD = "meta";
+const LAST_ACTIVITY_FIELD = "lastActivityAt";
 
 function claimField(claimId: string): string {
   return `claim:${claimId}`;
@@ -80,14 +89,15 @@ export class RedisGrounnelStore implements GrounnelStore {
   constructor(private readonly redis: RedisHashClient) {}
 
   async createAudit(data: {
+    id?: string;
     text: string;
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text">>;
     truncated: boolean;
   }): Promise<{ id: string }> {
-    const id = randomUUID();
+    const id = data.id ?? randomUUID();
     const key = `audit:${id}`;
-    const meta: Meta = { total: data.claims.length, truncated: data.truncated };
+    const meta: Meta = { total: data.claims.length, truncated: data.truncated, createdAt: new Date().toISOString(), escalating: false };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };
     for (const claim of data.claims) {
       const full: Claim = {
@@ -118,7 +128,18 @@ export class RedisGrounnelStore implements GrounnelStore {
     const merged: Claim = { ...existing, ...result };
     // Single-field HSET — independent of every other claim's own field, which is what makes
     // concurrent writeClaimResult calls for different claims land without clobbering each other.
-    await this.redis.hset(key, { [claimField(claimId)]: JSON.stringify(merged) });
+    // lastActivityAt rides along in the same call (no extra round trip) — getStatus uses it to
+    // freeze elapsed_seconds once status is "done", instead of it counting up forever on every read.
+    await this.redis.hset(key, { [claimField(claimId)]: JSON.stringify(merged), [LAST_ACTIVITY_FIELD]: new Date().toISOString() });
+  }
+
+  /** D026 §14 — run-level flag, read-merge-write same as writeClaimResult; independent of every claim's own field. */
+  async setEscalating(auditId: string, escalating: boolean): Promise<void> {
+    const key = `audit:${auditId}`;
+    const existingRaw = await this.redis.hget(key, META_FIELD);
+    if (!existingRaw) return; // audit expired/missing — nothing to flag, matches getStatus's own null-on-missing convention
+    const meta = JSON.parse(existingRaw) as Meta;
+    await this.redis.hset(key, { [META_FIELD]: JSON.stringify({ ...meta, escalating }) });
   }
 
   async getStatus(id: string): Promise<StatusResponse | null> {
@@ -129,14 +150,17 @@ export class RedisGrounnelStore implements GrounnelStore {
 
     const claims: Claim[] = [];
     for (const [field, value] of Object.entries(raw)) {
-      if (field === META_FIELD) continue;
+      if (field === META_FIELD || field === LAST_ACTIVITY_FIELD) continue;
       claims.push(ClaimSchema.parse(JSON.parse(value)));
     }
 
     const checked = claims.filter((c) => c.status !== "pending").length;
     const total = meta.total;
+    // D026 §14 — "done" must also wait for escalation, not just every claim leaving "pending":
+    // escalateUnresolved runs after the main pass, inside the same run(), without touching claim
+    // status (kept monotonic — an already-shown verdict never visibly reverts to "pending").
     const status: StatusResponse["status"] =
-      total === 0 || checked === total ? "done" : checked === 0 ? "extracting" : "verifying";
+      (total === 0 || checked === total) && !meta.escalating ? "done" : checked === 0 ? "extracting" : "verifying";
 
     const grounded_n = claims.filter((c) => c.verdict === "supported").length;
     const unclear_n = claims.filter((c) => c.verdict === "partially_supported" || c.verdict === "unverifiable").length;
@@ -146,6 +170,12 @@ export class RedisGrounnelStore implements GrounnelStore {
     const eligible = grounded_n + unclear_n + no_evidence_n + contradicted_n + not_checked_n;
     const grounded_pct = eligible === 0 ? 0 : Math.round((grounded_n / eligible) * 100);
 
+    const startedAt = meta.createdAt ?? null;
+    // Frozen at the last claim write once done, not Date.now() — otherwise elapsed_seconds keeps
+    // climbing forever on every later poll of an already-finished run (real bug, caught live).
+    const endedAt = status === "done" && raw[LAST_ACTIVITY_FIELD] ? raw[LAST_ACTIVITY_FIELD] : new Date().toISOString();
+    const elapsedSeconds = startedAt ? Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000) : null;
+
     return {
       id,
       status,
@@ -153,6 +183,8 @@ export class RedisGrounnelStore implements GrounnelStore {
       claims,
       score: { grounded_pct, grounded_n, unclear_n, no_evidence_n, contradicted_n, not_checked_n, eligible },
       caps_hit: meta.truncated,
+      started_at: startedAt,
+      elapsed_seconds: elapsedSeconds,
     };
   }
 }

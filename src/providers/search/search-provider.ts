@@ -13,9 +13,20 @@ export interface SearchPassage {
   status: SourceStatus;
   /** null whenever status !== "ok" — a failed fetch has no usable text. */
   text: string | null;
+  /** Which path produced this passage — lets an API consumer tell DIY vs Tavily apart without querying grounnel_search_calls. Optional: only HybridSearchProvider stamps it. */
+  retrievalMethod?: "diy_fetch" | "tavily_fallback";
 }
 
 export interface SearchProvider {
-  /** Resolves a claim/query to real, independently-fetched passage text. Returns every attempted source, not just the successful one — failures are counted/shown, never silently dropped (§4.4). */
-  search(query: string): Promise<SearchPassage[]>;
+  /**
+   * Every attempted source, not just the successful one (§4.4). `context` is additive/optional —
+   * only `HybridSearchProvider` reads it (D023 §6). `searchFlow: "tavily"` skips DIY fetch entirely
+   * and goes straight to the fallback provider — lets a caller actually exercise that path on
+   * demand (POST /extract's `searchEngine` param) instead of gambling on which URLs a live
+   * grounding search happens to return.
+   */
+  /** `maxCandidates` (D026 §13) — how many DIY discovery candidates to actually fetch; only
+   * `HybridSearchProvider` reads it, escalation-only (default MAX_CANDIDATES when omitted). Tavily's
+   * fallback already retains FALLBACK_RETAINED_CANDIDATES (8) regardless, so it ignores this field. */
+  search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily"; maxCandidates?: number }): Promise<SearchPassage[]>;
 }
