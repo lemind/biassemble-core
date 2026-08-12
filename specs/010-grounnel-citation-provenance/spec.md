@@ -1,6 +1,6 @@
 # Feature Specification: Grounnel Citation Provenance
 
-**Feature Branch**: `011-gr-upd1`
+**Feature Branch**: `011-gr-upd1` (pre-existing branch this work landed on — doesn't follow the usual `0NN-slug` = branch-name convention other specs in this repo use; noted here rather than silently mismatched, per code review)
 
 **Created**: 2026-08-12
 

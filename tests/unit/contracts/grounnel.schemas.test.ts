@@ -59,7 +59,7 @@ describe("ClaimSourceSchema", () => {
   });
 });
 
-describe("ClaimResultSchema — derived from ClaimSchema via .omit(), not hand-duplicated", () => {
+describe("ClaimResultSchema — derived from ClaimObjectSchema via .omit(), not hand-duplicated", () => {
   it("accepts the same verdict fields as ClaimSchema minus id/text", () => {
     const { id: _id, text: _text, ...claimResult } = baseClaim;
     expect(() => ClaimResultSchema.parse(claimResult)).not.toThrow();
@@ -101,10 +101,31 @@ describe("ClaimSchema/ClaimResultSchema — citations must be empty when evidenc
     expect(() => ClaimSchema.parse(claim)).toThrow();
   });
 
-  it("applies the same rule to ClaimResultSchema (the writeClaimResult-facing shape)", () => {
+  // Reviewed finding: ClaimSchema and ClaimResultSchema are two independent .refine()
+  // invocations (withCitationsInvariant applied separately to each) — asserting only the
+  // reject case on ClaimResultSchema left its accept paths unverified, so a typo'd predicate
+  // that still rejects this one negative case but wrongly rejects a legitimate
+  // real-evidence/empty-citations ClaimResult could ship unnoticed. All 4 cases now mirrored.
+  it("applies the same rule to ClaimResultSchema (the writeClaimResult-facing shape) — reject case", () => {
     const { id: _id, text: _text, ...rest } = baseClaim;
     const result = { ...rest, evidence: null, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
     expect(() => ClaimResultSchema.parse(result)).toThrow();
+  });
+
+  it("ClaimResultSchema accept case: real evidence with matching citations", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    const result = { ...rest, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimResultSchema.parse(result)).not.toThrow();
+  });
+
+  it("ClaimResultSchema accept case: real evidence with NO citations (defensive-drop, not an error)", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    expect(() => ClaimResultSchema.parse({ ...rest, citations: [] })).not.toThrow();
+  });
+
+  it("ClaimResultSchema accept case: null evidence with empty citations", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    expect(() => ClaimResultSchema.parse({ ...rest, evidence: null, citations: [] })).not.toThrow();
   });
 });
 

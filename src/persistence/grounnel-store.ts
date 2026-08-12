@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Redis } from "@upstash/redis";
 import { ClaimSchema, type Claim, type ClaimResult, type StatusResponse } from "../contracts/grounnel.schemas.js";
+import { logger } from "../observability/logger.js";
+
+const MODULE = "grounnel-store";
 
 // D019 §4 — comfortably covers the P0 one-shot flow and a time-limited shareable-result page
 // without needing Postgres. Distinct from the search/fetch cache's own TTL by design.
@@ -152,7 +155,27 @@ export class RedisGrounnelStore implements GrounnelStore {
     const claims: Claim[] = [];
     for (const [field, value] of Object.entries(raw)) {
       if (field === META_FIELD || field === LAST_ACTIVITY_FIELD) continue;
-      claims.push(ClaimSchema.parse(JSON.parse(value)));
+      // Reviewed finding (D027) — one malformed claim row (e.g. a future write bug violating
+      // ClaimSchema's citations/evidence refine) must not 500 the whole audit's status response
+      // for every other, healthy claim — same "never fail the whole run over one bad item"
+      // convention pipeline.service.ts's runBatch/degradeBatch already apply at write time.
+      try {
+        claims.push(ClaimSchema.parse(JSON.parse(value)));
+      } catch (err) {
+        const claimId = field.startsWith("claim:") ? field.slice("claim:".length) : field;
+        logger.error({ module: MODULE, operation: "getStatus", auditId: id, claimId, err }, "Claim row failed schema validation — degrading this one claim instead of failing the whole status response");
+        claims.push({
+          id: claimId,
+          text: "",
+          status: "failed",
+          verdict: null,
+          evidence: null,
+          confidence: null,
+          reason: "This claim's stored result was invalid and could not be read.",
+          sources: [],
+          citations: [],
+        });
+      }
     }
 
     const checked = claims.filter((c) => c.status !== "pending").length;

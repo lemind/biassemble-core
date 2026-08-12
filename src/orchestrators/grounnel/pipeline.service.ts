@@ -58,12 +58,7 @@ const VerifyResultSchema = z.object({
   reason: z.string().nullable().optional().transform((v) => v ?? null),
   confidence: z.number().min(0).max(1),
 });
-// D027 — callVerify's real return shape: VerifyResultSchema's fields (intersected, not
-// hand-duplicated — same drift-proofing precedent VerifyRawResultSchema itself sets right below),
-// plus the resolved citations behind `evidence` (no `url` yet — that needs `item.passages`, only
-// available once the result rejoins its originating claim in processVerifyResults). Not folded
-// into VerifyResultSchema itself: that schema is also VerifyRawResultSchema's base, and
-// `citations` is a value THIS FILE computes, never something the model's raw response contains.
+// D027 — callVerify's real return shape (see ADR §3 for why citations aren't part of VerifyResultSchema itself).
 type VerifyProcessedResult = z.infer<typeof VerifyResultSchema> & { citations: ResolvedCitation[] };
 
 // D026 §7/§11 — cites {source, n} pairs, never free-text quotes. Derived from VerifyResultSchema
@@ -120,16 +115,17 @@ function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
   return sources.map((s) => ({ kind: "web" as const, title: s.title, domain: s.domain, url: s.url, status: s.status, retrievalMethod: s.retrievalMethod }));
 }
 
-// D027 §2 — callVerify's citation label codec ("A"/"B"/"C" over `passages`, rank order); not
-// shared with rerankPassages' own separate, ephemeral labels below (discarded before callVerify runs).
+// D027 §2 — callVerify's citation label codec ("A"-"Z" over `passages`, rank order); single-letter
+// only, coupled by convention to MAX_VERIFY_PASSAGES staying ≤ 26 (guarded below, not just assumed).
 function passageLabelForIndex(i: number): string {
+  if (i >= 26) throw new Error(`passageLabelForIndex: index ${i} exceeds the single-letter A-Z label scheme`);
   return String.fromCharCode(65 + i);
 }
 function passageIndexForLabel(label: string): number {
   return label.charCodeAt(0) - 65;
 }
 
-// D027 §2 — decoding back to `passages` is safe by construction; out-of-range labels are dropped, not thrown.
+// D027 §2 — out-of-range labels are dropped (logged), not thrown; see ADR §2 for why this is safe by construction today.
 function attachCitationUrls(citations: ResolvedCitation[], passages: SearchPassage[]): ClaimCitation[] {
   const result: ClaimCitation[] = [];
   for (const citation of citations) {
@@ -1019,12 +1015,11 @@ export class GrounnelPipelineService {
 
         const { verdict, evidence, gateEvents } = chain;
         const sources = toClaimSources(item.sources);
-        // D027 §2 — citations survive iff the evidence they back survived the gate chain (gates
-        // only pass `evidence` through unchanged or null it, never rewrite it). ClaimSchema's own
-        // refine() enforces the null-evidence-empty-citations half at parse time as a backstop.
+        // D027 §2 — citations survive iff the evidence they back survived the gate chain.
         const citations = evidence !== null ? attachCitationUrls(citationsBeforeGates, item.passages) : [];
         const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason, sources, citations };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
+        // D027 §4 — deliberately no `citations` here: historyStore's Postgres row doesn't carry it (out of scope for this change).
         await this.historyStore.createClaim({
           claimId: item.claim.id,
           runId: auditId,

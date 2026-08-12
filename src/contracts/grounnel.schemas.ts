@@ -91,20 +91,21 @@ const ClaimObjectSchema = z.object({
   citations: z.array(ClaimCitationSchema).default([]),
 });
 
-// D027 §2 — one direction only: citations must be empty when evidence is null (a claim never
-// points at rejected/absent evidence). The converse doesn't hold — attachCitationUrls can
-// legitimately drop a citation while `evidence` stays non-null, so it's not enforced here.
-const citationsEmptyWhenNoEvidence = (c: { evidence: string | null; citations: unknown[] }) =>
-  c.evidence !== null || c.citations.length === 0;
-const CITATIONS_REFINE_MESSAGE = "citations must be empty when evidence is null (D027 §2)";
+// D027 §2 — one direction only (evidence null ⇒ citations empty; see ADR for why the converse
+// doesn't hold). Centralized so ClaimSchema's and ClaimResultSchema's separate .refine() calls
+// (below — Zod's .refine() loses .omit(), so they can't share one derivation) can't diverge.
+const citationsInvariant = {
+  check: (c: { evidence: string | null; citations: unknown[] }) => c.evidence !== null || c.citations.length === 0,
+  message: "citations must be empty when evidence is null (D027 §2)",
+};
 
-export const ClaimSchema = ClaimObjectSchema.refine(citationsEmptyWhenNoEvidence, { message: CITATIONS_REFINE_MESSAGE });
+export const ClaimSchema = ClaimObjectSchema.refine(citationsInvariant.check, { message: citationsInvariant.message });
 
 export type Claim = z.infer<typeof ClaimSchema>;
 
 // GrounnelStore.writeClaimResult's `result` param (spec.md Code Style; tasks.md T007).
-export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true }).refine(citationsEmptyWhenNoEvidence, {
-  message: CITATIONS_REFINE_MESSAGE,
+export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true }).refine(citationsInvariant.check, {
+  message: citationsInvariant.message,
 });
 
 export type ClaimResult = z.infer<typeof ClaimResultSchema>;

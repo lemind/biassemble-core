@@ -236,4 +236,57 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status).not.toBeNull();
     expect(status!.claims[0]!.citations).toEqual([]);
   });
+
+  // Reviewed finding (D027, code review): the new citations/evidence refine() is enforced at
+  // read time (ClaimSchema.parse in getStatus), never at write time — a future write bug could
+  // silently store a row that fails it. Before this fix, ANY one malformed claim row would throw
+  // uncaught out of getStatus's loop, 500-ing the whole audit's status for every other, healthy
+  // claim too — a strictly worse blast radius than the pre-D027 silent-wrong-data behavior.
+  it("D027: one malformed claim row degrades to status:failed instead of crashing the whole audit's status response", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const healthyId = "11111111-1111-4111-8111-111111111111";
+    const brokenId = "33333333-3333-4333-8333-333333333333";
+    const auditId = "22222222-2222-4222-8222-222222222222";
+
+    await redis.hset(`audit:${auditId}`, {
+      meta: JSON.stringify({ total: 2, truncated: false, createdAt: new Date().toISOString(), escalating: false }),
+      [`claim:${healthyId}`]: JSON.stringify({
+        id: healthyId,
+        text: "A healthy claim",
+        status: "done",
+        verdict: "supported",
+        evidence: "real evidence",
+        confidence: 0.9,
+        reason: "real reason",
+        sources: [],
+        citations: [],
+      }),
+      // Hand-crafted violation of the citations/evidence invariant — evidence null but citations
+      // non-empty. Should never happen via any real writer in this codebase (all tested), but
+      // simulates the "future write bug" scenario the fix is a backstop for.
+      [`claim:${brokenId}`]: JSON.stringify({
+        id: brokenId,
+        text: "A broken claim",
+        status: "done",
+        verdict: "unsupported",
+        evidence: null,
+        confidence: null,
+        reason: null,
+        sources: [],
+        citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "orphaned citation" }],
+      }),
+    });
+
+    const status = await store.getStatus(auditId);
+    expect(status).not.toBeNull();
+    expect(status!.claims).toHaveLength(2);
+
+    const healthy = status!.claims.find((c) => c.id === healthyId)!;
+    expect(healthy.verdict).toBe("supported");
+
+    const broken = status!.claims.find((c) => c.id === brokenId)!;
+    expect(broken.status).toBe("failed");
+    expect(broken.citations).toEqual([]);
+  });
 });
