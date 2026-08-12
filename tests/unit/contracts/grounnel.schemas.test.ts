@@ -79,6 +79,35 @@ describe("ClaimSchema", () => {
   });
 });
 
+// D027 §2 — one direction only: a null-evidence claim must never carry citations pointing at
+// evidence the gate chain rejected. The converse (non-null evidence, empty citations) is legitimate
+// (attachCitationUrls can drop a citation defensively) and must NOT be rejected.
+describe("ClaimSchema/ClaimResultSchema — citations must be empty when evidence is null (D027 §2)", () => {
+  it("accepts a claim with real evidence and matching citations", () => {
+    const claim = { ...baseClaim, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimSchema.parse(claim)).not.toThrow();
+  });
+
+  it("accepts a claim with real evidence and NO citations — a legitimate defensive-drop case, not an error", () => {
+    expect(() => ClaimSchema.parse({ ...baseClaim, citations: [] })).not.toThrow();
+  });
+
+  it("accepts a null-evidence claim with empty citations", () => {
+    expect(() => ClaimSchema.parse({ ...baseClaim, evidence: null, citations: [] })).not.toThrow();
+  });
+
+  it("rejects a null-evidence claim that still carries citations", () => {
+    const claim = { ...baseClaim, evidence: null, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimSchema.parse(claim)).toThrow();
+  });
+
+  it("applies the same rule to ClaimResultSchema (the writeClaimResult-facing shape)", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    const result = { ...rest, evidence: null, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimResultSchema.parse(result)).toThrow();
+  });
+});
+
 const baseScore = {
   grounded_pct: 24,
   grounded_n: 20,

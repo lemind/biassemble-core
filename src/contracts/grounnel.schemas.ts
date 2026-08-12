@@ -64,9 +64,21 @@ export const ClaimSourceSchema = z.discriminatedUnion("kind", [
 
 export type ClaimSource = z.infer<typeof ClaimSourceSchema>;
 
+// D027 §3 — one entry per VERIFY citation, in citation order, never merged by source.
+export const ClaimCitationSchema = z.object({
+  source: z.string(),
+  sentence: z.number().int(),
+  url: z.url(),
+  text: z.string(),
+});
+
+export type ClaimCitation = z.infer<typeof ClaimCitationSchema>;
+
 // ─── Claim (as it appears in GET /status/:id's claims[]) ─────
 
-export const ClaimSchema = z.object({
+// Plain object, not yet refined — .omit() (below) needs a ZodObject, unavailable once .refine()
+// wraps it in ZodEffects. Not exported; ClaimSchema/ClaimResultSchema are the two refined forms.
+const ClaimObjectSchema = z.object({
   id: z.string().uuid(),
   text: z.string(),
   status: ClaimStatusEnum,
@@ -75,12 +87,25 @@ export const ClaimSchema = z.object({
   confidence: z.number().min(0).max(1).nullable(),
   reason: z.string().nullable(),
   sources: z.array(ClaimSourceSchema),
+  // D027 §2 — additive; defaulted so a pre-D027 Redis row still parses.
+  citations: z.array(ClaimCitationSchema).default([]),
 });
+
+// D027 §2 — one direction only: citations must be empty when evidence is null (a claim never
+// points at rejected/absent evidence). The converse doesn't hold — attachCitationUrls can
+// legitimately drop a citation while `evidence` stays non-null, so it's not enforced here.
+const citationsEmptyWhenNoEvidence = (c: { evidence: string | null; citations: unknown[] }) =>
+  c.evidence !== null || c.citations.length === 0;
+const CITATIONS_REFINE_MESSAGE = "citations must be empty when evidence is null (D027 §2)";
+
+export const ClaimSchema = ClaimObjectSchema.refine(citationsEmptyWhenNoEvidence, { message: CITATIONS_REFINE_MESSAGE });
 
 export type Claim = z.infer<typeof ClaimSchema>;
 
 // GrounnelStore.writeClaimResult's `result` param (spec.md Code Style; tasks.md T007).
-export const ClaimResultSchema = ClaimSchema.omit({ id: true, text: true });
+export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true }).refine(citationsEmptyWhenNoEvidence, {
+  message: CITATIONS_REFINE_MESSAGE,
+});
 
 export type ClaimResult = z.infer<typeof ClaimResultSchema>;
 

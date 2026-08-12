@@ -106,6 +106,7 @@ export class GrounnelExtractService {
           confidence: null,
           reason: OPINION_REASON,
           sources: [],
+          citations: [],
         });
         // Reviewed finding: gate #3 claims were only ever written to Redis — never to
         // grounnel_claims, permanently absent from history/analytics (D023 §3).

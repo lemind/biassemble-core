@@ -109,6 +109,7 @@ export class RedisGrounnelStore implements GrounnelStore {
         confidence: null,
         reason: null,
         sources: [],
+        citations: [],
       };
       fields[claimField(claim.id)] = JSON.stringify(full);
     }

@@ -209,4 +209,31 @@ describe("RedisGrounnelStore (T007)", () => {
     const store = makeStore();
     await expect(store.setEscalating("00000000-0000-0000-0000-000000000000", true)).resolves.toBeUndefined();
   });
+
+  it("D027 FR-007: a claim row written before `citations` existed (no key at all) still parses via getStatus, defaulting to []", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const auditId = "22222222-2222-4222-8222-222222222222";
+    // Hand-written, pre-D027-shape claim row — no `citations` key, written directly to the fake
+    // Redis backing store, bypassing createAudit/writeClaimResult (which always write it now) to
+    // simulate a real audit persisted before this field existed.
+    await redis.hset(`audit:${auditId}`, {
+      meta: JSON.stringify({ total: 1, truncated: false, createdAt: new Date().toISOString(), escalating: false }),
+      [`claim:${claimId}`]: JSON.stringify({
+        id: claimId,
+        text: "Pre-existing claim",
+        status: "done",
+        verdict: "supported",
+        evidence: "some evidence",
+        confidence: 0.9,
+        reason: "some reason",
+        sources: [],
+      }),
+    });
+
+    const status = await store.getStatus(auditId);
+    expect(status).not.toBeNull();
+    expect(status!.claims[0]!.citations).toEqual([]);
+  });
 });
