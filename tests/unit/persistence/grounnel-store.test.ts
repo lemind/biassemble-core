@@ -28,6 +28,24 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status!.caps_hit).toBe(false);
   });
 
+  it("D028: round-trips sourceExcerpt through createAudit/getStatus, including the null case", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({
+      text: "some pasted article",
+      maxClaims: 100,
+      claims: [
+        { id: "11111111-1111-4111-8111-111111111111", text: "Claim A", sourceExcerpt: "the real quoted span" },
+        { id: "22222222-2222-4222-8222-222222222222", text: "Claim B", sourceExcerpt: null },
+      ],
+      truncated: false,
+    });
+
+    const status = await store.getStatus(id);
+    const byId = (claimId: string) => status!.claims.find((c) => c.id === claimId)!;
+    expect(byId("11111111-1111-4111-8111-111111111111").sourceExcerpt).toBe("the real quoted span");
+    expect(byId("22222222-2222-4222-8222-222222222222").sourceExcerpt).toBeNull();
+  });
+
   it("returns null for an audit id that was never created", async () => {
     const store = makeStore();
     expect(await store.getStatus("00000000-0000-0000-0000-000000000000")).toBeNull();

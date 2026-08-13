@@ -93,6 +93,8 @@ interface Diagnostic {
 export interface PipelineClaimInput {
   id: string;
   text: string;
+  // D028 — verified verbatim substring of the source text, or null if unproduced/unverified.
+  sourceExcerpt: string | null;
 }
 
 interface ResolvedEvidence {

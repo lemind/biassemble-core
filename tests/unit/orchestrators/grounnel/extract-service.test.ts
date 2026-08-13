@@ -26,7 +26,7 @@ describe("GrounnelExtractService (T009)", () => {
 
   it("writes the initial claim list to the store and returns before any search/verify work", async () => {
     provider.setDefault({
-      claims: [{ claim: "The Eiffel Tower was completed in 1889." }, { claim: "Bukowski attended Los Angeles City College." }],
+      claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }, { claim: "Bukowski attended Los Angeles City College.", source_excerpt: "Bukowski attended Los Angeles City College." }],
       truncated: false,
     });
     const { service, store } = makeService(provider);
@@ -47,7 +47,7 @@ describe("GrounnelExtractService (T009)", () => {
 
   it("resolves an opinion-shaped claim to unverifiable immediately, with zero SearchProvider calls (gate #3)", async () => {
     provider.setDefault({
-      claims: [{ claim: "This is the best coffee in Rome." }, { claim: "The Eiffel Tower was completed in 1889." }],
+      claims: [{ claim: "This is the best coffee in Rome.", source_excerpt: "This is the best coffee in Rome." }, { claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }],
       truncated: false,
     });
     const { service, store } = makeService(provider);
@@ -92,7 +92,7 @@ describe("GrounnelExtractService (T009)", () => {
 
   it("retries on a provider failure and succeeds on a later attempt", async () => {
     provider.failOn(1, "transient provider error");
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     const { service, store } = makeService(provider);
 
     const { id } = await service.run("text");
@@ -109,7 +109,7 @@ describe("GrounnelExtractService (T009)", () => {
   });
 
   it("caps claims at the internal MAX_CLAIMS limit and sets caps_hit", async () => {
-    const claims = Array.from({ length: 150 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.` }));
+    const claims = Array.from({ length: 150 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.`, source_excerpt: `Claim number ${i} happened in ${2000 + i}.` }));
     provider.setDefault({ claims, truncated: false });
     const { service, store } = makeService(provider);
 
@@ -120,7 +120,7 @@ describe("GrounnelExtractService (T009)", () => {
   });
 
   it("does NOT set caps_hit when EXTRACT returns exactly MAX_CLAIMS with no real truncation", async () => {
-    const claims = Array.from({ length: 100 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.` }));
+    const claims = Array.from({ length: 100 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.`, source_excerpt: `Claim number ${i} happened in ${2000 + i}.` }));
     provider.setDefault({ claims, truncated: false });
     const { service, store } = makeService(provider);
 
@@ -131,7 +131,7 @@ describe("GrounnelExtractService (T009)", () => {
   });
 
   it("sets caps_hit when the LLM itself reports truncation, even under MAX_CLAIMS", async () => {
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: true });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: true });
     const { service, store } = makeService(provider);
 
     const { id } = await service.run("text");
@@ -149,8 +149,89 @@ describe("GrounnelExtractService (T009)", () => {
     expect(status!.progress.total).toBe(0);
   });
 
+  it("D028: sourceExcerpt is set when it's a real substring of the article text", async () => {
+    const text = "The Eiffel Tower was completed in 1889. It is located in Paris, France.";
+    provider.setDefault({
+      claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }],
+      truncated: false,
+    });
+    const { service, store } = makeService(provider);
+
+    const { id } = await service.run(text);
+    const status = await store.getStatus(id);
+
+    expect(status!.claims[0]!.sourceExcerpt).toBe("The Eiffel Tower was completed in 1889.");
+  });
+
+  it("D028 (review finding): an empty-string source_excerpt is treated as no-excerpt, not a trivially-true match", async () => {
+    // Every string .includes("") in JS — without the length guard, this would store "" instead
+    // of null, defeating the frontend's null-means-fall-back contract.
+    const text = "The Eiffel Tower was completed in 1889.";
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "" }], truncated: false });
+    const { service, store } = makeService(provider);
+
+    const { id } = await service.run(text);
+    const status = await store.getStatus(id);
+
+    expect(status!.claims[0]!.sourceExcerpt).toBeNull();
+  });
+
+  it("D028 (review finding): a claim missing source_excerpt entirely is not dropped by repair.ts's salvageArrays", async () => {
+    // A schema-level required field would fail the whole array element's parse on a missing key,
+    // and repair.ts's salvageArrays drops the entire element, not just the bad field — the exact
+    // "whole claim silently vanishes" failure D028 §4 says never to allow.
+    const text = "The Eiffel Tower was completed in 1889.";
+    provider.setDefault({
+      claims: [{ claim: "The Eiffel Tower was completed in 1889." } as unknown as { claim: string; source_excerpt: string }],
+      truncated: false,
+    });
+    const { service, store } = makeService(provider);
+
+    const { id } = await service.run(text);
+    const status = await store.getStatus(id);
+
+    expect(status!.claims).toHaveLength(1);
+    expect(status!.claims[0]!.text).toBe("The Eiffel Tower was completed in 1889.");
+    expect(status!.claims[0]!.sourceExcerpt).toBeNull();
+  });
+
+  it("D028: sourceExcerpt is nulled out, not the claim dropped, when the model's excerpt isn't a real substring of the article text", async () => {
+    const text = "The Eiffel Tower was completed in 1889.";
+    provider.setDefault({
+      claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "a paraphrase that never appears verbatim in the article" }],
+      truncated: false,
+    });
+    const { service, store } = makeService(provider);
+
+    const { id } = await service.run(text);
+    const status = await store.getStatus(id);
+
+    expect(status!.claims).toHaveLength(1);
+    expect(status!.claims[0]!.text).toBe("The Eiffel Tower was completed in 1889.");
+    expect(status!.claims[0]!.sourceExcerpt).toBeNull();
+  });
+
+  it("D028: two claims whose excerpts both come from the same sentence are verified independently", async () => {
+    const text = "John Smith was born in 1950 and became CEO in 2001.";
+    provider.setDefault({
+      claims: [
+        { claim: "John Smith was born in 1950.", source_excerpt: "born in 1950" },
+        { claim: "John Smith became CEO in 2001.", source_excerpt: "became CEO in 2001" },
+      ],
+      truncated: false,
+    });
+    const { service, store } = makeService(provider);
+
+    const { id } = await service.run(text);
+    const status = await store.getStatus(id);
+
+    const byText = (t: string) => status!.claims.find((c) => c.text === t)!;
+    expect(byText("John Smith was born in 1950.").sourceExcerpt).toBe("born in 1950");
+    expect(byText("John Smith became CEO in 2001.").sourceExcerpt).toBe("became CEO in 2001");
+  });
+
   it("T024/D023 §3: defaults to source 'production' and writes the same runId used for the Redis audit", async () => {
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const historyStore = new FakeGrounnelHistoryStore();
     const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
@@ -162,7 +243,7 @@ describe("GrounnelExtractService (T009)", () => {
   });
 
   it("T024/D023 §3: an eval-triggered run writes source 'eval' — golden-set runs must not pollute production analytics", async () => {
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const historyStore = new FakeGrounnelHistoryStore();
     const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
@@ -174,7 +255,7 @@ describe("GrounnelExtractService (T009)", () => {
   });
 
   it("T025/D023 §4: records one grounnel_llm_calls completion for the EXTRACT call, stamped with the real prompt version", async () => {
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const prompts = new PromptRegistry();
     const llmCallStore = new FakeGrounnelLlmCallStore();
@@ -196,7 +277,7 @@ describe("GrounnelExtractService (T009)", () => {
 
   it("T025/D023 §4: records one completion per attempt, not just the final one, when a retry happens", async () => {
     provider.failOn(1, "transient provider error");
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const llmCallStore = new FakeGrounnelLlmCallStore();
     const service = new GrounnelExtractService(provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore);
@@ -209,7 +290,7 @@ describe("GrounnelExtractService (T009)", () => {
   });
 
   it("T028/D023 §2: a real sessionId, once the caller has one (biassemble/backend's proxy), is written to grounnel_runs", async () => {
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const historyStore = new FakeGrounnelHistoryStore();
     const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
@@ -220,7 +301,7 @@ describe("GrounnelExtractService (T009)", () => {
   });
 
   it("reviewed finding: an opinion-shaped claim (gate #3) also gets a durable grounnel_claims row, not just a Redis write", async () => {
-    provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome.", source_excerpt: "This is the best coffee in Rome." }], truncated: false });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const historyStore = new FakeGrounnelHistoryStore();
     const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());

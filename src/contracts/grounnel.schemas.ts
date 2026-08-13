@@ -89,6 +89,8 @@ const ClaimObjectSchema = z.object({
   sources: z.array(ClaimSourceSchema),
   // D027 §2 — additive; defaulted so a pre-D027 Redis row still parses.
   citations: z.array(ClaimCitationSchema).default([]),
+  // D028 — additive; defaulted so a pre-D028 Redis row still parses.
+  sourceExcerpt: z.string().nullable().default(null),
 });
 
 // D027 §2 — one direction only (evidence null ⇒ citations empty; see ADR for why the converse
@@ -104,7 +106,9 @@ export const ClaimSchema = ClaimObjectSchema.refine(citationsInvariant.check, { 
 export type Claim = z.infer<typeof ClaimSchema>;
 
 // GrounnelStore.writeClaimResult's `result` param (spec.md Code Style; tasks.md T007).
-export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true }).refine(citationsInvariant.check, {
+// sourceExcerpt omitted alongside id/text (D028) — set once at claim creation (createAudit),
+// never touched by a VERIFY-stage writeClaimResult call.
+export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true, sourceExcerpt: true }).refine(citationsInvariant.check, {
   message: citationsInvariant.message,
 });
 

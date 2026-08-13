@@ -83,7 +83,7 @@ describe("GET /status/:id (T015)", () => {
   });
 
   it("returns the full StatusResponse shape, no delta logic, once a real run settles", async () => {
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     provider.setResponseFn("You are a verification engine", (request) => {
       const match = request.system.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)!;
       const ids = (JSON.parse(match[1]) as Array<{ id: string }>).map((p) => p.id);
@@ -113,14 +113,14 @@ describe("GET /status/:id (T015)", () => {
   });
 
   it("counts a forced VERIFY batch failure as not_checked (status: failed), not silently dropped from the denominator", async () => {
-    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
     // A custom Provider (not MockProvider.failAll) so EXTRACT still succeeds and only the
     // verification-engine call fails — matches how a real VERIFY-only outage would present.
     const failingOnVerify: Provider = {
       mode: "mock",
       completeJson: async (request) => {
         if (request.system.includes("You are a claim-extraction engine")) {
-          return { result: { claims: [{ claim: "The Eiffel Tower was completed in 1889." }], truncated: false } as any };
+          return { result: { claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false } as any };
         }
         throw new Error("VERIFY provider is down");
       },

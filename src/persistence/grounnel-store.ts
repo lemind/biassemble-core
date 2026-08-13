@@ -14,7 +14,7 @@ export interface GrounnelStore {
     id?: string;
     text: string;
     maxClaims: number;
-    claims: Array<Pick<Claim, "id" | "text">>;
+    claims: Array<Pick<Claim, "id" | "text" | "sourceExcerpt">>;
     truncated: boolean;
   }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
@@ -95,7 +95,7 @@ export class RedisGrounnelStore implements GrounnelStore {
     id?: string;
     text: string;
     maxClaims: number;
-    claims: Array<Pick<Claim, "id" | "text">>;
+    claims: Array<Pick<Claim, "id" | "text" | "sourceExcerpt">>;
     truncated: boolean;
   }): Promise<{ id: string }> {
     const id = data.id ?? randomUUID();
@@ -113,6 +113,7 @@ export class RedisGrounnelStore implements GrounnelStore {
         reason: null,
         sources: [],
         citations: [],
+        sourceExcerpt: claim.sourceExcerpt,
       };
       fields[claimField(claim.id)] = JSON.stringify(full);
     }
@@ -174,6 +175,7 @@ export class RedisGrounnelStore implements GrounnelStore {
           reason: "This claim's stored result was invalid and could not be read.",
           sources: [],
           citations: [],
+          sourceExcerpt: null,
         });
       }
     }

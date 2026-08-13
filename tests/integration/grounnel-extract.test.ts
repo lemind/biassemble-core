@@ -43,7 +43,7 @@ describe("POST /extract (T014)", () => {
   beforeEach(() => {
     provider = new MockProvider();
     // Opinion-shaped — gate #3 resolves it during EXTRACT, no pipeline run, no polling needed.
-    provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome." }], truncated: false });
+    provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome.", source_excerpt: "This is the best coffee in Rome." }], truncated: false });
   });
 
   it("returns 401 when the Authorization header is missing", async () => {
