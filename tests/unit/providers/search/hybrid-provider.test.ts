@@ -90,6 +90,28 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(results[0]!.title).toBe("Discovery Title");
   });
 
+  it("real bug, 2026-08-16: an HTML comment mentioning '<title>' in prose doesn't get mistaken for the real opening tag", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/Charles_Bukowski", title: undefined as unknown as string }]));
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        url,
+        text: async () =>
+          `<html><head><!-- og:title falls back to the page <title>, per convention --><title>Charles Bukowski - Wikipedia</title></head><body>${LONG_TEXT}</body></html>`,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("Bukowski attended Los Angeles City College.");
+
+    expect(results[0]!.title).toBe("Charles Bukowski - Wikipedia");
+  });
+
   it("D026 §13: context.maxCandidates widens how many discovered candidates get fetched, past the default of 3", async () => {
     const fallback = new StubFallback([]);
     const fetchedUrls: string[] = [];

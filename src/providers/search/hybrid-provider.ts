@@ -128,7 +128,10 @@ function extractTextFromHtml(html: string): string {
 
 // Real page title beats discoverUrls()'s domainOf() fallback (2026-08-13 — was always the domain).
 function extractTitleFromHtml(html: string): string | null {
-  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  // Strip comments first — a dev comment mentioning "<title>" in prose was mistaken for a real
+  // opening tag (real bug, 2026-08-16). Unterminated comments aren't caught — accepted gap.
+  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, "");
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(withoutComments);
   if (!match) return null;
   const decoded = match[1]!
     .replace(/&amp;/g, "&")
