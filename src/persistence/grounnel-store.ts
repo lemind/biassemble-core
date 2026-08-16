@@ -9,6 +9,10 @@ const MODULE = "grounnel-store";
 // without needing Postgres. Distinct from the search/fetch cache's own TTL by design.
 const AUDIT_TTL_SECONDS = 60 * 60 * 24 * 7;
 
+// D029 — a Vercel maxDuration (300s) kill mid-escalation never clears `escalating`, sticking a
+// run at "verifying" forever even once every claim is done. 8min = maxDuration + a clock-skew buffer.
+const STUCK_ESCALATION_TIMEOUT_MS = 8 * 60 * 1000;
+
 export interface GrounnelStore {
   createAudit(data: {
     id?: string;
@@ -185,8 +189,18 @@ export class RedisGrounnelStore implements GrounnelStore {
     // D026 §14 — "done" must also wait for escalation, not just every claim leaving "pending":
     // escalateUnresolved runs after the main pass, inside the same run(), without touching claim
     // status (kept monotonic — an already-shown verdict never visibly reverts to "pending").
+    const allChecked = total === 0 || checked === total;
+    const lastActivityAt = raw[LAST_ACTIVITY_FIELD] ? new Date(raw[LAST_ACTIVITY_FIELD]).getTime() : null;
+    // Self-heal (D029) — every claim is done but escalating is stuck; report done anyway.
+    const staleWhileEscalating =
+      meta.escalating === true && lastActivityAt !== null && Date.now() - lastActivityAt > STUCK_ESCALATION_TIMEOUT_MS;
+    if (staleWhileEscalating) {
+      // Observability (review finding) — how often this masks a real maxDuration kill should be
+      // visible, not silent.
+      logger.warn({ module: MODULE, operation: "getStatus", auditId: id, staleForMs: Date.now() - lastActivityAt! }, "Stuck-escalation self-heal fired — reporting done despite meta.escalating still true");
+    }
     const status: StatusResponse["status"] =
-      (total === 0 || checked === total) && !meta.escalating ? "done" : checked === 0 ? "extracting" : "verifying";
+      allChecked && (!meta.escalating || staleWhileEscalating) ? "done" : checked === 0 ? "extracting" : "verifying";
 
     const grounded_n = claims.filter((c) => c.verdict === "supported").length;
     const unclear_n = claims.filter((c) => c.verdict === "partially_supported" || c.verdict === "unverifiable").length;

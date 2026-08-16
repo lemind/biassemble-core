@@ -223,6 +223,67 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status!.status).toBe("done"); // flips back once escalation genuinely finishes
   });
 
+  it("real bug, 2026-08-16: self-heals to 'done' when escalating is stuck true and nothing has written to the audit in well over the stuck-escalation timeout (a Vercel maxDuration kill mid-escalation never clears the flag)", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: "Claim A" }], truncated: false });
+
+    await store.writeClaimResult(id, claimId, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
+    await store.setEscalating(id, true);
+
+    // Simulate a background function killed mid-escalation: the last write is far in the past,
+    // well past STUCK_ESCALATION_TIMEOUT_MS, with escalating never cleared.
+    const staleTimestamp = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { lastActivityAt: staleTimestamp });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("done");
+  });
+
+  it("real bug, 2026-08-16: does NOT self-heal while checked < total, even if escalating is stale — an incomplete run must never be reported done", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimA = "11111111-1111-4111-8111-111111111111";
+    const claimB = "22222222-2222-4222-8222-222222222222";
+    const { id } = await store.createAudit({
+      text: "article",
+      maxClaims: 100,
+      claims: [
+        { id: claimA, text: "Claim A" },
+        { id: claimB, text: "Claim B" },
+      ],
+      truncated: false,
+    });
+
+    // Only one of two claims resolved — checked (1) < total (2).
+    await store.writeClaimResult(id, claimA, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
+    await store.setEscalating(id, true);
+    const staleTimestamp = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { lastActivityAt: staleTimestamp });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("verifying");
+  });
+
+  it("real bug, 2026-08-16 (review finding, boundary case): still 'verifying' while stale by less than STUCK_ESCALATION_TIMEOUT_MS — must not self-heal a genuinely still-running escalation early", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: "Claim A" }], truncated: false });
+
+    await store.writeClaimResult(id, claimId, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
+    await store.setEscalating(id, true);
+
+    // 3 minutes stale — well under the 8-minute STUCK_ESCALATION_TIMEOUT_MS, still plausibly a
+    // genuinely-running escalation.
+    const nearlyStaleTimestamp = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { lastActivityAt: nearlyStaleTimestamp });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("verifying");
+  });
+
   it("D026 §14: setEscalating on a missing/expired audit is a silent no-op, matching getStatus's own null-on-missing convention", async () => {
     const store = makeStore();
     await expect(store.setEscalating("00000000-0000-0000-0000-000000000000", true)).resolves.toBeUndefined();
