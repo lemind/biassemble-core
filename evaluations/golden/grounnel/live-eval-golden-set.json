@@ -5,70 +5,159 @@
       "text": "The Eiffel Tower was completed in 1889. It is located in Paris, France.",
       "minCorrectRate": 1.0,
       "claims": [
-        { "match": "Eiffel Tower", "kind": "true" },
-        { "match": "located in Paris", "kind": "true" }
+        {
+          "match": "Eiffel Tower",
+          "kind": "true"
+        },
+        {
+          "match": "located in Paris",
+          "kind": "true"
+        }
       ]
     },
     {
       "id": "g02-mount-everest",
       "text": "Mount Everest is the tallest mountain on Earth above sea level, standing at 8,849 meters.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "tallest mountain on Earth", "kind": "true" }]
+      "claims": [
+        {
+          "match": "tallest mountain on Earth",
+          "kind": "true"
+        }
+      ]
     },
     {
       "id": "g03-moon-landing",
       "text": "The first man to walk on the Moon was Buzz Aldrin, in July 1969.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "Buzz Aldrin", "kind": "false" }]
+      "claims": [
+        {
+          "match": "Buzz Aldrin",
+          "kind": "false"
+        }
+      ]
     },
     {
       "id": "g04-wwii-end-date",
       "text": "World War II ended in 1943 with the surrender of Germany and Japan.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "World War II ended in 1943", "kind": "false" }]
+      "claims": [
+        {
+          "match": "World War II ended in 1943",
+          "kind": "false"
+        }
+      ]
     },
     {
       "id": "g05-statue-of-liberty",
       "text": "The Statue of Liberty was a gift from Canada to the United States, unveiled in 1886.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "gift from Canada", "kind": "false" }]
+      "claims": [
+        {
+          "match": "gift from Canada",
+          "kind": "false"
+        }
+      ]
     },
     {
       "id": "g06-bananas-berries",
       "text": "Bananas are botanically classified as berries, while strawberries are not classified as true berries.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "bananas", "kind": "true" }]
+      "claims": [
+        {
+          "match": "bananas",
+          "kind": "true"
+        }
+      ]
     },
     {
       "id": "g07-great-barrier-reef",
       "text": "The Great Barrier Reef, located off the coast of Australia, is the world's largest coral reef system.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "largest coral reef system", "kind": "true" }]
+      "claims": [
+        {
+          "match": "largest coral reef system",
+          "kind": "true"
+        }
+      ]
     },
     {
       "id": "g08-napoleon-birthplace",
       "text": "Napoleon Bonaparte was born on the island of Corsica in 1769.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "Corsica", "kind": "true" }]
+      "claims": [
+        {
+          "match": "Corsica",
+          "kind": "true"
+        }
+      ]
     },
     {
       "id": "g09-japan-currency",
       "text": "The official currency of Japan is the Korean won.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "Korean won", "kind": "false" }]
+      "claims": [
+        {
+          "match": "Korean won",
+          "kind": "false"
+        }
+      ]
     },
     {
       "id": "g10-fabricated-silence",
       "text": "The Zorgonian Institute's 1932 expedition confirmed the migratory pattern of the lesser spotted grelkin.",
       "minCorrectRate": 1.0,
-      "claims": [{ "match": "Zorgonian Institute", "kind": "silence" }]
+      "claims": [
+        {
+          "match": "Zorgonian Institute",
+          "kind": "silence"
+        }
+      ]
     },
     {
       "id": "g11-bloomberg-fallback",
       "text": "Bloomberg reported that Apple's market capitalization surpassed $3.5 trillion in 2024.",
       "minCorrectRate": 1.0,
       "searchEngine": "tavily",
-      "claims": [{ "match": "market capitalization surpassed $3.5 trillion", "kind": "true" }]
+      "claims": [
+        {
+          "match": "market capitalization surpassed $3.5 trillion",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g12-bukowski-death-year",
+      "text": "Charles Bukowski's father was Heinrich (Henry) Bukowski, who was born in 1895 and died in 1948.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "died in 1948",
+          "kind": "false"
+        }
+      ]
+    },
+    {
+      "id": "g13-bukowski-claimed-wedlock",
+      "text": "Charles Bukowski repeatedly claimed to be born out of wedlock, although Andernach marital records indicate his parents married one month before his birth.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "claimed to be born out of wedlock",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g14-bukowski-wrong-role",
+      "text": "Charles Bukowski's father, Heinrich (Henry) Bukowski, was born in 1958.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "born in 1958",
+          "kind": "false"
+        }
+      ]
     }
   ]
 }

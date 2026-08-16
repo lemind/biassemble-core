@@ -104,6 +104,8 @@ export type GateReason =
   | "evidence_not_grounded"
   | "threshold_comparison"
   | "equality_comparison"
+  | "year_role_match"
+  | "year_role_mismatch"
   | "counterfact_ignored"
   | "retry_contradiction_invalidated"
   | "claim_reason_no_overlap"

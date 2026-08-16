@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence, type ResolvedCitation } from "./passage-sentences.js";
-import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
+import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyYearGate } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -688,6 +688,14 @@ export class GrounnelPipelineService {
     const gate2 = applyNumericGate({ claimText: input.claimText, verdict, evidence });
     gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
     verdict = gate2.verdict;
+
+    // Gate #2b — year/date comparison, disjoint token class from gate #2 (dates vs $/%), so order
+    // relative to it doesn't matter. Real live-run finding: a wrong-year claim ("died in 1948" vs
+    // evidence "1895–1958") was graded supported since gate #2's extractNumericFact never
+    // recognizes bare years at all.
+    const gate2b = applyYearGate({ claimText: input.claimText, verdict, evidence });
+    gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
+    verdict = gate2b.verdict;
 
     // D025 §2 — retry fires on any ERROR-severity diagnostic; today that's every diagnostic this
     // chain produces, but the field exists so a future WARNING/INFO-only gate doesn't force a retry.

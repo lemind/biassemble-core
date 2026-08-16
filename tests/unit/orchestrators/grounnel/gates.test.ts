@@ -6,6 +6,7 @@ import {
   applyImplicitNegationGate,
   applyNumericGate,
   applyReasonConsistencyGate,
+  applyYearGate,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
 describe("gate #1 — contradiction evidence gate (T003)", () => {
@@ -363,6 +364,155 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       evidence: "Revenue reached $1.4 million.",
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+});
+
+describe("gate #2b — year/date comparison (real live-run finding, 2026-08-13: a wrong-year claim was graded supported since gate #2's extractNumericFact never recognizes bare years)", () => {
+  it("overrides to contradicted when the same month+day appears with a different year", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1930.",
+      verdict: "supported",
+      evidence: "Bukowski was born on August 16, 1920, in Andernach.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("overrides to supported when the same month+day+year matches but VERIFY was overly cautious", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "unverifiable",
+      evidence: "Bukowski was born on August 16, 1920, in Andernach.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "year_role_match" });
+  });
+
+  it("does nothing when the month or day differs — not the same dated event", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "supported",
+      evidence: "Bukowski was born on August 17, 1920, in Andernach.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("overrides to contradicted on the real death-year case (role-anchored, parenthetical range)", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski's father was Heinrich (Henry) Bukowski, born in 1895 and died in 1948.",
+      verdict: "supported",
+      evidence: "His father was Heinrich (Henry) Bukowski (1895–1958), an American of German descent.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("overrides to supported when a role-anchored parenthetical range matches exactly", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich (Henry) Bukowski was born in 1895 and died in 1958.",
+      verdict: "unverifiable",
+      evidence: "His father was Heinrich (Henry) Bukowski (1895–1958), an American of German descent.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "year_role_match" });
+  });
+
+  it("overrides to contradicted on a keyword-anchored (non-parenthetical) role mismatch", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich Bukowski died in 1948.",
+      verdict: "supported",
+      evidence: "Heinrich Bukowski died in 1958 after a long illness.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("(review finding) does NOT match a claim's death year against evidence only stating a birth year, even when the numbers happen to be equal", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich Bukowski died in 1948.",
+      verdict: "unverifiable",
+      evidence: "Heinrich Bukowski was born in 1948.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) does NOT match when the role-anchored year belongs to a different, unrelated named entity", () => {
+    const result = applyYearGate({
+      claimText: "Charles Bukowski was born in 1920.",
+      verdict: "unverifiable",
+      evidence: "John Smith was born in 1920 in a small town.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) does NOT force supported when the matched date sits inside hedged/disputed evidence", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "unverifiable",
+      evidence: "Bukowski was reportedly born on August 16, 1920, according to unreliable early biographers.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("still forces contradicted on a genuine mismatch even inside hedged evidence — a wrong value is wrong regardless of confidence", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1930.",
+      verdict: "supported",
+      evidence: "Bukowski was reportedly born on August 16, 1920, according to unreliable early biographers.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("does nothing when there is no evidence to compare against", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "unsupported",
+      evidence: null,
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
+  it("does nothing on an ordinary sentence with no recognizable date structure on either side", () => {
+    const result = applyYearGate({
+      claimText: "The company was profitable in 1998.",
+      verdict: "supported",
+      evidence: "By 2005 the company had expanded internationally.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Code-review findings, 2026-08-16 — all reproduced live against the pre-fix code before fixing.
+
+  it("(review finding) never overwrites an already-contradicted verdict back to supported on an unrelated date match — a coincidentally-matching date doesn't excuse a genuine mismatch gate #2 already found on a different fact", () => {
+    const result = applyYearGate({
+      claimText: "The company's revenue was $500 million, founded on August 16, 1920.",
+      // Simulates gate #2 having already, correctly, flipped this to contradicted over the wrong revenue figure.
+      verdict: "contradicted",
+      evidence: "The company's revenue was $300 million. It was founded on August 16, 1920, in Chicago.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("(review finding) Detector 1 (month+day) abstains when claim and evidence name clearly different, unrelated subjects", () => {
+    const result = applyYearGate({
+      claimText: "Alice's wedding was announced for June 5, 2021.",
+      verdict: "unverifiable",
+      evidence: "Bob Smith won the marathon on June 5, 2019, setting a new record.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) the entity guard is not defeated by a shared month name alone — two different people both 'born in December' must not match", () => {
+    const result = applyYearGate({
+      claimText: "Ada Lovelace was born on December 10, 1815.",
+      verdict: "unverifiable",
+      evidence: "Nikola Tesla was born on December 25, 1856.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) a year-shaped substring inside a longer digit run (e.g. a record number) is not extracted as a role year", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich Bukowski died in 1937.",
+      verdict: "unverifiable",
+      evidence: "Heinrich Bukowski died; see record no. 1937004 in the archive index.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
   });
 });
 
