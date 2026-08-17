@@ -158,6 +158,36 @@
           "kind": "false"
         }
       ]
+    },
+    {
+      "id": "g15-wright-brothers-ordinal",
+      "text": "The Wright brothers made their first powered flight at Kitty Hawk, North Carolina on December 17, 1903, and that first flight lasted 59 seconds and covered 852 feet.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "December 17, 1903",
+          "kind": "true"
+        },
+        {
+          "match": "852 feet",
+          "kind": "false"
+        },
+        {
+          "match": "59 seconds",
+          "kind": "false"
+        }
+      ]
+    },
+    {
+      "id": "g16-hopper-cobol-attribution",
+      "text": "Grace Murray Hopper played a crucial role in the development of COBOL in 1959. From 1959 to 1961, Hopper led the team that invented COBOL.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "led the team",
+          "kind": "true"
+        }
+      ]
     }
   ]
 }
