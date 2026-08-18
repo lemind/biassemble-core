@@ -943,3 +943,9 @@ T023 (grounnel pg schema — 5 tables)
   - **Dependencies:** T068 (direct same-day follow-up to its revert).
   - **Files:** `src/orchestrators/grounnel/gates.ts`, `tests/unit/orchestrators/grounnel/gates.test.ts`.
   - **Size:** S.
+
+## Backlog — not started
+
+- **Personal/autobiographical statements graded `unsupported` instead of excluded** (real user example, 2026-08-18): "In 2023, I was in need of a new laptop that should hopefully last me for a while" — a first-person statement about the author's own private circumstances, with no public record that could ever confirm or deny it. `opinion-filter.ts`'s gate #3 (`isOpinionClaim`) doesn't catch this class at all — its three regexes (`VALUE_JUDGMENT_RE`, `VAGUE_INTENSIFIER_RE`, `PREDICTION_RE`) target value judgments, vague intensifiers, and hedged predictions, none of which "I was in need of a laptop" matches. VERIFY correctly finds no evidence either way, so it grades `unsupported` — technically not wrong, but misleading UX: `unsupported` reads as "we searched and found nothing," when really this was never a checkable claim to begin with, same category gap `isOpinionClaim` already exists to solve for other non-factual statement types.
+  - **Likely approach, not yet designed**: per this repo's own AGENTS.md rule #12 ("prefer LLM judgment over regex for semantic/contextual checks... anything requiring 'does this text mean X' should be a small LLM classifier call instead of a growing pile of patterns") — first-person/personal-circumstance detection is exactly this class of problem, not a fixed-vocabulary pattern like the existing three regexes. A first-person-pronoun heuristic alone (`\bI\b`) would false-positive on legitimate checkable claims that happen to use first person in a quote or attribution; needs real judgment, not a fourth regex bolted onto `isOpinionClaim`.
+  - **Not started** — flagging for next iteration, no design/implementation done yet.
