@@ -6,6 +6,8 @@ import {
   applyImplicitNegationGate,
   applyNumericGate,
   applyReasonConsistencyGate,
+  applyReasonYearGate,
+  applyYearGate,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
 describe("gate #1 — contradiction evidence gate (T003)", () => {
@@ -366,6 +368,207 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
   });
 });
 
+describe("gate #2b — year/date comparison (real live-run finding, 2026-08-13: a wrong-year claim was graded supported since gate #2's extractNumericFact never recognizes bare years)", () => {
+  it("overrides to contradicted when the same month+day appears with a different year", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1930.",
+      verdict: "supported",
+      evidence: "Bukowski was born on August 16, 1920, in Andernach.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("overrides to supported when the same month+day+year matches but VERIFY was overly cautious", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "unverifiable",
+      evidence: "Bukowski was born on August 16, 1920, in Andernach.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "year_role_match" });
+  });
+
+  it("does nothing when the month or day differs — not the same dated event", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "supported",
+      evidence: "Bukowski was born on August 17, 1920, in Andernach.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("overrides to contradicted on the real death-year case (role-anchored, parenthetical range)", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski's father was Heinrich (Henry) Bukowski, born in 1895 and died in 1948.",
+      verdict: "supported",
+      evidence: "His father was Heinrich (Henry) Bukowski (1895–1958), an American of German descent.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("overrides to supported when a role-anchored parenthetical range matches exactly", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich (Henry) Bukowski was born in 1895 and died in 1958.",
+      verdict: "unverifiable",
+      evidence: "His father was Heinrich (Henry) Bukowski (1895–1958), an American of German descent.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "year_role_match" });
+  });
+
+  it("overrides to contradicted on a keyword-anchored (non-parenthetical) role mismatch", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich Bukowski died in 1948.",
+      verdict: "supported",
+      evidence: "Heinrich Bukowski died in 1958 after a long illness.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("(review finding) does NOT match a claim's death year against evidence only stating a birth year, even when the numbers happen to be equal", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich Bukowski died in 1948.",
+      verdict: "unverifiable",
+      evidence: "Heinrich Bukowski was born in 1948.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) does NOT match when the role-anchored year belongs to a different, unrelated named entity", () => {
+    const result = applyYearGate({
+      claimText: "Charles Bukowski was born in 1920.",
+      verdict: "unverifiable",
+      evidence: "John Smith was born in 1920 in a small town.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) does NOT force supported when the matched date sits inside hedged/disputed evidence", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "unverifiable",
+      evidence: "Bukowski was reportedly born on August 16, 1920, according to unreliable early biographers.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("still forces contradicted on a genuine mismatch even inside hedged evidence — a wrong value is wrong regardless of confidence", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1930.",
+      verdict: "supported",
+      evidence: "Bukowski was reportedly born on August 16, 1920, according to unreliable early biographers.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("does nothing when there is no evidence to compare against", () => {
+    const result = applyYearGate({
+      claimText: "Bukowski was born on August 16, 1920.",
+      verdict: "unsupported",
+      evidence: null,
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
+  it("does nothing on an ordinary sentence with no recognizable date structure on either side", () => {
+    const result = applyYearGate({
+      claimText: "The company was profitable in 1998.",
+      verdict: "supported",
+      evidence: "By 2005 the company had expanded internationally.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Code-review findings, 2026-08-16 — all reproduced live against the pre-fix code before fixing.
+
+  it("(review finding) never overwrites an already-contradicted verdict back to supported on an unrelated date match — a coincidentally-matching date doesn't excuse a genuine mismatch gate #2 already found on a different fact", () => {
+    const result = applyYearGate({
+      claimText: "The company's revenue was $500 million, founded on August 16, 1920.",
+      // Simulates gate #2 having already, correctly, flipped this to contradicted over the wrong revenue figure.
+      verdict: "contradicted",
+      evidence: "The company's revenue was $300 million. It was founded on August 16, 1920, in Chicago.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("(review finding) Detector 1 (month+day) abstains when claim and evidence name clearly different, unrelated subjects", () => {
+    const result = applyYearGate({
+      claimText: "Alice's wedding was announced for June 5, 2021.",
+      verdict: "unverifiable",
+      evidence: "Bob Smith won the marathon on June 5, 2019, setting a new record.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) the entity guard is not defeated by a shared month name alone — two different people both 'born in December' must not match", () => {
+    const result = applyYearGate({
+      claimText: "Ada Lovelace was born on December 10, 1815.",
+      verdict: "unverifiable",
+      evidence: "Nikola Tesla was born on December 25, 1856.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) a year-shaped substring inside a longer digit run (e.g. a record number) is not extracted as a role year", () => {
+    const result = applyYearGate({
+      claimText: "Heinrich Bukowski died in 1937.",
+      verdict: "unverifiable",
+      evidence: "Heinrich Bukowski died; see record no. 1937004 in the archive index.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  // Real live-run finding, 2026-08-17/18: "Pluto was reclassified... in 2005" against evidence
+  // agreeing "2006" was graded supported — ROLE_KEYWORDS had no "reclassified" entry, so this
+  // gate abstained entirely instead of catching a plain, unambiguous year mismatch.
+  it("overrides to contradicted on the real Pluto reclassification-year miss", () => {
+    const result = applyYearGate({
+      claimText: "Pluto was reclassified as a dwarf planet by the International Astronomical Union in 2005.",
+      verdict: "supported",
+      evidence: "In 2006, the International Astronomical Union (IAU) reclassified Pluto as a dwarf planet.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("overrides to supported on a matching reclassification year", () => {
+    const result = applyYearGate({
+      claimText: "Pluto was reclassified as a dwarf planet in 2006.",
+      verdict: "unverifiable",
+      evidence: "In 2006, the International Astronomical Union reclassified Pluto as a dwarf planet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "year_role_match" });
+  });
+
+  it("recognizes the new 'launched' role", () => {
+    const result = applyYearGate({
+      claimText: "The satellite Voyager 2 was launched in 1978.",
+      verdict: "supported",
+      evidence: "Voyager 2 was launched in 1977, a year before its sister probe.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("recognizes the new 'released' role", () => {
+    const result = applyYearGate({
+      claimText: "The film was released in 2001.",
+      verdict: "supported",
+      evidence: "The film was released in 1999 to critical acclaim.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  // Review finding, 2026-08-18: widening ROLE_YEAR_WINDOW to 100 (tried first) let "nearest year
+  // wins" reach past the claim's own entity into an unrelated relative's year, 93 chars from the
+  // keyword — reproduced live, then fixed by settling on 80 instead. This locks in the fix.
+  it("(review finding) does NOT reach past a different named relative's year at the widened window distance", () => {
+    const result = applyYearGate({
+      claimText: "Charles Bukowski was born in 1920.",
+      verdict: "supported",
+      evidence:
+        "Charles Bukowski was born in the city of Andernach, in the German Rhineland region, while his brother was born in 1925.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+});
+
 describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => {
   it("forces contradicted when the reason explicitly says 'directly contradicting the claim' (g04)", () => {
     const result = applyReasonConsistencyGate({
@@ -591,5 +794,121 @@ describe("gate #5 — counterfact-ignored, LLM-classifier-driven (D025, real liv
   it("never changes the verdict itself, unlike gates #1-4 — only ever flags for a reconciliation retry", () => {
     const result = applyCounterfactIgnoredGate({ verdict: "unsupported", reasonSupportsVerdict: false });
     expect(result).not.toHaveProperty("verdict");
+  });
+});
+
+describe("reason/verdict consistency gate — year mismatch (candidate; NOT wired into runGateChain, tasks.md Phase 35/36)", () => {
+  const claim = "The International Astronomical Union reclassified Pluto as a dwarf planet in 2005.";
+  const altYearSentence = "The International Astronomical Union confirms Pluto's reclassification occurred in 2006.";
+
+  it("forces contradicted when reason states only a different year for the claim's fact (Pluto run 7 shape)", () => {
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  it("forces contradicted when the claim's year is a NEGATED mention, not a confirmation (Pluto run 8 shape)", () => {
+    const reason =
+      "None of the provided sentences mention the year 2005 in relation to the International Astronomical Union's reclassification of Pluto. " +
+      altYearSentence;
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  it("does nothing when reason positively confirms the claim's own year among others", () => {
+    const reason = "Multiple sources confirm the reclassification occurred in 2005, though a minority report incorrectly cited 1999.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains on a compound claim with 2+ year tokens — scope-limiting guard", () => {
+    const compoundClaim = "Pluto was discovered in 1930 and reclassified as a dwarf planet in 2005.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: compoundClaim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains when reason mentions no year at all", () => {
+    const reason = "Sources broadly agree with the claim as stated, with no specific date given.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("no-ops on a verdict already contradicted", () => {
+    const result = applyReasonYearGate({ verdict: "contradicted", claimText: claim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("no-ops on 'unverifiable' — CONFIDENCE-downgrade exclusion, mirrors applyReasonConsistencyGate", () => {
+    const result = applyReasonYearGate({ verdict: "unverifiable", claimText: claim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("still forces contradicted when reason also uses explicit contradiction language — no conflict with applyReasonConsistencyGate", () => {
+    const reason =
+      "This contradicts the claim; the International Astronomical Union confirms Pluto's reclassification occurred in 2006, not 2005.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  it("(review finding) abstains when reason mentions an unrelated year for a DIFFERENT fact — locality guard", () => {
+    const reason = "The source discusses Pluto's reclassification but does not mention 2005. The IAU was founded in 1919.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Review finding: a decimal point ("$3.5 million") was being treated as a sentence terminator,
+  // splitting the sentence mid-number and losing the entity terms the locality check needs.
+  it("(review finding) a dollar figure with a decimal point next to the year doesn't defeat the locality check", () => {
+    const reason = "The International Astronomical Union confirmed a $3.5 million budget when it reclassified Pluto in 2006.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  describe("negation-window adversarial phrasings", () => {
+    it("'did not occur in 2005' — negated", () => {
+      const reason = "The reclassification did not occur in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    it("'None of the sources mention the year 2005' — negated", () => {
+      const reason =
+        "None of the sources mention the year 2005 regarding the International Astronomical Union's reclassification of Pluto. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    it("'never occurred in 2005' — negated", () => {
+      const reason = "The reclassification never occurred in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    it("'Notably, 2005 was...' — NOT negated (word boundary stops 'not' matching inside 'notably')", () => {
+      const reason = "Notably, 2005 was suggested by early reports. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("'not X; the event occurred in 2005' — NOT negated (clause boundary stops negation crossing the semicolon)", () => {
+      const reason = "This is not correct; the reclassification occurred in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    // Review finding: "n't" has no leading \b (contractions have no word boundary before 'n') —
+    // a naive \b-wrapped alternation silently never matches "wasn't"/"didn't"/etc.
+    it("'wasn't dated 2005' — negated (contraction, no word boundary before 'n't')", () => {
+      const reason = "The reclassification wasn't dated 2005; it occurred in 2006. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    // Review finding: the decimal point in "$3.5 million" was wrongly treated as a clause boundary,
+    // stripping an earlier negation word ("never") from the window tested for negation.
+    it("'never confirmed a $3.5 million reclassification in 2005' — negated (decimal point isn't a clause boundary)", () => {
+      const reason = "The IAU never confirmed a $3.5 million reclassification in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
   });
 });

@@ -59,7 +59,7 @@ describe("ClaimSourceSchema", () => {
   });
 });
 
-describe("ClaimResultSchema — derived from ClaimSchema via .omit(), not hand-duplicated", () => {
+describe("ClaimResultSchema — derived from ClaimObjectSchema via .omit(), not hand-duplicated", () => {
   it("accepts the same verdict fields as ClaimSchema minus id/text", () => {
     const { id: _id, text: _text, ...claimResult } = baseClaim;
     expect(() => ClaimResultSchema.parse(claimResult)).not.toThrow();
@@ -76,6 +76,56 @@ describe("ClaimResultSchema — derived from ClaimSchema via .omit(), not hand-d
 describe("ClaimSchema", () => {
   it("parses a full valid claim", () => {
     expect(() => ClaimSchema.parse(baseClaim)).not.toThrow();
+  });
+});
+
+// D027 §2 — one direction only: a null-evidence claim must never carry citations pointing at
+// evidence the gate chain rejected. The converse (non-null evidence, empty citations) is legitimate
+// (attachCitationUrls can drop a citation defensively) and must NOT be rejected.
+describe("ClaimSchema/ClaimResultSchema — citations must be empty when evidence is null (D027 §2)", () => {
+  it("accepts a claim with real evidence and matching citations", () => {
+    const claim = { ...baseClaim, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimSchema.parse(claim)).not.toThrow();
+  });
+
+  it("accepts a claim with real evidence and NO citations — a legitimate defensive-drop case, not an error", () => {
+    expect(() => ClaimSchema.parse({ ...baseClaim, citations: [] })).not.toThrow();
+  });
+
+  it("accepts a null-evidence claim with empty citations", () => {
+    expect(() => ClaimSchema.parse({ ...baseClaim, evidence: null, citations: [] })).not.toThrow();
+  });
+
+  it("rejects a null-evidence claim that still carries citations", () => {
+    const claim = { ...baseClaim, evidence: null, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimSchema.parse(claim)).toThrow();
+  });
+
+  // Reviewed finding: ClaimSchema and ClaimResultSchema are two independent .refine()
+  // invocations (withCitationsInvariant applied separately to each) — asserting only the
+  // reject case on ClaimResultSchema left its accept paths unverified, so a typo'd predicate
+  // that still rejects this one negative case but wrongly rejects a legitimate
+  // real-evidence/empty-citations ClaimResult could ship unnoticed. All 4 cases now mirrored.
+  it("applies the same rule to ClaimResultSchema (the writeClaimResult-facing shape) — reject case", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    const result = { ...rest, evidence: null, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimResultSchema.parse(result)).toThrow();
+  });
+
+  it("ClaimResultSchema accept case: real evidence with matching citations", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    const result = { ...rest, citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "some text" }] };
+    expect(() => ClaimResultSchema.parse(result)).not.toThrow();
+  });
+
+  it("ClaimResultSchema accept case: real evidence with NO citations (defensive-drop, not an error)", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    expect(() => ClaimResultSchema.parse({ ...rest, citations: [] })).not.toThrow();
+  });
+
+  it("ClaimResultSchema accept case: null evidence with empty citations", () => {
+    const { id: _id, text: _text, ...rest } = baseClaim;
+    expect(() => ClaimResultSchema.parse({ ...rest, evidence: null, citations: [] })).not.toThrow();
   });
 });
 

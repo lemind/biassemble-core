@@ -57,20 +57,35 @@ export function buildPassageSentencesMulti(
   return bySource;
 }
 
-/** Resolves the model's (source, n) citation(s) to real text; any unresolvable citation nulls the WHOLE answer. D026 §11. */
+/** D027 §2 — keyed by label/number, not URL yet; this module only knows sentence pools. */
+export interface ResolvedCitation {
+  source: string;
+  sentence: number;
+  text: string;
+}
+
+export interface ResolvedEvidenceFromCitations {
+  evidence: string | null;
+  citations: ResolvedCitation[];
+}
+
+/** Resolves citations to real text; unresolvable nulls both `evidence` and `citations` (D026 §11,
+ * D027 §2). Preserves citation order, never merges same-source citations (D027 §3). */
 export function resolveEvidenceFromCitations(
   citations: Array<{ source: string; n: number }> | null | undefined,
   sentencesBySource: Record<string, PassageSentence[]>
-): string | null {
-  if (!citations || citations.length === 0) return null;
-  const resolved: string[] = [];
+): ResolvedEvidenceFromCitations {
+  if (!citations || citations.length === 0) return { evidence: null, citations: [] };
+  const resolvedText: string[] = [];
+  const resolvedCitations: ResolvedCitation[] = [];
   for (const { source, n } of citations) {
     // Reviewed finding — `source` is model output, so a plain-property lookup ("constructor",
     // "toString", "__proto__", ...) would resolve to an inherited value instead of undefined.
-    if (!Object.prototype.hasOwnProperty.call(sentencesBySource, source)) return null;
+    if (!Object.prototype.hasOwnProperty.call(sentencesBySource, source)) return { evidence: null, citations: [] };
     const sentence = sentencesBySource[source]!.find((s) => s.n === n);
-    if (!sentence) return null;
-    resolved.push(sentence.text);
+    if (!sentence) return { evidence: null, citations: [] };
+    resolvedText.push(sentence.text);
+    resolvedCitations.push({ source, sentence: n, text: sentence.text });
   }
-  return resolved.join(" ... ");
+  return { evidence: resolvedText.join(" ... "), citations: resolvedCitations };
 }

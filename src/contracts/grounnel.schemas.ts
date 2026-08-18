@@ -64,9 +64,21 @@ export const ClaimSourceSchema = z.discriminatedUnion("kind", [
 
 export type ClaimSource = z.infer<typeof ClaimSourceSchema>;
 
+// D027 §3 — one entry per VERIFY citation, in citation order, never merged by source.
+export const ClaimCitationSchema = z.object({
+  source: z.string(),
+  sentence: z.number().int(),
+  url: z.url(),
+  text: z.string(),
+});
+
+export type ClaimCitation = z.infer<typeof ClaimCitationSchema>;
+
 // ─── Claim (as it appears in GET /status/:id's claims[]) ─────
 
-export const ClaimSchema = z.object({
+// Plain object, not yet refined — .omit() (below) needs a ZodObject, unavailable once .refine()
+// wraps it in ZodEffects. Not exported; ClaimSchema/ClaimResultSchema are the two refined forms.
+const ClaimObjectSchema = z.object({
   id: z.string().uuid(),
   text: z.string(),
   status: ClaimStatusEnum,
@@ -75,12 +87,30 @@ export const ClaimSchema = z.object({
   confidence: z.number().min(0).max(1).nullable(),
   reason: z.string().nullable(),
   sources: z.array(ClaimSourceSchema),
+  // D027 §2 — additive; defaulted so a pre-D027 Redis row still parses.
+  citations: z.array(ClaimCitationSchema).default([]),
+  // D028 — additive; defaulted so a pre-D028 Redis row still parses.
+  sourceExcerpt: z.string().nullable().default(null),
 });
+
+// D027 §2 — one direction only (evidence null ⇒ citations empty; see ADR for why the converse
+// doesn't hold). Centralized so ClaimSchema's and ClaimResultSchema's separate .refine() calls
+// (below — Zod's .refine() loses .omit(), so they can't share one derivation) can't diverge.
+const citationsInvariant = {
+  check: (c: { evidence: string | null; citations: unknown[] }) => c.evidence !== null || c.citations.length === 0,
+  message: "citations must be empty when evidence is null (D027 §2)",
+};
+
+export const ClaimSchema = ClaimObjectSchema.refine(citationsInvariant.check, { message: citationsInvariant.message });
 
 export type Claim = z.infer<typeof ClaimSchema>;
 
 // GrounnelStore.writeClaimResult's `result` param (spec.md Code Style; tasks.md T007).
-export const ClaimResultSchema = ClaimSchema.omit({ id: true, text: true });
+// sourceExcerpt omitted alongside id/text (D028) — set once at claim creation (createAudit),
+// never touched by a VERIFY-stage writeClaimResult call.
+export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true, sourceExcerpt: true }).refine(citationsInvariant.check, {
+  message: citationsInvariant.message,
+});
 
 export type ClaimResult = z.infer<typeof ClaimResultSchema>;
 

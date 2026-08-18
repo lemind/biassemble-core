@@ -11,7 +11,7 @@ LLM-powered reasoning engine for cognitive bias detection. Structured, evaluable
 
 ## What It Does
 
-Four endpoints. Structured output. Auditable reasoning.
+Six endpoints. Structured output. Auditable reasoning.
 
 | Endpoint | Trigger | Output |
 |----------|---------|--------|
@@ -48,7 +48,7 @@ Auditable reasoning engine with structured traces, evidence binding, and evaluat
 - **CI evaluation gate** — automated prompt quality checks on every change via `.github/workflows/prompt-eval.yml`
 - **Inngest eval job** — `src/jobs/eval-assessment.ts` runs golden + no_bias datasets, persists results, checks determinism
 
-All 40 tasks across 7 phases complete. 224/225 tests pass. See `specs/002-reasoning-infrastructure/` for full spec.
+All 40 tasks across 7 phases complete. See `specs/002-reasoning-infrastructure/` for full spec.
 
 ## RAG Integration — Stage 005 + D017
 
@@ -61,13 +61,13 @@ Every assessment records provenance to `core.retrieval_comparisons` — which si
 `POST /audit` checks someone else's AI-generated output (e.g. a financial research tool's summary) against the source documents it claims to be drawn from — built to answer "can I trust what this AI just told me?" for a buyer, not a builder.
 
 - **Claim pipeline**: EXTRACT (pull individual factual claims out of the submitted text) → RETRIEVE (find matching passages in the submitted sources) → VERIFY (compare each claim against its evidence) → GATE (compute business-facing scores)
-- **Verdicts**: `supported`, `partially_supported`, `contradicted`, `unsupported`, `unverifiable` — the last reserved for retrieval infrastructure failures, so they never contaminate the contradiction/unsupported rates
+- **Verdicts**: `supported`, `partially_supported`, `contradicted`, `unsupported`, `unverifiable` — the last is the "could not be decided" verdict, reached three ways: low-confidence gating below the threshold (FR-011), retrieval infrastructure failures (so they never contaminate the contradiction/unsupported rates), and VERIFY batch degradation when a response can't be parsed after retries (D018 §5.10)
 - **Numeric reconciliation**: a deterministic code-side check (not another LLM call) catches cases where a model's own arithmetic is right but its stated conclusion is wrong — e.g. "$111,184M vs $95,359M is more than doubling" (it's 1.17×, not ≥2×) — and cases of scale/unit mismatches ($640M claimed vs $64M cited)
 - **Reference-drift guard**: a deterministic check in EXTRACT catches the model paraphrasing away a sub-reference its own excerpt cites (e.g. "Article 19-2" collapsed to "Article 19") — found via a real audit run against app.gc.ai, where the mangled claim was then correctly rejected by VERIFY, producing a false "the audited output got this wrong" reading of a claim it actually stated correctly
 - **Inference-tolerance policy**: VERIFY's prompt explicitly ranks how far a verdict may reason beyond literal wording — direct restatement, logically-necessary entailment (a negative claim ruled out by an explicit exclusive fact = supported), or plausible-but-unstated inference (an adjacent but non-equivalent fact = `partially_supported`, never rounded up) — added after the same app.gc.ai run surfaced both failure directions at once
 - **Async by design**: submitting an audit returns immediately with `{ audit_id, status: "running" }`; poll `GET /audit/:audit_id` for the finished result (`Retry-After: 5` while running)
 - **Immutable results**: a completed or failed audit is never recomputed — `GET` always returns exactly what was persisted
-- **Golden sets**: 12 EXTRACT cases + 35 VERIFY cases + 20 numeric-normalization cases in `evaluations/golden/audit/`, each one hand-labeled before the prompt it tests existed to run against it; several were added directly from real production/audit incidents, not hypotheticals, including verbatim repros of three real target-run failures across two companies
+- **Golden sets**: 12 EXTRACT cases + 41 VERIFY cases + 20 numeric-normalization cases in `evaluations/golden/audit/`, each one hand-labeled before the prompt it tests existed to run against it; several were added directly from real production/audit incidents, not hypotheticals, including verbatim repros of three real target-run failures across two companies
 - **Deterministic model calls**: EXTRACT and VERIFY pass `temperature: 0` explicitly — found necessary after a real audit re-run on identical input produced three different claim sets and score patterns, making any fix unverifiable by re-running the live pipeline
 
 See `specs/008-b2b/quickstart.md` for example `curl` commands and `docs/decisions/018-audit-mode-flag.md` for the full design rationale. Out of scope for this stage: real document corpus ingestion (still a lexical stub retriever), the bias-module cross-check, and a review UI.
@@ -128,7 +128,7 @@ curl http://localhost:3001/health
 
 # run tests
 pnpm test
-# → all tests passing (388 as of this writing — grows with each feature)
+# → all tests passing (1002 as of this writing — grows with each feature)
 ```
 
 ### Local Dev vs Vercel Deployment

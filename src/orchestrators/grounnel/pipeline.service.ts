@@ -3,12 +3,12 @@ import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
-import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
-import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate } from "./gates.js";
+import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence, type ResolvedCitation } from "./passage-sentences.js";
+import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonYearGate, applyYearGate } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
-import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource } from "../../contracts/grounnel.schemas.js";
+import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource, type ClaimCitation } from "../../contracts/grounnel.schemas.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
@@ -58,7 +58,8 @@ const VerifyResultSchema = z.object({
   reason: z.string().nullable().optional().transform((v) => v ?? null),
   confidence: z.number().min(0).max(1),
 });
-const VerifyResponseSchema = z.object({ results: z.array(VerifyResultSchema) });
+// D027 — callVerify's real return shape (see ADR §3 for why citations aren't part of VerifyResultSchema itself).
+type VerifyProcessedResult = z.infer<typeof VerifyResultSchema> & { citations: ResolvedCitation[] };
 
 // D026 §7/§11 — cites {source, n} pairs, never free-text quotes. Derived from VerifyResultSchema
 // (not copy-pasted) so fields can't drift. `source` names which pooled passage a citation is from.
@@ -92,6 +93,8 @@ interface Diagnostic {
 export interface PipelineClaimInput {
   id: string;
   text: string;
+  // D028 — verified verbatim substring of the source text, or null if unproduced/unverified.
+  sourceExcerpt: string | null;
 }
 
 interface ResolvedEvidence {
@@ -112,6 +115,30 @@ function hasPassage(r: ResolvedEvidence): r is ResolvedWithPassage {
 
 function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
   return sources.map((s) => ({ kind: "web" as const, title: s.title, domain: s.domain, url: s.url, status: s.status, retrievalMethod: s.retrievalMethod }));
+}
+
+// D027 §2 — callVerify's citation label codec ("A"-"Z" over `passages`, rank order); single-letter
+// only, coupled by convention to MAX_VERIFY_PASSAGES staying ≤ 26 (guarded below, not just assumed).
+function passageLabelForIndex(i: number): string {
+  if (i >= 26) throw new Error(`passageLabelForIndex: index ${i} exceeds the single-letter A-Z label scheme`);
+  return String.fromCharCode(65 + i);
+}
+function passageIndexForLabel(label: string): number {
+  return label.charCodeAt(0) - 65;
+}
+
+// D027 §2 — out-of-range labels are dropped (logged), not thrown; see ADR §2 for why this is safe by construction today.
+function attachCitationUrls(citations: ResolvedCitation[], passages: SearchPassage[]): ClaimCitation[] {
+  const result: ClaimCitation[] = [];
+  for (const citation of citations) {
+    const passage = passages[passageIndexForLabel(citation.source)];
+    if (!passage) {
+      logger.warn({ module: MODULE, operation: "attachCitationUrls", source: citation.source }, "Citation source label did not resolve to a pooled passage — dropping this citation");
+      continue;
+    }
+    result.push({ source: citation.source, sentence: citation.sentence, url: passage.url, text: citation.text });
+  }
+  return result;
 }
 
 /** Per-claim loop: search -> gate #4 -> VERIFY (batched) -> gates #1/#2 -> store (D019 §1, T010). No-evidence claims skip VERIFY (cost saving, §4.1). Gemini/Tavily rate limits get distinct messages. */
@@ -303,7 +330,7 @@ export class GrounnelPipelineService {
       nowContradicted.map(async (c) => {
         const consistent = consistencyMap.get(c.id) ?? true; // fail-open, same convention as D025 §2/§5
         if (consistent) return;
-        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources });
+        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [] });
         await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
@@ -347,7 +374,7 @@ export class GrounnelPipelineService {
         const consistent = consistencyMap.get(c.id) ?? true; // fail-open, same convention as D025 §2/§5
         if (consistent) return;
         const verdictBefore = c.verdict as Verdict;
-        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources });
+        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [] });
         await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore, verdictAfter: "unsupported", overridden: true, reason: "escalation_reversal_invalidated" },
@@ -531,6 +558,7 @@ export class GrounnelPipelineService {
       confidence: null,
       reason,
       sources,
+      citations: [],
     });
     await this.historyStore.createClaim({
       claimId: r.claim.id,
@@ -556,6 +584,7 @@ export class GrounnelPipelineService {
           confidence: null,
           reason,
           sources,
+          citations: [],
         });
         await this.historyStore.createClaim({
           claimId: b.claim.id,
@@ -603,6 +632,14 @@ export class GrounnelPipelineService {
     });
     gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
     verdict = implicitNegation.verdict;
+
+    // Reason/verdict year-mismatch gate (tasks.md Phase 36/T069) — checks the model's own `reason`
+    // for a differing, associated year instead of scanning raw evidence (applyYearGate's
+    // ROLE_KEYWORDS whitelist proved unable to keep up with unbounded phrasing). Grouped with the
+    // other reason-only gates, before gate #1, same rationale as reasonConsistency/implicitNegation.
+    const reasonYear = applyReasonYearGate({ verdict, reason: input.reason, claimText: input.claimText });
+    gateEvents.push({ gate: "reason_year", verdictBefore: verdict, verdictAfter: reasonYear.verdict, overridden: reasonYear.overridden, reason: reasonYear.reason });
+    verdict = reasonYear.verdict;
 
     // Gate #5 (D025 §2/§3) — chain position (between implicit_negation and gate #1) is load-bearing, see ADR.
     const counterfact = applyCounterfactIgnoredGate({ verdict, reasonSupportsVerdict: input.reasonSupportsVerdict });
@@ -659,6 +696,14 @@ export class GrounnelPipelineService {
     const gate2 = applyNumericGate({ claimText: input.claimText, verdict, evidence });
     gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
     verdict = gate2.verdict;
+
+    // Gate #2b — year/date comparison, disjoint token class from gate #2 (dates vs $/%), so order
+    // relative to it doesn't matter. Real live-run finding: a wrong-year claim ("died in 1948" vs
+    // evidence "1895–1958") was graded supported since gate #2's extractNumericFact never
+    // recognizes bare years at all.
+    const gate2b = applyYearGate({ claimText: input.claimText, verdict, evidence });
+    gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
+    verdict = gate2b.verdict;
 
     // D025 §2 — retry fires on any ERROR-severity diagnostic; today that's every diagnostic this
     // chain produces, but the field exists so a future WARNING/INFO-only gate doesn't force a retry.
@@ -722,11 +767,11 @@ export class GrounnelPipelineService {
     // D025 §2 — the reconciliation retry needs a dynamic message (previous answer + diagnostics),
     // not the primary call's fixed trigger phrase. Same `grounnel-verify` system prompt either way.
     user: string = "Return the JSON now."
-  ): Promise<z.infer<typeof VerifyResponseSchema>> {
+  ): Promise<{ results: VerifyProcessedResult[] }> {
     // D026 §7/§11 — each pooled passage becomes a source-labeled, numbered subset of its own
     // sentences; the model cites {source, n}, never generates a quote.
     const sentencesByClaim = new Map<string, Record<string, PassageSentence[]>>(
-      pairs.map((p) => [p.id, buildPassageSentencesMulti(p.claim, p.passages.map((passage, i) => ({ label: String.fromCharCode(65 + i), text: passage.text })))])
+      pairs.map((p) => [p.id, buildPassageSentencesMulti(p.claim, p.passages.map((passage, i) => ({ label: passageLabelForIndex(i), text: passage.text })))])
     );
     const renderedPairs = pairs.map((p) => ({ id: p.id, claim: p.claim, passage_sentences: sentencesByClaim.get(p.id) ?? {} }));
     // Telemetry (reviewed finding) — lets a later recall check distinguish "pooling didn't help"
@@ -753,13 +798,17 @@ export class GrounnelPipelineService {
     const claimId = pairs.length === 1 ? pairs[0]!.id : undefined;
     const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion, [], claimId);
     return {
-      results: raw.results.map((r) => ({
-        id: r.id,
-        verdict: r.verdict,
-        evidence: resolveEvidenceFromCitations(r.evidenceCitations, sentencesByClaim.get(r.id) ?? {}),
-        reason: r.reason,
-        confidence: r.confidence,
-      })),
+      results: raw.results.map((r) => {
+        const resolved = resolveEvidenceFromCitations(r.evidenceCitations, sentencesByClaim.get(r.id) ?? {});
+        return {
+          id: r.id,
+          verdict: r.verdict,
+          evidence: resolved.evidence,
+          citations: resolved.citations,
+          reason: r.reason,
+          confidence: r.confidence,
+        };
+      }),
     };
   }
 
@@ -788,7 +837,7 @@ export class GrounnelPipelineService {
     verifyVersion: string,
     previous: { verdict: Verdict; evidence: string | null; reason: string | null },
     diagnostics: Diagnostic[]
-  ): Promise<z.infer<typeof VerifyResultSchema> | RateLimitError | null> {
+  ): Promise<VerifyProcessedResult | RateLimitError | null> {
     const pairs = [{ id: item.claim.id, claim: item.claim.text, passages: item.passages.map((p) => ({ text: p.text! })) }];
     const user = this.buildReconciliationUser(previous, diagnostics);
     try {
@@ -899,7 +948,7 @@ export class GrounnelPipelineService {
   private async processVerifyResults(
     auditId: string,
     items: ResolvedWithPassage[],
-    parsed: z.infer<typeof VerifyResponseSchema>,
+    parsed: { results: VerifyProcessedResult[] },
     verifyVersion: string,
     retryState: { rateLimit: RateLimitError | null },
     answeredIds: Set<string>
@@ -932,6 +981,8 @@ export class GrounnelPipelineService {
 
         let reason = result.reason;
         let confidence = result.confidence;
+        // D027 §2 — reassigned on a successful retry, same as reason/confidence just below.
+        let citationsBeforeGates = result.citations;
         // D026 §11 — gate #1's backstop runs on the joined text of every pooled passage; evidence
         // is already grounded per-source by construction, this just answers "is it real text."
         const passageText = item.passages.map((p) => p.text!).join("\n\n");
@@ -961,6 +1012,7 @@ export class GrounnelPipelineService {
           } else if (retried) {
             reason = retried.reason;
             confidence = retried.confidence;
+            citationsBeforeGates = retried.citations;
             const retryVerdict = confidence < CONFIDENCE_THRESHOLD && retried.verdict !== "unverifiable" ? "unverifiable" : retried.verdict;
             // Capped at one attempt, not re-classified (D025 §2) — deterministic gates still apply.
             const retryPass = this.runGateChain({
@@ -981,8 +1033,11 @@ export class GrounnelPipelineService {
 
         const { verdict, evidence, gateEvents } = chain;
         const sources = toClaimSources(item.sources);
-        const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason, sources };
+        // D027 §2 — citations survive iff the evidence they back survived the gate chain.
+        const citations = evidence !== null ? attachCitationUrls(citationsBeforeGates, item.passages) : [];
+        const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason, sources, citations };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
+        // D027 §4 — deliberately no `citations` here: historyStore's Postgres row doesn't carry it (out of scope for this change).
         await this.historyStore.createClaim({
           claimId: item.claim.id,
           runId: auditId,
@@ -1009,7 +1064,7 @@ export class GrounnelPipelineService {
     // than tracking "already stamped" across an arbitrary number of batches for one run.
     waitUntil(this.historyStore.updateRun(auditId, { promptVersionVerify: verifyVersion }));
 
-    let parsed: z.infer<typeof VerifyResponseSchema>;
+    let parsed: { results: VerifyProcessedResult[] };
     try {
       parsed = await this.callVerify(auditId, pairs, "runBatch", "primary", verifyVersion);
     } catch (err) {

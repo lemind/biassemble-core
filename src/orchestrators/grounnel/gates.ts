@@ -325,3 +325,331 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
   }
   return { verdict: input.verdict, overridden: false, reason: null };
 }
+
+// ─── Gate #2b — year/date comparison (D028-adjacent live-run finding, 2026-08-13) ─────────────
+
+export interface YearGateInput {
+  claimText: string;
+  verdict: Verdict;
+  evidence: string | null;
+}
+
+export interface YearGateResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "year_role_match" | "year_role_mismatch" | null;
+}
+
+// A near-identical month list exists in audit/table-parse.ts's DATE_RE (table-column detection, a
+// different concern) — kept separate deliberately rather than a new cross-orchestrator import for
+// one static array, matching this file's existing preference not to widen its coupling to `audit`.
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const MONTH_ALT = MONTH_NAMES.join("|");
+// Wider than gate #2's own YEAR_RE (19xx/20xx only) — deliberately scoped to just this gate's
+// regexes, not a change to YEAR_RE's existing behavior elsewhere in this file. Birth years for
+// people-claims (the motivating real case) commonly fall in the 1700s/1800s.
+const YEAR_TOKEN = "(?:1[5-9]\\d{2}|20\\d{2})";
+const FULL_DATE_MDY_RE = new RegExp(`\\b(${MONTH_ALT})\\s+(\\d{1,2}),?\\s+(${YEAR_TOKEN})\\b`, "i");
+const FULL_DATE_DMY_RE = new RegExp(`\\b(\\d{1,2})\\s+(${MONTH_ALT})\\s+(${YEAR_TOKEN})\\b`, "i");
+
+interface FullDate {
+  month: string;
+  day: string;
+  year: string;
+}
+
+function extractFullDate(text: string): FullDate | null {
+  const mdy = FULL_DATE_MDY_RE.exec(text);
+  if (mdy) return { month: mdy[1]!.toLowerCase(), day: mdy[2]!, year: mdy[3]! };
+  const dmy = FULL_DATE_DMY_RE.exec(text);
+  if (dmy) return { month: dmy[2]!.toLowerCase(), day: dmy[1]!, year: dmy[3]! };
+  return null;
+}
+
+// Generalized role/year extractor (review finding on the design plan) — a list, not a fixed
+// {birth, death} shape, so a future role (founding, publication) is additive, not a reshape.
+interface TemporalRoleFact {
+  role: string;
+  year: string;
+}
+
+// A "(YYYY–YYYY)" parenthetical immediately after a name is this codebase's own recognized
+// bio-range convention (EXTRACT's prompt already calls this shape out for birth/death splitting).
+const BIRTH_DEATH_RANGE_RE = new RegExp(`\\(\\s*(${YEAR_TOKEN})\\s*[–-]\\s*(${YEAR_TOKEN})\\s*\\)`);
+
+// `established` folded into `founding` (same concept, needs to match the same role string on
+// both sides) — `reclassified`/`launched`/`released` are new roles, added after a real live-run
+// miss (Pluto reclassification year) where the gate abstained entirely for want of a keyword.
+const ROLE_KEYWORDS: Array<{ re: RegExp; role: string }> = [
+  { re: /\b(?:born|birth)\b/i, role: "birth" },
+  { re: /\b(?:died|death|passed away)\b/i, role: "death" },
+  { re: /\b(?:founded|founding|established)\b/i, role: "founding" },
+  { re: /\b(?:published|publication)\b/i, role: "published" },
+  { re: /\b(?:reclassified|reclassification)\b/i, role: "reclassified" },
+  { re: /\b(?:launched|launch)\b/i, role: "launched" },
+  { re: /\b(?:released|release)\b/i, role: "released" },
+];
+
+// How far (chars) a role keyword may sit from the year it anchors. Widened from 40 to 80 (real
+// live-run finding, 2026-08-18) to reach the Pluto claim's 74-char keyword-to-year gap. Review
+// finding: 100 was tried first and reproduced a live regression — "nearest year wins" only
+// protects against a second year for the SAME entity, not a nearer year belonging to a genuinely
+// different one (e.g. "...was born in Andernach... while his brother was born in 1925", 93 chars
+// away) — 80 stays under that distance while still covering the real Pluto case, with margin.
+const ROLE_YEAR_WINDOW = 80;
+// \b on both sides (review finding) — without it this matched a 4-digit year-shaped substring
+// inside a longer digit run (a record/page number near a role keyword), same class of bug YEAR_RE
+// (line 259) already guards against elsewhere in this file.
+const YEAR_TOKEN_RE_G = new RegExp(`\\b${YEAR_TOKEN}\\b`, "g");
+
+// Known limitation, accepted (review finding): only the FIRST occurrence of each role keyword/
+// range is used, so a text naming multiple people (subject and a relative, each with their own
+// birth/death) could anchor to the wrong one. `sameEntity`'s proper-noun overlap check is the
+// mitigation, not a full fix — genuine multi-entity disambiguation is out of scope, same D026 §5
+// precedent this file already follows for not over-building per-fact attribution.
+function extractTemporalRoleFacts(text: string): TemporalRoleFact[] {
+  const facts: TemporalRoleFact[] = [];
+  const rangeMatch = BIRTH_DEATH_RANGE_RE.exec(text);
+  if (rangeMatch) {
+    facts.push({ role: "birth", year: rangeMatch[1]! });
+    facts.push({ role: "death", year: rangeMatch[2]! });
+  }
+  for (const { re, role } of ROLE_KEYWORDS) {
+    const kwMatch = re.exec(text);
+    if (!kwMatch) continue;
+    const windowStart = Math.max(0, kwMatch.index - ROLE_YEAR_WINDOW);
+    const windowEnd = Math.min(text.length, kwMatch.index + kwMatch[0].length + ROLE_YEAR_WINDOW);
+    const window = text.slice(windowStart, windowEnd);
+    const keywordOffsetInWindow = kwMatch.index - windowStart;
+    // Nearest year to the keyword wins, not just the first one in the window — a window can
+    // legitimately contain a second, farther role's year too (e.g. "born in 1895 and died in
+    // 1948" — the "born" keyword's window also reaches "1948").
+    let nearest: { year: string; distance: number } | null = null;
+    for (const yearMatch of window.matchAll(YEAR_TOKEN_RE_G)) {
+      const distance = Math.abs(yearMatch.index! - keywordOffsetInWindow);
+      if (!nearest || distance < nearest.distance) nearest = { year: yearMatch[0], distance };
+    }
+    if (nearest) facts.push({ role, year: nearest.year });
+  }
+  return facts;
+}
+
+// Coarse entity guard — abstains when claim and evidence name disjoint proper nouns, so a
+// coincidentally-matching date for a clearly different subject doesn't force a verdict either way.
+// Known limitation, accepted: two different people sharing a surname (e.g. father/son) still
+// overlap here and won't be caught — full entity linking is out of scope (D026 §5's own precedent:
+// overly clever per-fact attribution was tried elsewhere in this file and rejected as fragile).
+const PROPER_NOUN_RE = /\b[A-Z][a-zA-Z'-]+\b/g;
+// Review finding — month names are capitalized proper-noun-shaped tokens too, and this gate's own
+// claim/evidence pairs are date-heavy by construction, so without excluding them a shared month
+// name alone (not an actual shared entity) was enough to defeat this guard.
+const SENTENCE_START_STOPWORDS = new Set(
+  ["the", "he", "she", "they", "his", "her", "their", "a", "an", "in", "on", "at", "this", "that", "its", ...MONTH_NAMES].map((w) => w.toLowerCase())
+);
+
+function properNounWords(text: string): Set<string> {
+  const words = text.match(PROPER_NOUN_RE) ?? [];
+  return new Set(words.map((w) => w.toLowerCase()).filter((w) => !SENTENCE_START_STOPWORDS.has(w)));
+}
+
+// Shared by both detectors (review finding — Detector 1 previously had no entity guard at all,
+// letting two unrelated subjects that coincidentally share a month+day force a verdict). Abstains
+// only when BOTH sides name at least one proper noun and they share none — a text with no
+// capitalized names at all (pronoun-only) is left to the year/date comparison alone.
+function sameEntity(claimText: string, evidenceText: string): boolean {
+  const claimNames = properNounWords(claimText);
+  const evidenceNames = properNounWords(evidenceText);
+  if (claimNames.size === 0 || evidenceNames.size === 0) return true;
+  return [...claimNames].some((n) => evidenceNames.has(n));
+}
+
+// Only gates the forced-`supported` direction (review finding) — a wrong value is wrong
+// regardless of how confidently the source states it, so `contradicted` is never held back by this.
+const HEDGE_RE = /\b(reportedly|allegedly|disputed|unclear|unreliable|unconfirmed|some sources)\b/i;
+
+/**
+ * Gate #2b — deliberately narrower than D026 §5's rejected generic "any differing year" approach:
+ * only acts when claim and evidence share a recognizable structural marker (identical month+day,
+ * or the same temporal role — birth, death, ...) tying two numbers to the SAME fact, never bare
+ * year proximity/set-overlap guessing. `applyNumericGate`'s own `extractNumericFact` only
+ * recognizes currency/percent (shared with the `audit` orchestrator) — bare years never reach it.
+ */
+export function applyYearGate(input: YearGateInput): YearGateResult {
+  if (!input.evidence) return { verdict: input.verdict, overridden: false, reason: null };
+  const evidence = input.evidence;
+
+  // Review finding — the forced-`supported` direction must also leave an existing `contradicted`
+  // alone: a date MATCH doesn't excuse a genuine mismatch gate #2 (or an earlier gate) already
+  // found on a DIFFERENT fact in the same claim (e.g. a wrong dollar figure alongside a correct
+  // founding date) — reproduced live before this fix, gate #2b was silently undoing gate #2's own
+  // correct contradiction. The forced-`contradicted` direction is unconditional, as before: a
+  // wrong date is wrong regardless of what an already-`contradicted` verdict says about it too.
+  const canForceSupported = (verdict: Verdict) => verdict !== "supported" && verdict !== "contradicted";
+
+  if (!sameEntity(input.claimText, evidence)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  // Detector 1 — same month+day, different year.
+  const claimDate = extractFullDate(input.claimText);
+  const evidenceDate = extractFullDate(evidence);
+  if (claimDate && evidenceDate && claimDate.month === evidenceDate.month && Number(claimDate.day) === Number(evidenceDate.day)) {
+    if (claimDate.year !== evidenceDate.year) {
+      if (input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true, reason: "year_role_mismatch" };
+      return { verdict: input.verdict, overridden: false, reason: null };
+    }
+    if (!HEDGE_RE.test(evidence) && canForceSupported(input.verdict)) {
+      return { verdict: "supported", overridden: true, reason: "year_role_match" };
+    }
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  // Detector 2 — role-anchored year comparison.
+  const claimFacts = extractTemporalRoleFacts(input.claimText);
+  const evidenceFacts = extractTemporalRoleFacts(evidence);
+  if (claimFacts.length === 0 || evidenceFacts.length === 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  let sawMismatch = false;
+  let sawMatch = false;
+  for (const claimFact of claimFacts) {
+    for (const evidenceFact of evidenceFacts) {
+      if (claimFact.role !== evidenceFact.role) continue;
+      if (claimFact.year === evidenceFact.year) sawMatch = true;
+      else sawMismatch = true;
+    }
+  }
+
+  if (sawMismatch) {
+    if (input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true, reason: "year_role_mismatch" };
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  if (sawMatch && !HEDGE_RE.test(evidence) && canForceSupported(input.verdict)) {
+    return { verdict: "supported", overridden: true, reason: "year_role_match" };
+  }
+  return { verdict: input.verdict, overridden: false, reason: null };
+}
+
+// ─── Reason/verdict consistency gate — year mismatch (candidate; not wired into runGateChain,
+// see tasks.md Phase 35/36) ─────────────────────────────────────────────────────────────────
+
+export interface ReasonYearGateInput {
+  claimText: string;
+  verdict: Verdict;
+  reason: string | null;
+}
+
+export interface ReasonYearGateResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "reason_year_mismatch" | null;
+}
+
+// Window sized off a real captured VERIFY reason ("None of the provided sentences mention the year
+// 2005...", ~48 chars from "None" to "2005") with margin — same measure-then-set approach as
+// ROLE_YEAR_WINDOW above.
+// "n't" has no leading \b (contractions have no word boundary before 'n') — same fix
+// NEGATED_CONTRADICTION_RE already applies (verify-reconcilers.ts) for the identical reason.
+const REASON_YEAR_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
+const REASON_YEAR_NEGATION_WINDOW = 60;
+
+// A "." flanked by digits on both sides is a decimal point ("$3.5 million"), not a sentence/clause
+// end — review finding: treating every "." as a boundary truncated both the negation window and
+// the locality check right at a dollar figure, silently defeating them whenever one sat near the year.
+function isSentenceTerminator(text: string, index: number): boolean {
+  if (text[index] !== ".") return true;
+  return !(/\d/.test(text[index - 1] ?? "") && /\d/.test(text[index + 1] ?? ""));
+}
+
+function lastClauseBoundary(window: string): number {
+  let last = -1;
+  for (let i = 0; i < window.length; i++) {
+    const ch = window[i]!;
+    if (ch === ";" || ch === "," || ch === "!" || ch === "?") last = i;
+    else if (ch === "." && isSentenceTerminator(window, i)) last = i;
+  }
+  return last;
+}
+
+// Clause-scoped, not just char-distance: a negation earlier in the window but in a PRIOR clause
+// ("not X; the event occurred in 2005") must not negate a year in a later, unrelated clause.
+function isReasonYearNegated(reason: string, yearIndex: number): boolean {
+  const windowStart = Math.max(0, yearIndex - REASON_YEAR_NEGATION_WINDOW);
+  const window = reason.slice(windowStart, yearIndex);
+  const clauseStart = lastClauseBoundary(window);
+  return REASON_YEAR_NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
+}
+
+// Rough sentence spans with offsets, just to bound the locality check below — doesn't split mid-
+// number (see isSentenceTerminator); doesn't need to handle abbreviations etc. perfectly otherwise.
+function reasonSentenceSpans(reason: string): Array<{ text: string; start: number; end: number }> {
+  const spans: Array<{ text: string; start: number; end: number }> = [];
+  let start = 0;
+  for (let i = 0; i < reason.length; i++) {
+    const ch = reason[i]!;
+    if (ch !== "." && ch !== "!" && ch !== "?") continue;
+    if (!isSentenceTerminator(reason, i)) continue;
+    let end = i + 1;
+    while (end < reason.length && ".!?".includes(reason[end]!) && isSentenceTerminator(reason, end)) end++;
+    const text = reason.slice(start, end);
+    if (text.trim().length > 0) spans.push({ text, start, end });
+    start = end;
+  }
+  const tail = reason.slice(start);
+  if (tail.trim().length > 0) spans.push({ text: tail, start, end: reason.length });
+  return spans;
+}
+
+/**
+ * Reason/verdict consistency check (external review, 2026-08-18) — NOT a second fact-verification
+ * pass. `applyYearGate`'s `ROLE_KEYWORDS` whitelist proved unable to keep up with unbounded evidence
+ * phrasing (tasks.md Phase 35 revert); this instead checks whether VERIFY's own `reason` names a
+ * different year for the claim's fact than the claim asserts, independent of whether the reason uses
+ * applyReasonConsistencyGate's specific contradiction vocabulary.
+ *
+ * Locality guard: an alternative year only counts when its own sentence shares >=2 of the claim's
+ * key terms (extractKeyTerms/scoreKeyTermMatches — same helper applyImplicitNegationGate already
+ * uses) — otherwise a reason mentioning an unrelated year for a different fact ("...founded in 1919")
+ * would be wrongly treated as contradicting this claim. `contradicted`-only and year-only, matching
+ * this file's existing narrow-gate discipline (see applyReasonConsistencyGate above).
+ */
+export function applyReasonYearGate(input: ReasonYearGateInput): ReasonYearGateResult {
+  if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimYears = [...input.claimText.matchAll(YEAR_TOKEN_RE_G)].map((m) => m[0]);
+  if (claimYears.length !== 1) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  const claimYear = claimYears[0]!;
+
+  const reason = input.reason;
+  const reasonYearMatches = [...reason.matchAll(YEAR_TOKEN_RE_G)];
+  if (reasonYearMatches.length === 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimYearConfirmed = reasonYearMatches.some((m) => m[0] === claimYear && !isReasonYearNegated(reason, m.index!));
+  if (claimYearConfirmed) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimTerms = extractKeyTerms(input.claimText);
+  const sentences = reasonSentenceSpans(reason);
+  const hasAssociatedAlternative = reasonYearMatches.some((m) => {
+    if (m[0] === claimYear || isReasonYearNegated(reason, m.index!)) return false;
+    const sentence = sentences.find((s) => m.index! >= s.start && m.index! < s.end);
+    return sentence !== undefined && scoreKeyTermMatches(claimTerms, sentence.text) >= 2;
+  });
+  if (!hasAssociatedAlternative) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  return { verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" };
+}
+

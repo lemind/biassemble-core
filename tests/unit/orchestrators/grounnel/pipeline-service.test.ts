@@ -254,6 +254,11 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBe(
       "The company had a landmark year in 2024 across every major product line, according to analysts. ... Apple's valuation reached $3.8 trillion during the year, according to regulatory filings."
     );
+    // D027 — each citation attributes to its REAL source url, not just the joined evidence string.
+    expect(claim.citations).toEqual([
+      { source: "A", sentence: 1, url: "https://a.example", text: "The company had a landmark year in 2024 across every major product line, according to analysts." },
+      { source: "B", sentence: 1, url: "https://b.example", text: "Apple's valuation reached $3.8 trillion during the year, according to regulatory filings." },
+    ]);
   });
 
   it("D026 §18: semantic reranking promotes the correct source over off-topic ones that only outrank it lexically — the real Nauru/Vatican-City live-test shape, 2026-08-10", async () => {
@@ -581,6 +586,8 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("unsupported"); // downgraded by gate #1, never reaches the store as contradicted
     expect(claim.evidence).toBeNull();
+    // D027 §2 — citations null out in lockstep with evidence; never point at rejected evidence.
+    expect(claim.citations).toEqual([]);
   });
 
   it("reason-consistency gate forces contradicted when VERIFY's own reason says so but verdict didn't (real live-eval finding, g04)", async () => {
@@ -652,6 +659,54 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(provider.getCallCount()).toBe(9);
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("World War II began in 1939 and ended in 1945 with the surrender of Germany and Japan.");
+  });
+
+  it("D027 FR-006: when a T034 retry replaces the primary answer, citations reflect the RETRY's own citation, not the discarded primary one — even though both are independently real/grounded", async () => {
+    const claimId = uuid(1);
+    const claimText = "The Eiffel Tower was completed in 1889.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    // A repeated identical sentence — every numbered sentence has the same TEXT, so only the
+    // citation's own `sentence` number (not resolved text) can prove which pass it came from.
+    const passageText = "The Eiffel Tower was completed in 1889. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const firstPass = provider.getCallCount() === 1;
+      // Both passes cite REAL, gate #1-grounded evidence — neither is fabricated/ungrounded. Only
+      // the classifier (below) forces a retry, isolating "does the retry's citation win" from gate
+      // #1's separate evidence-groundedness concern (covered by the gate-#1 test above).
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: [{ source: "A", n: firstPass ? 1 : 2 }],
+          reason: "Confirmed.",
+          confidence: 0.95,
+        })),
+      };
+    });
+
+    // Forces exactly one retry: the primary pass's classifier call says "not consistent" (even
+    // though it plainly is — this test only cares about which citation survives, not real
+    // reason-quality judgment); the retry's own post-check (D025 §5) says "consistent" so it stands.
+    let consistencyCalls = 0;
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      consistencyCalls++;
+      const ids = idsFromConsistencyRequest(request);
+      const consistent = consistencyCalls > 1;
+      return { results: ids.map((id) => ({ id, consistent })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+    // The retry's citation (n: 2), never the primary's discarded one (n: 1).
+    expect(claim.citations).toEqual([{ source: "A", sentence: 2, url: webSource().url, text: "The Eiffel Tower was completed in 1889." }]);
   });
 
   it("D026 §7/§11 (reviewed finding): the reconciliation retry's user message describes evidence_citations, not the old free-text quote contract", async () => {
@@ -1262,20 +1317,21 @@ describe("GrounnelPipelineService (T010)", () => {
     // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
     expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
-    // 6 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap),
-    // plus D025 §5's retry-contradiction check (the retry landed on contradicted, so it ran) —
-    // the original inconsistent pass is not lost.
-    expect(events).toHaveLength(13);
+    // 8 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
+    // year/date gate added a 7th, T069's reason_year added an 8th), plus D025 §5's
+    // retry-contradiction check (the retry landed on contradicted, so it ran) — the original
+    // inconsistent pass is not lost.
+    expect(events).toHaveLength(17);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
-    // Index 3, not 2: counterfact_ignored (D025) now sits between implicit_negation and contradiction_evidence.
-    expect(events[3]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
+    // Index 4, not 3: reason_year (T069) now sits between implicit_negation and counterfact_ignored.
+    expect(events[4]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    // Index 9, not 8: each pass is now 6 gates (contradiction_evidence is offset 3 within a pass).
-    expect(events[9]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 12, not 10: each pass is now 8 gates (contradiction_evidence is offset 4 within a pass).
+    expect(events[12]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
-    expect(events[12]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    expect(events[16]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -1754,12 +1810,14 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(gateEventStore.calls[0]!.events.map((e) => e.gate)).toEqual([
       "reason_consistency",
       "implicit_negation",
+      "reason_year",
       "counterfact_ignored",
       "contradiction_evidence",
       "claim_reason_overlap",
       "numeric",
+      "year",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the six gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the eight gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 

@@ -28,6 +28,24 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status!.caps_hit).toBe(false);
   });
 
+  it("D028: round-trips sourceExcerpt through createAudit/getStatus, including the null case", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({
+      text: "some pasted article",
+      maxClaims: 100,
+      claims: [
+        { id: "11111111-1111-4111-8111-111111111111", text: "Claim A", sourceExcerpt: "the real quoted span" },
+        { id: "22222222-2222-4222-8222-222222222222", text: "Claim B", sourceExcerpt: null },
+      ],
+      truncated: false,
+    });
+
+    const status = await store.getStatus(id);
+    const byId = (claimId: string) => status!.claims.find((c) => c.id === claimId)!;
+    expect(byId("11111111-1111-4111-8111-111111111111").sourceExcerpt).toBe("the real quoted span");
+    expect(byId("22222222-2222-4222-8222-222222222222").sourceExcerpt).toBeNull();
+  });
+
   it("returns null for an audit id that was never created", async () => {
     const store = makeStore();
     expect(await store.getStatus("00000000-0000-0000-0000-000000000000")).toBeNull();
@@ -205,8 +223,149 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status!.status).toBe("done"); // flips back once escalation genuinely finishes
   });
 
+  it("real bug, 2026-08-16: self-heals to 'done' when escalating is stuck true and nothing has written to the audit in well over the stuck-escalation timeout (a Vercel maxDuration kill mid-escalation never clears the flag)", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: "Claim A" }], truncated: false });
+
+    await store.writeClaimResult(id, claimId, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
+    await store.setEscalating(id, true);
+
+    // Simulate a background function killed mid-escalation: the last write is far in the past,
+    // well past STUCK_ESCALATION_TIMEOUT_MS, with escalating never cleared.
+    const staleTimestamp = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { lastActivityAt: staleTimestamp });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("done");
+  });
+
+  it("real bug, 2026-08-16: does NOT self-heal while checked < total, even if escalating is stale — an incomplete run must never be reported done", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimA = "11111111-1111-4111-8111-111111111111";
+    const claimB = "22222222-2222-4222-8222-222222222222";
+    const { id } = await store.createAudit({
+      text: "article",
+      maxClaims: 100,
+      claims: [
+        { id: claimA, text: "Claim A" },
+        { id: claimB, text: "Claim B" },
+      ],
+      truncated: false,
+    });
+
+    // Only one of two claims resolved — checked (1) < total (2).
+    await store.writeClaimResult(id, claimA, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
+    await store.setEscalating(id, true);
+    const staleTimestamp = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { lastActivityAt: staleTimestamp });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("verifying");
+  });
+
+  it("real bug, 2026-08-16 (review finding, boundary case): still 'verifying' while stale by less than STUCK_ESCALATION_TIMEOUT_MS — must not self-heal a genuinely still-running escalation early", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: "Claim A" }], truncated: false });
+
+    await store.writeClaimResult(id, claimId, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
+    await store.setEscalating(id, true);
+
+    // 3 minutes stale — well under the 8-minute STUCK_ESCALATION_TIMEOUT_MS, still plausibly a
+    // genuinely-running escalation.
+    const nearlyStaleTimestamp = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { lastActivityAt: nearlyStaleTimestamp });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("verifying");
+  });
+
   it("D026 §14: setEscalating on a missing/expired audit is a silent no-op, matching getStatus's own null-on-missing convention", async () => {
     const store = makeStore();
     await expect(store.setEscalating("00000000-0000-0000-0000-000000000000", true)).resolves.toBeUndefined();
+  });
+
+  it("D027 FR-007: a claim row written before `citations` existed (no key at all) still parses via getStatus, defaulting to []", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const auditId = "22222222-2222-4222-8222-222222222222";
+    // Hand-written, pre-D027-shape claim row — no `citations` key, written directly to the fake
+    // Redis backing store, bypassing createAudit/writeClaimResult (which always write it now) to
+    // simulate a real audit persisted before this field existed.
+    await redis.hset(`audit:${auditId}`, {
+      meta: JSON.stringify({ total: 1, truncated: false, createdAt: new Date().toISOString(), escalating: false }),
+      [`claim:${claimId}`]: JSON.stringify({
+        id: claimId,
+        text: "Pre-existing claim",
+        status: "done",
+        verdict: "supported",
+        evidence: "some evidence",
+        confidence: 0.9,
+        reason: "some reason",
+        sources: [],
+      }),
+    });
+
+    const status = await store.getStatus(auditId);
+    expect(status).not.toBeNull();
+    expect(status!.claims[0]!.citations).toEqual([]);
+  });
+
+  // Reviewed finding (D027, code review): the new citations/evidence refine() is enforced at
+  // read time (ClaimSchema.parse in getStatus), never at write time — a future write bug could
+  // silently store a row that fails it. Before this fix, ANY one malformed claim row would throw
+  // uncaught out of getStatus's loop, 500-ing the whole audit's status for every other, healthy
+  // claim too — a strictly worse blast radius than the pre-D027 silent-wrong-data behavior.
+  it("D027: one malformed claim row degrades to status:failed instead of crashing the whole audit's status response", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const healthyId = "11111111-1111-4111-8111-111111111111";
+    const brokenId = "33333333-3333-4333-8333-333333333333";
+    const auditId = "22222222-2222-4222-8222-222222222222";
+
+    await redis.hset(`audit:${auditId}`, {
+      meta: JSON.stringify({ total: 2, truncated: false, createdAt: new Date().toISOString(), escalating: false }),
+      [`claim:${healthyId}`]: JSON.stringify({
+        id: healthyId,
+        text: "A healthy claim",
+        status: "done",
+        verdict: "supported",
+        evidence: "real evidence",
+        confidence: 0.9,
+        reason: "real reason",
+        sources: [],
+        citations: [],
+      }),
+      // Hand-crafted violation of the citations/evidence invariant — evidence null but citations
+      // non-empty. Should never happen via any real writer in this codebase (all tested), but
+      // simulates the "future write bug" scenario the fix is a backstop for.
+      [`claim:${brokenId}`]: JSON.stringify({
+        id: brokenId,
+        text: "A broken claim",
+        status: "done",
+        verdict: "unsupported",
+        evidence: null,
+        confidence: null,
+        reason: null,
+        sources: [],
+        citations: [{ source: "A", sentence: 1, url: "https://example.com", text: "orphaned citation" }],
+      }),
+    });
+
+    const status = await store.getStatus(auditId);
+    expect(status).not.toBeNull();
+    expect(status!.claims).toHaveLength(2);
+
+    const healthy = status!.claims.find((c) => c.id === healthyId)!;
+    expect(healthy.verdict).toBe("supported");
+
+    const broken = status!.claims.find((c) => c.id === brokenId)!;
+    expect(broken.status).toBe("failed");
+    expect(broken.citations).toEqual([]);
   });
 });

@@ -83,24 +83,44 @@ describe("resolveEvidenceFromCitations (D026 §11, T049)", () => {
     B: [{ n: 1, text: "It was unveiled in 1886." }],
   };
 
-  it("returns null for a null/undefined/empty citation list", () => {
-    expect(resolveEvidenceFromCitations(null, sentencesBySource)).toBeNull();
-    expect(resolveEvidenceFromCitations(undefined, sentencesBySource)).toBeNull();
-    expect(resolveEvidenceFromCitations([], sentencesBySource)).toBeNull();
+  it("returns null evidence and no citations for a null/undefined/empty citation list", () => {
+    expect(resolveEvidenceFromCitations(null, sentencesBySource)).toEqual({ evidence: null, citations: [] });
+    expect(resolveEvidenceFromCitations(undefined, sentencesBySource)).toEqual({ evidence: null, citations: [] });
+    expect(resolveEvidenceFromCitations([], sentencesBySource)).toEqual({ evidence: null, citations: [] });
   });
 
-  it("resolves a single valid citation to its real sentence text", () => {
-    expect(resolveEvidenceFromCitations([{ source: "A", n: 1 }], sentencesBySource)).toBe("France gave the statue.");
+  it("resolves a single valid citation to its real sentence text and a matching structured citation", () => {
+    const result = resolveEvidenceFromCitations([{ source: "A", n: 1 }], sentencesBySource);
+    expect(result.evidence).toBe("France gave the statue.");
+    expect(result.citations).toEqual([{ source: "A", sentence: 1, text: "France gave the statue." }]);
   });
 
-  it("joins citations from DIFFERENT sources with the existing '...' multi-excerpt convention", () => {
-    expect(resolveEvidenceFromCitations([{ source: "A", n: 1 }, { source: "B", n: 1 }], sentencesBySource)).toBe(
-      "France gave the statue. ... It was unveiled in 1886."
-    );
+  it("joins citations from DIFFERENT sources with the existing '...' multi-excerpt convention, and D027: keeps them as separate structured entries", () => {
+    const result = resolveEvidenceFromCitations([{ source: "A", n: 1 }, { source: "B", n: 1 }], sentencesBySource);
+    expect(result.evidence).toBe("France gave the statue. ... It was unveiled in 1886.");
+    expect(result.citations).toEqual([
+      { source: "A", sentence: 1, text: "France gave the statue." },
+      { source: "B", sentence: 1, text: "It was unveiled in 1886." },
+    ]);
   });
 
-  it("nulls out the WHOLE answer when a citation names an unknown source label", () => {
-    expect(resolveEvidenceFromCitations([{ source: "Z", n: 1 }], sentencesBySource)).toBeNull();
+  it("D027: preserves citation order exactly, even out of source-alphabetical order", () => {
+    const result = resolveEvidenceFromCitations([{ source: "B", n: 1 }, { source: "A", n: 1 }], sentencesBySource);
+    expect(result.citations.map((c) => c.source)).toEqual(["B", "A"]);
+  });
+
+  it("D027: does not merge two citations from the same source into one entry", () => {
+    const twoSentenceSource = { A: [{ n: 1, text: "First." }, { n: 2, text: "Second." }] };
+    const result = resolveEvidenceFromCitations([{ source: "A", n: 1 }, { source: "A", n: 2 }], twoSentenceSource);
+    expect(result.citations).toHaveLength(2);
+    expect(result.citations).toEqual([
+      { source: "A", sentence: 1, text: "First." },
+      { source: "A", sentence: 2, text: "Second." },
+    ]);
+  });
+
+  it("nulls out the WHOLE answer — evidence AND citations — when a citation names an unknown source label", () => {
+    expect(resolveEvidenceFromCitations([{ source: "Z", n: 1 }], sentencesBySource)).toEqual({ evidence: null, citations: [] });
   });
 
   it("reviewed finding: a citation naming a JS Object prototype property doesn't resolve to inherited junk or throw", () => {
@@ -109,17 +129,19 @@ describe("resolveEvidenceFromCitations (D026 §11, T049)", () => {
     // of undefined, and `.find` on that would throw, taking down the whole VERIFY batch with it.
     for (const source of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
       expect(() => resolveEvidenceFromCitations([{ source, n: 1 }], sentencesBySource)).not.toThrow();
-      expect(resolveEvidenceFromCitations([{ source, n: 1 }], sentencesBySource)).toBeNull();
+      expect(resolveEvidenceFromCitations([{ source, n: 1 }], sentencesBySource)).toEqual({ evidence: null, citations: [] });
     }
   });
 
   it("nulls out the WHOLE answer when a citation's n is out of range for its own (real) source", () => {
-    expect(resolveEvidenceFromCitations([{ source: "A", n: 999 }], sentencesBySource)).toBeNull();
+    expect(resolveEvidenceFromCitations([{ source: "A", n: 999 }], sentencesBySource)).toEqual({ evidence: null, citations: [] });
   });
 
   it("cannot resolve a citation to the wrong document's text even if n collides across sources — grounded per-source by construction", () => {
     // Both sources have an "n: 1" sentence, but they're different texts — citing {A, 1} must never
     // resolve to B's text or vice versa.
-    expect(resolveEvidenceFromCitations([{ source: "A", n: 1 }], sentencesBySource)).not.toBe("It was unveiled in 1886.");
+    const result = resolveEvidenceFromCitations([{ source: "A", n: 1 }], sentencesBySource);
+    expect(result.evidence).not.toBe("It was unveiled in 1886.");
+    expect(result.citations[0]!.text).not.toBe("It was unveiled in 1886.");
   });
 });

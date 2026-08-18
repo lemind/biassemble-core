@@ -24,7 +24,7 @@ function buildServer(limit: number) {
   const provider = new MockProvider();
   // Opinion-shaped — gate #3 resolves it during EXTRACT, no pipeline run, keeps each request fast
   // and deterministic so this file can focus purely on the rate limiter, not pipeline timing.
-  provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome." }], truncated: false });
+  provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome.", source_excerpt: "This is the best coffee in Rome." }], truncated: false });
 
   const server = Fastify();
   const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());

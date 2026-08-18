@@ -19,7 +19,9 @@ const EXTRACT_ATTEMPTS = 3;
 const MAX_CLAIMS = 100;
 
 const ExtractResponseSchema = z.object({
-  claims: z.array(z.object({ claim: z.string() })),
+  // .default("") — a missing/malformed excerpt must not drop the whole claim via repair.ts's
+  // salvageArrays (D028 §4); empty string reads as no-excerpt below.
+  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default("") })),
   truncated: z.boolean(),
 });
 
@@ -59,6 +61,9 @@ export class GrounnelExtractService {
         user: "Return the JSON now.",
         schema: ExtractResponseSchema,
         expectedKeys: ["claims", "truncated"],
+        // D028 — source_excerpt is a verbatim quote of untrusted article text (llm-json-call.ts's
+        // quotedFields, same mechanism VERIFY's evidence already uses).
+        quotedFields: ["source_excerpt"],
         attempts: EXTRACT_ATTEMPTS,
         module: MODULE,
         operation: "run",
@@ -80,13 +85,19 @@ export class GrounnelExtractService {
     }
 
     // Belt-and-suspenders cap enforcement (same rationale as audit's) — computed before slicing so it reflects a real cut, not re-derived from a count that could legitimately equal the cap.
-    let claimTexts = parsed.claims.map((c) => c.claim);
-    const truncated = parsed.truncated || claimTexts.length > MAX_CLAIMS;
-    if (claimTexts.length > MAX_CLAIMS) {
-      claimTexts = claimTexts.slice(0, MAX_CLAIMS);
+    let extractedClaims = parsed.claims;
+    const truncated = parsed.truncated || extractedClaims.length > MAX_CLAIMS;
+    if (extractedClaims.length > MAX_CLAIMS) {
+      extractedClaims = extractedClaims.slice(0, MAX_CLAIMS);
     }
 
-    const claims = claimTexts.map((claimText) => ({ id: randomUUID(), text: claimText }));
+    // D028 — strict, un-normalized substring check. A miss (or empty/missing excerpt, see the
+    // schema's .default("") above) degrades to null; the claim itself is still verified either way.
+    const claims = extractedClaims.map((c) => ({
+      id: randomUUID(),
+      text: c.claim,
+      sourceExcerpt: c.source_excerpt.length > 0 && text.includes(c.source_excerpt) ? c.source_excerpt : null,
+    }));
     const { id } = await this.grounnelStore.createAudit({ id: runId, text, maxClaims: MAX_CLAIMS, claims, truncated });
 
     // Best-effort (D023 §7) — real truncated value + stamped prompt version, once both are known.
@@ -106,6 +117,7 @@ export class GrounnelExtractService {
           confidence: null,
           reason: OPINION_REASON,
           sources: [],
+          citations: [],
         });
         // Reviewed finding: gate #3 claims were only ever written to Redis — never to
         // grounnel_claims, permanently absent from history/analytics (D023 §3).

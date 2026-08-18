@@ -126,6 +126,24 @@ function extractTextFromHtml(html: string): string {
     .trim();
 }
 
+// Real page title beats discoverUrls()'s domainOf() fallback (2026-08-13 — was always the domain).
+function extractTitleFromHtml(html: string): string | null {
+  // Strip comments first — a dev comment mentioning "<title>" in prose was mistaken for a real
+  // opening tag (real bug, 2026-08-16). Unterminated comments aren't caught — accepted gap.
+  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, "");
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(withoutComments);
+  if (!match) return null;
+  const decoded = match[1]!
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  return decoded.length > 0 ? decoded : null;
+}
+
 /** D021 — Gemini's google_search for URL discovery only, never content/verdicts (D019 §3 still applies). DIY-fetches top candidates; falls back to `fallback` only when every DIY attempt fails. */
 export class HybridSearchProvider implements SearchProvider {
   constructor(
@@ -361,10 +379,13 @@ export class HybridSearchProvider implements SearchProvider {
       const html = await response.text();
       const text = extractTextFromHtml(html);
       const finalUrl = response.url || candidate.url;
+      // The real fetched page's own <title> tag beats discoverUrls()'s domain-derived guess —
+      // real HTML is only in hand here, not at discovery time.
+      const title = extractTitleFromHtml(html) ?? candidate.title;
       if (text.length < MIN_TEXT_LENGTH) {
-        return { url: finalUrl, title: candidate.title, domain: domainOf(finalUrl), status: "paywalled", text: null };
+        return { url: finalUrl, title, domain: domainOf(finalUrl), status: "paywalled", text: null };
       }
-      return { url: finalUrl, title: candidate.title, domain: domainOf(finalUrl), status: "ok", text };
+      return { url: finalUrl, title, domain: domainOf(finalUrl), status: "ok", text };
     }
     logger.warn(
       { module: MODULE, operation: "fetchCandidate", url: candidate.url, err: sanitizeErrorForLogging(lastNetworkError) },
