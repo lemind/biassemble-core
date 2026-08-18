@@ -380,16 +380,26 @@ interface TemporalRoleFact {
 // bio-range convention (EXTRACT's prompt already calls this shape out for birth/death splitting).
 const BIRTH_DEATH_RANGE_RE = new RegExp(`\\(\\s*(${YEAR_TOKEN})\\s*[–-]\\s*(${YEAR_TOKEN})\\s*\\)`);
 
+// `established` folded into `founding` (same concept, needs to match the same role string on
+// both sides) — `reclassified`/`launched`/`released` are new roles, added after a real live-run
+// miss (Pluto reclassification year) where the gate abstained entirely for want of a keyword.
 const ROLE_KEYWORDS: Array<{ re: RegExp; role: string }> = [
   { re: /\b(?:born|birth)\b/i, role: "birth" },
   { re: /\b(?:died|death|passed away)\b/i, role: "death" },
-  { re: /\b(?:founded|founding)\b/i, role: "founding" },
+  { re: /\b(?:founded|founding|established)\b/i, role: "founding" },
   { re: /\b(?:published|publication)\b/i, role: "published" },
+  { re: /\b(?:reclassified|reclassification)\b/i, role: "reclassified" },
+  { re: /\b(?:launched|launch)\b/i, role: "launched" },
+  { re: /\b(?:released|release)\b/i, role: "released" },
 ];
 
-// How far (chars) a role keyword may sit from the year it anchors — deliberately short, same
-// conservative-abstain-over-guess convention as this file's other proximity-based checks.
-const ROLE_YEAR_WINDOW = 40;
+// How far (chars) a role keyword may sit from the year it anchors. Widened from 40 to 80 (real
+// live-run finding, 2026-08-18) to reach the Pluto claim's 74-char keyword-to-year gap. Review
+// finding: 100 was tried first and reproduced a live regression — "nearest year wins" only
+// protects against a second year for the SAME entity, not a nearer year belonging to a genuinely
+// different one (e.g. "...was born in Andernach... while his brother was born in 1925", 93 chars
+// away) — 80 stays under that distance while still covering the real Pluto case, with margin.
+const ROLE_YEAR_WINDOW = 80;
 // \b on both sides (review finding) — without it this matched a 4-digit year-shaped substring
 // inside a longer digit run (a record/page number near a role keyword), same class of bug YEAR_RE
 // (line 259) already guards against elsewhere in this file.
@@ -520,6 +530,152 @@ export function applyYearGate(input: YearGateInput): YearGateResult {
   }
   if (sawMatch && !HEDGE_RE.test(evidence) && canForceSupported(input.verdict)) {
     return { verdict: "supported", overridden: true, reason: "year_role_match" };
+  }
+  return { verdict: input.verdict, overridden: false, reason: null };
+}
+
+// ─── Gate #2c candidate — ordinal/sequence-position comparison. Pure, NOT wired into
+// runGateChain — see specs/009-grounnel/tasks.md T068 for the finding and staging rationale. ───
+
+const ORDINAL_ROLE_KEYWORDS = ["flight", "attempt", "round", "edition", "trial", "place", "position"];
+const ORDINAL_ROLE_RE = new RegExp(`\\b(?:${ORDINAL_ROLE_KEYWORDS.join("|")})\\b`, "gi");
+
+const ORDINAL_WORDS: Record<string, number> = {
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5,
+  sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+};
+const ORDINAL_WORD_RE = new RegExp(`\\b(${Object.keys(ORDINAL_WORDS).join("|")})\\b`, "gi");
+
+// A unit is REQUIRED, not optional — without it, a bare 4-digit number (a year, "1903") sitting
+// near a role keyword in the same sentence would otherwise be misread as this fact's "value".
+// `(?!\w)` instead of a trailing `\b` (review finding) — `\b` can never match after `%`, a
+// non-word character, so a bare "45%" was silently never recognized as a value at all.
+const ORDINAL_VALUE_RE =
+  /\b(\d[\d,]*(?:\.\d+)?)\s*(ft|feet|foot|m|meters?|metres?|km|kilometers?|miles?|mi|seconds?|secs?|minutes?|mins?|hours?|hrs?|points?|goals?|percent|%)(?!\w)/gi;
+
+// Canonicalizes spelling variants so "852 ft" and "852 feet" compare equal (review finding —
+// the original code compared bare numbers only, so "852 feet" and "852 seconds" collided as equal).
+const ORDINAL_UNIT_CANON: Record<string, string> = {
+  ft: "ft", feet: "ft", foot: "ft",
+  m: "m", meter: "m", meters: "m", metre: "m", metres: "m",
+  km: "km", kilometer: "km", kilometers: "km",
+  mile: "mi", miles: "mi", mi: "mi",
+  second: "s", seconds: "s", sec: "s", secs: "s",
+  minute: "min", minutes: "min", min: "min", mins: "min",
+  hour: "hr", hours: "hr", hr: "hr", hrs: "hr",
+  point: "pt", points: "pt",
+  goal: "goal", goals: "goal",
+  percent: "%", "%": "%",
+};
+
+const ORDINAL_WINDOW = 80;
+const SENTENCE_END_RE = /[.!?]/;
+
+interface OrdinalFact {
+  role: string;
+  ordinal: number;
+  value: string;
+}
+
+// Deliberately value-anchored only (design direction, 2026-08-18): a fact is only extracted when
+// a role keyword has BOTH a numeral ordinal word ("first".."tenth") AND a measurable value nearby
+// — "last"/"final" alone never produces a fact. Comparing role+ordinal with no shared value is
+// the riskier, unanchored form — explicitly deferred, see applyOrdinalGate's own doc comment.
+//
+// Review finding, 2026-08-18 (reproduced live): picking the nearest ordinal and nearest value
+// INDEPENDENTLY (each closest to the role keyword) could fabricate a pairing across two unrelated
+// sentences that each happen to fall within the same keyword-centered window. A raw distance cap
+// between the ordinal and value doesn't reliably fix this either — real sentences legitimately put
+// them 50+ chars apart ("the first powered flight by the Wright brothers covered 852 feet"),
+// closer than some fabricated cross-sentence pairings measured during review. What actually
+// distinguishes them: a sentence boundary between the two. Fixed by picking the closest (ordinal,
+// value) pair with no `.`/`!`/`?` between them, not the closest independently.
+function extractOrdinalFacts(text: string): OrdinalFact[] {
+  const facts: OrdinalFact[] = [];
+  for (const roleMatch of text.matchAll(ORDINAL_ROLE_RE)) {
+    const role = roleMatch[0]!.toLowerCase();
+    const windowStart = Math.max(0, roleMatch.index! - ORDINAL_WINDOW);
+    const windowEnd = Math.min(text.length, roleMatch.index! + roleMatch[0].length + ORDINAL_WINDOW);
+    const window = text.slice(windowStart, windowEnd);
+
+    const ordinalCandidates: Array<{ ordinal: number; index: number }> = [];
+    for (const om of window.matchAll(ORDINAL_WORD_RE)) {
+      ordinalCandidates.push({ ordinal: ORDINAL_WORDS[om[1]!.toLowerCase()]!, index: om.index! });
+    }
+    if (ordinalCandidates.length === 0) continue; // no numeral ordinal nearby — nothing to compare
+
+    const valueCandidates: Array<{ value: string; index: number }> = [];
+    for (const vm of window.matchAll(ORDINAL_VALUE_RE)) {
+      const unit = ORDINAL_UNIT_CANON[vm[2]!.toLowerCase()] ?? vm[2]!.toLowerCase();
+      valueCandidates.push({ value: `${vm[1]!.replace(/,/g, "")}_${unit}`, index: vm.index! });
+    }
+    if (valueCandidates.length === 0) continue; // no measurable value nearby — nothing to anchor to
+
+    let best: { ordinal: number; value: string; distance: number } | null = null;
+    for (const oc of ordinalCandidates) {
+      for (const vc of valueCandidates) {
+        const [lo, hi] = oc.index < vc.index ? [oc.index, vc.index] : [vc.index, oc.index];
+        if (SENTENCE_END_RE.test(window.slice(lo, hi))) continue; // different sentences — not the same fact
+        const distance = Math.abs(oc.index - vc.index);
+        if (!best || distance < best.distance) best = { ordinal: oc.ordinal, value: vc.value, distance };
+      }
+    }
+    if (!best) continue;
+
+    facts.push({ role, ordinal: best.ordinal, value: best.value });
+  }
+  return facts;
+}
+
+export interface OrdinalGateInput {
+  claimText: string;
+  verdict: Verdict;
+  evidence: string | null;
+}
+
+export interface OrdinalGateResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "ordinal_role_mismatch" | "ordinal_role_match" | null;
+}
+
+/**
+ * Candidate gate #2c — NOT wired into runGateChain yet (specs/009-grounnel/tasks.md T068).
+ * Value-anchored only: facts are compared only when role AND measurable value both match — see
+ * extractOrdinalFacts' own comment for why role+ordinal alone (no shared value) isn't compared.
+ */
+export function applyOrdinalGate(input: OrdinalGateInput): OrdinalGateResult {
+  if (!input.evidence) return { verdict: input.verdict, overridden: false, reason: null };
+  const evidence = input.evidence;
+
+  const canForceSupported = (verdict: Verdict) => verdict !== "supported" && verdict !== "contradicted";
+
+  if (!sameEntity(input.claimText, evidence)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimFacts = extractOrdinalFacts(input.claimText);
+  const evidenceFacts = extractOrdinalFacts(evidence);
+  if (claimFacts.length === 0 || evidenceFacts.length === 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  let sawMismatch = false;
+  let sawMatch = false;
+  for (const claimFact of claimFacts) {
+    for (const evidenceFact of evidenceFacts) {
+      if (claimFact.role !== evidenceFact.role || claimFact.value !== evidenceFact.value) continue;
+      if (claimFact.ordinal === evidenceFact.ordinal) sawMatch = true;
+      else sawMismatch = true;
+    }
+  }
+
+  if (sawMismatch) {
+    if (input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true, reason: "ordinal_role_mismatch" };
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  if (sawMatch && !HEDGE_RE.test(evidence) && canForceSupported(input.verdict)) {
+    return { verdict: "supported", overridden: true, reason: "ordinal_role_match" };
   }
   return { verdict: input.verdict, overridden: false, reason: null };
 }

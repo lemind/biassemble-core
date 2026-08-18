@@ -5,6 +5,7 @@ import {
   applyCounterfactIgnoredGate,
   applyImplicitNegationGate,
   applyNumericGate,
+  applyOrdinalGate,
   applyReasonConsistencyGate,
   applyYearGate,
 } from "../../../../src/orchestrators/grounnel/gates.js";
@@ -513,6 +514,188 @@ describe("gate #2b — year/date comparison (real live-run finding, 2026-08-13: 
       evidence: "Heinrich Bukowski died; see record no. 1937004 in the archive index.",
     });
     expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  // Real live-run finding, 2026-08-17/18: "Pluto was reclassified... in 2005" against evidence
+  // agreeing "2006" was graded supported — ROLE_KEYWORDS had no "reclassified" entry, so this
+  // gate abstained entirely instead of catching a plain, unambiguous year mismatch.
+  it("overrides to contradicted on the real Pluto reclassification-year miss", () => {
+    const result = applyYearGate({
+      claimText: "Pluto was reclassified as a dwarf planet by the International Astronomical Union in 2005.",
+      verdict: "supported",
+      evidence: "In 2006, the International Astronomical Union (IAU) reclassified Pluto as a dwarf planet.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("overrides to supported on a matching reclassification year", () => {
+    const result = applyYearGate({
+      claimText: "Pluto was reclassified as a dwarf planet in 2006.",
+      verdict: "unverifiable",
+      evidence: "In 2006, the International Astronomical Union reclassified Pluto as a dwarf planet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "year_role_match" });
+  });
+
+  it("recognizes the new 'launched' role", () => {
+    const result = applyYearGate({
+      claimText: "The satellite Voyager 2 was launched in 1978.",
+      verdict: "supported",
+      evidence: "Voyager 2 was launched in 1977, a year before its sister probe.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  it("recognizes the new 'released' role", () => {
+    const result = applyYearGate({
+      claimText: "The film was released in 2001.",
+      verdict: "supported",
+      evidence: "The film was released in 1999 to critical acclaim.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "year_role_mismatch" });
+  });
+
+  // Review finding, 2026-08-18: widening ROLE_YEAR_WINDOW to 100 (tried first) let "nearest year
+  // wins" reach past the claim's own entity into an unrelated relative's year, 93 chars from the
+  // keyword — reproduced live, then fixed by settling on 80 instead. This locks in the fix.
+  it("(review finding) does NOT reach past a different named relative's year at the widened window distance", () => {
+    const result = applyYearGate({
+      claimText: "Charles Bukowski was born in 1920.",
+      verdict: "supported",
+      evidence:
+        "Charles Bukowski was born in the city of Andernach, in the German Rhineland region, while his brother was born in 1925.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+});
+
+// Real live-run finding, 2026-08-17/18: a claim about the Wright brothers' FIRST flight's
+// distance/duration was graded supported against evidence explicitly attributing those same
+// numbers to the fourth and final flight. No existing gate covers ordinal words; a prompt-only
+// fix (SEQUENCE POSITION) was tried and failed live 2/2 (reverted). `applyOrdinalGate` is a
+// candidate deterministic backstop — deliberately NOT wired into runGateChain yet (see
+// specs/009-grounnel/tasks.md T068); this suite validates its abstention behavior in isolation
+// before any decision to wire it in.
+describe("gate #2c candidate — ordinal/sequence-position comparison (NOT wired into runGateChain)", () => {
+  it("overrides to contradicted on the real Wright-brothers ordinal mismatch (shared value, different ordinal)", () => {
+    const result = applyOrdinalGate({
+      claimText: "The first powered flight by the Wright brothers covered 852 feet.",
+      verdict: "supported",
+      evidence: "The airplane flew 852 ft on its fourth and final flight.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "ordinal_role_mismatch" });
+  });
+
+  it("overrides to supported when the same role, value, and ordinal all match", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "unverifiable",
+      evidence: "The third and final flight covered a distance of 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "ordinal_role_match" });
+  });
+
+  it("abstains when the value differs — no shared anchor tying the two facts together", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "supported",
+      evidence: "The fourth flight covered 900 feet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains when claim and evidence name clearly different, unrelated subjects, even with a matching value", () => {
+    const result = applyOrdinalGate({
+      claimText: "Amelia Earhart's third flight covered 852 feet.",
+      verdict: "unverifiable",
+      evidence: "Charles Lindbergh's fourth flight covered 852 feet, an unrelated record.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("abstains when evidence only says 'final' with no numeral ordinal anywhere nearby — a bare 'final' is never extracted alone", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "supported",
+      evidence: "The airplane flew 852 ft on its final flight of the day.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains on a real golden-set case with literal ordinal language but no role-keyword/value anchor (g03-moon-landing: a name-swap error, not an ordinal-position one)", () => {
+    const result = applyOrdinalGate({
+      claimText: "The first man to walk on the Moon was Buzz Aldrin.",
+      verdict: "contradicted",
+      evidence: "The first man to walk on the Moon was Neil Armstrong, in July 1969.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("does nothing when there is no evidence to compare against", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "unsupported",
+      evidence: null,
+    });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
+  it("does not force supported when the matching fact sits inside hedged/disputed evidence, but still forces contradicted on a genuine mismatch regardless of hedging", () => {
+    const withheld = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "unverifiable",
+      evidence: "The third flight reportedly covered 852 feet, according to disputed early records.",
+    });
+    expect(withheld).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+
+    const stillForced = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "supported",
+      evidence: "The airplane reportedly flew 852 ft on its fourth and final flight, according to disputed records.",
+    });
+    expect(stillForced).toEqual({ verdict: "contradicted", overridden: true, reason: "ordinal_role_mismatch" });
+  });
+
+  it("never overwrites an already-contradicted verdict back to supported on a coincidentally-matching ordinal fact", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      // Simulates an earlier gate having already, correctly, flipped this to contradicted over a different fact.
+      verdict: "contradicted",
+      evidence: "The third flight covered 852 feet, confirmed by two independent sources.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  // Review finding, 2026-08-18 (reproduced live): picking the nearest ordinal and nearest value
+  // INDEPENDENTLY fabricated a pairing across two unrelated sentences that each happened to fall
+  // in the same keyword-centered window — fixed by requiring no sentence boundary between them.
+  it("(review finding) does NOT fabricate a fact by pairing an ordinal and a value from two different sentences", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third attempt reached 852 feet.",
+      verdict: "supported",
+      evidence: "The second attempt failed badly. Judges recorded 852 feet for an unrelated event.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Review finding, 2026-08-18: the original code compared bare numbers only, so "852 feet" and
+  // "852 seconds" collided as the same "value" and could force a false match/mismatch.
+  it("(review finding) does NOT treat the same bare number with different units as a matching value", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "unverifiable",
+      evidence: "The third flight lasted 852 seconds before landing.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("(review finding) still matches equal values across spelling variants of the same unit ('ft' vs 'feet')", () => {
+    const result = applyOrdinalGate({
+      claimText: "The third flight covered 852 feet.",
+      verdict: "unverifiable",
+      evidence: "The third and final flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "ordinal_role_match" });
   });
 });
 
