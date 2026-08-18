@@ -6,6 +6,7 @@ import {
   applyImplicitNegationGate,
   applyNumericGate,
   applyReasonConsistencyGate,
+  applyReasonYearGate,
   applyYearGate,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
@@ -793,5 +794,121 @@ describe("gate #5 — counterfact-ignored, LLM-classifier-driven (D025, real liv
   it("never changes the verdict itself, unlike gates #1-4 — only ever flags for a reconciliation retry", () => {
     const result = applyCounterfactIgnoredGate({ verdict: "unsupported", reasonSupportsVerdict: false });
     expect(result).not.toHaveProperty("verdict");
+  });
+});
+
+describe("reason/verdict consistency gate — year mismatch (candidate; NOT wired into runGateChain, tasks.md Phase 35/36)", () => {
+  const claim = "The International Astronomical Union reclassified Pluto as a dwarf planet in 2005.";
+  const altYearSentence = "The International Astronomical Union confirms Pluto's reclassification occurred in 2006.";
+
+  it("forces contradicted when reason states only a different year for the claim's fact (Pluto run 7 shape)", () => {
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  it("forces contradicted when the claim's year is a NEGATED mention, not a confirmation (Pluto run 8 shape)", () => {
+    const reason =
+      "None of the provided sentences mention the year 2005 in relation to the International Astronomical Union's reclassification of Pluto. " +
+      altYearSentence;
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  it("does nothing when reason positively confirms the claim's own year among others", () => {
+    const reason = "Multiple sources confirm the reclassification occurred in 2005, though a minority report incorrectly cited 1999.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains on a compound claim with 2+ year tokens — scope-limiting guard", () => {
+    const compoundClaim = "Pluto was discovered in 1930 and reclassified as a dwarf planet in 2005.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: compoundClaim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains when reason mentions no year at all", () => {
+    const reason = "Sources broadly agree with the claim as stated, with no specific date given.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("no-ops on a verdict already contradicted", () => {
+    const result = applyReasonYearGate({ verdict: "contradicted", claimText: claim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("no-ops on 'unverifiable' — CONFIDENCE-downgrade exclusion, mirrors applyReasonConsistencyGate", () => {
+    const result = applyReasonYearGate({ verdict: "unverifiable", claimText: claim, reason: altYearSentence });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("still forces contradicted when reason also uses explicit contradiction language — no conflict with applyReasonConsistencyGate", () => {
+    const reason =
+      "This contradicts the claim; the International Astronomical Union confirms Pluto's reclassification occurred in 2006, not 2005.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  it("(review finding) abstains when reason mentions an unrelated year for a DIFFERENT fact — locality guard", () => {
+    const reason = "The source discusses Pluto's reclassification but does not mention 2005. The IAU was founded in 1919.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Review finding: a decimal point ("$3.5 million") was being treated as a sentence terminator,
+  // splitting the sentence mid-number and losing the entity terms the locality check needs.
+  it("(review finding) a dollar figure with a decimal point next to the year doesn't defeat the locality check", () => {
+    const reason = "The International Astronomical Union confirmed a $3.5 million budget when it reclassified Pluto in 2006.";
+    const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
+  });
+
+  describe("negation-window adversarial phrasings", () => {
+    it("'did not occur in 2005' — negated", () => {
+      const reason = "The reclassification did not occur in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    it("'None of the sources mention the year 2005' — negated", () => {
+      const reason =
+        "None of the sources mention the year 2005 regarding the International Astronomical Union's reclassification of Pluto. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    it("'never occurred in 2005' — negated", () => {
+      const reason = "The reclassification never occurred in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    it("'Notably, 2005 was...' — NOT negated (word boundary stops 'not' matching inside 'notably')", () => {
+      const reason = "Notably, 2005 was suggested by early reports. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("'not X; the event occurred in 2005' — NOT negated (clause boundary stops negation crossing the semicolon)", () => {
+      const reason = "This is not correct; the reclassification occurred in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    // Review finding: "n't" has no leading \b (contractions have no word boundary before 'n') —
+    // a naive \b-wrapped alternation silently never matches "wasn't"/"didn't"/etc.
+    it("'wasn't dated 2005' — negated (contraction, no word boundary before 'n't')", () => {
+      const reason = "The reclassification wasn't dated 2005; it occurred in 2006. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
+
+    // Review finding: the decimal point in "$3.5 million" was wrongly treated as a clause boundary,
+    // stripping an earlier negation word ("never") from the window tested for negation.
+    it("'never confirmed a $3.5 million reclassification in 2005' — negated (decimal point isn't a clause boundary)", () => {
+      const reason = "The IAU never confirmed a $3.5 million reclassification in 2005. " + altYearSentence;
+      const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
+      expect(result.verdict).toBe("contradicted");
+    });
   });
 });

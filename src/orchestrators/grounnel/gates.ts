@@ -534,3 +534,122 @@ export function applyYearGate(input: YearGateInput): YearGateResult {
   return { verdict: input.verdict, overridden: false, reason: null };
 }
 
+// ─── Reason/verdict consistency gate — year mismatch (candidate; not wired into runGateChain,
+// see tasks.md Phase 35/36) ─────────────────────────────────────────────────────────────────
+
+export interface ReasonYearGateInput {
+  claimText: string;
+  verdict: Verdict;
+  reason: string | null;
+}
+
+export interface ReasonYearGateResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "reason_year_mismatch" | null;
+}
+
+// Window sized off a real captured VERIFY reason ("None of the provided sentences mention the year
+// 2005...", ~48 chars from "None" to "2005") with margin — same measure-then-set approach as
+// ROLE_YEAR_WINDOW above.
+// "n't" has no leading \b (contractions have no word boundary before 'n') — same fix
+// NEGATED_CONTRADICTION_RE already applies (verify-reconcilers.ts) for the identical reason.
+const REASON_YEAR_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
+const REASON_YEAR_NEGATION_WINDOW = 60;
+
+// A "." flanked by digits on both sides is a decimal point ("$3.5 million"), not a sentence/clause
+// end — review finding: treating every "." as a boundary truncated both the negation window and
+// the locality check right at a dollar figure, silently defeating them whenever one sat near the year.
+function isSentenceTerminator(text: string, index: number): boolean {
+  if (text[index] !== ".") return true;
+  return !(/\d/.test(text[index - 1] ?? "") && /\d/.test(text[index + 1] ?? ""));
+}
+
+function lastClauseBoundary(window: string): number {
+  let last = -1;
+  for (let i = 0; i < window.length; i++) {
+    const ch = window[i]!;
+    if (ch === ";" || ch === "," || ch === "!" || ch === "?") last = i;
+    else if (ch === "." && isSentenceTerminator(window, i)) last = i;
+  }
+  return last;
+}
+
+// Clause-scoped, not just char-distance: a negation earlier in the window but in a PRIOR clause
+// ("not X; the event occurred in 2005") must not negate a year in a later, unrelated clause.
+function isReasonYearNegated(reason: string, yearIndex: number): boolean {
+  const windowStart = Math.max(0, yearIndex - REASON_YEAR_NEGATION_WINDOW);
+  const window = reason.slice(windowStart, yearIndex);
+  const clauseStart = lastClauseBoundary(window);
+  return REASON_YEAR_NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
+}
+
+// Rough sentence spans with offsets, just to bound the locality check below — doesn't split mid-
+// number (see isSentenceTerminator); doesn't need to handle abbreviations etc. perfectly otherwise.
+function reasonSentenceSpans(reason: string): Array<{ text: string; start: number; end: number }> {
+  const spans: Array<{ text: string; start: number; end: number }> = [];
+  let start = 0;
+  for (let i = 0; i < reason.length; i++) {
+    const ch = reason[i]!;
+    if (ch !== "." && ch !== "!" && ch !== "?") continue;
+    if (!isSentenceTerminator(reason, i)) continue;
+    let end = i + 1;
+    while (end < reason.length && ".!?".includes(reason[end]!) && isSentenceTerminator(reason, end)) end++;
+    const text = reason.slice(start, end);
+    if (text.trim().length > 0) spans.push({ text, start, end });
+    start = end;
+  }
+  const tail = reason.slice(start);
+  if (tail.trim().length > 0) spans.push({ text: tail, start, end: reason.length });
+  return spans;
+}
+
+/**
+ * Reason/verdict consistency check (external review, 2026-08-18) — NOT a second fact-verification
+ * pass. `applyYearGate`'s `ROLE_KEYWORDS` whitelist proved unable to keep up with unbounded evidence
+ * phrasing (tasks.md Phase 35 revert); this instead checks whether VERIFY's own `reason` names a
+ * different year for the claim's fact than the claim asserts, independent of whether the reason uses
+ * applyReasonConsistencyGate's specific contradiction vocabulary.
+ *
+ * Locality guard: an alternative year only counts when its own sentence shares >=2 of the claim's
+ * key terms (extractKeyTerms/scoreKeyTermMatches — same helper applyImplicitNegationGate already
+ * uses) — otherwise a reason mentioning an unrelated year for a different fact ("...founded in 1919")
+ * would be wrongly treated as contradicting this claim. `contradicted`-only and year-only, matching
+ * this file's existing narrow-gate discipline (see applyReasonConsistencyGate above).
+ */
+export function applyReasonYearGate(input: ReasonYearGateInput): ReasonYearGateResult {
+  if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimYears = [...input.claimText.matchAll(YEAR_TOKEN_RE_G)].map((m) => m[0]);
+  if (claimYears.length !== 1) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  const claimYear = claimYears[0]!;
+
+  const reason = input.reason;
+  const reasonYearMatches = [...reason.matchAll(YEAR_TOKEN_RE_G)];
+  if (reasonYearMatches.length === 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimYearConfirmed = reasonYearMatches.some((m) => m[0] === claimYear && !isReasonYearNegated(reason, m.index!));
+  if (claimYearConfirmed) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimTerms = extractKeyTerms(input.claimText);
+  const sentences = reasonSentenceSpans(reason);
+  const hasAssociatedAlternative = reasonYearMatches.some((m) => {
+    if (m[0] === claimYear || isReasonYearNegated(reason, m.index!)) return false;
+    const sentence = sentences.find((s) => m.index! >= s.start && m.index! < s.end);
+    return sentence !== undefined && scoreKeyTermMatches(claimTerms, sentence.text) >= 2;
+  });
+  if (!hasAssociatedAlternative) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  return { verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" };
+}
+
