@@ -115,14 +115,20 @@ stored verdict is not `supported` or `partially_supported`. Fully testable via u
       `src/persistence/grounnel-gate-event-store.ts`, `src/persistence/types.ts`, `src/db/schema.ts`,
       `src/db/queries.ts` for whether it's a free-text/varchar with an app-level union — no migration
       needed — or a native Postgres `enum` — needs an additive `ALTER TYPE ... ADD VALUE` migration —
-      per `data-model.md` §3's own hedge) and make the minimum corresponding change. (depends on T006)
+      per `data-model.md` §3's own hedge) and make the minimum corresponding change. This is a
+      DB-facing change independent of T006's in-memory integration test — both branch from T005 and
+      can run in parallel rather than serialized. (depends on T005)
 - [ ] T008 [P] [US1] Add an ordinal golden-set case restoring the intent of the removed
       `g15-wright-brothers-ordinal` to `evaluations/golden/grounnel/live-eval-golden-set.json` (now
       exercising the gate, not a prompt section). Doesn't need persistence changes to be meaningful —
       only needs the gate wired in. (depends on T005)
 - [ ] T009 [P] [US1] Measure the false-downgrade rate on a held-out set of correctly-supported
-      claims not used in T002's fixture set (spec.md SC-002) — hard requirement of zero. Can be
-      measured directly against the pure function (no wiring needed). (depends on T004)
+      claims not used in T002's fixture set (spec.md SC-002) — hard requirement of zero. **Also
+      report the contradiction-detection recall rate on a held-out set of genuine contradiction
+      cases** (SC-002's other required measurement — not just the safety metric): a gate that never
+      fires has a trivially perfect 0% false-downgrade rate while being useless, the same reasoning
+      already applied to US2's T016. Can be measured directly against the pure function (no wiring
+      needed). (depends on T004)
 - [ ] T010 [US1] Live re-verification: with the gate deployed, re-run the original Wright-brothers
       regression test article twice against the live API; confirm the claim no longer lands on
       `supported`/`partially_supported`. Query `grounnel_gate_events` directly (same method used to
@@ -237,11 +243,11 @@ independently of whether User Story 1 has shipped.
 ### Within Each User Story
 
 - **US1**: T002 (tests, must fail) → T003 (implement, unwired) → T004 (validate, gate) → T005 (wire
-  in) → T006 (integration test) → T007 (persistence). T008 (golden case) and T009 (held-out metric)
-  branch off earlier (T005 and T004 respectively) and run in parallel with T006/T007. **T010 (live
-  re-verification) requires T007, T008, AND T009 — all three** — this was a real gap in the first
-  draft of this task list (T010 previously only waited on persistence + golden case, which would
-  have allowed a live deploy before the held-out safety check ran).
+  in) → then T006 (integration test), T007 (persistence), and T008 (golden case) all branch off T005
+  and can run in parallel (no data dependency between them); T009 (held-out metric) branches off T004
+  directly. **T010 (live re-verification) requires T007, T008, AND T009 — all three** — this was a
+  real gap in the first draft of this task list (T010 previously only waited on persistence + golden
+  case, which would have allowed a live deploy before the held-out safety check ran).
 - **US2**: T011/T012 (tests + prompt, parallel) → T013 (implement, fail-open) → T014 (wire in, after
   the existing regex). T015 (golden set) and T017 (held-out metric) both branch off T014 and run in
   parallel; T016 (live/golden eval) additionally needs T015. **T018 (live re-verification) requires
@@ -252,8 +258,8 @@ independently of whether User Story 1 has shipped.
 - T001 has nothing to block on.
 - T002 (US1 tests) and T011+T012 (US2 tests + prompt) can all run in parallel — different files,
   different stories.
-- Within US1: T008 and T009 can both start as soon as T005/T004 respectively are done, in parallel
-  with T006/T007.
+- Within US1: T006, T007, and T008 can all start as soon as T005 is done, in parallel with each
+  other; T009 can start as soon as T004 is done.
 - Within US2: T015 and T017 can both start as soon as T014 is done.
 - T019 and T020 (Polish) can run in parallel.
 
