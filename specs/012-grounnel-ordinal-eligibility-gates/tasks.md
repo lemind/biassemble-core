@@ -37,9 +37,12 @@ merge in that one shared file if both land at once.
 **Purpose**: Confirm no new project scaffolding is needed — this is an addition to an existing,
 established service, not a new project.
 
-- [ ] T001 [P] Confirm no new dependencies are required — plan.md's Technical Context lists only the
+- [x] T001 [P] Confirm no new dependencies are required — plan.md's Technical Context lists only the
       existing stack (TypeScript 5, Fastify 5, Drizzle ORM, the existing Gemini provider adapter in
       `src/providers/`); no `package.json` changes.
+      **Done**: verified directly against `package.json` — `fastify@5.8.5`, `zod@4.4.3`,
+      `drizzle-orm@0.40.0`, `@google/generative-ai@0.21.0` are all already present. No dependency
+      changes needed for either user story.
 
 ---
 
@@ -49,6 +52,10 @@ established service, not a new project.
 `applyReasonOrdinalGate` (US1) and `classifyClaimVerifiability` (US2) touch disjoint source files and
 neither calls into the other (spec.md Assumptions; plan.md Structure Decision). Both can start
 immediately after Phase 1.
+
+**Confirmed empty** — re-checked during implementation, not just at planning time: no shared
+scaffolding, config, or infrastructure change is required before either user story can start. Zero
+tasks in this phase, intentionally.
 
 ---
 
