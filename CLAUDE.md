@@ -1,15 +1,16 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-specs/008-b2b/plan.md
+specs/012-grounnel-ordinal-eligibility-gates/plan.md
 
 Supporting artifacts:
-- specs/008-b2b/spec.md — feature specification (3 user stories, 21 functional requirements)
-- specs/008-b2b/research.md — technical decisions: retrieval stub, ID strategy, prompt registry reuse, numeric fact shape, score computation, VERIFY batching, injection hard-stop
-- specs/008-b2b/data-model.md — new `audit` pg schema entities: Audit, Claim, Verdict, SourcePassage, ScoreSummary
-- specs/008-b2b/contracts/audit-endpoint.md — POST /audit request/result contract
-- specs/008-b2b/quickstart.md — golden-set validation commands, pass bars, "done" definition
-- docs/decisions/018-audit-mode-flag.md — ADR (authoritative decision record)
+- specs/012-grounnel-ordinal-eligibility-gates/spec.md — feature specification (2 user stories, 10 functional requirements)
+- specs/012-grounnel-ordinal-eligibility-gates/research.md — technical decisions: reason-grounded (not evidence-grounded) ordinal extraction, claim-anchored attachment over a global whitelist, no generic fact-gate abstraction yet, LLM classifier additive to the existing regex opinion filter
+- specs/012-grounnel-ordinal-eligibility-gates/data-model.md — applyReasonOrdinalGate input/result shape + validation matrix, classifyClaimVerifiability result shape + policy, 4-file persistence union-type extension (deferred until wired in)
+- specs/012-grounnel-ordinal-eligibility-gates/quickstart.md — build order, validation commands, live re-verification steps, "done" definition
+- docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md — ADR (authoritative decision record)
+
+Prior plan (008-b2b, audit mode) remains at specs/008-b2b/ if still relevant to work in progress there.
 <!-- SPECKIT END -->
 
 ## Conventions
