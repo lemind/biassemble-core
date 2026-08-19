@@ -601,7 +601,7 @@ export class GrounnelPipelineService {
     );
   }
 
-  /** The 5-gate chain, extracted so T034/T035's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
+  /** The 9-gate chain (grew from 5; see the gateEvents.push calls below for the current list), extracted so T034/T035's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
   private runGateChain(input: {
     verdict: Verdict;
     reason: string | null;

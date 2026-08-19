@@ -671,10 +671,35 @@ const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "
 const ORDINAL_RE_G = new RegExp(`\\b(${ORDINAL_WORDS.join("|")})\\b`, "gi");
 
 // Words too generic to serve as an anchor on their own, filtered out of the content-word window
-// below so a shared article/conjunction/pronoun never counts as "the same noun phrase" — only a
-// real content word (the noun the ordinal modifies, or a modifier next to it) does.
-const ORDINAL_ANCHOR_STOPWORDS = new Set(["and", "the", "a", "an", "of", "in", "on", "at", "its", "his", "her", "their", "was", "is", "were", "also", "then", "to", "by"]);
+// below so a shared article/conjunction/preposition/pronoun never counts as "the same noun phrase"
+// — only a real content word (the noun the ordinal modifies, or a modifier next to it) does.
+// Review finding (code-review, high effort): the original list omitted common prepositions/
+// connectives ("for", "with", "that", ...), letting two UNRELATED ordinal mentions "overlap" purely
+// because they shared a preposition (e.g. "third time for the team" vs "second attempt for the
+// group" both anchoring on "for") — reproduced and fixed by widening this list, not by shrinking the
+// window (a 1-word window would defeat the "third unsuccessful attempt" modifier case below).
+const ORDINAL_ANCHOR_STOPWORDS = new Set([
+  "and", "the", "a", "an", "of", "in", "on", "at", "its", "his", "her", "their", "was", "is", "were",
+  "also", "then", "to", "by", "for", "with", "that", "which", "who", "from", "has", "had", "have",
+  "about", "as", "or", "but", "so", "this", "these", "those", "it", "not", "did", "does", "will",
+  "would", "could", "over", "under", "into", "onto", "than", "there", "here",
+]);
 const ORDINAL_ANCHOR_WINDOW_WORDS = 2;
+
+// Forward-scanning counterpart to lastClauseBoundary above, reusing the same isSentenceTerminator
+// decimal-point guard. Review finding (code-review, high effort): ordinalAnchorWords originally used
+// a raw `search(/[.!?;,]/)`, which — exactly like the bug isSentenceTerminator was introduced to fix
+// for the year gate's negation window — treated the "." inside a dollar figure ("$3.5 million") as a
+// clause end, truncating the anchor window to nothing and silently defeating the whole gate for any
+// claim with a number/decimal/abbreviation near the ordinal.
+function firstClauseBoundaryForward(text: string): number {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === ";" || ch === "," || ch === "!" || ch === "?") return i;
+    if (ch === "." && isSentenceTerminator(text, i)) return i;
+  }
+  return -1;
+}
 
 /**
  * Up to 2 real content words immediately after the ordinal, never crossing a clause boundary.
@@ -682,16 +707,10 @@ const ORDINAL_ANCHOR_WINDOW_WORDS = 2;
  * claim happens to use becomes the anchor, so this generalizes past any fixed vocabulary the way a
  * whitelist structurally can't. 2 words, not 1, so a single modifier between the ordinal and its
  * noun ("the third unsuccessful attempt") doesn't defeat matching — see data-model.md §1's matrix.
- *
- * Known limitation, accepted (shallow review, T003): the 2nd word can be a generic verb/adjective
- * ("reached", "covered") rather than the noun itself. Two unrelated ordinal mentions that happen to
- * share that generic 2nd word could produce a false anchor overlap — no case in the validation or
- * held-out matrices exercises this, but it's a real, not-yet-observed risk of the 2-word window,
- * same class of accepted tradeoff as extractTemporalRoleFacts's "first occurrence only" above.
  */
 function ordinalAnchorWords(text: string, matchEnd: number): Set<string> {
   const rest = text.slice(matchEnd);
-  const clauseEnd = rest.search(/[.!?;,]/);
+  const clauseEnd = firstClauseBoundaryForward(rest);
   const window = clauseEnd === -1 ? rest : rest.slice(0, clauseEnd);
   const words: string[] = [];
   for (const raw of window.trim().split(/\s+/)) {

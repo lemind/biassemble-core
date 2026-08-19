@@ -1054,6 +1054,30 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
+
+  // Review finding (code-review, high effort): a decimal point near the ordinal was being treated
+  // as a clause boundary, truncating the anchor window to nothing and silently defeating the gate —
+  // same bug class isSentenceTerminator was introduced to fix for the year gate's negation window.
+  it("(review finding) a decimal-figure near the ordinal doesn't collapse the anchor window to empty", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "This was the third $3.5 million funding round for the company.",
+      reason: "Filings show this was the fourth $3.5 million funding round for the company.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Review finding (code-review, high effort): two unrelated ordinal mentions sharing only a
+  // generic preposition ("for") as their second anchor word were wrongly treated as the same
+  // anchor, forcing a false contradiction between claims about entirely different facts.
+  it("(review finding) a shared generic preposition alone does not count as anchor overlap", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "This was the third time for the team.",
+      reason: "Sources say it was the second attempt for the group.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
 });
 
 // T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different
