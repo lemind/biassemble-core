@@ -127,6 +127,24 @@ function passageIndexForLabel(label: string): number {
   return label.charCodeAt(0) - 65;
 }
 
+// Reconciliation-disagreement telemetry (D030 T010 backlog, 2026-08-19 — see tasks.md for why).
+// Caller must pass only the gate events of the PASS whose verdict is currently standing (e.g.
+// retryPass, not firstPass ++ retryPass) — reviewed finding: scanning a concatenated audit trail can
+// find a stale, already-superseded flip from a discarded earlier pass instead of the real origin.
+function originatingContradictionGate(gateEvents: GateEventInput[]): { gate: string; reason: GateReason | null } | null {
+  const event = gateEvents.findLast((e) => e.overridden && e.verdictAfter === "contradicted");
+  return event ? { gate: event.gate, reason: event.reason } : null;
+}
+
+// Shared by checkRetryContradiction and reconcileContradictedVerdicts — one message shape, one set
+// of keys, so the two downgrade sites stay aggregatable as a single log stream (tasks.md backlog).
+function logReconciliationDowngrade(operation: string, auditId: string, claimId: string, originating: { gate: string; reason: GateReason | null } | null): void {
+  logger.info(
+    { module: MODULE, operation, auditId, claimId, verdictBefore: "contradicted" as const, originatingGate: originating?.gate ?? null, originatingReason: originating?.reason ?? null },
+    "Reconciliation classifier downgraded a contradicted verdict to unsupported"
+  );
+}
+
 // D027 §2 — out-of-range labels are dropped (logged), not thrown; see ADR §2 for why this is safe by construction today.
 function attachCitationUrls(citations: ResolvedCitation[], passages: SearchPassage[]): ClaimCitation[] {
   const result: ClaimCitation[] = [];
@@ -335,7 +353,9 @@ export class GrounnelPipelineService {
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
-        logger.info({ module: MODULE, operation: "reconcileContradictedVerdicts", auditId, claimId: c.id }, "Fresh contradicted verdict failed reason-consistency — downgraded to unsupported");
+        // D030 T010 backlog — no in-memory gate trace here (re-reads Redis status); originating gate
+        // is reconstructable after the fact via grounnel_gate_events, joined on claimId/created_at.
+        logReconciliationDowngrade("reconcileContradictedVerdicts", auditId, c.id, null);
       })
     );
   }
@@ -913,6 +933,10 @@ export class GrounnelPipelineService {
     auditId: string,
     item: ResolvedWithPassage,
     chain: { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[] },
+    // Reviewed finding — telemetry attribution must scan only THIS pass's own gate events, not
+    // chain.gateEvents (firstPass ++ retryPass): the concatenated trail can surface a stale flip a
+    // discarded earlier pass already made, misattributing the current contradiction to the wrong gate.
+    currentPassGateEvents: GateEventInput[],
     reason: string | null,
     previousEvidence: string | null,
     previousReason: string | null
@@ -934,6 +958,11 @@ export class GrounnelPipelineService {
       { module: MODULE, operation: "checkRetryContradiction", auditId, claimId: item.claim.id, consistent, evidenceChanged, reasonSimilarity },
       "Retry landed on contradicted — logged reconciliation-quality signals"
     );
+
+    // Reconciliation-disagreement telemetry (D030 T010 backlog, 2026-08-19 — see tasks.md for why).
+    if (!consistent) {
+      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, originatingContradictionGate(currentPassGateEvents));
+    }
 
     const gateEvent: GateEventInput = {
       gate: "retry_reconciliation",
@@ -964,39 +993,34 @@ export class GrounnelPipelineService {
   ): Promise<void> {
     const byId = new Map(items.map((b) => [b.claim.id, b]));
 
-    // Live-verification finding (D030 T010) — a batched VERIFY response can answer the same claim
-    // id twice (observed live: Gemini returned two distinct `results` entries for one id). Without
-    // this dedup, both survived into Promise.all below and ran the full gate chain concurrently,
-    // each independently calling writeClaimResult (Redis, read-merge-write) and insertGrounnelClaim
-    // (Postgres, onConflictDoUpdate) for the *same* claimId — a silent last-write-wins race with no
-    // error or log, capable of discarding a correct gate override (e.g. reason_ordinal firing) in
-    // favor of whichever duplicate answer's write happened to land last. First occurrence wins —
-    // deterministic, and consistent with every other "which VERIFY answer is authoritative" call in
-    // this file treating the primary/first response as canonical unless a dedicated retry supersedes it.
+    // Live-verification finding (D030 T010, tasks.md backlog) — a batched VERIFY response can
+    // answer the same claim id twice; unguarded, both ran the full gate chain concurrently and
+    // raced to persist the same claim's final result (last write silently won, no error/log).
+    // Scoped to byId first — an id VERIFY invented that isn't part of this batch at all shouldn't
+    // count as a "duplicate answer" for a real claim, just discarded junk like any other unknown id.
     const seenIds = new Set<string>();
     const duplicateIds: string[] = [];
-    const dedupedResults = parsed.results.filter((r) => {
-      if (seenIds.has(r.id)) {
-        duplicateIds.push(r.id);
-        return false;
-      }
-      seenIds.add(r.id);
-      return true;
-    });
-    if (duplicateIds.length > 0) {
-      logger.warn({ module: MODULE, operation: "processVerifyResults", auditId, duplicateIds }, "VERIFY response answered the same claim id more than once — keeping the first answer, discarding the rest");
-    }
-
     // Reviewed finding: initialVerdict (the value the gate chain actually operates on, e.g.
     // confidence-downgraded to "unverifiable") must be computed once here, before the classifier
     // call — the classifier was previously judging the raw pre-downgrade verdict while gate #5
     // applied its answer to a different, already-downgraded one.
-    const knownResults = dedupedResults
+    const knownResults = parsed.results
       .filter((r) => byId.has(r.id))
+      .filter((r) => {
+        if (seenIds.has(r.id)) {
+          duplicateIds.push(r.id);
+          return false;
+        }
+        seenIds.add(r.id);
+        return true;
+      })
       .map((r) => ({
         result: r,
         initialVerdict: (r.confidence < CONFIDENCE_THRESHOLD && r.verdict !== "unverifiable" ? "unverifiable" : r.verdict) as Verdict,
       }));
+    if (duplicateIds.length > 0) {
+      logger.warn({ module: MODULE, operation: "processVerifyResults", auditId, duplicateIds }, "VERIFY response answered the same claim id more than once — keeping the first answer, discarding the rest");
+    }
 
     // D025 §2 — one batched classifier call up front, covering every claim not already
     // "contradicted", so runGateChain (still pure/sync) can just read the result per claim below.
@@ -1059,7 +1083,7 @@ export class GrounnelPipelineService {
             // (the override that triggered this retry) stays in the audit trail, not just the retry's.
             chain = { ...retryPass, gateEvents: [...firstPass.gateEvents, ...retryPass.gateEvents] };
             // D025 §5 addendum — the retry itself gets one bounded check when it lands on `contradicted`.
-            chain = { ...chain, ...(await this.checkRetryContradiction(auditId, item, chain, reason, result.evidence, result.reason)) };
+            chain = { ...chain, ...(await this.checkRetryContradiction(auditId, item, chain, retryPass.gateEvents, reason, result.evidence, result.reason)) };
           }
         }
 

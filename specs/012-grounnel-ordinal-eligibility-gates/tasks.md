@@ -347,6 +347,33 @@ independently of whether User Story 1 has shipped.
 
 ---
 
+## Backlog — outside D030 scope, surfaced by T010's live re-verification
+
+- [x] **Reconciliation-disagreement telemetry** (2026-08-19). Not a D030 task — D025 §5
+      (`checkRetryContradiction`) and D026 §22 (`reconcileContradictedVerdicts`) are pre-existing
+      mechanisms, unrelated to the ordinal gate specifically, that T010's live run happened to expose:
+      a correct `reason_ordinal` contradiction was downgraded back to `unsupported` by the
+      reconciliation classifier giving an answer that contradicted its own stated prompt rule. Rather
+      than reactively patch that classifier/prompt off one observation, log a structured event at
+      each downgrade site so a real disagreement rate per originating gate can be measured before any
+      prompt change is considered — distinguishes "one rare model miss" from "this gate systematically
+      produces contradictions the classifier correctly rejects" from "the classifier systematically
+      disagrees with all deterministic gates."
+      **Done**: `checkRetryContradiction` and `reconcileContradictedVerdicts` (`pipeline.service.ts`)
+      each log a `logger.info` ("Reconciliation classifier downgraded a contradicted verdict...") on
+      every downgrade, carrying `auditId`, `claimId`, `verdictBefore`, and (where available in-memory)
+      the originating gate + its reason code, derived from the just-computed gate-event trace
+      (`checkRetryContradiction` has this on hand directly). `reconcileContradictedVerdicts` runs
+      later, re-reading Redis status with no in-memory gate trace available, so it logs without
+      gate attribution — the originating gate for those cases is still reconstructable after the fact
+      by joining `grounnel_gate_events` on `claim_id`, ordered by `created_at` (the downgrade's own
+      `retry_reconciliation` row already lands in that same table). No new DB column/table added —
+      log lines only, queryable via existing log infrastructure; SQL/dashboard aggregation left for
+      whoever pulls the numbers, not built speculatively here. Explicitly not touching the
+      reconciliation classifier's prompt — that's the whole point of measuring first.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
