@@ -1317,21 +1317,21 @@ describe("GrounnelPipelineService (T010)", () => {
     // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
     expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
-    // 8 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
-    // year/date gate added a 7th, T069's reason_year added an 8th), plus D025 §5's
-    // retry-contradiction check (the retry landed on contradicted, so it ran) — the original
-    // inconsistent pass is not lost.
-    expect(events).toHaveLength(17);
+    // 9 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
+    // year/date gate added a 7th, T069's reason_year added an 8th, D030's reason_ordinal added a
+    // 9th), plus D025 §5's retry-contradiction check (the retry landed on contradicted, so it ran)
+    // — the original inconsistent pass is not lost.
+    expect(events).toHaveLength(19);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
-    // Index 4, not 3: reason_year (T069) now sits between implicit_negation and counterfact_ignored.
-    expect(events[4]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
+    // Index 5, not 4: reason_ordinal (D030) now sits between reason_year and counterfact_ignored.
+    expect(events[5]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    // Index 12, not 10: each pass is now 8 gates (contradiction_evidence is offset 4 within a pass).
-    expect(events[12]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 14, not 12: each pass is now 9 gates (contradiction_evidence is offset 5 within a pass).
+    expect(events[14]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
-    expect(events[16]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    expect(events[18]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -1811,13 +1811,14 @@ describe("GrounnelPipelineService (T010)", () => {
       "reason_consistency",
       "implicit_negation",
       "reason_year",
+      "reason_ordinal",
       "counterfact_ignored",
       "contradiction_evidence",
       "claim_reason_overlap",
       "numeric",
       "year",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the eight gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the nine gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 
@@ -1854,5 +1855,90 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(implicitNegation).toMatchObject({ verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true });
     // reason_consistency runs first and doesn't catch this bare negation (no contradiction verb) — abstains.
     expect(events.find((e) => e.gate === "reason_consistency")).toMatchObject({ overridden: false });
+  });
+
+  // T006 (D030) — integration coverage for applyReasonOrdinalGate through the real runGateChain,
+  // not just the pure-function unit tests in gates.test.ts: proves the pipeline actually invokes it
+  // at the right point and that its result survives gate #1's downstream evidence-grounding check.
+  it("T006 (D030): reason_ordinal fires end-to-end — the Wright-brothers regression shape, wired through runGateChain", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 ft.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          // The bug itself: VERIFY's raw verdict says supported even though its own reason names
+          // a different flight — reason_ordinal is the only thing that can catch this.
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, factSentence.trim()),
+          reason: "The passage states the airplane flew 852 feet on its fourth and final flight.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // Survives gate #1's grounding check (the cited evidence is a real substring of the passage),
+    // so the final stored verdict is "contradicted", not downgraded back to "unsupported".
+    expect(claim.verdict).toBe("contradicted");
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "contradicted",
+      overridden: true,
+      reason: "reason_ordinal_mismatch",
+    });
+  });
+
+  it("T006 (D030): reason_ordinal correctly abstains end-to-end and leaves a genuinely correct verdict untouched", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 ft.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's first flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, factSentence.trim()),
+          reason: "The passage confirms the first flight covered 852 feet.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "supported",
+      overridden: false,
+      reason: null,
+    });
   });
 });

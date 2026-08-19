@@ -73,7 +73,7 @@ stored verdict is not `supported` or `partially_supported`. Fully testable via u
 
 > Write these FIRST — they must fail (the function doesn't exist yet) before implementation.
 
-- [ ] T002 [P] [US1] Write `applyReasonOrdinalGate` unit tests in
+- [x] T002 [P] [US1] Write `applyReasonOrdinalGate` unit tests in
       `tests/unit/orchestrators/grounnel/gates.test.ts` covering the full validation matrix from
       `data-model.md` §1: the Wright-brothers regression fire case, a second/third-attempt fire case,
       a discourse-enumeration abstain case ("First,... Second,..."), an ambiguous-mention abstain
@@ -84,51 +84,83 @@ stored verdict is not `supported` or `partially_supported`. Fully testable via u
       interfere). The gate's correctness rests on structural pattern-matching (anchor + explicit
       competing ordinal), not on any claim that `reason` is generally "true" — cases should exercise
       that structural condition directly, not just plausible-sounding text.
+      **Done**: 15 new cases added, confirmed to fail first (`applyReasonOrdinalGate is not a
+      function`) before implementation.
 
 ### Implementation for User Story 1
 
-- [ ] T003 [US1] Implement `applyReasonOrdinalGate` in `src/orchestrators/grounnel/gates.ts` per
+- [x] T003 [US1] Implement `applyReasonOrdinalGate` in `src/orchestrators/grounnel/gates.ts` per
       `data-model.md` §1 — the explicit anchor definition (single unambiguous noun phrase or
       abstain), the abstention short-circuits in their stated order, and the override-direction
       semantics (forces `contradicted` from any state except `contradicted`/`unverifiable`; never
       promotes toward `supported`). Deliberately **unwired** — no call site yet. (depends on T002)
-- [ ] T004 [US1] Run `gates.test.ts`; confirm 100% pass on the validation matrix with zero false
+      **Done**: claim-anchored extraction (2-content-word window after the ordinal, clause-scoped,
+      stoplist-filtered), confirmation-takes-precedence-over-contradiction design (resolves the
+      "does NOT fire — same value" and "abstains — ambiguous" matrix rows for free, since both
+      collapse to the same no-op return regardless of which internal path is taken).
+- [x] T004 [US1] Run `gates.test.ts`; confirm 100% pass on the validation matrix with zero false
       positives on every "must NOT fire"/"must abstain" row, and zero regression on the existing
       `applyReasonYearGate` golden cases. This establishes **deterministic regression correctness on
       the known matrix only** — it is not evidence of generalization; T009 establishes that
       separately, on held-out data. **Gate**: do not proceed to T005 until this passes — per
       quickstart.md's build order and T068's own precedent (tasks.md Phase 35), wiring in is a
       separate, later decision, not part of the same change. (depends on T003)
-- [ ] T005 [US1] Wire `applyReasonOrdinalGate` into `runGateChain` in
+      **Done**: 114/114 pass (15 new + 99 existing) on first attempt; `tsc --noEmit` clean.
+- [x] T005 [US1] Wire `applyReasonOrdinalGate` into `runGateChain` in
       `src/orchestrators/grounnel/pipeline.service.ts`, positioned after the `reason_year` gate.
       (depends on T004)
-- [ ] T006 [US1] Add integration coverage in
-      `tests/unit/orchestrators/grounnel/pipeline-service.test.ts` proving `runGateChain` actually
-      invokes `applyReasonOrdinalGate` at the right point in sequence — one case where it fires and
-      changes the final verdict/gate-event list, one case where it correctly abstains and leaves
-      earlier gates' results untouched. Unit tests alone (T002) only prove the function is correct in
-      isolation, not that the pipeline wires it up correctly (wrong argument, wrong order, dropped
-      result). (depends on T005)
-- [ ] T007 [US1] Add `"reason_ordinal"` to the persistence gate-name/reason-code representation,
+      **Done**. **Discovery, correcting T007 below**: wiring this in without updating the
+      persistence union types first is a **compile-time TypeScript error**
+      (`"reason_ordinal"` not assignable to `GateEventInput["gate"]`), not a decoupled later step as
+      originally planned — `gateEvents.push({ gate: "reason_ordinal", ... })` is type-checked against
+      that union at the call site. T007 was done immediately after T005, before T006, not in
+      parallel with it as this task originally assumed.
+- [x] T007 [US1] Add `"reason_ordinal"` to the persistence gate-name/reason-code representation,
       following the same pattern T069 used for `reason_year` — but **verify the actual DB
       representation first, don't assume**: inspect how `reason_year` is actually stored (check
       `src/persistence/grounnel-gate-event-store.ts`, `src/persistence/types.ts`, `src/db/schema.ts`,
       `src/db/queries.ts` for whether it's a free-text/varchar with an app-level union — no migration
       needed — or a native Postgres `enum` — needs an additive `ALTER TYPE ... ADD VALUE` migration —
-      per `data-model.md` §3's own hedge) and make the minimum corresponding change. This is a
+      per `data-model.md` §3's own hedge) and make the minimum corresponding change. ~~This is a
       DB-facing change independent of T006's in-memory integration test — both branch from T005 and
-      can run in parallel rather than serialized. (depends on T005)
-- [ ] T008 [P] [US1] Add an ordinal golden-set case restoring the intent of the removed
+      can run in parallel rather than serialized.~~ **Corrected during implementation (see T005): this
+      is actually a hard compile-time prerequisite of T005/T006, not independent of them** — the
+      dependency direction in the original task graph was backwards. (depends on T005)
+      **Done**: confirmed `text("gate", { enum: [...] })` is a Drizzle TS-level enum, not a native
+      Postgres enum (no CHECK constraint) — no migration needed, matching the hedge exactly.
+- [x] T006 [US1] Add integration coverage in
+      `tests/unit/orchestrators/grounnel/pipeline-service.test.ts` proving `runGateChain` actually
+      invokes `applyReasonOrdinalGate` at the right point in sequence — one case where it fires and
+      changes the final verdict/gate-event list, one case where it correctly abstains and leaves
+      earlier gates' results untouched. Unit tests alone (T002) only prove the function is correct in
+      isolation, not that the pipeline wires it up correctly (wrong argument, wrong order, dropped
+      result). (depends on T005, and in practice T007 — see correction above)
+      **Done**: 2 new end-to-end tests added. **Also found and fixed 2 real regressions** in
+      *existing* tests that hard-coded the old 8-gates-per-pass count/indices (`toHaveLength(17)`→19,
+      `events[4]`/`events[12]`→`events[5]`/`events[14]`, and a gate-name-order array missing
+      `"reason_ordinal"`) — these would have silently broken on merge without this task's full-suite
+      run surfacing them.
+- [x] T008 [P] [US1] Add an ordinal golden-set case restoring the intent of the removed
       `g15-wright-brothers-ordinal` to `evaluations/golden/grounnel/live-eval-golden-set.json` (now
       exercising the gate, not a prompt section). Doesn't need persistence changes to be meaningful —
       only needs the gate wired in. (depends on T005)
-- [ ] T009 [P] [US1] Measure the false-downgrade rate on a held-out set of correctly-supported
+      **Done**: added as `g17-wright-brothers-ordinal` (fresh ID, not reusing "g15" — a different
+      mechanism now, gate not prompt), real historical Wright Flyer figures (first flight ~120 ft,
+      fourth/final flight 852 ft/59 s), README.md case count updated 15→16 with a labeling note.
+      Not run live (requires `GEMINI_API_KEY`/`TAVILY_API_KEY`, real budget-affecting API calls) —
+      that's T010's job, blocked on deploy access.
+- [x] T009 [P] [US1] Measure the false-downgrade rate on a held-out set of correctly-supported
       claims not used in T002's fixture set (spec.md SC-002) — hard requirement of zero. **Also
       report the contradiction-detection recall rate on a held-out set of genuine contradiction
       cases** (SC-002's other required measurement — not just the safety metric): a gate that never
       fires has a trivially perfect 0% false-downgrade rate while being useless, the same reasoning
       already applied to US2's T016. Can be measured directly against the pure function (no wiring
       needed). (depends on T004)
+      **Done**: 10 held-out "must not fire" + 10 held-out "must fire" cases, deliberately different
+      domains (novels, experiments, seasons, candidates, albums, prototypes, referendums, episodes,
+      quarters, chapters) from T002's flight/attempt fixtures. **Measured, not assumed**:
+      false-downgrade rate 0/10 (meets the hard requirement); recall 10/10 (reported, not required to
+      hit 100%).
 - [ ] T010 [US1] Live re-verification: with the gate deployed, re-run the original Wright-brothers
       regression test article twice against the live API; confirm the claim no longer lands on
       `supported`/`partially_supported`. Query `grounnel_gate_events` directly (same method used to
@@ -243,11 +275,14 @@ independently of whether User Story 1 has shipped.
 ### Within Each User Story
 
 - **US1**: T002 (tests, must fail) → T003 (implement, unwired) → T004 (validate, gate) → T005 (wire
-  in) → then T006 (integration test), T007 (persistence), and T008 (golden case) all branch off T005
-  and can run in parallel (no data dependency between them); T009 (held-out metric) branches off T004
-  directly. **T010 (live re-verification) requires T007, T008, AND T009 — all three** — this was a
-  real gap in the first draft of this task list (T010 previously only waited on persistence + golden
-  case, which would have allowed a live deploy before the held-out safety check ran).
+  in) → **T007 (persistence)** — corrected during implementation: this is a hard compile-time
+  prerequisite of the wiring itself (`gateEvents.push({ gate: "reason_ordinal", ... })` doesn't
+  type-check without it), not an independent branch off T005 as originally planned → T006
+  (integration test) can then run; T008 (golden case) also only needs T005 wired in. T009 (held-out
+  metric) branches off T004 directly, no wiring needed. **T010 (live re-verification) requires T007,
+  T008, AND T009 — all three** — this was a real gap in the first draft of this task list (T010
+  previously only waited on persistence + golden case, which would have allowed a live deploy before
+  the held-out safety check ran).
 - **US2**: T011/T012 (tests + prompt, parallel) → T013 (implement, fail-open) → T014 (wire in, after
   the existing regex). T015 (golden set) and T017 (held-out metric) both branch off T014 and run in
   parallel; T016 (live/golden eval) additionally needs T015. **T018 (live re-verification) requires
@@ -258,8 +293,9 @@ independently of whether User Story 1 has shipped.
 - T001 has nothing to block on.
 - T002 (US1 tests) and T011+T012 (US2 tests + prompt) can all run in parallel — different files,
   different stories.
-- Within US1: T006, T007, and T008 can all start as soon as T005 is done, in parallel with each
-  other; T009 can start as soon as T004 is done.
+- Within US1: T007 must complete before T006 (compile-time dependency, discovered during
+  implementation — see above); T008 can start as soon as T005 is done, in parallel with T007/T006;
+  T009 can start as soon as T004 is done.
 - Within US2: T015 and T017 can both start as soon as T014 is done.
 - T019 and T020 (Polish) can run in parallel.
 

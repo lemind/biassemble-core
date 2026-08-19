@@ -107,6 +107,7 @@ export type GateReason =
   | "year_role_match"
   | "year_role_mismatch"
   | "reason_year_mismatch"
+  | "reason_ordinal_mismatch"
   | "counterfact_ignored"
   | "retry_contradiction_invalidated"
   | "claim_reason_no_overlap"

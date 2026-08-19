@@ -1,12 +1,21 @@
 # Grounnel live eval — minimum golden set
 
-15 cases, `live-eval-golden-set.json`, in the same spirit as `evaluations/golden/audit/live-eval-fixtures/`: a real, live run of the actual pipeline (`GrounnelExtractService` + `GrounnelPipelineService`) against real Gemini (EXTRACT, VERIFY, `google_search` discovery) and a real Tavily fallback — no mocks, no recorded/replayed responses for the run itself.
+16 cases, `live-eval-golden-set.json`, in the same spirit as `evaluations/golden/audit/live-eval-fixtures/`: a real, live run of the actual pipeline (`GrounnelExtractService` + `GrounnelPipelineService`) against real Gemini (EXTRACT, VERIFY, `google_search` discovery) and a real Tavily fallback — no mocks, no recorded/replayed responses for the run itself.
 
 ## Labeling discipline
 
 Same rule as `evaluations/golden/audit/README.md`: every case's expected `kind` (`true` / `false` / `silence`) was written before the script ever ran against it, based on independently verifiable public facts (6 true, 4 false, 1 fabricated/obscure for the silence case) — not adjusted afterward to match whatever the model produced.
 
-`g11-bloomberg-fallback` is the one case deliberately targeting a different thing than a true/false/silence label: `HybridSearchProvider` only calls Tavily when *every* DIY candidate (Gemini `google_search` discovery + direct fetch) fails for a claim — none of g01–g10 are designed to force that, so the fallback path had zero deliberate coverage. `bloomberg.com` commonly blocks non-browser fetches (403/unreachable), and the fact itself (Apple's market cap) is widely corroborated elsewhere, so Tavily has a real shot at resolving it. **Not guaranteed** — this repo has no per-claim provider-attribution field, so whether it actually fell back to Tavily on a given run has to be confirmed from logs (`"DIY fetch failed for every candidate — falling back"`), not from the eval's JSON output alone.
+`g17-wright-brothers-ordinal` (added D030, tasks.md T008) restores the intent of the original
+`g15-wright-brothers-ordinal` — deliberately removed (see D030 §1) when the fix attempt it was
+validating (a `SEQUENCE POSITION` VERIFY prompt section) failed live 2/2 and was reverted. This case
+exercises the real fix instead: `applyReasonOrdinalGate`, a deterministic gate reading VERIFY's own
+`reason` text for a differing ordinal, not a prompt instruction. The article deliberately misattributes
+the Wright Flyer's fourth-and-final-flight distance (852 ft / 59 s, real historical figures) to the
+first flight — real web sources state the first flight actually covered ~120 ft in 12 seconds, so a
+live run should find that contradiction and land on `contradicted`.
+
+`g11-bloomberg-fallback` is the one other case deliberately targeting a different thing than a true/false/silence label: `HybridSearchProvider` only calls Tavily when *every* DIY candidate (Gemini `google_search` discovery + direct fetch) fails for a claim — none of g01–g10 are designed to force that, so the fallback path had zero deliberate coverage. `bloomberg.com` commonly blocks non-browser fetches (403/unreachable), and the fact itself (Apple's market cap) is widely corroborated elsewhere, so Tavily has a real shot at resolving it. **Not guaranteed** — this repo has no per-claim provider-attribution field, so whether it actually fell back to Tavily on a given run has to be confirmed from logs (`"DIY fetch failed for every candidate — falling back"`), not from the eval's JSON output alone.
 
 ## Running it
 

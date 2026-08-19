@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence, type ResolvedCitation } from "./passage-sentences.js";
-import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonYearGate, applyYearGate } from "./gates.js";
+import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonOrdinalGate, applyReasonYearGate, applyYearGate } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -640,6 +640,15 @@ export class GrounnelPipelineService {
     const reasonYear = applyReasonYearGate({ verdict, reason: input.reason, claimText: input.claimText });
     gateEvents.push({ gate: "reason_year", verdictBefore: verdict, verdictAfter: reasonYear.verdict, overridden: reasonYear.overridden, reason: reasonYear.reason });
     verdict = reasonYear.verdict;
+
+    // Reason/verdict ordinal-mismatch gate (D030, tasks.md T005) — same rationale and chain
+    // position as reasonYear directly above: reads VERIFY's own `reason` for a differing,
+    // anchored ordinal instead of scanning raw evidence (the deleted applyOrdinalGate's
+    // ROLE_KEYWORDS approach, proven unable to keep up with unbounded phrasing, same as the year
+    // gate's own whitelist). Grouped with the other reason-only gates, before gate #1.
+    const reasonOrdinal = applyReasonOrdinalGate({ verdict, reason: input.reason, claimText: input.claimText });
+    gateEvents.push({ gate: "reason_ordinal", verdictBefore: verdict, verdictAfter: reasonOrdinal.verdict, overridden: reasonOrdinal.overridden, reason: reasonOrdinal.reason });
+    verdict = reasonOrdinal.verdict;
 
     // Gate #5 (D025 §2/§3) — chain position (between implicit_negation and gate #1) is load-bearing, see ADR.
     const counterfact = applyCounterfactIgnoredGate({ verdict, reasonSupportsVerdict: input.reasonSupportsVerdict });

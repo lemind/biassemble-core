@@ -653,3 +653,131 @@ export function applyReasonYearGate(input: ReasonYearGateInput): ReasonYearGateR
   return { verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" };
 }
 
+// ─── Reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T002/T003) ──────────
+
+export interface ReasonOrdinalGateInput {
+  claimText: string;
+  verdict: Verdict;
+  reason: string | null;
+}
+
+export interface ReasonOrdinalGateResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "reason_ordinal_mismatch" | null;
+}
+
+const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
+const ORDINAL_RE_G = new RegExp(`\\b(${ORDINAL_WORDS.join("|")})\\b`, "gi");
+
+// Words too generic to serve as an anchor on their own, filtered out of the content-word window
+// below so a shared article/conjunction/pronoun never counts as "the same noun phrase" — only a
+// real content word (the noun the ordinal modifies, or a modifier next to it) does.
+const ORDINAL_ANCHOR_STOPWORDS = new Set(["and", "the", "a", "an", "of", "in", "on", "at", "its", "his", "her", "their", "was", "is", "were", "also", "then", "to", "by"]);
+const ORDINAL_ANCHOR_WINDOW_WORDS = 2;
+
+/**
+ * Up to 2 real content words immediately after the ordinal, never crossing a clause boundary.
+ * Deliberately NOT a role-noun whitelist (research.md Decision 2, D030 §3a/§4) — whatever word the
+ * claim happens to use becomes the anchor, so this generalizes past any fixed vocabulary the way a
+ * whitelist structurally can't. 2 words, not 1, so a single modifier between the ordinal and its
+ * noun ("the third unsuccessful attempt") doesn't defeat matching — see data-model.md §1's matrix.
+ *
+ * Known limitation, accepted (shallow review, T003): the 2nd word can be a generic verb/adjective
+ * ("reached", "covered") rather than the noun itself. Two unrelated ordinal mentions that happen to
+ * share that generic 2nd word could produce a false anchor overlap — no case in the validation or
+ * held-out matrices exercises this, but it's a real, not-yet-observed risk of the 2-word window,
+ * same class of accepted tradeoff as extractTemporalRoleFacts's "first occurrence only" above.
+ */
+function ordinalAnchorWords(text: string, matchEnd: number): Set<string> {
+  const rest = text.slice(matchEnd);
+  const clauseEnd = rest.search(/[.!?;,]/);
+  const window = clauseEnd === -1 ? rest : rest.slice(0, clauseEnd);
+  const words: string[] = [];
+  for (const raw of window.trim().split(/\s+/)) {
+    const word = raw.toLowerCase().replace(/[^a-z]/g, "");
+    if (!word || ORDINAL_ANCHOR_STOPWORDS.has(word)) continue;
+    words.push(word);
+    if (words.length >= ORDINAL_ANCHOR_WINDOW_WORDS) break;
+  }
+  return new Set(words);
+}
+
+function anchorsOverlap(a: Set<string>, b: Set<string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  for (const w of a) if (b.has(w)) return true;
+  return false;
+}
+
+// Same clause-scoped negation approach as isReasonYearNegated above (reuses lastClauseBoundary).
+// Window matches the year gate's own 60-char constant rather than a smaller guess — this gate has
+// no live-captured VERIFY reason to measure a real window off yet (T010, blocked on deployment
+// access), and there's no principled reason to use a NARROWER window than the sibling gate that
+// HAS been validated against real captured data. Revisit once real ordinal-mismatch reasons exist.
+const ORDINAL_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
+const ORDINAL_NEGATION_WINDOW = 60;
+
+function isOrdinalNegated(reason: string, matchIndex: number): boolean {
+  const windowStart = Math.max(0, matchIndex - ORDINAL_NEGATION_WINDOW);
+  const window = reason.slice(windowStart, matchIndex);
+  const clauseStart = lastClauseBoundary(window);
+  return ORDINAL_NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
+}
+
+/**
+ * Reason/verdict consistency gate — ordinal/sequence-position mismatch (D030, tasks.md T002/T003).
+ * NOT a token-swapped copy of applyReasonYearGate (research.md Decision 2): an ordinal word
+ * ("first", "second"...) is not inherently a fact the way a year is — it's equally likely to be
+ * discourse structure ("First, the source says X. Second, it says Y.") as a factual attribute of
+ * an event, so extraction anchors on the noun phrase the ordinal attaches to in the CLAIM text
+ * itself, not a fixed role-noun vocabulary — the exact abstraction that already failed twice in
+ * this codebase (the deleted applyOrdinalGate's ROLE_KEYWORDS, and the sibling year-gate's own
+ * ROLE_KEYWORDS whitelist miss on "redesignated"/"downgraded").
+ *
+ * Confirmation takes precedence over contradiction, deliberately (data-model.md §1's "does NOT
+ * fire" / "abstains — ambiguous" matrix rows): if the claim's own ordinal+anchor combination
+ * appears anywhere in `reason`, un-negated, that's sufficient to leave the verdict alone — even if
+ * a different ordinal on the same anchor also appears elsewhere in the same reason (a reason can
+ * legitimately discuss more than one instance of the same anchored noun).
+ */
+export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrdinalGateResult {
+  if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const claimMatches = [...input.claimText.matchAll(ORDINAL_RE_G)];
+  if (claimMatches.length !== 1) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  const claimMatch = claimMatches[0]!;
+  const claimOrdinal = claimMatch[1]!.toLowerCase();
+  const claimAnchor = ordinalAnchorWords(input.claimText, claimMatch.index! + claimMatch[0].length);
+  if (claimAnchor.size === 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  const reason = input.reason;
+  const reasonMatches = [...reason.matchAll(ORDINAL_RE_G)];
+  if (reasonMatches.length === 0) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+
+  let competing = false;
+  for (const m of reasonMatches) {
+    const ordinal = m[1]!.toLowerCase();
+    const anchor = ordinalAnchorWords(reason, m.index! + m[0].length);
+    if (!anchorsOverlap(claimAnchor, anchor)) continue;
+    if (isOrdinalNegated(reason, m.index!)) continue;
+    if (ordinal === claimOrdinal) {
+      // Confirmation found — takes precedence, return immediately (data-model.md §1 step 4).
+      return { verdict: input.verdict, overridden: false, reason: null };
+    }
+    competing = true;
+  }
+
+  if (!competing) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  return { verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" };
+}
+
