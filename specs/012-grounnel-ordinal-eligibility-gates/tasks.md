@@ -161,15 +161,100 @@ stored verdict is not `supported` or `partially_supported`. Fully testable via u
       quarters, chapters) from T002's flight/attempt fixtures. **Measured, not assumed**:
       false-downgrade rate 0/10 (meets the hard requirement); recall 10/10 (reported, not required to
       hit 100%).
-- [ ] T010 [US1] Live re-verification: with the gate deployed, re-run the original Wright-brothers
+- [x] T010 [US1] Live re-verification: with the gate deployed, re-run the original Wright-brothers
       regression test article twice against the live API; confirm the claim no longer lands on
       `supported`/`partially_supported`. Query `grounnel_gate_events` directly (same method used to
       verify T069) to confirm `reason_ordinal` fires on the regression case and does not fire on
-      unrelated claims in the same run. **Do not perform this until T007, T008, and T009 have all
-      passed** — this is the live/production check and must not happen before both the
-      integration-correctness and held-out-safety work is done. (depends on T007, T008, T009)
+      unrelated claims in the same run. (depends on T007, T008, T009)
+      **Done, mixed result — do not treat as a clean pass**: deploy confirmed live
+      (`vercel inspect`, prod alias `biassemble-core.vercel.app`, `/health` 200, build ~30 min old,
+      matches local `92628ad` on a clean tree). Ran g17 (`On December 17, 1903... The first flight
+      covered 852 feet...`) against `/extract` + `/status` twice, then queried
+      `grounnel.grounnel_gate_events` / `grounnel_claims` directly via `psql`.
+      - **Run 1**: `reason_ordinal` ran (confirmed in DB) but abstained (`overridden: f`) — VERIFY's
+        own `reason` for this claim was *"the longest of the four flights covered 852 feet"*, no
+        ordinal word at all. Final verdict: `supported` (regression NOT caught).
+      - **Run 2**: `reason_ordinal` correctly fired on a T034 retry pass (`overridden: t`, `reason:
+        reason_ordinal_mismatch`, verdict flipped to `contradicted`) — proves the gate detects the
+        mismatch live, not just in unit tests. But the pre-existing D025 §5 `checkRetryContradiction`
+        classifier then judged that contradiction "inconsistent" and downgraded it to `unsupported`
+        (`retry_reconciliation` / `retry_contradiction_invalidated`). Final verdict: `supported`
+        again — a **second, distinct claim-processing pass for the same `claim_id`** (VERIFY
+        returned two answers for one id in the batched response; `Promise.all` processed both,
+        last write won) landed clean with no ordinal in its reason either. Regression NOT caught,
+        by a different path than run 1.
+      - **Verdict on the gate itself**: works as designed — deterministic, reason-grounded, fires
+        correctly when the signal is present in VERIFY's own reason text. Not a bug in
+        `applyReasonOrdinalGate`.
+      - **Real gaps surfaced, out of scope for this task/feature, logged for backlog**: (1) VERIFY's
+        `reason` paraphrase is nondeterministic and often omits the ordinal word entirely even when
+        describing the exact fact that would contradict the claim — the reason-grounded design has
+        no signal to act on in that case (known/accepted limitation, see ADR D030 §3a). (2) The
+        pre-existing `checkRetryContradiction` safety net (built for a different failure mode —
+        compound-claim conflation) can undo a correct `reason_ordinal` catch. (3) A batched VERIFY
+        response duplicate-answering one claim id, processed twice concurrently with "last write
+        wins," is a pre-existing data-integrity gap unrelated to D030 — not investigated further
+        here.
+      - Not re-attempting a 3rd live run or expanding scope to fix (1)-(3): out of bounds for T010,
+        which only asks to confirm-and-report the live check, not to chase every gap it surfaces.
 
-**Checkpoint**: User Story 1 is fully functional, independently deployable, and live-verified.
+**Checkpoint**: User Story 1 is functionally complete and live-confirmed to run correctly end-to-end
+in production; the specific Wright-brothers regression article was not caught live in either of the
+2 runs performed, for reasons outside the gate itself (see T010 notes above) — flagged, not silently
+marked green.
+
+### Post-T010 investigation of the 3 gaps T010 surfaced (2026-08-19, same day)
+
+T010's 3 surfaced gaps were investigated for fixability. One was a real, fixable bug — fixed. Two
+turned out unsafe or unnecessary to patch once actually tested against existing behavior; reverted
+rather than shipped half-working. Full suite (81 files, 1066 tests, 1 pre-existing todo) green after.
+
+- **Fixed — duplicate-claim-id race** (`pipeline.service.ts`'s `processVerifyResults`). Confirmed via
+  `grounnel_llm_calls.parsed_output` for the live run2 audit: Gemini's batched VERIFY response
+  genuinely returned two separate `results` entries for the same claim id (one reason mentioning
+  "fourth" flight, one not). `knownResults` had no dedup on `result.id`, so both entries ran the full
+  gate chain concurrently under `Promise.all`, each independently calling `writeClaimResult` (Redis,
+  read-merge-write per claim field) and `insertGrounnelClaim` (Postgres, `onConflictDoUpdate` on
+  `claimId`) — a silent last-write-wins race, capable of discarding a correct gate override in favor
+  of whichever duplicate's write happened to land last, with no error or log. Fixed: `parsed.results`
+  is now deduped by `id` before processing (first answer wins, deterministic; a `logger.warn` fires
+  when a duplicate is seen). New regression test:
+  `pipeline-service.test.ts` — "a VERIFY batch response answering the same claim id twice is
+  deduplicated." Unrelated to D030 specifically; a general VERIFY-response-integrity gap.
+- **Investigated, not fixed — `checkRetryContradiction` (D025 §5) downgrading a correct
+  `reason_ordinal` catch.** Traced the exact live sequence via `grounnel_llm_calls`: the retry's own
+  raw VERIFY reason named the ordinal cleanly ("...flew 852 feet in its fourth flight"), `reason_ordinal`
+  correctly fired (`contradicted`), then `checkRetryContradiction`'s classifier call judged that
+  contradiction `consistent: false` — which contradicts the classifier's *own* prompt rule ("a reason
+  that states or implies a fact conflicting with the claim... only 'contradicted' or 'unverifiable'
+  fit"). Attempted a precedence fix (skip the classifier re-check when the retry's raw verdict wasn't
+  already `contradicted`, i.e. a gate produced it, not the model) — but found `reconcileContradictedVerdicts`
+  (D026 §22/T064) already runs the *same* classifier against **every** `contradicted` verdict after
+  `runBatch`, regardless of source, by deliberate design (its own comment: "ANY `contradicted` verdict
+  landing straight off a fresh primary VERIFY call... gets none of D025 §2/§5's scrutiny by default" —
+  written specifically because gate-only contradictions can also be wrong, e.g. "a nomination misread
+  as a rejection"). The precedence fix was therefore both incomplete (D026 §22 still downgrades it
+  regardless) and in direct tension with an existing, deliberate, documented design decision — reverted.
+  Root cause is narrower than a precedence bug: the consistency classifier (Gemini) gave a wrong
+  answer, on this one input, against its own stated rule. Per the external review's own P2/P3
+  ordering, this doesn't warrant a reactive prompt patch off one anecdote — logged as a candidate for
+  future telemetry (% of `contradicted` verdicts the reconciliation classifier itself downgrades,
+  broken out by which upstream gate produced the contradiction), not fixed here.
+- **Investigated, not fixed — `ordinalAnchorWords` comma gap.** VERIFY's live reason phrased the
+  ordinal as "the fourth, **and longest** flight" — a comma landing directly against the ordinal with
+  nothing but stopwords before it collapsed the anchor window to empty (`firstClauseBoundaryForward`
+  correctly treats `,` as a hard boundary), so `reason_ordinal` had no anchor to compare and abstained
+  on the primary VERIFY pass (only caught it later, by luck, on a retry with cleaner phrasing).
+  Attempted fix: skip exactly one such empty-content comma before giving up. This broke an existing,
+  deliberately-authored test — `gates.test.ts`'s "abstains on discourse-enumeration ordinals with no
+  anchor noun attached ('First,... Second,...')" — because "First, the source reports..." has the
+  *identical* stopword-only-before-comma shape as the real bug, and the fix can't tell "comma
+  introduces a real modifying aside on the same noun" from "comma follows an unrelated discourse
+  marker" without actual language understanding. Reverted rather than trade a live false-negative for
+  a reopened, already-defended false-positive class (the more dangerous direction throughout this
+  codebase's own gate ADRs). Logged as an accepted limitation alongside the existing "VERIFY's reason
+  may omit the ordinal entirely" one (ADR D030 §3a) — same family of gap, not independently fixable
+  without redesigning the anchor mechanism itself, which is out of scope for a reactive patch.
 
 ---
 

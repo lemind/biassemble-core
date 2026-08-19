@@ -932,6 +932,55 @@ describe("GrounnelPipelineService (T010)", () => {
     });
   });
 
+  it("(live-verification finding, D030 T010) a VERIFY batch response answering the same claim id twice is deduplicated — first answer wins, no concurrent double-processing", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 feet.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The first flight covered 852 feet in 59 seconds. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // Two distinct answer objects for the same id, real observed live shape (Gemini returned a
+      // duplicate `results` entry for one claim in a batched response).
+      return {
+        results: ids.flatMap((id) => [
+          {
+            id,
+            verdict: "supported",
+            evidenceCitations: citationsFor(claimText, passageText, "The first flight covered 852 feet in 59 seconds."),
+            reason: "first answer",
+            confidence: 1,
+          },
+          {
+            id,
+            verdict: "unverifiable",
+            evidenceCitations: null,
+            reason: "second, duplicate answer for the same id",
+            confidence: 0.2,
+          },
+        ]),
+      };
+    });
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: true })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // The first answer wins — deterministic, matches array order, not a race.
+    expect(claim.verdict).toBe("supported");
+    expect(claim.reason).toBe("first answer");
+    // Exactly one gate-chain pass recorded for this claim, not two concurrent ones.
+    expect(gateEventStore.calls.filter((c) => c.claimId === claimId)).toHaveLength(1);
+  });
+
   it("D026 §12: gate #1b catches cross-claim contamination in a batched VERIFY call — one claim's id answered with a DIFFERENT claim's reasoning (real live-test finding, Marie Curie / Camp David Accords, 2026-08-10)", async () => {
     const curieId = uuid(1);
     const curieText = "Marie Curie won Nobel Prizes in chemistry and physics.";

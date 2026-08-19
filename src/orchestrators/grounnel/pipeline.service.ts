@@ -964,11 +964,34 @@ export class GrounnelPipelineService {
   ): Promise<void> {
     const byId = new Map(items.map((b) => [b.claim.id, b]));
 
+    // Live-verification finding (D030 T010) — a batched VERIFY response can answer the same claim
+    // id twice (observed live: Gemini returned two distinct `results` entries for one id). Without
+    // this dedup, both survived into Promise.all below and ran the full gate chain concurrently,
+    // each independently calling writeClaimResult (Redis, read-merge-write) and insertGrounnelClaim
+    // (Postgres, onConflictDoUpdate) for the *same* claimId — a silent last-write-wins race with no
+    // error or log, capable of discarding a correct gate override (e.g. reason_ordinal firing) in
+    // favor of whichever duplicate answer's write happened to land last. First occurrence wins —
+    // deterministic, and consistent with every other "which VERIFY answer is authoritative" call in
+    // this file treating the primary/first response as canonical unless a dedicated retry supersedes it.
+    const seenIds = new Set<string>();
+    const duplicateIds: string[] = [];
+    const dedupedResults = parsed.results.filter((r) => {
+      if (seenIds.has(r.id)) {
+        duplicateIds.push(r.id);
+        return false;
+      }
+      seenIds.add(r.id);
+      return true;
+    });
+    if (duplicateIds.length > 0) {
+      logger.warn({ module: MODULE, operation: "processVerifyResults", auditId, duplicateIds }, "VERIFY response answered the same claim id more than once — keeping the first answer, discarding the rest");
+    }
+
     // Reviewed finding: initialVerdict (the value the gate chain actually operates on, e.g.
     // confidence-downgraded to "unverifiable") must be computed once here, before the classifier
     // call — the classifier was previously judging the raw pre-downgrade verdict while gate #5
     // applied its answer to a different, already-downgraded one.
-    const knownResults = parsed.results
+    const knownResults = dedupedResults
       .filter((r) => byId.has(r.id))
       .map((r) => ({
         result: r,
