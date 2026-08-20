@@ -10,9 +10,7 @@ const ELIGIBILITY_ATTEMPTS = 3;
 
 export interface ClaimVerifiabilityInput {
   claimText: string;
-  // D028 — the claim's own verbatim source context, or null if EXTRACT didn't produce one. Required
-  // to tell a private assertion ("I discovered X in 1928") apart from an attributed quote
-  // ("'I discovered X in 1928,' said Fleming") — claim text alone can't make that distinction.
+  // D028 — the claim's own verbatim source context, or null if EXTRACT didn't produce one; see D030 §3b for why.
   sourceExcerpt: string | null;
 }
 
@@ -28,9 +26,7 @@ const ClaimVerifiabilityResultSchema = z.object({
   reason: z.string(),
 });
 
-// D030 §3b — any classifier failure (provider error, timeout, rate limit, malformed/schema-invalid
-// output) fails open to "checkable"/"uncertain": a wrongly excluded checkable claim is worse than
-// searching a claim that turns out unverifiable anyway. Never a basis for exclusion (tasks.md T013).
+// D030 §3b, tasks.md T013 — any classifier failure fails open to "checkable"/"uncertain", never a basis for exclusion.
 const FAIL_OPEN_RESULT: ClaimVerifiabilityResult = {
   category: "checkable",
   certainty: "uncertain",
@@ -50,13 +46,14 @@ export async function classifyClaimVerifiability(
   claimId: string,
   input: ClaimVerifiabilityInput
 ): Promise<ClaimVerifiabilityResult> {
-  const promptVersion = prompts.getGrounnelEligibilityVersion();
-  const system = prompts.render("grounnel-eligibility", {
-    claim_text: input.claimText,
-    source_excerpt: input.sourceExcerpt ?? "(none)",
-  });
-
+  // Review finding — try must cover rendering/version lookup too, not just the provider call, or fail-open doesn't hold.
   try {
+    const promptVersion = prompts.getGrounnelEligibilityVersion();
+    const system = prompts.render("grounnel-eligibility", {
+      claim_text: input.claimText,
+      source_excerpt: input.sourceExcerpt ?? "(none)",
+    });
+
     return await callLlmForJson({
       provider,
       system,
@@ -66,10 +63,8 @@ export async function classifyClaimVerifiability(
       attempts: ELIGIBILITY_ATTEMPTS,
       module: MODULE,
       operation: "classifyClaimVerifiability",
-      // repair.ts's partialParseObject nulls an individual field that fails its own sub-schema
-      // (e.g. an invalid enum value) instead of throwing — without this check, a bad `category`
-      // silently returns as `null` rather than triggering the retry/fail-open path T013 requires.
-      isValid: (result) => result.category != null && result.certainty != null,
+      // repair.ts nulls an individual invalid field instead of throwing — isValid forces the retry/fail-open path T013 requires.
+      isValid: (result) => result.category != null && result.certainty != null && result.reason != null,
       onComplete: llmCallStore.recordCall({
         runId,
         claimId,
@@ -90,4 +85,20 @@ export async function classifyClaimVerifiability(
 /** D030 §3b policy (data-model.md §2) — conservative: excludes only on a clear non-checkable call. */
 export function isEligibilityExcluded(result: ClaimVerifiabilityResult): boolean {
   return result.category !== "checkable" && result.certainty === "clear";
+}
+
+// Review finding — colocated with isEligibilityExcluded, not extract.service.ts: same D030 §3b policy.
+export function eligibilityReason(category: ClaimVerifiabilityResult["category"]): string {
+  switch (category) {
+    case "personal":
+      return "No public record could confirm or deny this — a private, speaker-relative circumstance (D030 §3b).";
+    case "opinion":
+      return "No checkable referent — opinion, not caught by the existing regex filter (D030 §3b).";
+    case "prediction":
+      return "No checkable referent — vague prediction, not caught by the existing regex filter (D030 §3b).";
+    case "checkable":
+      // Unreachable — callers only invoke this for isEligibilityExcluded results, which requires
+      // category !== "checkable". Kept for exhaustiveness, not a real runtime path.
+      return "No checkable referent (D030 §3b).";
+  }
 }

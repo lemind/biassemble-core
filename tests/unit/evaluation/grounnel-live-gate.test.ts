@@ -68,4 +68,15 @@ describe("Grounnel live eval gate — the gate itself must fail when it should",
     expect(evaluateGrounnelRun([{ claims: [claim('"I discovered X in 1928," said Fleming.', "unsupported")] }], s).ok).toBe(true);
     expect(evaluateGrounnelRun([{ claims: [claim('"I discovered X in 1928," said Fleming.', "unverifiable")] }], s).ok).toBe(false);
   });
+
+  // Review finding: `not_excluded`'s own ACCEPTABLE list allows `contradicted` (it only asserts
+  // "reached search," not "is true"), but the no_false_accusation check originally exempted only
+  // `"false"` — a correctly-scored `contradicted` outcome was also flagged as a false accusation,
+  // forcing `ok:false` for a run that behaved exactly as intended.
+  it("'not_excluded' does not treat a genuinely contradicted outcome as a false accusation", () => {
+    const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, claims: [{ match: "said Fleming", kind: "not_excluded" }] };
+    const result = evaluateGrounnelRun([{ claims: [claim('"I discovered X in 1928," said Fleming.', "contradicted")] }], s);
+    expect(result.ok).toBe(true);
+    expect(result.violations).toHaveLength(0);
+  });
 });

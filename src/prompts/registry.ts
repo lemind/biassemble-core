@@ -111,10 +111,15 @@ export class PromptRegistry {
         throw new Error(`Unknown template: ${template satisfies never}`);
     }
 
-    let rendered = raw.replace("{{guardrails}}", this.guardrails);
+    // Review finding — a string 2nd argument to .replace() treats $$/$&/$`/$' in VALUE as special
+    // replacement patterns even though the search pattern is a plain string, not a regex. `variables`
+    // carries raw external text (a whole pasted article, claim substrings, source excerpts) that can
+    // contain any of those sequences — a replacer FUNCTION sidesteps this entirely (its return value
+    // is inserted verbatim, no $-pattern interpretation).
+    let rendered = raw.replace("{{guardrails}}", () => this.guardrails);
 
     for (const [key, value] of Object.entries(variables)) {
-      rendered = rendered.replace(`{{${key}}}`, value);
+      rendered = rendered.replace(`{{${key}}}`, () => value);
     }
 
     return rendered;

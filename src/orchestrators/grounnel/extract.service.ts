@@ -3,7 +3,7 @@ import { z } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isOpinionClaim } from "./opinion-filter.js";
-import { classifyClaimVerifiability, isEligibilityExcluded, type ClaimVerifiabilityResult } from "./claim-eligibility.js";
+import { classifyClaimVerifiability, isEligibilityExcluded, eligibilityReason, type ClaimVerifiabilityResult } from "./claim-eligibility.js";
 import { env } from "../../lib/env.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
@@ -18,9 +18,7 @@ const EXTRACT_ATTEMPTS = 3;
 // spec.md Assumption 6 — the real number is still an open, ask-first question. This is a
 // placeholder so the service is runnable, not a tuned decision (tasks.md T009).
 const MAX_CLAIMS = 100;
-// D030 §3b — one Gemini call per claim (not batched, data-model.md §2), so an unbounded Promise.all
-// could fire up to MAX_CLAIMS concurrent calls for one article. Waved, same value/rationale as
-// pipeline.service.ts's SEARCH_CONCURRENCY for its own per-claim search/verify fan-out.
+// D030 §3b — one Gemini call per claim, unbatched; same value/rationale as SEARCH_CONCURRENCY (pipeline.service.ts).
 const ELIGIBILITY_CONCURRENCY = 20;
 
 const ExtractResponseSchema = z.object({
@@ -113,38 +111,9 @@ export class GrounnelExtractService {
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
     const afterRegexFilter = claims.filter((claim) => !isOpinionClaim(claim.text));
     const OPINION_REASON = "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).";
-    await Promise.all(
-      opinionClaims.map(async (claim) => {
-        await this.grounnelStore.writeClaimResult(id, claim.id, {
-          status: "done",
-          verdict: "unverifiable",
-          evidence: null,
-          confidence: null,
-          reason: OPINION_REASON,
-          sources: [],
-          citations: [],
-        });
-        // Reviewed finding: gate #3 claims were only ever written to Redis — never to
-        // grounnel_claims, permanently absent from history/analytics (D023 §3).
-        await this.historyStore.createClaim({
-          claimId: claim.id,
-          runId,
-          claimText: claim.text,
-          verdict: "unverifiable",
-          evidence: null,
-          confidence: null,
-          reason: OPINION_REASON,
-          sources: [],
-          status: "done",
-        });
-      })
-    );
+    await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, runId, claim, OPINION_REASON)));
 
-    // D030 §3b (tasks.md T014) — additive to the regex filter above, positioned AFTER it: only
-    // evaluates claims the free regex didn't already exclude (cost optimization, no correctness
-    // change — research.md Decision 4). Conservative policy (isEligibilityExcluded): excludes only
-    // on a clear non-checkable call, any uncertainty defaults to search. Waved by
-    // ELIGIBILITY_CONCURRENCY, not one flat Promise.all — same rationale as SEARCH_CONCURRENCY.
+    // D030 §3b (tasks.md T014, research.md Decision 4) — waved by ELIGIBILITY_CONCURRENCY, not one flat Promise.all (review finding).
     const eligibilityResults: Array<{ claim: (typeof afterRegexFilter)[number]; result: ClaimVerifiabilityResult }> = [];
     for (let i = 0; i < afterRegexFilter.length; i += ELIGIBILITY_CONCURRENCY) {
       const chunk = afterRegexFilter.slice(i, i + ELIGIBILITY_CONCURRENCY);
@@ -161,50 +130,32 @@ export class GrounnelExtractService {
     }
     const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
     const pendingClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
-    await Promise.all(
-      ineligibleClaims.map(async ({ claim, result }) => {
-        const reason = eligibilityReason(result.category);
-        await this.grounnelStore.writeClaimResult(id, claim.id, {
-          status: "done",
-          verdict: "unverifiable",
-          evidence: null,
-          confidence: null,
-          reason,
-          sources: [],
-          citations: [],
-        });
-        await this.historyStore.createClaim({
-          claimId: claim.id,
-          runId,
-          claimText: claim.text,
-          verdict: "unverifiable",
-          evidence: null,
-          confidence: null,
-          reason,
-          sources: [],
-          status: "done",
-        });
-      })
-    );
+    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(id, runId, claim, eligibilityReason(result.category))));
 
     return { id, pendingClaims };
   }
-}
 
-// Fixed per-category messages, not the classifier's own free-text `reason` (data-model.md §2 —
-// that field is for observability/telemetry only, already captured via llmCallStore), matching
-// OPINION_REASON's convention above.
-function eligibilityReason(category: ClaimVerifiabilityResult["category"]): string {
-  switch (category) {
-    case "personal":
-      return "No public record could confirm or deny this — a private, speaker-relative circumstance (D030 §3b).";
-    case "opinion":
-      return "No checkable referent — opinion, not caught by the existing regex filter (D030 §3b).";
-    case "prediction":
-      return "No checkable referent — vague prediction, not caught by the existing regex filter (D030 §3b).";
-    case "checkable":
-      // Unreachable — callers only invoke this for isEligibilityExcluded results, which requires
-      // category !== "checkable". Kept for exhaustiveness, not a real runtime path.
-      return "No checkable referent (D030 §3b).";
+  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — both exclude a claim pre-search with a fixed reason. Reviewed finding: writes both Redis (source of truth) and grounnel_claims (D023 §3 — previously only Redis, permanently absent from history/analytics). */
+  private async writeExcludedClaim(auditId: string, runId: string, claim: PipelineClaimInput, reason: string): Promise<void> {
+    await this.grounnelStore.writeClaimResult(auditId, claim.id, {
+      status: "done",
+      verdict: "unverifiable",
+      evidence: null,
+      confidence: null,
+      reason,
+      sources: [],
+      citations: [],
+    });
+    await this.historyStore.createClaim({
+      claimId: claim.id,
+      runId,
+      claimText: claim.text,
+      verdict: "unverifiable",
+      evidence: null,
+      confidence: null,
+      reason,
+      sources: [],
+      status: "done",
+    });
   }
 }

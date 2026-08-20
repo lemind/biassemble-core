@@ -79,8 +79,11 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
     for (const [i, claim] of found.entries()) {
       if (!claim) continue;
       // A true or absent claim marked `contradicted` is the worst outcome the product can produce —
-      // the single case ADR-000 §2's FP-discipline promise is actually about.
-      if (expected.kind !== "false" && claim.verdict === "contradicted") {
+      // the single case ADR-000 §2's FP-discipline promise is actually about. `not_excluded`'s own
+      // ACCEPTABLE list already allows `contradicted` (review finding: it isn't a ground-truth-true
+      // kind like `true`/`silence`/`excluded`, it only asserts "reached search," so exempt it here too
+      // — otherwise a correctly-scored `contradicted` outcome also forces a false violation.
+      if (expected.kind !== "false" && expected.kind !== "not_excluded" && claim.verdict === "contradicted") {
         violations.push({
           rule: "no_false_accusation",
           detail: `run ${i}: ${expected.kind} claim "${claim.text.slice(0, 70)}" → contradicted`,

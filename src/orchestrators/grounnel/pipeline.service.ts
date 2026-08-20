@@ -127,21 +127,18 @@ function passageIndexForLabel(label: string): number {
   return label.charCodeAt(0) - 65;
 }
 
-// Reconciliation-disagreement telemetry (D030 T010 backlog, 2026-08-19 — see tasks.md for why).
-// Caller must pass only the gate events of the PASS whose verdict is currently standing (e.g.
-// retryPass, not firstPass ++ retryPass) — reviewed finding: scanning a concatenated audit trail can
-// find a stale, already-superseded flip from a discarded earlier pass instead of the real origin.
+// Reconciliation-disagreement telemetry (D030 T010 backlog — see tasks.md). Caller must pass only
+// the CURRENT pass's gate events (review finding: a concatenated trail can surface a stale flip).
 function originatingContradictionGate(gateEvents: GateEventInput[]): { gate: string; reason: GateReason | null } | null {
   const event = gateEvents.findLast((e) => e.overridden && e.verdictAfter === "contradicted");
   return event ? { gate: event.gate, reason: event.reason } : null;
 }
 
-// Shared by checkRetryContradiction and reconcileContradictedVerdicts — one message shape, one set
-// of keys, so the two downgrade sites stay aggregatable as a single log stream (tasks.md backlog).
-function logReconciliationDowngrade(operation: string, auditId: string, claimId: string, originating: { gate: string; reason: GateReason | null } | null): void {
+// Shared by all 3 reconciliation-downgrade sites (tasks.md backlog) — one aggregatable log stream; verdictBefore varies by site.
+function logReconciliationDowngrade(operation: string, auditId: string, claimId: string, verdictBefore: Verdict, originating: { gate: string; reason: GateReason | null } | null): void {
   logger.info(
-    { module: MODULE, operation, auditId, claimId, verdictBefore: "contradicted" as const, originatingGate: originating?.gate ?? null, originatingReason: originating?.reason ?? null },
-    "Reconciliation classifier downgraded a contradicted verdict to unsupported"
+    { module: MODULE, operation, auditId, claimId, verdictBefore, originatingGate: originating?.gate ?? null, originatingReason: originating?.reason ?? null },
+    "Reconciliation classifier downgraded a verdict to unsupported"
   );
 }
 
@@ -332,7 +329,7 @@ export class GrounnelPipelineService {
    * Reuses the same batched classifier + downgrade-only-to-`unsupported` convention as D025 §5's
    * `checkRetryContradiction`, scoped to whatever claims the caller just processed.
    */
-  private async reconcileContradictedVerdicts(auditId: string, scope: PipelineClaimInput[]): Promise<void> {
+  private async reconcileContradictedVerdicts(auditId: string, scope: PipelineClaimInput[], gateEventsByClaimId: Map<string, GateEventInput[]>): Promise<void> {
     const status = await this.grounnelStore.getStatus(auditId);
     if (!status) return;
     const byId = new Map(scope.map((c) => [c.id, c]));
@@ -353,9 +350,9 @@ export class GrounnelPipelineService {
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
-        // D030 T010 backlog — no in-memory gate trace here (re-reads Redis status); originating gate
-        // is reconstructable after the fact via grounnel_gate_events, joined on claimId/created_at.
-        logReconciliationDowngrade("reconcileContradictedVerdicts", auditId, c.id, null);
+        // Review finding — was always null; runBatch now threads processVerifyResults' own gate
+        // trace through (gateEventsByClaimId), same idiom as answeredIds/retryState.
+        logReconciliationDowngrade("reconcileContradictedVerdicts", auditId, c.id, "contradicted", originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? []));
       })
     );
   }
@@ -399,7 +396,9 @@ export class GrounnelPipelineService {
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore, verdictAfter: "unsupported", overridden: true, reason: "escalation_reversal_invalidated" },
         ]);
-        logger.info({ module: MODULE, operation: "guardEscalatedContradictionReversals", auditId, claimId: c.id }, "Escalation's flip away from a prior contradicted verdict failed reason-consistency — downgraded to unsupported");
+        // Review finding — was its own inline logger.info, missed the checkRetryContradiction/
+        // reconcileContradictedVerdicts consolidation into one aggregatable log stream (tasks.md backlog).
+        logReconciliationDowngrade("guardEscalatedContradictionReversals", auditId, c.id, verdictBefore, null);
       })
     );
   }
@@ -933,9 +932,7 @@ export class GrounnelPipelineService {
     auditId: string,
     item: ResolvedWithPassage,
     chain: { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[] },
-    // Reviewed finding — telemetry attribution must scan only THIS pass's own gate events, not
-    // chain.gateEvents (firstPass ++ retryPass): the concatenated trail can surface a stale flip a
-    // discarded earlier pass already made, misattributing the current contradiction to the wrong gate.
+    // Reviewed finding — THIS pass's gate events only, not chain.gateEvents (see originatingContradictionGate).
     currentPassGateEvents: GateEventInput[],
     reason: string | null,
     previousEvidence: string | null,
@@ -961,7 +958,7 @@ export class GrounnelPipelineService {
 
     // Reconciliation-disagreement telemetry (D030 T010 backlog, 2026-08-19 — see tasks.md for why).
     if (!consistent) {
-      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, originatingContradictionGate(currentPassGateEvents));
+      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, "contradicted", originatingContradictionGate(currentPassGateEvents));
     }
 
     const gateEvent: GateEventInput = {
@@ -981,7 +978,8 @@ export class GrounnelPipelineService {
    * Runs the gate chain + T034 retry + persistence for one VERIFY response against `items` — shared
    * by runBatch's primary pass and its fill-in pass (D026 §8, T045), so a fill-in claim gets exactly
    * the same treatment (gates, consistency classifier, one retry) as a normally-answered one, not a
-   * cut-down path. Mutates `answeredIds`/`retryState` (shared across both passes by the caller).
+   * cut-down path. Mutates `answeredIds`/`retryState`/`gateEventsByClaimId` (all shared across both
+   * passes by the caller).
    */
   private async processVerifyResults(
     auditId: string,
@@ -989,15 +987,16 @@ export class GrounnelPipelineService {
     parsed: { results: VerifyProcessedResult[] },
     verifyVersion: string,
     retryState: { rateLimit: RateLimitError | null },
-    answeredIds: Set<string>
+    answeredIds: Set<string>,
+    // Review finding — reconcileContradictedVerdicts (runBatch's caller) had no in-memory gate trace
+    // and always logged a null originating gate for its telemetry; same idiom as answeredIds/retryState
+    // above, so it can now read the real trace instead.
+    gateEventsByClaimId: Map<string, GateEventInput[]>
   ): Promise<void> {
     const byId = new Map(items.map((b) => [b.claim.id, b]));
 
-    // Live-verification finding (D030 T010, tasks.md backlog) — a batched VERIFY response can
-    // answer the same claim id twice; unguarded, both ran the full gate chain concurrently and
-    // raced to persist the same claim's final result (last write silently won, no error/log).
-    // Scoped to byId first — an id VERIFY invented that isn't part of this batch at all shouldn't
-    // count as a "duplicate answer" for a real claim, just discarded junk like any other unknown id.
+    // Live-verification finding (D030 T010, tasks.md backlog) — dedupes a VERIFY response answering
+    // one claim id twice (see tasks.md for the race this fixes). Scoped to byId first, not after.
     const seenIds = new Set<string>();
     const duplicateIds: string[] = [];
     // Reviewed finding: initialVerdict (the value the gate chain actually operates on, e.g.
@@ -1108,6 +1107,7 @@ export class GrounnelPipelineService {
         // Buffered until here, flushed only after the claim row above — grounnel_gate_events.claimId
         // has a real FK, and gates finish before that row exists (D023 §5/T027).
         this.gateEventStore.recordGateEvents(auditId, item.claim.id, gateEvents);
+        gateEventsByClaimId.set(item.claim.id, gateEvents);
       })
     );
   }
@@ -1142,8 +1142,11 @@ export class GrounnelPipelineService {
     // the same way (below). An object, not a bare `let`: TS doesn't narrow a closure's mutation of
     // an outer `let` across an `await`, so `if (retryRateLimit)` would otherwise wrongly narrow to `never`.
     const retryState: { rateLimit: RateLimitError | null } = { rateLimit: null };
+    // Review finding — lets reconcileContradictedVerdicts below log a real originating gate instead
+    // of always null (it previously had no in-memory gate trace at all).
+    const gateEventsByClaimId = new Map<string, GateEventInput[]>();
 
-    await this.processVerifyResults(auditId, batch, parsed, verifyVersion, retryState, answeredIds);
+    await this.processVerifyResults(auditId, batch, parsed, verifyVersion, retryState, answeredIds, gateEventsByClaimId);
 
     if (retryState.rateLimit) {
       logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: retryState.rateLimit.limitType }, "Gemini rate-limited during a T034 retry — stopping remaining batches");
@@ -1162,7 +1165,7 @@ export class GrounnelPipelineService {
       const fillInPairs = missing.map((b) => ({ id: b.claim.id, claim: b.claim.text, passages: b.passages.map((p) => ({ text: p.text! })) }));
       try {
         const fillIn = await this.callVerify(auditId, fillInPairs, "runBatch.fillIn", "fill_in", verifyVersion);
-        await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds);
+        await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds, gateEventsByClaimId);
         // Cast, not a plain read — the earlier check above narrowed retryState.rateLimit to null,
         // and TS carries that narrowing across the mutating processVerifyResults() call, so an
         // unannotated re-read here type-checks as `never` even with an explicit variable annotation.
@@ -1205,7 +1208,8 @@ export class GrounnelPipelineService {
     // this was a real gap, not just a hardening pass. Covers escalation too since it calls runBatch.
     await this.reconcileContradictedVerdicts(
       auditId,
-      batch.map((b) => b.claim)
+      batch.map((b) => b.claim),
+      gateEventsByClaimId
     );
 
     return null;
