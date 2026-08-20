@@ -63,17 +63,23 @@ export function registerGrounnelRoutes(
 
     reply.status(202).send({ id: extracted.id });
 
-    // No external queue (D020 §3) — the pipeline runs here, after the response is flushed.
-    // waitUntil (D016/assessment.service.ts's own established pattern), not a bare await: Vercel
-    // freezes the container as soon as `res` finishes, regardless of whether this handler's own
-    // promise chain is still pending — maxDuration only bounds how long work is ALLOWED to run,
-    // it does not keep the container alive to do it. waitUntil is the actual platform contract.
+    // No external queue (D020 §3) — eligibility classification + the pipeline both run here, after
+    // the response is flushed. waitUntil (D016/assessment.service.ts's own established pattern), not
+    // a bare await: Vercel freezes the container as soon as `res` finishes, regardless of whether
+    // this handler's own promise chain is still pending — maxDuration only bounds how long work is
+    // ALLOWED to run, it does not keep the container alive to do it. waitUntil is the actual platform
+    // contract. D030 §3b (review finding) — eligibility used to run inside extractService.run(), blocking this response.
     if (extracted.pendingClaims.length > 0) {
       waitUntil(
-        services.pipelineService.run(extracted.id, extracted.pendingClaims, body.searchEngine).catch((err) => {
+        (async () => {
+          const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims);
+          if (eligible.length > 0) {
+            await services.pipelineService.run(extracted.id, eligible, body.searchEngine);
+          }
+        })().catch((err) => {
           logger.error(
             { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
-            "Pipeline run failed after the 202 response was already sent"
+            "Eligibility classification or pipeline run failed after the 202 response was already sent"
           );
         })
       );

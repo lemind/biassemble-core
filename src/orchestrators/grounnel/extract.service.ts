@@ -109,18 +109,29 @@ export class GrounnelExtractService {
     // Gate #3 — resolved immediately, no SearchProvider call ever made for these (D019 §2, T005).
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
-    const afterRegexFilter = claims.filter((claim) => !isOpinionClaim(claim.text));
+    const pendingClaims = claims.filter((claim) => !isOpinionClaim(claim.text));
     const OPINION_REASON = "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).";
-    await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, runId, claim, OPINION_REASON)));
+    await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
-    // D030 §3b (tasks.md T014, research.md Decision 4) — waved by ELIGIBILITY_CONCURRENCY, not one flat Promise.all (review finding).
-    const eligibilityResults: Array<{ claim: (typeof afterRegexFilter)[number]; result: ClaimVerifiabilityResult }> = [];
-    for (let i = 0; i < afterRegexFilter.length; i += ELIGIBILITY_CONCURRENCY) {
-      const chunk = afterRegexFilter.slice(i, i + ELIGIBILITY_CONCURRENCY);
+    return { id, pendingClaims };
+  }
+
+  /**
+   * D030 §3b (tasks.md T014) — the eligibility classifier runs AFTER the 202 response, unlike gate
+   * #3's regex above (review finding: one Gemini call per claim was blocking the response on the
+   * client's critical path, the exact cost the rest of this pipeline defers via waitUntil for).
+   * Called from routes/grounnel.ts's background phase, before pipelineService.run(). A claim this
+   * excludes still shows `pending` in the meantime — same as any claim still being searched/verified,
+   * resolved on the next /status poll once writeExcludedClaim below lands.
+   */
+  async classifyEligibility(auditId: string, claims: PipelineClaimInput[]): Promise<PipelineClaimInput[]> {
+    const eligibilityResults: Array<{ claim: PipelineClaimInput; result: ClaimVerifiabilityResult }> = [];
+    for (let i = 0; i < claims.length; i += ELIGIBILITY_CONCURRENCY) {
+      const chunk = claims.slice(i, i + ELIGIBILITY_CONCURRENCY);
       const chunkResults = await Promise.all(
         chunk.map(async (claim) => ({
           claim,
-          result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, runId, claim.id, {
+          result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, auditId, claim.id, {
             claimText: claim.text,
             sourceExcerpt: claim.sourceExcerpt,
           }),
@@ -129,14 +140,13 @@ export class GrounnelExtractService {
       eligibilityResults.push(...chunkResults);
     }
     const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
-    const pendingClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
-    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(id, runId, claim, eligibilityReason(result.category))));
-
-    return { id, pendingClaims };
+    const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
+    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
+    return eligibleClaims;
   }
 
-  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — both exclude a claim pre-search with a fixed reason. Reviewed finding: writes both Redis (source of truth) and grounnel_claims (D023 §3 — previously only Redis, permanently absent from history/analytics). */
-  private async writeExcludedClaim(auditId: string, runId: string, claim: PipelineClaimInput, reason: string): Promise<void> {
+  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — both exclude a claim pre-search with a fixed reason. Reviewed finding: writes both Redis (source of truth) and grounnel_claims (D023 §3 — previously only Redis, permanently absent from history/analytics). auditId doubles as the Postgres runId — createAudit always mints them equal (grounnel-store.ts). */
+  private async writeExcludedClaim(auditId: string, claim: PipelineClaimInput, reason: string): Promise<void> {
     await this.grounnelStore.writeClaimResult(auditId, claim.id, {
       status: "done",
       verdict: "unverifiable",
@@ -148,7 +158,7 @@ export class GrounnelExtractService {
     });
     await this.historyStore.createClaim({
       claimId: claim.id,
-      runId,
+      runId: auditId,
       claimText: claim.text,
       verdict: "unverifiable",
       evidence: null,
