@@ -271,7 +271,7 @@ ordering dependency between them.
 
 > Write these FIRST — they must fail (the function doesn't exist yet) before implementation.
 
-- [ ] T011 [P] [US2] Write `classifyClaimVerifiability` orchestration unit tests (mocked provider
+- [x] T011 [P] [US2] Write `classifyClaimVerifiability` orchestration unit tests (mocked provider
       responses) in `tests/unit/orchestrators/grounnel/claim-eligibility.test.ts`, covering the
       Policy table in `data-model.md` §2: `category === "checkable"` → search; non-checkable category
       with `certainty: "clear"` → excluded; `certainty: "uncertain"` (any category) → search. **Also
@@ -280,7 +280,12 @@ ordering dependency between them.
       grounds for exclusion (this is the single most important correctness property of this feature:
       false exclusion is the dangerous failure direction, so any failure must fail open). This tests
       wiring only, not classification quality — see T016.
-- [ ] T012 [P] [US2] Create the `classifyClaimVerifiability` prompt at
+      **Done**: 12 tests. Real bug found while writing these: `repair.ts`'s `partialParseObject`
+      nulls an individual invalid field (e.g. a bad `category` enum value) instead of throwing —
+      without an explicit `isValid` check, that silently returned `category: null` as a "successful"
+      result rather than triggering the retry/fail-open path. Added `isValid: (r) => r.category !=
+      null && r.certainty != null` to `classifyClaimVerifiability` to close it.
+- [x] T012 [P] [US2] Create the `classifyClaimVerifiability` prompt at
       `src/prompts/grounnel/eligibility/system.json` — input shape (`claimText`, `sourceExcerpt`),
       output shape (`category`, `certainty`, `reason`) per `data-model.md` §2. Must instruct the
       model precisely on two points: (1) `personal` names a speaker-relative *category*, not an
@@ -289,19 +294,39 @@ ordering dependency between them.
       verifiable specifically** — not mere confidence about which category label fits. A claim must
       not receive `category: "personal"` + `certainty: "clear"` just because it's phrased in first
       person; the model needs to reason about verifiability, not grammatical person.
+      **Done**: `system.json` v1.0.0, registered in `PromptRegistry` (`grounnel-eligibility` template
+      id, `getGrounnelEligibilityVersion()`). Both required instruction points are explicit CRITICAL
+      paragraphs in the prompt, with concrete examples matching data-model.md §2's own.
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Implement `classifyClaimVerifiability` in new file
+- [x] T013 [US2] Implement `classifyClaimVerifiability` in new file
       `src/orchestrators/grounnel/claim-eligibility.ts`. **Must fail open**: any LLM error, timeout,
       provider error, or invalid/malformed structured output results in treating the claim as
       `checkable` and proceeding to normal search — never as grounds for exclusion. (depends on T011,
       T012)
-- [ ] T014 [US2] Wire into `src/orchestrators/grounnel/extract.service.ts`, positioned **after** the
+      **Done**: `classifyClaimVerifiability` (fails open to `{category:"checkable",
+      certainty:"uncertain"}` on any error, including the T011 `isValid`-gap finding above) +
+      `isEligibilityExcluded` (pure policy function). Widened `GrounnelLlmCallStore`'s `callType`
+      union with `"eligibility_check"` (`grounnel-llm-call-store.ts`, `db/schema.ts`, `db/queries.ts`
+      — same TS-level-only Drizzle enum pattern as `reason_ordinal`, no migration needed).
+- [x] T014 [US2] Wire into `src/orchestrators/grounnel/extract.service.ts`, positioned **after** the
       existing `isOpinionClaim` call, not ahead of it — `classifyClaimVerifiability` must only
       evaluate claims the regex filter did not already exclude (cost optimization; no correctness
       change — see `research.md` Decision 4). (depends on T013)
-- [ ] T015 [P] [US2] Add eligibility golden-set cases to `evaluations/golden/grounnel/` — true
+      **Done**: wired in after the regex filter, waved by a new `ELIGIBILITY_CONCURRENCY` (=20, same
+      value/rationale as `pipeline.service.ts`'s `SEARCH_CONCURRENCY`) — self-caught during
+      implementation: one Gemini call per claim (not batched, data-model.md §2), so an unbounded
+      `Promise.all` could have fired up to `MAX_CLAIMS` (100) concurrent calls for one article.
+      Excluded claims get a fixed per-category reason message (`eligibilityReason()`), matching the
+      existing `OPINION_REASON` convention — not the classifier's own free-text `reason`, which
+      data-model.md §2 scopes to observability/telemetry only. 3 pre-existing `extract-service.test.ts`
+      tests updated for the new call (provider call counts, `recordCallContexts` length) — all used
+      `provider.setDefault(...)` without a matching eligibility stub, so the classifier hit the
+      injection-guard's "expected keys missing" path and failed open in one attempt (cheaper than a
+      full 3-attempt exhaustion) for every other test in the file; confirmed harmless (fail-open kept
+      every other test's assertions correct) rather than stubbed everywhere.
+- [x] T015 [P] [US2] Add eligibility golden-set cases to `evaluations/golden/grounnel/` — true
       exclusions (personal circumstance, opinion, vague prediction) and hard negatives (a quoted
       first-person claim, a checkable personal claim about a public figure, a scheduled/dated future
       event) per `data-model.md` §2's Validation set. For the quoted-attribution hard negative
@@ -309,6 +334,16 @@ ordering dependency between them.
       actually produces for this claim includes the attribution clause — if it doesn't, the
       classifier has no way to make the correct call regardless of prompt quality, and that's a real
       gap to surface now rather than discover during live eval. (depends on T013)
+      **Done**: `g18-eligibility-personal-exclusion` (reuses the real user report that motivated this
+      feature verbatim) and `g19-eligibility-hard-negatives` (Fleming/penicillin attributed quote +
+      a checkable personal birth-year fact). Self-caught during implementation: `grounnel-live-gate.ts`'s
+      existing `silence` kind accepts EITHER `unsupported` OR `unverifiable`, which can't tell "correctly
+      excluded pre-search" apart from "searched, found nothing" — exactly FR-008's ambiguity. Added 2
+      new `ClaimKind` values, `excluded` (only `unverifiable` accepted) and `not_excluded` (`unverifiable`
+      is the one unacceptable outcome), with their own unit tests. **Not confirmed** (blocked, see
+      T016/T017 below): whether EXTRACT's real `sourceExcerpt` for the Fleming claim actually includes
+      the attribution clause — the one thing T015 asked to explicitly verify — since that requires a
+      real EXTRACT call this environment can't make (see T016).
 - [ ] T016 [US2] Run `pnpm eval:grounnel` (live/golden-set evaluation) to validate actual classifier
       *behavior* — distinct from T011's mocked orchestration tests, which only prove the pipeline
       wires a given classification correctly, not that the model classifies correctly (plan.md
@@ -316,19 +351,30 @@ ordering dependency between them.
       (safety) and non-checkable-detection recall (utility) — a classifier that calls everything
       "checkable" has a perfect 0% false-exclusion rate and is also useless; recall makes that
       failure mode visible. (depends on T014, T015)
+      **Blocked**: `pnpm eval:grounnel` needs Redis/Postgres-backed persistence (`GrounnelPipelineService`'s
+      real stores) that aren't reachable from this sandbox. Not attempted further.
 - [ ] T017 [P] [US2] Measure the false-exclusion rate on a held-out set of checkable claims not used
       in T015's fixture set (spec.md SC-004 — the primary safety metric for this check) — hard
       requirement of zero. Broaden the set beyond first-person phrasing specifically: include
       third-person, attributed, and superficially-personal-but-checkable claims too, so this doesn't
       end up only proving the classifier is a fancier `\bI\b` regex. (depends on T014)
+      **Blocked, confirmed via a real attempt**: unlike T016, this doesn't need the full pipeline —
+      just `classifyClaimVerifiability` called directly against real Gemini. Tried exactly that
+      (`GeminiProvider` + `PromptRegistry`, no Redis/Postgres) — Gemini's API itself rejected the call:
+      `400 Bad Request: User location is not supported for the API use`. This sandbox's egress
+      location can't reach Gemini directly at all; only the deployed Vercel app can. Genuinely blocked
+      on deploy access, not a lighter-weight case T016 was.
 - [ ] T018 [US2] Live re-verification: with the classifier deployed, re-run the original "I was in
       need of a new laptop" report; confirm the claim is labeled distinctly from a checked-and-empty
       (`unsupported`) result. **Do not perform this until T015, T016, and T017 have all passed** —
       this is the live/production check and must not happen before both the model-behavior evaluation
       and the held-out safety measurement are done. (depends on T015, T016, T017)
+      **Blocked** — depends on T016/T017, both blocked above.
 
-**Checkpoint**: User Story 2 is fully functional, independently deployable, and live-verified —
-independently of whether User Story 1 has shipped.
+**Checkpoint**: User Story 2's code is complete and unit-tested (T011–T015) — same shape as US1 at
+its T009 checkpoint. Live model-behavior validation (T016/T017) and live re-verification (T018) are
+blocked on deploy access, same as US1's T010 was before deployment; not yet independently
+deployable/live-verified until those run against the deployed app.
 
 ---
 

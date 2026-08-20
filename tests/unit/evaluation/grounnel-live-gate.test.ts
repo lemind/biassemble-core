@@ -53,4 +53,19 @@ describe("Grounnel live eval gate — the gate itself must fail when it should",
     const result = evaluateGrounnelRun([run], anchorSpec);
     expect(result.matched).toBe(1);
   });
+
+  // D030 §3b (tasks.md T015/T016) — "excluded"/"not_excluded" distinguish pre-search exclusion from
+  // "silence"'s looser ["unsupported", "unverifiable"] pair, which can't tell them apart.
+  it("'excluded' only accepts unverifiable — unsupported (searched, found nothing) is the wrong outcome for a true exclusion", () => {
+    const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, claims: [{ match: "in need of a new laptop", kind: "excluded" }] };
+    expect(evaluateGrounnelRun([{ claims: [claim("I was in need of a new laptop.", "unverifiable")] }], s).ok).toBe(true);
+    expect(evaluateGrounnelRun([{ claims: [claim("I was in need of a new laptop.", "unsupported")] }], s).ok).toBe(false);
+  });
+
+  it("'not_excluded' rejects unverifiable — a hard-negative claim must not have been excluded pre-search", () => {
+    const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, claims: [{ match: "said Fleming", kind: "not_excluded" }] };
+    expect(evaluateGrounnelRun([{ claims: [claim('"I discovered X in 1928," said Fleming.', "supported")] }], s).ok).toBe(true);
+    expect(evaluateGrounnelRun([{ claims: [claim('"I discovered X in 1928," said Fleming.', "unsupported")] }], s).ok).toBe(true);
+    expect(evaluateGrounnelRun([{ claims: [claim('"I discovered X in 1928," said Fleming.', "unverifiable")] }], s).ok).toBe(false);
+  });
 });

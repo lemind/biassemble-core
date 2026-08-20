@@ -93,12 +93,15 @@ describe("GrounnelExtractService (T009)", () => {
   it("retries on a provider failure and succeeds on a later attempt", async () => {
     provider.failOn(1, "transient provider error");
     provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a" });
     const { service, store } = makeService(provider);
 
     const { id } = await service.run("text");
     const status = await store.getStatus(id);
     expect(status!.claims).toHaveLength(1);
-    expect(provider.getCallCount()).toBe(2);
+    // EXTRACT: 1 failed attempt + 1 successful retry = 2. Plus 1 eligibility classifier call
+    // (D030 §3b, T014) for the one non-opinion claim = 3.
+    expect(provider.getCallCount()).toBe(3);
   });
 
   it("throws after exhausting all retries when the provider keeps failing", async () => {
@@ -256,6 +259,7 @@ describe("GrounnelExtractService (T009)", () => {
 
   it("T025/D023 §4: records one grounnel_llm_calls completion for the EXTRACT call, stamped with the real prompt version", async () => {
     provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a" });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const prompts = new PromptRegistry();
     const llmCallStore = new FakeGrounnelLlmCallStore();
@@ -263,7 +267,9 @@ describe("GrounnelExtractService (T009)", () => {
 
     const { id } = await service.run("Some pasted article text.");
 
-    expect(llmCallStore.recordCallContexts).toHaveLength(1);
+    // 2 calls total: EXTRACT itself, plus 1 eligibility classifier call (D030 §3b, T014) for the
+    // one non-opinion claim.
+    expect(llmCallStore.recordCallContexts).toHaveLength(2);
     expect(llmCallStore.recordCallContexts[0]).toMatchObject({
       runId: id,
       stage: "extract",
@@ -271,22 +277,32 @@ describe("GrounnelExtractService (T009)", () => {
       provider: "mock",
       promptVersion: prompts.getGrounnelExtractVersion(),
     });
-    expect(llmCallStore.completions).toHaveLength(1);
-    expect(llmCallStore.completions[0]!.info.status).toBe("success");
+    expect(llmCallStore.recordCallContexts[1]).toMatchObject({
+      runId: id,
+      stage: "extract",
+      callType: "eligibility_check",
+      provider: "mock",
+      promptVersion: prompts.getGrounnelEligibilityVersion(),
+    });
+    expect(llmCallStore.completions).toHaveLength(2);
+    expect(llmCallStore.completions.every((c) => c.info.status === "success")).toBe(true);
   });
 
   it("T025/D023 §4: records one completion per attempt, not just the final one, when a retry happens", async () => {
     provider.failOn(1, "transient provider error");
     provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    provider.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a" });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const llmCallStore = new FakeGrounnelLlmCallStore();
     const service = new GrounnelExtractService(provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore);
 
     await service.run("text");
 
-    expect(llmCallStore.completions).toHaveLength(2);
+    // EXTRACT: 1 error + 1 success, plus 1 success for the eligibility classifier call = 3.
+    expect(llmCallStore.completions).toHaveLength(3);
     expect(llmCallStore.completions[0]!.info.status).toBe("error");
     expect(llmCallStore.completions[1]!.info.status).toBe("success");
+    expect(llmCallStore.completions[2]!.info.status).toBe("success");
   });
 
   it("T028/D023 §2: a real sessionId, once the caller has one (biassemble/backend's proxy), is written to grounnel_runs", async () => {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isOpinionClaim } from "./opinion-filter.js";
+import { classifyClaimVerifiability, isEligibilityExcluded, type ClaimVerifiabilityResult } from "./claim-eligibility.js";
 import { env } from "../../lib/env.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
@@ -17,6 +18,10 @@ const EXTRACT_ATTEMPTS = 3;
 // spec.md Assumption 6 — the real number is still an open, ask-first question. This is a
 // placeholder so the service is runnable, not a tuned decision (tasks.md T009).
 const MAX_CLAIMS = 100;
+// D030 §3b — one Gemini call per claim (not batched, data-model.md §2), so an unbounded Promise.all
+// could fire up to MAX_CLAIMS concurrent calls for one article. Waved, same value/rationale as
+// pipeline.service.ts's SEARCH_CONCURRENCY for its own per-claim search/verify fan-out.
+const ELIGIBILITY_CONCURRENCY = 20;
 
 const ExtractResponseSchema = z.object({
   // .default("") — a missing/malformed excerpt must not drop the whole claim via repair.ts's
@@ -106,7 +111,7 @@ export class GrounnelExtractService {
     // Gate #3 — resolved immediately, no SearchProvider call ever made for these (D019 §2, T005).
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
-    const pendingClaims = claims.filter((claim) => !isOpinionClaim(claim.text));
+    const afterRegexFilter = claims.filter((claim) => !isOpinionClaim(claim.text));
     const OPINION_REASON = "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).";
     await Promise.all(
       opinionClaims.map(async (claim) => {
@@ -135,6 +140,71 @@ export class GrounnelExtractService {
       })
     );
 
+    // D030 §3b (tasks.md T014) — additive to the regex filter above, positioned AFTER it: only
+    // evaluates claims the free regex didn't already exclude (cost optimization, no correctness
+    // change — research.md Decision 4). Conservative policy (isEligibilityExcluded): excludes only
+    // on a clear non-checkable call, any uncertainty defaults to search. Waved by
+    // ELIGIBILITY_CONCURRENCY, not one flat Promise.all — same rationale as SEARCH_CONCURRENCY.
+    const eligibilityResults: Array<{ claim: (typeof afterRegexFilter)[number]; result: ClaimVerifiabilityResult }> = [];
+    for (let i = 0; i < afterRegexFilter.length; i += ELIGIBILITY_CONCURRENCY) {
+      const chunk = afterRegexFilter.slice(i, i + ELIGIBILITY_CONCURRENCY);
+      const chunkResults = await Promise.all(
+        chunk.map(async (claim) => ({
+          claim,
+          result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, runId, claim.id, {
+            claimText: claim.text,
+            sourceExcerpt: claim.sourceExcerpt,
+          }),
+        }))
+      );
+      eligibilityResults.push(...chunkResults);
+    }
+    const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
+    const pendingClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
+    await Promise.all(
+      ineligibleClaims.map(async ({ claim, result }) => {
+        const reason = eligibilityReason(result.category);
+        await this.grounnelStore.writeClaimResult(id, claim.id, {
+          status: "done",
+          verdict: "unverifiable",
+          evidence: null,
+          confidence: null,
+          reason,
+          sources: [],
+          citations: [],
+        });
+        await this.historyStore.createClaim({
+          claimId: claim.id,
+          runId,
+          claimText: claim.text,
+          verdict: "unverifiable",
+          evidence: null,
+          confidence: null,
+          reason,
+          sources: [],
+          status: "done",
+        });
+      })
+    );
+
     return { id, pendingClaims };
+  }
+}
+
+// Fixed per-category messages, not the classifier's own free-text `reason` (data-model.md §2 —
+// that field is for observability/telemetry only, already captured via llmCallStore), matching
+// OPINION_REASON's convention above.
+function eligibilityReason(category: ClaimVerifiabilityResult["category"]): string {
+  switch (category) {
+    case "personal":
+      return "No public record could confirm or deny this — a private, speaker-relative circumstance (D030 §3b).";
+    case "opinion":
+      return "No checkable referent — opinion, not caught by the existing regex filter (D030 §3b).";
+    case "prediction":
+      return "No checkable referent — vague prediction, not caught by the existing regex filter (D030 §3b).";
+    case "checkable":
+      // Unreachable — callers only invoke this for isEligibilityExcluded results, which requires
+      // category !== "checkable". Kept for exhaustiveness, not a real runtime path.
+      return "No checkable referent (D030 §3b).";
   }
 }

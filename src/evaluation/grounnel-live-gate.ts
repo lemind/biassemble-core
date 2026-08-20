@@ -1,6 +1,6 @@
 /** Live-run eval gate for Grounnel — scores a real run against expected outcomes. Same design as audit-live-gate.ts (loose match, kind->verdict mapping, aggregate floor). */
 
-export type ClaimKind = "true" | "false" | "silence";
+export type ClaimKind = "true" | "false" | "silence" | "excluded" | "not_excluded";
 
 export interface ExpectedClaim {
   /** Substring of the claim text as EXTRACT produced it — matched loosely, since EXTRACT rewords. */
@@ -45,6 +45,11 @@ const ACCEPTABLE: Record<ClaimKind, string[]> = {
   false: ["contradicted"],
   // Absent from the web is honestly reported either way; only `contradicted` is a false accusation.
   silence: ["unsupported", "unverifiable"],
+  // D030 §3b (tasks.md T015/T016/T017) — `silence`'s ["unsupported", "unverifiable"] pair can't tell
+  // "correctly excluded pre-search" apart from "searched, found nothing" (the exact ambiguity FR-008
+  // exists to eliminate), so a true-exclusion/hard-negative fixture needs its own stricter kinds.
+  excluded: ["unverifiable"],
+  not_excluded: ["supported", "partially_supported", "unsupported", "contradicted"],
 };
 
 function norm(s: string): string {

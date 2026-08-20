@@ -180,6 +180,32 @@
           "kind": "false"
         }
       ]
+    },
+    {
+      "id": "g18-eligibility-personal-exclusion",
+      "text": "In 2023, I was in need of a new laptop that should hopefully last me for a while.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "in need of a new laptop",
+          "kind": "excluded"
+        }
+      ]
+    },
+    {
+      "id": "g19-eligibility-hard-negatives",
+      "text": "Alexander Fleming, the Scottish bacteriologist, made one of the most important discoveries in medical history. \"I discovered penicillin in 1928,\" said Fleming, describing the accidental contamination of a culture plate in his laboratory. Fleming was born in 1881 in Ayrshire, Scotland.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "discovered penicillin in 1928",
+          "kind": "not_excluded"
+        },
+        {
+          "match": "born in 1881",
+          "kind": "not_excluded"
+        }
+      ]
     }
   ]
 }

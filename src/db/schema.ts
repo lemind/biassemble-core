@@ -380,7 +380,7 @@ export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id"),
   stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
-  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank"] }).notNull().default("primary"),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank", "eligibility_check"] }).notNull().default("primary"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),
