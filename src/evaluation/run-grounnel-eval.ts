@@ -103,8 +103,12 @@ export async function runGrounnelEvalCase(
 
   try {
     const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
-    if (pendingClaims.length > 0) {
-      await pipelineService.run(id, pendingClaims, goldenCase.searchEngine ?? "defaultFlow");
+    // D030 §3b — classifyEligibility runs in the background after /extract's 202 response in
+    // production (routes/grounnel.ts); mirrored here synchronously so this harness actually
+    // exercises the classifier, not just gate #3's regex (T016 finding: this call was missing).
+    const eligibleClaims = await extractService.classifyEligibility(id, pendingClaims);
+    if (eligibleClaims.length > 0) {
+      await pipelineService.run(id, eligibleClaims, goldenCase.searchEngine ?? "defaultFlow");
     }
     const status = await grounnelStore.getStatus(id);
     const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };

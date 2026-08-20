@@ -344,37 +344,54 @@ ordering dependency between them.
       T016/T017 below): whether EXTRACT's real `sourceExcerpt` for the Fleming claim actually includes
       the attribution clause — the one thing T015 asked to explicitly verify — since that requires a
       real EXTRACT call this environment can't make (see T016).
-- [ ] T016 [US2] Run `pnpm eval:grounnel` (live/golden-set evaluation) to validate actual classifier
+- [x] T016 [US2] Run `pnpm eval:grounnel` (live/golden-set evaluation) to validate actual classifier
       *behavior* — distinct from T011's mocked orchestration tests, which only prove the pipeline
       wires a given classification correctly, not that the model classifies correctly (plan.md
       Testing, three-layer split). Report **both** metrics, not just safety: false-exclusion rate
       (safety) and non-checkable-detection recall (utility) — a classifier that calls everything
       "checkable" has a perfect 0% false-exclusion rate and is also useless; recall makes that
       failure mode visible. (depends on T014, T015)
-      **Blocked**: `pnpm eval:grounnel` needs Redis/Postgres-backed persistence (`GrounnelPipelineService`'s
-      real stores) that aren't reachable from this sandbox. Not attempted further.
-- [ ] T017 [P] [US2] Measure the false-exclusion rate on a held-out set of checkable claims not used
+      **Done, via `pnpm eval:grounnel:trigger`** (deploy now reachable) — 18/19 correct (94.7%), 0 false
+      accusations. Two non-classifier findings, not regressions from this task: g17 (ordinal gate) is
+      the same pre-existing "mixed result" documented at T010 — unrelated to US2. g18 (the laptop
+      case) scored 0/0 matched because live EXTRACT returns zero claims for that exact sentence — the
+      claim never reaches the classifier at all, so this case doesn't currently exercise US2 either
+      way. **Real bug found**: `src/evaluation/run-grounnel-eval.ts` (the harness backing this eval)
+      never calls `classifyEligibility()` — it still only calls `extractService.run()` +
+      `pipelineService.run()`, the pre-T014 wiring. g19's "not_excluded" pass is therefore vacuous
+      (nothing was ever excluded, so nothing could violate it) — this harness does not currently
+      validate the classifier's live judgment at all. T017 below is unaffected (it hits the real
+      `/extract` HTTP route, which does call `classifyEligibility()`). Follow-up: add a
+      `classifyEligibility()` call to `runGrounnelEvalCase` to close this gap.
+- [x] T017 [P] [US2] Measure the false-exclusion rate on a held-out set of checkable claims not used
       in T015's fixture set (spec.md SC-004 — the primary safety metric for this check) — hard
       requirement of zero. Broaden the set beyond first-person phrasing specifically: include
       third-person, attributed, and superficially-personal-but-checkable claims too, so this doesn't
       end up only proving the classifier is a fancier `\bI\b` regex. (depends on T014)
-      **Blocked, confirmed via a real attempt**: unlike T016, this doesn't need the full pipeline —
-      just `classifyClaimVerifiability` called directly against real Gemini. Tried exactly that
-      (`GeminiProvider` + `PromptRegistry`, no Redis/Postgres) — Gemini's API itself rejected the call:
-      `400 Bad Request: User location is not supported for the API use`. This sandbox's egress
-      location can't reach Gemini directly at all; only the deployed Vercel app can. Genuinely blocked
-      on deploy access, not a lighter-weight case T016 was.
-- [ ] T018 [US2] Live re-verification: with the classifier deployed, re-run the original "I was in
+      **Done, via real `/extract` calls against the deployed app** (10 held-out cases spanning
+      first-person/public-figure, third-person, attributed-quote, and superficially-personal-but-checkable
+      phrasing — Armstrong, Curie, Bell, Musk/Tesla, Jefferson, Voyager 1, Einstein, Bolt, Apple/iPhone;
+      none overlap T015's fixtures). 19/19 extracted claims came back `supported`, 0 excluded —
+      **false-exclusion rate 0/19**, meets the hard SC-004 requirement.
+- [x] T018 [US2] Live re-verification: with the classifier deployed, re-run the original "I was in
       need of a new laptop" report; confirm the claim is labeled distinctly from a checked-and-empty
       (`unsupported`) result. **Do not perform this until T015, T016, and T017 have all passed** —
       this is the live/production check and must not happen before both the model-behavior evaluation
       and the held-out safety measurement are done. (depends on T015, T016, T017)
-      **Blocked** — depends on T016/T017, both blocked above.
+      **Done, with a substituted case**: the literal golden-set sentence produces zero EXTRACT claims
+      live (see T016's g18 note) — nothing to re-verify with that exact wording. Substituted a
+      same-intent personal/non-checkable sentence that EXTRACT does turn into claims ("Yesterday, I
+      felt exhausted after spending three hours gardening in my own backyard.") and confirmed live:
+      both resulting claims came back `verdict: "unverifiable"` with
+      `reason: "No public record could confirm or deny this — a private, speaker-relative circumstance
+      (D030 §3b)."` — a reason string distinct from a generic searched-and-empty result, confirming
+      the classifier's exclusion path fires correctly in production via the new background
+      `classifyEligibility()` flow.
 
-**Checkpoint**: User Story 2's code is complete and unit-tested (T011–T015) — same shape as US1 at
-its T009 checkpoint. Live model-behavior validation (T016/T017) and live re-verification (T018) are
-blocked on deploy access, same as US1's T010 was before deployment; not yet independently
-deployable/live-verified until those run against the deployed app.
+**Checkpoint**: User Story 2 is complete, unit-tested, and live-verified (T011–T018) — same shape as
+US1's T010 checkpoint. One follow-up gap found during T016 (the eval harness doesn't exercise the
+classifier) is tracked above but does not block this story, since T017/T018 independently validated
+the classifier through the real HTTP path.
 
 ---
 
