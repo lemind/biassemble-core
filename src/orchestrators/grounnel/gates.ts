@@ -682,9 +682,11 @@ export interface ReasonOrdinalGateResult {
 }
 
 const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
-// (?<!-)/(?!-) reject a hyphen-adjacent match — review finding: \b treats "-" as a boundary, so
-// bare `\b(second)\b` matches inside "second-to-last" (a penultimate-position compound, not "2nd").
-const ORDINAL_RE_G = new RegExp(`(?<!-)\\b(${ORDINAL_WORDS.join("|")})\\b(?!-)`, "gi");
+// (?!-to-) rejects "second-to-last"/"second-to-none" style compounds — \b treats "-" as a
+// boundary, so the bare regex matched "second" inside "second-to-last" (a penultimate-position
+// idiom, not "2nd"). Narrower than a blanket hyphen ban (review finding, round 2): "first-place"/
+// "third-ranked"/"fourth-largest" are genuine ordinal usage and must still match.
+const ORDINAL_RE_G = new RegExp(`\\b(${ORDINAL_WORDS.join("|")})\\b(?!-to-)`, "gi");
 
 // Words too generic to serve as an anchor on their own, filtered out of the content-word window
 // below so a shared article/conjunction/preposition/pronoun never counts as "the same noun phrase"

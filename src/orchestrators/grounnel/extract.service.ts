@@ -148,8 +148,10 @@ export class GrounnelExtractService {
       // Review finding: this runs in routes/grounnel.ts's post-202 background phase, before
       // pipelineService.run() ever sets status "verifying" — without this, a throw here (e.g. one
       // flaky writeExcludedClaim) left the run stuck at its prior status forever, same failure
-      // mode pipeline.service.ts's own catch (line ~226) already guards against.
-      await this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() });
+      // mode pipeline.service.ts's own catch (line ~226) already guards against. waitUntil, not
+      // await (round-2 review finding): an await here would let a second failure on this same
+      // write path replace and obscure the original error `err` being rethrown below.
+      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
       throw err;
     }
   }

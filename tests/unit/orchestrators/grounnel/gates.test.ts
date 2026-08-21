@@ -1123,6 +1123,18 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
+
+  // Round-2 review finding: the first fix (blanket hyphen-adjacency ban) was too broad and traded
+  // the false positive for a new false negative — genuine ordinal-hyphen compounds ("first-place",
+  // "second-place") stopped matching at all, so the gate silently abstained on a real contradiction.
+  it("(review finding, round 2) still fires on a genuine ordinal-hyphen compound (e.g. first-place vs second-place)", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The runner finished in first-place at the marathon.",
+      reason: "Official results show the runner finished in second-place at the marathon.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
 });
 
 // T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different
