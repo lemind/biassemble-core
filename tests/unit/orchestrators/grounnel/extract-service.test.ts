@@ -367,5 +367,22 @@ describe("GrounnelExtractService (T009)", () => {
       expect(eligibilityCalls).toHaveLength(1);
       expect(eligibilityCalls[0]).toMatchObject({ runId: id, stage: "extract", promptVersion: prompts.getGrounnelEligibilityVersion() });
     });
+
+    // Review finding (code-review high, full-branch pass): classifyEligibility runs in
+    // routes/grounnel.ts's post-202 background phase, before pipelineService.run() ever sets a
+    // status — an uncaught write failure here left the run stuck at its prior status forever.
+    it("(review finding) marks the run 'failed' in history when writing an excluded claim throws", async () => {
+      provider.setDefault({ claims: [{ claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
+      provider.setResponse("You are a claim-eligibility classifier", { category: "personal", certainty: "clear", reason: "private circumstance" });
+      const store = new RedisGrounnelStore(new FakeRedisHashClient());
+      const historyStore = new FakeGrounnelHistoryStore();
+      const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+      const { id, pendingClaims } = await service.run("Some pasted article text.");
+      historyStore.failCreateClaim = true;
+
+      await expect(service.classifyEligibility(id, pendingClaims)).rejects.toThrow();
+
+      expect(historyStore.updateRunCalls.some((c) => c.data.status === "failed")).toBe(true);
+    });
   });
 });

@@ -125,27 +125,36 @@ export class GrounnelExtractService {
    * resolved on the next /status poll once writeExcludedClaim below lands.
    */
   async classifyEligibility(auditId: string, claims: PipelineClaimInput[]): Promise<PipelineClaimInput[]> {
-    const eligibilityResults: Array<{ claim: PipelineClaimInput; result: ClaimVerifiabilityResult }> = [];
-    for (let i = 0; i < claims.length; i += ELIGIBILITY_CONCURRENCY) {
-      const chunk = claims.slice(i, i + ELIGIBILITY_CONCURRENCY);
-      const chunkResults = await Promise.all(
-        chunk.map(async (claim) => ({
-          claim,
-          result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, auditId, claim.id, {
-            claimText: claim.text,
-            sourceExcerpt: claim.sourceExcerpt,
-          }),
-        }))
-      );
-      eligibilityResults.push(...chunkResults);
+    try {
+      const eligibilityResults: Array<{ claim: PipelineClaimInput; result: ClaimVerifiabilityResult }> = [];
+      for (let i = 0; i < claims.length; i += ELIGIBILITY_CONCURRENCY) {
+        const chunk = claims.slice(i, i + ELIGIBILITY_CONCURRENCY);
+        const chunkResults = await Promise.all(
+          chunk.map(async (claim) => ({
+            claim,
+            result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, auditId, claim.id, {
+              claimText: claim.text,
+              sourceExcerpt: claim.sourceExcerpt,
+            }),
+          }))
+        );
+        eligibilityResults.push(...chunkResults);
+      }
+      const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
+      const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
+      await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
+      return eligibleClaims;
+    } catch (err) {
+      // Review finding: this runs in routes/grounnel.ts's post-202 background phase, before
+      // pipelineService.run() ever sets status "verifying" — without this, a throw here (e.g. one
+      // flaky writeExcludedClaim) left the run stuck at its prior status forever, same failure
+      // mode pipeline.service.ts's own catch (line ~226) already guards against.
+      await this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() });
+      throw err;
     }
-    const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
-    const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
-    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
-    return eligibleClaims;
   }
 
-  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — both exclude a claim pre-search with a fixed reason. Reviewed finding: writes both Redis (source of truth) and grounnel_claims (D023 §3 — previously only Redis, permanently absent from history/analytics). auditId doubles as the Postgres runId — createAudit always mints them equal (grounnel-store.ts). */
+  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — see D023 §3 for the dual Redis+Postgres write rationale. */
   private async writeExcludedClaim(auditId: string, claim: PipelineClaimInput, reason: string): Promise<void> {
     await this.grounnelStore.writeClaimResult(auditId, claim.id, {
       status: "done",

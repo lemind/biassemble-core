@@ -682,7 +682,9 @@ export interface ReasonOrdinalGateResult {
 }
 
 const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
-const ORDINAL_RE_G = new RegExp(`\\b(${ORDINAL_WORDS.join("|")})\\b`, "gi");
+// (?<!-)/(?!-) reject a hyphen-adjacent match — review finding: \b treats "-" as a boundary, so
+// bare `\b(second)\b` matches inside "second-to-last" (a penultimate-position compound, not "2nd").
+const ORDINAL_RE_G = new RegExp(`(?<!-)\\b(${ORDINAL_WORDS.join("|")})\\b(?!-)`, "gi");
 
 // Words too generic to serve as an anchor on their own, filtered out of the content-word window
 // below so a shared article/conjunction/preposition/pronoun never counts as "the same noun phrase"

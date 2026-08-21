@@ -1111,6 +1111,18 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
+
+  // Review finding (code-review high, full-branch pass): \b treats "-" as a boundary, so the bare
+  // regex matched "second" inside "second-to-last" — a penultimate-position compound, not "2nd" —
+  // and forced a genuinely supported claim to contradicted.
+  it("(review finding) a hyphen-compound ordinal (e.g. second-to-last) does not false-fire", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The second-to-last flight covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
 });
 
 // T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different
