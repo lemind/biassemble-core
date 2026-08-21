@@ -289,6 +289,39 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
     expect(result).toEqual({ verdict: "supported", overridden: true, reason: "threshold_comparison" });
   });
 
+  // D030 §3d (code-review finding, 2026-08-21) — a numeric MATCH must not silently un-contradict
+  // a verdict reason_ordinal itself produced (same %, different ordinal position); real reachable
+  // shape via runGateChain's actual gate order, unlike the g11 case above which stays correctable
+  // (contradictionProtectedFromForceSupported omitted/false there).
+  it("(review finding) does NOT override to supported on an equality match when the contradiction is protected (reason_ordinal-originated)", () => {
+    const result = applyNumericGate({
+      claimText: "The third trial showed a 40% success rate.",
+      verdict: "contradicted",
+      evidence: "The first trial showed a 40% success rate.",
+      contradictionProtectedFromForceSupported: true,
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("(review finding) still overrides to supported on an equality match when NOT protected — the g11-style correction path stays intact", () => {
+    const result = applyNumericGate({
+      claimText: "The third trial showed a 40% success rate.",
+      verdict: "contradicted",
+      evidence: "The first trial showed a 40% success rate.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "equality_comparison" });
+  });
+
+  it("(review finding) forcing contradicted on a genuine mismatch stays unconditional even when the protected flag is set", () => {
+    const result = applyNumericGate({
+      claimText: "The third trial showed a 40% success rate.",
+      verdict: "supported",
+      evidence: "The first trial showed a 55% success rate.",
+      contradictionProtectedFromForceSupported: true,
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "equality_comparison" });
+  });
+
   it("overrides to contradicted when an 'under X' threshold claim's evidence is actually above X", () => {
     const result = applyNumericGate({
       claimText: "Unemployment stayed under 5% in 2024.",

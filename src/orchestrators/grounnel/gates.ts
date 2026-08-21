@@ -222,6 +222,11 @@ export interface GateTwoInput {
   claimText: string;
   verdict: Verdict;
   evidence: string | null;
+  // D030 §3d — true only when `verdict === "contradicted"` was produced by reason_ordinal
+  // specifically; blocks a numeric MATCH from forcing "supported" over it. Every other caller
+  // omits this (undefined/falsy), leaving gate #2's existing raw-VERIFY-contradicted correction
+  // behavior (e.g. the g11 threshold cases) untouched.
+  contradictionProtectedFromForceSupported?: boolean;
 }
 
 export interface GateTwoResult {
@@ -295,6 +300,15 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
 
+  // Reviewed finding (D030 §3d, 2026-08-21): a numeric MATCH must not excuse a genuine mismatch
+  // reason_ordinal already found on a DIFFERENT fact in the same claim ("the third trial showed
+  // 40%" vs. reason "the first trial showed 40%" — same %, different ordinal) — but unlike
+  // applyYearGate's blanket canForceSupported, this can't block EVERY existing "contradicted": gate
+  // #2's own tests (g11, 2026-08-06) rely on correcting a raw, ungated VERIFY "contradicted" to
+  // "supported" when the actual numbers satisfy the claim. Only a contradiction reason_ordinal
+  // itself produced is protected — narrowly scoped to that one gate, not "contradicted" in general.
+  const canForceSupported = input.verdict !== "supported" && !input.contradictionProtectedFromForceSupported;
+
   const threshold = detectThreshold(input.claimText);
   if (threshold) {
     // direction is sign(claim - source). Strict wording ("exceeded") only holds on a real
@@ -308,7 +322,7 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
           : threshold === "at_most_strict"
             ? comparison.direction > 0
             : comparison.direction >= 0;
-    if (holds && input.verdict !== "supported") return { verdict: "supported", overridden: true, reason: "threshold_comparison" };
+    if (holds && canForceSupported) return { verdict: "supported", overridden: true, reason: "threshold_comparison" };
     if (!holds && input.verdict !== "contradicted") return { verdict: "contradicted", overridden: true, reason: "threshold_comparison" };
     return { verdict: input.verdict, overridden: false, reason: null };
   }
@@ -317,7 +331,7 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
 
-  if (comparison.equal && input.verdict !== "supported") {
+  if (comparison.equal && canForceSupported) {
     return { verdict: "supported", overridden: true, reason: "equality_comparison" };
   }
   if (!comparison.equal && input.verdict !== "contradicted") {

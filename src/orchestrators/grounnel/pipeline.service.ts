@@ -189,10 +189,14 @@ export class GrounnelPipelineService {
         await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
 
         const needsVerify = resolved.filter(hasPassage);
+        // D030 §3d — run-scoped, not batch-scoped: reason_ordinal-protected claim ids must survive
+        // across escalation tiers (each with its own fresh runBatch/gateEventsByClaimId), same idiom
+        // as gateEventsByClaimId itself but threaded one level higher.
+        const protectedContradictionClaimIds = new Set<string>();
         let rateLimitedMidRun = false;
         for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
           const batch = needsVerify.slice(i, i + BATCH_MAX);
-          const geminiRateLimit = await this.runBatch(auditId, batch);
+          const geminiRateLimit = await this.runBatch(auditId, batch, protectedContradictionClaimIds);
           if (geminiRateLimit) {
             rateLimitedMidRun = true;
             const remaining = needsVerify.slice(i + BATCH_MAX);
@@ -211,7 +215,7 @@ export class GrounnelPipelineService {
         // limit, escalating would just fail the same way, so skip it entirely rather than retry into it.
         if (!rateLimitedMidRun) {
           const escalationT0 = Date.now();
-          await this.escalateUnresolved(auditId, claims, searchEngine);
+          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds);
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
       } finally {
@@ -241,9 +245,14 @@ export class GrounnelPipelineService {
    * this widens the EVIDENCE pool, it doesn't add new verification logic. Bounded at 2 escalations
    * (`ESCALATION_TIERS`), stops early once a tier resolves a claim or the whole run gets rate-limited.
    */
-  private async escalateUnresolved(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily"): Promise<void> {
+  private async escalateUnresolved(
+    auditId: string,
+    claims: PipelineClaimInput[],
+    searchEngine: "defaultFlow" | "tavily",
+    protectedContradictionClaimIds: Set<string>
+  ): Promise<void> {
     const byId = new Map(claims.map((c) => [c.id, c]));
-    let pending = await this.findUnresolvedClaims(auditId, byId);
+    let pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
 
     for (const tier of ESCALATION_TIERS) {
       if (pending.length === 0) return;
@@ -274,7 +283,7 @@ export class GrounnelPipelineService {
       // stands (writeNoEvidence's original "unsupported: no evidence found" remains accurate).
 
       for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
-        const geminiRateLimit = await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX));
+        const geminiRateLimit = await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX), protectedContradictionClaimIds);
         if (geminiRateLimit) {
           logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Gemini rate-limited during escalation — stopping further tiers");
           return;
@@ -293,7 +302,7 @@ export class GrounnelPipelineService {
         return;
       }
 
-      pending = await this.findUnresolvedClaims(auditId, byId);
+      pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
     }
   }
 
@@ -301,8 +310,16 @@ export class GrounnelPipelineService {
    * after every claim in this run has already been written at least once. Excludes claims degraded
    * by a rate limit (Tavily's fixed reason string, or Gemini's mid-run stop) — escalating those
    * would just hit the same wall again, not surface new evidence. D026 §17 — verdict set widened to
-   * also include `contradicted`/`partially_supported`; see the ADR for why and for the risk this adds. */
-  private async findUnresolvedClaims(auditId: string, byId: Map<string, PipelineClaimInput>): Promise<PipelineClaimInput[]> {
+   * also include `contradicted`/`partially_supported`; see the ADR for why and for the risk this adds.
+   * D030 §3d — also excludes reason_ordinal-protected claims: escalation's own guard
+   * (guardEscalatedContradictionReversals) only validates a NEW verdict's self-consistency in
+   * isolation, with no awareness of the deterministic signal it could be overwriting, so a protected
+   * contradiction needs to skip escalation entirely, not just reconciliation's downgrade. */
+  private async findUnresolvedClaims(
+    auditId: string,
+    byId: Map<string, PipelineClaimInput>,
+    protectedContradictionClaimIds: Set<string>
+  ): Promise<PipelineClaimInput[]> {
     const status = await this.grounnelStore.getStatus(auditId);
     if (!status) return [];
     return status.claims
@@ -310,6 +327,7 @@ export class GrounnelPipelineService {
         (c) =>
           c.status === "done" &&
           (c.verdict === "unsupported" || c.verdict === "unverifiable" || c.verdict === "contradicted" || c.verdict === "partially_supported") &&
+          !protectedContradictionClaimIds.has(c.id) &&
           c.reason !== TAVILY_RATE_LIMITED_REASON &&
           !c.reason?.includes("AI usage limit") &&
           !c.reason?.includes("being rate-limited")
@@ -329,11 +347,28 @@ export class GrounnelPipelineService {
    * Reuses the same batched classifier + downgrade-only-to-`unsupported` convention as D025 §5's
    * `checkRetryContradiction`, scoped to whatever claims the caller just processed.
    */
-  private async reconcileContradictedVerdicts(auditId: string, scope: PipelineClaimInput[], gateEventsByClaimId: Map<string, GateEventInput[]>): Promise<void> {
+  private async reconcileContradictedVerdicts(
+    auditId: string,
+    scope: PipelineClaimInput[],
+    gateEventsByClaimId: Map<string, GateEventInput[]>,
+    // D030 §3d — claimIds this call adds `reason_ordinal`-protected claims to, so escalation
+    // (findUnresolvedClaims) can exclude them too; same mutable-output-param idiom as answeredIds.
+    protectedContradictionClaimIds: Set<string>
+  ): Promise<void> {
     const status = await this.grounnelStore.getStatus(auditId);
     if (!status) return;
     const byId = new Map(scope.map((c) => [c.id, c]));
-    const nowContradicted = status.claims.filter((c) => byId.has(c.id) && c.status === "done" && c.verdict === "contradicted");
+    const contradicted = status.claims.filter((c) => byId.has(c.id) && c.status === "done" && c.verdict === "contradicted");
+    if (contradicted.length === 0) return;
+
+    // D030 §3d — a reason_ordinal contradiction is grounded in an explicit textual mismatch VERIFY
+    // itself already produced, not solely in VERIFY's categorical verdict (see the ADR for the
+    // production trace + 10-case replay matrix this is based on). Excluded from the classifier call
+    // entirely, not just from acting on its answer — narrowly scoped to this one gate, not a general
+    // "deterministic gates outrank reconciliation" rule.
+    const protectedClaims = contradicted.filter((c) => originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? [])?.gate === "reason_ordinal");
+    for (const c of protectedClaims) protectedContradictionClaimIds.add(c.id);
+    const nowContradicted = contradicted.filter((c) => !protectedClaims.some((p) => p.id === c.id));
     if (nowContradicted.length === 0) return;
 
     const consistencyMap = await this.checkReasonVerdictConsistency(
@@ -720,8 +755,17 @@ export class GrounnelPipelineService {
       diagnostics.push({ code: "claim_reason_no_overlap", severity: "ERROR", details: "The model's reason for this contradiction shares no key terms with the claim itself — likely cross-claim contamination in a batched VERIFY call." });
     }
 
-    // Gate #2 — numeric normalization/comparison in code (D019 §2, T004).
-    const gate2 = applyNumericGate({ claimText: input.claimText, verdict, evidence });
+    // Gate #2 — numeric normalization/comparison in code (D019 §2, T004). D030 §3d — tells gate #2
+    // not to let a numeric MATCH silently un-contradict a verdict reason_ordinal itself produced
+    // (same originatingContradictionGate helper reconcileContradictedVerdicts uses, applied to
+    // this pass's events so far — gate #1/#1b only override AWAY from contradicted, never TO it,
+    // so reason_ordinal is still the correct match here if it fired).
+    const gate2 = applyNumericGate({
+      claimText: input.claimText,
+      verdict,
+      evidence,
+      contradictionProtectedFromForceSupported: verdict === "contradicted" && originatingContradictionGate(gateEvents)?.gate === "reason_ordinal",
+    });
     gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
     verdict = gate2.verdict;
 
@@ -1051,10 +1095,21 @@ export class GrounnelPipelineService {
           reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
         });
         let chain = firstPass;
+        // D030 §3d (code-review finding, 2026-08-21) — originatingContradictionGate must see only
+        // the pass that produced the FINAL verdict, not the concatenated firstPass+retryPass trail
+        // `chain.gateEvents` becomes below (same "concatenated trail can surface a stale flip"
+        // warning already documented on originatingContradictionGate itself, previously only
+        // honored by checkRetryContradiction's own currentPassGateEvents param). Without this,
+        // a firstPass reason_ordinal contradiction that gate #1 later downgraded (triggering a
+        // retry) whose retry then independently lands on "contradicted" with NO gate involved gets
+        // wrongly attributed to the STALE firstPass reason_ordinal event — misapplying D030 §3d's
+        // protection to an unrelated, unscrutinized retry-contradiction.
+        let currentPassGateEvents = firstPass.gateEvents;
 
-        // T034/D025 — a self-inconsistent VERIFY output (evidence-groundedness gate #1, or the new
-        // reason/verdict classifier) gets one retry before the degraded result stands.
-        if (firstPass.needsRetry) {
+        // D030 §3c — a gate-forced "contradicted" must not go to T034's retry, which can silently
+        // overwrite it with a weaker re-answer; reconcileContradictedVerdicts grounds it instead
+        // (real live-eval finding, tasks.md; see D030 §3c for the full trace and known gaps).
+        if (chain.verdict !== "contradicted" && firstPass.needsRetry) {
           const retried = await this.retryVerifyClaim(
             auditId,
             item,
@@ -1081,6 +1136,7 @@ export class GrounnelPipelineService {
             // Reviewed finding: concatenate, don't replace — the original self-inconsistent pass
             // (the override that triggered this retry) stays in the audit trail, not just the retry's.
             chain = { ...retryPass, gateEvents: [...firstPass.gateEvents, ...retryPass.gateEvents] };
+            currentPassGateEvents = retryPass.gateEvents;
             // D025 §5 addendum — the retry itself gets one bounded check when it lands on `contradicted`.
             chain = { ...chain, ...(await this.checkRetryContradiction(auditId, item, chain, retryPass.gateEvents, reason, result.evidence, result.reason)) };
           }
@@ -1107,13 +1163,15 @@ export class GrounnelPipelineService {
         // Buffered until here, flushed only after the claim row above — grounnel_gate_events.claimId
         // has a real FK, and gates finish before that row exists (D023 §5/T027).
         this.gateEventStore.recordGateEvents(auditId, item.claim.id, gateEvents);
-        gateEventsByClaimId.set(item.claim.id, gateEvents);
+        // Current pass only, not the concatenated `gateEvents` above — see the comment where
+        // currentPassGateEvents is declared.
+        gateEventsByClaimId.set(item.claim.id, currentPassGateEvents);
       })
     );
   }
 
   /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
-  private async runBatch(auditId: string, batch: ResolvedWithPassage[]): Promise<RateLimitError | null> {
+  private async runBatch(auditId: string, batch: ResolvedWithPassage[], protectedContradictionClaimIds: Set<string>): Promise<RateLimitError | null> {
     const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passages: b.passages.map((p) => ({ text: p.text! })) }));
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
@@ -1209,7 +1267,8 @@ export class GrounnelPipelineService {
     await this.reconcileContradictedVerdicts(
       auditId,
       batch.map((b) => b.claim),
-      gateEventsByClaimId
+      gateEventsByClaimId,
+      protectedContradictionClaimIds
     );
 
     return null;

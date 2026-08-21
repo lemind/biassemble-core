@@ -167,6 +167,102 @@ cost of searching one that turns out unverifiable anyway. Existing regexes stay 
 reliable for their narrow categories); the classifier is additive, not a replacement. Full shape in
 `specs/012-grounnel-ordinal-eligibility-gates/data-model.md` §2.
 
+**§3c — T034 retry can erase a gate-forced contradiction.** Real live-eval capture (2026-08-20,
+g17): `reason_ordinal` correctly forced a verdict to `contradicted` (reason named "the fourth
+flight"), but `needsRetry` — computed from diagnostics on the *raw pre-gate* verdict, which never
+learns a gate already resolved the inconsistency — still fired T034's single-claim retry anyway. The
+retry's fresh VERIFY call reasoned via "the longest flight" instead, a phrasing no gate recognizes,
+and its result unconditionally overwrote the correct contradiction with `supported`.
+
+**Fix:** skip the T034 retry whenever the post-gate-chain verdict is already `contradicted`
+(`pipeline.service.ts`, `processVerifyResults`) — `reconcileContradictedVerdicts` (existing,
+D030-T010-backlog telemetry) already grounds every claim ending a batch as `contradicted` via the
+same reason-vs-verdict consistency classifier, so no new check was added; the fix is purely
+"don't let an unrelated retry undo a resolved answer first."
+
+**Known gap, not fixed here:** `applyClaimReasonOverlapGate` (gate #1b, cross-claim-contamination
+check) only runs when the verdict is *already* `contradicted` at that point in `runGateChain` — a
+verdict flipped to `contradicted` later by gate #2/#2b (`applyNumericGate`/`applyYearGate`, both
+positioned after #1b) never gets gate #1b's contamination check. Pre-existing gate-ordering
+characteristic, not introduced by this fix; revisit if a contaminated-reason-plus-numeric-mismatch
+case is ever actually observed live (no case captured yet, consistent with this ADR's own precedent
+of only building against reproduced failures, §4's last bullet).
+
+**§3d — Gate-originated ordinal contradictions are not subject to generic contradiction
+reconciliation.** §3c's fix stopped T034's retry from erasing a `reason_ordinal` contradiction, but
+a *second*, independent erasure path exists: `reconcileContradictedVerdicts` (D026 §23/T064) also
+downgrades it.
+
+**Why reconciliation has this authority at all (D026 §23, 2026-08-11):** written 9 days before
+`reason_ordinal` existed. Its actual problem: a claim landing on `contradicted` straight off VERIFY's
+raw primary pass — no gate involved — with clean, gate-#1-passing evidence but internally wrong
+reasoning (their own example: "misreads a nomination as a rejection"), got zero consistency scrutiny.
+The fix made `checkReasonVerdictConsistency` run unconditionally on every `contradicted` verdict,
+explicitly accepting redundant-but-cheap re-checks of retry/escalation-produced contradictions — the
+only two other mechanisms that existed at the time. `reason_ordinal`'s provenance was never evaluated
+against this policy, because it didn't exist yet; it was swept into the blanket rule by construction.
+
+**The two provenances are not equivalent.** D026's target: `raw VERIFY verdict → LLM sanity check`.
+`reason_ordinal`'s shape: `VERIFY's own reason text → deterministic structural comparison →
+contradicted` — only fires when the claim has exactly one resolvable ordinal+anchor, the reason
+states a *different* ordinal on that same anchor, negation/discourse safeguards don't abstain, and
+gate #1/#1b haven't already invalidated it (§3a). The contradiction is grounded in an explicit
+textual mismatch VERIFY itself already produced, not solely in VERIFY's categorical verdict.
+
+**Evidence:** the captured production case (2026-08-21) — `reason_ordinal` identified "first" vs.
+"fourth" from VERIFY's own reason; `checkReasonVerdictConsistency`, given that exact reason, answered
+`consistent: false`. A follow-up replay of 10 semantically diverse ordinal-contradiction fixtures
+(flights, attempts, editions, trials, experiments, matches; varied reason phrasing) against the
+classifier in isolation found 4/10 incorrectly rejected — failures span multiple topics, not
+concentrated in one. All 4 hard-negative fixtures (reason does NOT establish a real contradiction)
+were correctly accepted, ruling out "the classifier is just a broken rubber stamp" — it has real
+discriminating power, and is specifically unreliable on confirming true ordinal contradictions.
+
+**Decision:** a `contradicted` verdict produced by `applyReasonOrdinalGate` must not be downgraded to
+`unsupported` solely because `checkReasonVerdictConsistency` returns `consistent: false` — nor
+re-verified away by escalation. Protecting reconciliation alone is not sufficient: `findUnresolvedClaims`
+(D026 §17) deliberately treats `contradicted` as escalation-eligible, and `guardEscalatedContradictionReversals`
+only validates a NEW post-escalation verdict's self-consistency in isolation — it has no way to know
+a stronger, gate-established signal is being overwritten, so it would not catch a fresh, weaker
+escalation VERIFY call flipping the claim to `supported`. Confirmed by tracing the captured case's
+full authority chain (not assumed): `reconcileContradictedVerdicts` was the only path that fired that
+time, but that was incidental — its downgrade happened to run before escalation ever saw the claim.
+Both paths are closed by the same fix: `reason_ordinal`-protected claim ids are collected once per
+`run()` (not per-batch — must survive across escalation tiers) and excluded from both
+`reconcileContradictedVerdicts`'s classifier call and `findUnresolvedClaims`'s eligible set.
+
+**A third path, found in review, not live**: `applyNumericGate` (gate #2, runs after `reason_ordinal`
+in the same synchronous chain) had no guard against un-contradicting a verdict an earlier gate had
+just set — unlike `applyYearGate`'s existing `canForceSupported` (added for the same reason on gate
+#2b). A numeric-bearing ordinal claim ("the third trial showed 40%" vs. reason "the first trial
+showed 40%" — same %, different ordinal) would silently flip back to `supported` inside `runGateChain`
+itself, before the claim's persisted verdict is ever `contradicted` — bypassing reconciliation/
+escalation protection entirely, since neither mechanism ever sees it. Fixed narrower than
+`applyYearGate`'s blanket guard: `applyNumericGate` gained an explicit
+`contradictionProtectedFromForceSupported` input, set only when `originatingContradictionGate`
+(applied to the chain's own events-so-far) says `reason_ordinal` produced the current contradiction —
+a blanket "never un-contradict" guard would have reverted a real, already-fixed live bug (g11,
+2026-08-06: a raw ungated VERIFY `contradicted` legitimately corrected to `supported` once the actual
+numbers satisfy the claim's threshold). Forcing *to* `contradicted` stays unconditional either way,
+same asymmetry as `applyYearGate`.
+
+**A fourth path, also found in review** — `gateEventsByClaimId` (what `originatingContradictionGate`
+reads to decide protection) was storing the *concatenated* firstPass+retryPass gate trail whenever a
+T034 retry fired, the exact "stale flip" risk already documented on `originatingContradictionGate`
+itself but, until now, only actually honored by `checkRetryContradiction`'s own separate
+`currentPassGateEvents` parameter. Concretely: a firstPass `reason_ordinal` contradiction that gate #1
+later downgrades (triggering a retry) whose retry then independently lands on `contradicted` with no
+gate involved would get wrongly attributed to the stale firstPass event, misapplying protection to an
+unrelated, unscrutinized retry-contradiction. Fixed by tracking `currentPassGateEvents` (last pass
+only) separately from the concatenated trail used for the Postgres audit log.
+
+**This is not a general precedence rule.** It does not mean deterministic gates outrank LLM judgment,
+and it does not apply automatically to other gates (`numeric`'s own reconciliation downgrades looked
+legitimate on inspection — a defensible 99.9%-vs-100% softening, not the same failure shape). Scoped
+narrowly to `reason_ordinal`'s specific provenance today; extract a shared abstraction only if a
+second gate demonstrates the same property (same anti-premature-abstraction stance as §4's "no
+generic `applyReasonFactGate<T>`").
+
 ## §4. Explicitly not doing
 
 - **Amending `MULTIPLE SOURCES` in the VERIFY prompt** — plausible contributing cause (§2), but the
