@@ -2,7 +2,7 @@ import { z, type ZodSchema } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
-import { isPassageRelevant } from "./passage-filter.js";
+import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence, type ResolvedCitation } from "./passage-sentences.js";
 import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonOrdinalGate, applyReasonYearGate, applyYearGate } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
@@ -95,6 +95,10 @@ export interface PipelineClaimInput {
   text: string;
   // D028 — verified verbatim substring of the source text, or null if unproduced/unverified.
   sourceExcerpt: string | null;
+  // g17 — EXTRACT's disambiguated name for who/what this claim is about, or "" when none applies.
+  // Fed into rerankPassages' scoring (docs/decisions g17 review round 2) so entity-anchoring is
+  // judged semantically, not string-matched ahead of that judgment.
+  subjectEntity: string;
 }
 
 interface ResolvedEvidence {
@@ -507,7 +511,8 @@ export class GrounnelPipelineService {
 
     // D026 §6/§11/§18 — check every already-fetched source (ranked by T048), pooling up to
     // MAX_VERIFY_PASSAGES relevant ones instead of stopping at the first — a claim's fact can
-    // span more than one page. rerankPassages augments T048's lexical order with a semantic score;
+    // span more than one page. rerankPassages augments T048's lexical order with a semantic score
+    // (g17 review: now including subject-entity judgment, see rerankPassages/the rerank prompt);
     // it falls back to gate #4's lexical filter itself on error, so no separate fallback needed here.
     const relevantSources = (await this.rerankPassages(auditId, claim, okSources)).slice(0, MAX_VERIFY_PASSAGES);
     if (relevantSources.length === 0) {
@@ -535,8 +540,12 @@ export class GrounnelPipelineService {
    */
   private async rerankPassages(auditId: string, claim: PipelineClaimInput, sources: SearchPassage[]): Promise<SearchPassage[]> {
     // Nothing to rank with at most one candidate — same fallback either way, skip the call entirely.
+    // g17 review — hasSubjectEntity joins isPassageRelevant only on this lexical-only degraded
+    // path, not as a separate hard gate ahead of the LLM call below (that placement foreclosed the
+    // LLM's own chance to recognize coreference-only evidence; see the LLM branch's SUBJECT ENTITY
+    // line in the rerank prompt instead).
     if (sources.length <= 1) {
-      return sources.filter((s) => isPassageRelevant(claim.text, s.text!));
+      return sources.filter((s) => isPassageRelevant(claim.text, s.text!) && hasSubjectEntity(claim.subjectEntity, s.text!));
     }
 
     const labeled = sources.map((s, i) => ({ label: String.fromCharCode(65 + i), source: s }));
@@ -554,6 +563,11 @@ export class GrounnelPipelineService {
       }));
       const system = this.prompts.render("grounnel-passage-rerank", {
         claim: claim.text,
+        // g17 — an explicit entity signal independent of the claim's own wording, so the LLM can
+        // score entity-anchoring semantically (coreference included) instead of relying only on a
+        // literal name repeated in the claim text. Empty string when EXTRACT gave none; the prompt
+        // itself treats an empty SUBJECT ENTITY line as "no additional constraint."
+        subjectEntity: claim.subjectEntity ?? "",
         candidates: JSON.stringify(candidates),
       });
       const parsed = await this.callGrounnelJson(
@@ -597,7 +611,7 @@ export class GrounnelPipelineService {
         { module: MODULE, operation: "rerankPassages", auditId, claimId: claim.id, rateLimited: err instanceof RateLimitError, err },
         "Passage reranking failed — falling back to lexical order + gate #4's relevance filter"
       );
-      return sources.filter((s) => isPassageRelevant(claim.text, s.text!));
+      return sources.filter((s) => isPassageRelevant(claim.text, s.text!) && hasSubjectEntity(claim.subjectEntity, s.text!));
     }
   }
 

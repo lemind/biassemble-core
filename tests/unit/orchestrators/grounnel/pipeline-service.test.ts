@@ -563,6 +563,54 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(provider.getCallCount()).toBe(2); // VERIFY + consistency classifier only — no reranker call attempted
   });
 
+  it("g17 review: subjectEntity reaches the rerank prompt as an explicit signal (multi-candidate LLM path)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The second layer contained 34 fragments.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const marwickPassage = "Marwick's second layer contained 34 fragments of pottery. ".repeat(5);
+    const unrelatedPassage = "Prof Foster believes the repair work resulted in 34 numbered fragments of the stone. ".repeat(5);
+    const search = new FakeSearchProvider(
+      new Map([[claimText, [webSource({ url: "https://a.example", text: marwickPassage }), webSource({ url: "https://b.example", text: unrelatedPassage })]]])
+    );
+
+    let sawSubjectEntity: string | undefined;
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      sawSubjectEntity = request.system.match(/SUBJECT ENTITY: (.*)/)?.[1];
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string }>;
+      return { results: candidates.map((c) => ({ id: c.id, score: 80 })) };
+    });
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: [{ source: "A", n: 1 }], reason: "Confirmed.", confidence: 0.95 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText, subjectEntity: "Marwick" }]);
+
+    expect(sawSubjectEntity).toBe("Marwick");
+  });
+
+  it("g17 review: an entity-mismatched source is dropped on the single-candidate lexical fallback path", async () => {
+    const claimId = uuid(1);
+    const claimText = "The second layer contained 34 fragments.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    // Shares the claim's own key terms ("second", "34", "fragments") but never mentions Marwick —
+    // the real g17 repro shape (Stone-of-Destiny page coincidentally matching a fragment count).
+    const unrelatedPassage = "The second batch of repairs left 34 numbered fragments of the stone. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: unrelatedPassage })]]]));
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText, subjectEntity: "Marwick" }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // Only one candidate was fetched, so rerankPassages never calls the LLM (D026 §18) — the
+    // lexical-only fallback (isPassageRelevant + hasSubjectEntity) must still catch the mismatch.
+    expect(claim.verdict).not.toBe("supported");
+  });
+
   it("gate #1 downgrades a contradicted verdict citing a sentence number that doesn't exist (D026 §7: the model can no longer fabricate quote TEXT, so this is the new equivalent of the old free-text fabrication case)", async () => {
     const claimId = uuid(1);
     const claimText = "Bukowski attended Harvard.";

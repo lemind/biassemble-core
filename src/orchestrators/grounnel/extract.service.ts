@@ -23,8 +23,9 @@ const ELIGIBILITY_CONCURRENCY = 20;
 
 const ExtractResponseSchema = z.object({
   // .default("") — a missing/malformed excerpt must not drop the whole claim via repair.ts's
-  // salvageArrays (D028 §4); empty string reads as no-excerpt below.
-  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default("") })),
+  // salvageArrays (D028 §4); empty string reads as no-excerpt below. subject_entity (g17) follows
+  // the same convention — "" just means EXTRACT found no distinguishing entity for this claim.
+  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default(""), subject_entity: z.string().default("") })),
   truncated: z.boolean(),
 });
 
@@ -100,6 +101,9 @@ export class GrounnelExtractService {
       id: randomUUID(),
       text: c.claim,
       sourceExcerpt: c.source_excerpt.length > 0 && text.includes(c.source_excerpt) ? c.source_excerpt : null,
+      // g17 — no substring check against `text` (unlike sourceExcerpt): a canonical name, not a
+      // verbatim quote, so it can legitimately differ from the article's own wording.
+      subjectEntity: c.subject_entity.trim(),
     }));
     const { id } = await this.grounnelStore.createAudit({ id: runId, text, maxClaims: MAX_CLAIMS, claims, truncated });
 

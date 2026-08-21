@@ -14,3 +14,16 @@ export function isPassageRelevant(claimText: string, passageText: string): boole
   const lowerPassage = passageText.toLowerCase();
   return terms.some((term) => lowerPassage.includes(term));
 }
+
+/**
+ * Same check as isPassageRelevant, keyed on EXTRACT's own subject_entity instead of claim text
+ * (g17, review round 2 — delegates rather than reimplementing, was a near-duplicate). Used only in
+ * rerankPassages' lexical-only fallback branches, not as a standalone gate ahead of the LLM rerank
+ * call (see pipeline.service.ts's rerank prompt for the primary, semantic entity check).
+ */
+export function hasSubjectEntity(subjectEntity: string, passageText: string): boolean {
+  // Guards undefined too: tests aren't typechecked (tsconfig excludes tests/), so pre-existing
+  // fixtures predating this field hit this at runtime, not just a real "" from EXTRACT.
+  if (!subjectEntity) return true;
+  return isPassageRelevant(subjectEntity, passageText);
+}
