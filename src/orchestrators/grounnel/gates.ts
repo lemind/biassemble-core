@@ -681,8 +681,19 @@ export interface ReasonOrdinalGateResult {
   reason: "reason_ordinal_mismatch" | null;
 }
 
-const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
+// "last"/"final" added deliberately narrow (D030 §3e, live-eval finding 2026-08-21): they're
+// positional by definition (opposite end of a sequence from "first"), unlike superlatives
+// ("longest", "best", "record") which describe a ranking that CAN coincide with any position —
+// see D030 §3e for the adversarial matrix and why superlatives were deliberately excluded.
+const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "last", "final"];
 const ORDINAL_RE_G = new RegExp(`\\b(${ORDINAL_WORDS.join("|")})\\b`, "gi");
+// "last" and "final" are synonyms — without this, "the last flight" (claim) vs "the final
+// flight" (reason) about the SAME event would wrongly read as a competing ordinal instead of a
+// confirmation (D030 §3e matrix case N1/N2).
+const ORDINAL_EQUIVALENTS: Record<string, string> = { last: "final", final: "last" };
+function sameOrdinal(a: string, b: string): boolean {
+  return a === b || ORDINAL_EQUIVALENTS[a] === b;
+}
 
 // Words too generic to serve as an anchor on their own, filtered out of the content-word window
 // below so a shared article/conjunction/preposition/pronoun never counts as "the same noun phrase"
@@ -801,7 +812,7 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
     const anchor = ordinalAnchorWords(reason, m.index! + m[0].length);
     if (!anchorsOverlap(claimAnchor, anchor)) continue;
     if (isOrdinalNegated(reason, m.index!)) continue;
-    if (ordinal === claimOrdinal) {
+    if (sameOrdinal(ordinal, claimOrdinal)) {
       // Confirmation found — takes precedence, return immediately (data-model.md §1 step 4).
       return { verdict: input.verdict, overridden: false, reason: null };
     }

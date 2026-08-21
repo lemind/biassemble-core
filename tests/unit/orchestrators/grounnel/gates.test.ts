@@ -1111,6 +1111,76 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
+
+  // D030 §3e (live-eval finding, 2026-08-21) — offline adversarial matrix (10/10) validated adding
+  // "last"/"final" before wiring; see ADR for why superlatives ("longest") were deliberately excluded.
+  it("(D030 §3e) fires on last vs first, same anchor", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The passages state the last flight covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  it("(D030 §3e) fires on final vs first, same anchor", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight lasted 59 seconds.",
+      reason: "Sources state the final flight lasted 59 seconds.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  it("(D030 §3e) does not fire when last/final anchor is unrelated to the claim's ordinal", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "This was the last update to the article.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Critical safety case: without the equivalence class, "last" (claim) vs "final" (reason) about
+  // the SAME event would be wrongly read as a competing ordinal instead of a confirmation.
+  it("(D030 §3e) treats last/final as synonyms — confirmation, not contradiction", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The last flight covered 852 feet.",
+      reason: "Sources state the final flight covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("(D030 §3e) treats final/last as synonyms — confirmation, not contradiction (reverse)", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The final flight covered 852 feet.",
+      reason: "Sources state the last flight covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Superlatives ("longest") are deliberately NOT in ORDINAL_WORDS — they describe a ranking that
+  // can coincide with any position, unlike "last"/"final" which are positional by definition. A
+  // true claim like this must never be flipped just because the reason uses "longest".
+  it("(D030 §3e) bare superlative language never fires — not in vocabulary by design", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first attempt took 3 hours.",
+      reason: "Multiple sources state the longest attempt took 3 hours.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("(D030 §3e) negated last does not fire", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The passage does not say the last flight covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
 });
 
 // T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different
