@@ -1,14 +1,29 @@
-import { z, type ZodSchema } from "zod";
+import type { ZodSchema } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
-import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence, type ResolvedCitation } from "./passage-sentences.js";
-import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonOrdinalGate, applyReasonYearGate, applySubjectEntityGate, applyYearGate, rewriteUngroundedAffirmativeReason } from "./gates.js";
+import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
+import { rewriteUngroundedAffirmativeReason } from "./gates.js";
+import { runGateChain, type Diagnostic } from "./pipeline-gate-chain.js";
+import {
+  buildGeminiRateLimitMessage,
+  hasPassage,
+  toClaimSources,
+  passageLabelForIndex,
+  originatingContradictionGate,
+  logReconciliationDowngrade,
+  attachCitationUrls,
+  type PipelineClaimInput,
+  type ResolvedEvidence,
+  type ResolvedWithPassage,
+  type Verdict,
+} from "./pipeline-helpers.js";
+import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
-import { GrounnelVerdictEnum, type ClaimResult, type ClaimSource, type ClaimCitation } from "../../contracts/grounnel.schemas.js";
+import type { ClaimResult } from "../../contracts/grounnel.schemas.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
@@ -17,7 +32,10 @@ import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-s
 import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import { NoopGrounnelRerankDecisionStore, type GrounnelRerankDecisionStore } from "../../persistence/grounnel-rerank-decision-store.js";
 import type { SearchProvider, SearchPassage } from "../../providers/search/search-provider.js";
-import type { GateReason } from "../../persistence/types.js";
+
+// Re-exported for backward compatibility — extract.service.ts and routes/grounnel.ts import these
+// from this file. Implementations moved to pipeline-helpers.ts (D031 file-size split).
+export { buildGeminiRateLimitMessage, type PipelineClaimInput };
 
 const MODULE = "grounnel-pipeline-service";
 // D018 §2.3 — lowered from 10 to 8 there: batch size, not verdict logic, was why VERDICT/NOTE
@@ -34,127 +52,9 @@ const MAX_VERIFY_PASSAGES = 3;
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
 // gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
 const ESCALATION_TIERS = [5, 8];
-type Verdict = z.infer<typeof GrounnelVerdictEnum>;
 
 const NO_EVIDENCE_REASON = "No relevant source found for this claim.";
 const TAVILY_RATE_LIMITED_REASON = "This claim could not be checked right now — our search provider's rate limit was reached. Try again later.";
-
-/** Client-facing message for a Gemini RateLimitError — also reused by the route handler for EXTRACT's own case (no audit exists yet there, so it becomes the /extract response directly). */
-export function buildGeminiRateLimitMessage(err: RateLimitError): string {
-  if (err.limitType === "daily") {
-    return err.resetsAt
-      ? `We've hit today's AI usage limit. Please try again after ${err.resetsAt}.`
-      : "We've hit today's AI usage limit. Please try again tomorrow.";
-  }
-  return "We're being rate-limited right now. Please try again in a few minutes.";
-}
-
-const VerifyResultSchema = z.object({
-  id: z.string(),
-  verdict: GrounnelVerdictEnum,
-  // Gemini sometimes omits a null-valued key entirely rather than sending `null` — same
-  // normalization idiom as audit-internal.schemas.ts's VerifyResultSchema (D018 §5, production incident).
-  evidence: z.string().nullable().optional().transform((v) => v ?? null),
-  reason: z.string().nullable().optional().transform((v) => v ?? null),
-  confidence: z.number().min(0).max(1),
-});
-// D027 — callVerify's real return shape (see ADR §3 for why citations aren't part of VerifyResultSchema itself).
-type VerifyProcessedResult = z.infer<typeof VerifyResultSchema> & { citations: ResolvedCitation[] };
-
-// D026 §7/§11 — cites {source, n} pairs, never free-text quotes. Derived from VerifyResultSchema
-// (not copy-pasted) so fields can't drift. `source` names which pooled passage a citation is from.
-const VerifyRawResultSchema = VerifyResultSchema.omit({ evidence: true }).extend({
-  evidenceCitations: z
-    .array(z.object({ source: z.string(), n: z.number().int() }))
-    .nullable()
-    .optional()
-    .transform((v) => v ?? null),
-});
-const VerifyRawResponseSchema = z.object({ results: z.array(VerifyRawResultSchema) });
-
-// D025/T035 — batched "does reason support verdict?" classifier response.
-const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
-const ConsistencyCheckResponseSchema = z.object({ results: z.array(ConsistencyCheckResultSchema) });
-
-// D026 §18 — batched passage-relevance reranker response; score only, no free-text field (nothing
-// downstream reads an explanation, so the prompt doesn't ask for one).
-const PassageRerankResultSchema = z.object({ id: z.string(), score: z.number().min(0).max(100) });
-const PassageRerankResponseSchema = z.object({ results: z.array(PassageRerankResultSchema) });
-
-/** One gate's finding (D025 §2); `code` reuses `GateReason` so it can't drift from grounnel_gate_events.reason. */
-interface Diagnostic {
-  code: GateReason;
-  severity: "ERROR" | "WARNING" | "INFO";
-  details: string;
-}
-
-export interface PipelineClaimInput {
-  id: string;
-  text: string;
-  // D028 — verified verbatim substring of the source text, or null if unproduced/unverified.
-  sourceExcerpt: string | null;
-  // g17 — EXTRACT's disambiguated name for who/what this claim is about, or "" when none applies.
-  subjectEntity: string;
-}
-
-interface ResolvedEvidence {
-  claim: PipelineClaimInput;
-  // D026 §11 — up to MAX_VERIFY_PASSAGES ranked sources; array order is rank order, which
-  // callVerify's label assignment depends on being meaningful.
-  passages: SearchPassage[];
-  sources: SearchPassage[];
-}
-
-interface ResolvedWithPassage extends ResolvedEvidence {
-  passages: SearchPassage[]; // guaranteed non-empty by hasPassage below
-}
-
-function hasPassage(r: ResolvedEvidence): r is ResolvedWithPassage {
-  return r.passages.length > 0;
-}
-
-function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
-  return sources.map((s) => ({ kind: "web" as const, title: s.title, domain: s.domain, url: s.url, status: s.status, retrievalMethod: s.retrievalMethod }));
-}
-
-// D027 §2 — callVerify's citation label codec ("A"-"Z" over `passages`, rank order); single-letter
-// only, coupled by convention to MAX_VERIFY_PASSAGES staying ≤ 26 (guarded below, not just assumed).
-function passageLabelForIndex(i: number): string {
-  if (i >= 26) throw new Error(`passageLabelForIndex: index ${i} exceeds the single-letter A-Z label scheme`);
-  return String.fromCharCode(65 + i);
-}
-function passageIndexForLabel(label: string): number {
-  return label.charCodeAt(0) - 65;
-}
-
-// Reconciliation-disagreement telemetry (D030 T010 backlog — see tasks.md). Caller must pass only
-// the CURRENT pass's gate events (review finding: a concatenated trail can surface a stale flip).
-function originatingContradictionGate(gateEvents: GateEventInput[]): { gate: string; reason: GateReason | null } | null {
-  const event = gateEvents.findLast((e) => e.overridden && e.verdictAfter === "contradicted");
-  return event ? { gate: event.gate, reason: event.reason } : null;
-}
-
-// Shared by all 3 reconciliation-downgrade sites (tasks.md backlog) — one aggregatable log stream; verdictBefore varies by site.
-function logReconciliationDowngrade(operation: string, auditId: string, claimId: string, verdictBefore: Verdict, originating: { gate: string; reason: GateReason | null } | null): void {
-  logger.info(
-    { module: MODULE, operation, auditId, claimId, verdictBefore, originatingGate: originating?.gate ?? null, originatingReason: originating?.reason ?? null },
-    "Reconciliation classifier downgraded a verdict to unsupported"
-  );
-}
-
-// D027 §2 — out-of-range labels are dropped (logged), not thrown; see ADR §2 for why this is safe by construction today.
-function attachCitationUrls(citations: ResolvedCitation[], passages: SearchPassage[]): ClaimCitation[] {
-  const result: ClaimCitation[] = [];
-  for (const citation of citations) {
-    const passage = passages[passageIndexForLabel(citation.source)];
-    if (!passage) {
-      logger.warn({ module: MODULE, operation: "attachCitationUrls", source: citation.source }, "Citation source label did not resolve to a pooled passage — dropping this citation");
-      continue;
-    }
-    result.push({ source: citation.source, sentence: citation.sentence, url: passage.url, text: citation.text });
-  }
-  return result;
-}
 
 /** Per-claim loop: search -> gate #4 -> VERIFY (batched) -> gates #1/#2 -> store (D019 §1, T010). No-evidence claims skip VERIFY (cost saving, §4.1). Gemini/Tavily rate limits get distinct messages. */
 export class GrounnelPipelineService {
@@ -569,113 +469,6 @@ export class GrounnelPipelineService {
     );
   }
 
-  /** The 10-gate chain (grew from 5; see the gateEvents.push calls below for the current list), extracted so T034/T035's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
-  private runGateChain(input: {
-    verdict: Verdict;
-    reason: string | null;
-    evidence: string | null;
-    claimText: string;
-    passageText: string;
-    subjectEntity: string;
-    // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
-    reasonSupportsVerdict: boolean | null;
-  }): { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[]; diagnostics: Diagnostic[]; needsRetry: boolean } {
-    let verdict = input.verdict;
-    const gateEvents: GateEventInput[] = [];
-    const diagnostics: Diagnostic[] = [];
-
-    // Reason-consistency gate (g04/g05) — runs before gate #1 so a flip to contradicted still clears its evidence check.
-    const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: input.reason });
-    gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden, reason: reasonConsistency.reason });
-    verdict = reasonConsistency.verdict;
-
-    // Case A gate (D022 §4) — bare "X, not Y" negation, the gap applyReasonConsistencyGate
-    // names but doesn't catch (g05). Also runs before gate #1 — a flip still needs real evidence.
-    const implicitNegation = applyImplicitNegationGate({
-      verdict,
-      reason: input.reason,
-      claimText: input.claimText,
-      passageText: input.passageText,
-    });
-    gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
-    verdict = implicitNegation.verdict;
-
-    // Reason/verdict year-mismatch gate (T069) — reads VERIFY's own reason for a differing year, not raw evidence (applyYearGate's whitelist couldn't keep up).
-    const reasonYear = applyReasonYearGate({ verdict, reason: input.reason, claimText: input.claimText });
-    gateEvents.push({ gate: "reason_year", verdictBefore: verdict, verdictAfter: reasonYear.verdict, overridden: reasonYear.overridden, reason: reasonYear.reason });
-    verdict = reasonYear.verdict;
-
-    // Reason/verdict ordinal-mismatch gate (D030) — same rationale as reasonYear, for a differing anchored ordinal.
-    const reasonOrdinal = applyReasonOrdinalGate({ verdict, reason: input.reason, claimText: input.claimText });
-    gateEvents.push({ gate: "reason_ordinal", verdictBefore: verdict, verdictAfter: reasonOrdinal.verdict, overridden: reasonOrdinal.overridden, reason: reasonOrdinal.reason });
-    verdict = reasonOrdinal.verdict;
-
-    // Gate #5 (D025 §2/§3) — chain position (between implicit_negation and gate #1) is load-bearing, see ADR.
-    const counterfact = applyCounterfactIgnoredGate({ verdict, reasonSupportsVerdict: input.reasonSupportsVerdict });
-    // overridden is always false — this gate only flags (D025 §2); query by reason IS NOT NULL, not overridden = true.
-    gateEvents.push({ gate: "counterfact_ignored", verdictBefore: verdict, verdictAfter: verdict, overridden: false, reason: counterfact.reason });
-    if (counterfact.flagged) {
-      diagnostics.push({ code: "counterfact_ignored", severity: "ERROR", details: "The model's own reason did not appear to support the verdict it gave for this claim." });
-    }
-
-    // Captured before gate #1 — needsRetry also needs a claim that arrived already "contradicted", not just a flipped one.
-    const verdictBeforeGate1 = verdict;
-
-    // Gate #1 — never reaches the store without passing this (D019 §2, T003, tasks.md acceptance).
-    const gate1 = applyContradictionEvidenceGate({ verdict, evidence: input.evidence, passageText: input.passageText });
-    gateEvents.push({ gate: "contradiction_evidence", verdictBefore: verdict, verdictAfter: gate1.verdict, overridden: gate1.overridden, reason: gate1.reason });
-    verdict = gate1.verdict;
-    let evidence = gate1.evidence;
-
-    // T034 (g04) — verdict was "contradicted" going into gate #1 but no real evidence backed it.
-    // details phrased generically, not "verdict was contradicted" — D025 §2's reconciliation prompt shows the model its own raw pre-gate verdict, which may differ.
-    if (verdictBeforeGate1 === "contradicted" && (gate1.reason === "evidence_null" || gate1.reason === "evidence_not_grounded")) {
-      diagnostics.push({
-        code: gate1.reason,
-        severity: "ERROR",
-        details:
-          gate1.reason === "evidence_null"
-            ? "A contradiction was indicated but no evidence quote was given."
-            : "A contradiction was indicated but the evidence quote wasn't found verbatim in the passage.",
-      });
-    }
-
-    // Gate #1b (D026 §12) — cross-claim contamination backstop: a batched VERIFY call can answer one claim's id with a different claim's (topically unrelated but grounded) reasoning.
-    const gate1b = applyClaimReasonOverlapGate({ verdict, reason: input.reason, claimText: input.claimText });
-    gateEvents.push({ gate: "claim_reason_overlap", verdictBefore: verdict, verdictAfter: gate1b.verdict, overridden: gate1b.overridden, reason: gate1b.reason });
-    verdict = gate1b.verdict;
-    if (gate1b.overridden) {
-      evidence = null; // stale — it was only meaningful attached to the discarded contradicted verdict.
-      diagnostics.push({ code: "claim_reason_no_overlap", severity: "ERROR", details: "The model's reason for this contradiction shares no key terms with the claim itself — likely cross-claim contamination in a batched VERIFY call." });
-    }
-
-    // Gate #2 — numeric normalization/comparison (D019 §2). D030 §3d — a numeric MATCH must not silently un-contradict a verdict reason_ordinal produced.
-    const gate2 = applyNumericGate({
-      claimText: input.claimText,
-      verdict,
-      evidence,
-      contradictionProtectedFromForceSupported: verdict === "contradicted" && originatingContradictionGate(gateEvents)?.gate === "reason_ordinal",
-    });
-    gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
-    verdict = gate2.verdict;
-
-    // Gate #2b — year/date comparison; extractNumericFact (gate #2) never recognizes bare years.
-    const gate2b = applyYearGate({ claimText: input.claimText, verdict, evidence });
-    gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
-    verdict = gate2b.verdict;
-
-    // g17 — deterministic backstop, last in the chain: downgrades supported/partially_supported to unverifiable when evidence shares no proper noun with the claim's subject.
-    const gate3 = applySubjectEntityGate({ verdict, claimText: input.claimText, subjectEntity: input.subjectEntity, evidence });
-    gateEvents.push({ gate: "subject_entity", verdictBefore: verdict, verdictAfter: gate3.verdict, overridden: gate3.overridden, reason: gate3.reason });
-    verdict = gate3.verdict;
-    if (gate3.overridden) evidence = null; // stale — it was only meaningful attached to the discarded supported verdict.
-
-    // D025 §2 — retry fires on any ERROR-severity diagnostic; the field exists so a future WARNING/INFO gate doesn't force one.
-    const needsRetry = diagnostics.some((d) => d.severity === "ERROR");
-
-    return { verdict, evidence, gateEvents, diagnostics, needsRetry };
-  }
-
   /** Shared by callVerify and checkReasonVerdictConsistency — avoids drift between two near-identical callLlmForJson invocations. */
   private async callGrounnelJson<T extends { results: unknown[] }>(
     auditId: string,
@@ -941,7 +734,7 @@ export class GrounnelPipelineService {
         // is already grounded per-source by construction, this just answers "is it real text."
         const passageText = item.passages.map((p) => p.text!).join("\n\n");
 
-        const firstPass = this.runGateChain({
+        const firstPass = runGateChain({
           verdict: initialVerdict,
           reason,
           evidence: result.evidence,
@@ -971,7 +764,7 @@ export class GrounnelPipelineService {
             citationsBeforeGates = retried.citations;
             const retryVerdict = confidence < CONFIDENCE_THRESHOLD && retried.verdict !== "unverifiable" ? "unverifiable" : retried.verdict;
             // Capped at one attempt, not re-classified (D025 §2) — deterministic gates still apply.
-            const retryPass = this.runGateChain({
+            const retryPass = runGateChain({
               verdict: retryVerdict,
               reason,
               evidence: retried.evidence,
