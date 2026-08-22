@@ -263,6 +263,91 @@ narrowly to `reason_ordinal`'s specific provenance today; extract a shared abstr
 second gate demonstrates the same property (same anti-premature-abstraction stance as §4's "no
 generic `applyReasonFactGate<T>`").
 
+**§3e — Superlatives deliberately excluded from `ORDINAL_WORDS`.** A same-day live-eval finding
+(2026-08-21, `g17-wright-brothers-ordinal`) showed `applyReasonOrdinalGate` abstaining on a reason
+using "last"/"final" instead of a plain ordinal word. `last`/`final` were added to `ORDINAL_WORDS`
+with an equivalence class (`last` ≡ `final`, same end-of-sequence position) and validated offline
+against a 10-case adversarial matrix (idiomatic "at last"/"last year" negatives included) before
+being wired in — commit `d6e9738`.
+
+Reverted same day, commit `bb11072`: a live re-run surfaced the case the offline matrix didn't cover
+— "last"'s idiomatic/temporal senses in real reason prose (not just the "at last"/"last year"
+phrasings already tested) carry real false-accusation risk, and once `reason_ordinal` fires there is
+no downstream safety net (§3d made this gate's contradictions immune to reconciliation/escalation
+correction specifically *because* it was trusted as high-precision — a property this widening broke).
+`last`/`final` removed; `first`...`tenth` only, unchanged since.
+
+**Superlatives (`longest`, `largest`, `best`, `record`) were never added at all**, for a distinct
+reason from `last`/`final`'s revert: a ranking descriptor can coincide with *any* sequence position
+depending on the data (the longest flight isn't structurally guaranteed to be first, fourth, or any
+other fixed slot), whereas `last`/`final` are positional by definition. Extending `ORDINAL_WORDS` to
+cover them would be the same under-tested-heuristic shape this ADR's §3a already rejected once (the
+deleted `applyOrdinalGate`'s `ROLE_KEYWORDS`) — see §3f for what actually causes `g17` to keep
+failing on this axis, and why widening this list further is explicitly rejected again there.
+
+**§3f — `g17-wright-brothers-ordinal` still red: root cause is retrieval, not the ordinal gate.**
+Investigated 2026-08-22 after 5 consecutive live runs (4 automatic Inngest retries of one stale
+event, replaying memoized `step.run` output per D019 §4's per-case checkpointing design, plus 1
+genuinely fresh trigger) all landed `supported`, never `contradicted`, on the same claim: "The first
+flight covered 852 feet." — golden spec expects `contradicted` (`ACCEPTABLE.false =
+["contradicted"]` only; `unverifiable` does not satisfy it).
+
+**Finding:** `extractKeyTerms("The first flight covered 852 feet.")` → `["852"]` — "first" and
+"flight" both score zero (capitalization-gated proper-noun/number classifier, D026 §6). Gate #4
+(`isPassageRelevant`) admits a passage only if it contains a key term, so every passage that survives
+filtering is *structurally guaranteed* to contain "852" — i.e. every candidate VERIFY ever sees is
+about whichever flight covered 852 feet (the fourth, the source material's own "longest"), never
+about the actually-first, shorter flight that would refute the claim. VERIFY is not reasoning
+poorly; it is being handed a confirmation-biased evidence pool with no counter-evidence in it. This
+matches the reason text observed across all 5 runs — no run's reason ever cites a differing figure
+for "the first flight," only ever 852ft/59s under varying phrasing ("longest," "first," or no
+selector at all).
+
+**This is upstream of `applyReasonOrdinalGate` and every other reason-grounded gate** — no
+downstream gate can force a correct verdict from an evidence pool that structurally never contained
+the refuting fact. Confirms §3e's standing rejection of widening `ORDINAL_WORDS` for superlatives:
+even a perfect "longest ≠ first" detector would still need the refuting sentence to reach VERIFY
+first, which it currently cannot.
+
+**Decision:** treat "first flight" / "second attempt" / "final trial" as **instance selectors** —
+identifying *which occurrence* of a repeated entity a claim is about — as a concept distinct from,
+and additive to, `extractKeyTerms`'s existing entity/number classification. `extractKeyTerms` itself
+is explicitly NOT changed: it's shared by `reason_year`'s locality check, `claim_reason_overlap`, and
+the Case-A gate (§3a's own `applyImplicitNegationGate`) — widening it to score "first" as a key term
+would silently change what those three already-validated gates admit as collateral damage. The
+selector is a new, separate signal (`lib/instance-selector.ts`), consumed only by retrieval
+(`isPassageRelevant`/rerank ranking) so the refuting sentence can reach VERIFY at all — reusing the
+anchor/stopword machinery `applyReasonOrdinalGate`'s `ordinalAnchorWords` already validated, moved to
+`lib/` so both sides import one definition instead of drifting.
+
+**Explicitly rejected again, with the mechanism now understood:**
+- Widening `ORDINAL_WORDS` further (the tempting one-liner) — would only fix the ~fraction of runs
+  where VERIFY happens to phrase its reason with a selector word at all (observed non-deterministic
+  across the 5 captured runs), leaves the biased evidence pool untouched, and reintroduces §3e's
+  exact false-accusation risk class.
+- Relaxing the golden set's `ACCEPTABLE.false` to also accept `unverifiable` — changes the
+  scoreboard, not the defect.
+- Modifying VERIFY's prompt or `applyReasonOrdinalGate` before retrieval is fixed — confounds
+  measurement; see the plan's P3 gate below.
+
+**Plan (P0–P3 scoped for this decision; P4 blocked on P3's result):** P0, confirm the confirmation-
+bias empirically (read-only — pull the actual passage set a real run sent to VERIFY, not just infer
+it from `extractKeyTerms`'s output). P1, extract instance-selector parsing as a pure function with
+its own test matrix (sequence selectors like "first"/"fourth" vs. ranking descriptors like "longest",
+which are deliberately NOT given retrieval-admission weight — a ranking can coincide with any
+position, same distinction §3e already drew for `last`/`final` vs. superlatives) — zero behavior
+change, full suite green with no `gates.test.ts` deltas, proving D030 untouched. P2, wire the
+selector into gate #4 admission and rerank ranking as an additive OR-condition alongside existing
+key-term matching, validated against a matrix covering both the target cases and adversarial ones
+(e.g. "the first quarter of 2024" — "first" naming a calendar period, not a repeated-entity
+instance — must not over-admit). P3, run `g17` live 3× with the fixed retrieval against VERIFY
+**unmodified**, to isolate whether evidence availability alone resolves it before touching VERIFY's
+prompt or any gate.
+
+`applyReasonOrdinalGate` (§3a–§3d) is explicitly preserved unchanged throughout — defense-in-depth
+for the cases where VERIFY's reason does surface a selector mismatch even with today's retrieval,
+which the 5 captured runs show happens some of the time.
+
 ## §4. Explicitly not doing
 
 - **Amending `MULTIPLE SOURCES` in the VERIFY prompt** — plausible contributing cause (§2), but the
@@ -318,6 +403,17 @@ generic `applyReasonFactGate<T>`").
   "I", scheduled future events).
 - `verify/system.json` (`MULTIPLE SOURCES`) is explicitly untouched by this decision (§4) — no
   prompt-version bump associated with this ADR.
+- (§3f) New `src/lib/instance-selector.ts` — pure sequence-selector/anchor extraction, no LLM cost,
+  reusing `applyReasonOrdinalGate`'s anchor-window machinery moved out of `gates.ts` so both sides
+  share one definition. Consumed by `passage-filter.ts` (`isPassageRelevant` admission) and
+  `pipeline.service.ts`'s rerank ranking, as an additive OR-condition alongside existing key-term
+  matching — `lib/claim-terms.ts`'s `extractKeyTerms` output is explicitly unchanged (shared by
+  `reason_year`, `claim_reason_overlap`, and Case-A gate; widening it would be collateral, not
+  targeted). `gates.ts`/`applyReasonOrdinalGate` untouched.
+- (§3f) Golden-set/test-matrix additions for selector-aware retrieval (sequence selectors that must
+  now surface counter-evidence; ranking descriptors like "longest" that deliberately must not; a
+  calendar-period false-positive check, "the first quarter of 2024") — separate from §3a's own
+  ordinal-gate matrix, which stays as-is.
 
 **Source**: `biassemble-core`, investigation + this doc 2026-08-19; builds on tasks.md Phase 34/35
 (2026-08-17/18) and T069 (`applyReasonYearGate`, 2026-08-18). Design refined twice same day after

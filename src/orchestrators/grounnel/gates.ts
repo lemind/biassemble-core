@@ -1,6 +1,13 @@
 import { compare } from "../../numbers/compare.js";
 import { extractNumericFact, CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
+import {
+  isSentenceTerminator,
+  anchorWords as ordinalAnchorWords,
+  anchorsOverlap,
+  SEQUENCE_SELECTOR_WORDS as ORDINAL_WORDS,
+  SELECTOR_RE_G as ORDINAL_RE_G,
+} from "../../lib/instance-selector.js";
 import type { GrounnelVerdictEnum } from "../../contracts/grounnel.schemas.js";
 import type { z } from "zod";
 
@@ -587,13 +594,8 @@ export interface ReasonYearGateResult {
 const REASON_YEAR_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
 const REASON_YEAR_NEGATION_WINDOW = 60;
 
-// A "." flanked by digits on both sides is a decimal point ("$3.5 million"), not a sentence/clause
-// end — review finding: treating every "." as a boundary truncated both the negation window and
-// the locality check right at a dollar figure, silently defeating them whenever one sat near the year.
-function isSentenceTerminator(text: string, index: number): boolean {
-  if (text[index] !== ".") return true;
-  return !(/\d/.test(text[index - 1] ?? "") && /\d/.test(text[index + 1] ?? ""));
-}
+// isSentenceTerminator moved to lib/instance-selector.ts (D030 §3f) — shared with the retrieval
+// selector signal now, imported above. Still used here (year/ordinal negation windows below).
 
 function lastClauseBoundary(window: string): number {
   let last = -1;
@@ -697,70 +699,10 @@ export interface ReasonOrdinalGateResult {
   reason: "reason_ordinal_mismatch" | null;
 }
 
-const ORDINAL_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
-// (?!-to-) rejects "second-to-last"/"second-to-none" style compounds — \b treats "-" as a
-// boundary, so the bare regex matched "second" inside "second-to-last" (a penultimate-position
-// idiom, not "2nd"). Narrower than a blanket hyphen ban (review finding, round 2): "first-place"/
-// "third-ranked"/"fourth-largest" are genuine ordinal usage and must still match.
-const ORDINAL_RE_G = new RegExp(`\\b(${ORDINAL_WORDS.join("|")})\\b(?!-to-)`, "gi");
-
-// Words too generic to serve as an anchor on their own, filtered out of the content-word window
-// below so a shared article/conjunction/preposition/pronoun never counts as "the same noun phrase"
-// — only a real content word (the noun the ordinal modifies, or a modifier next to it) does.
-// Review finding (code-review, high effort): the original list omitted common prepositions/
-// connectives ("for", "with", "that", ...), letting two UNRELATED ordinal mentions "overlap" purely
-// because they shared a preposition (e.g. "third time for the team" vs "second attempt for the
-// group" both anchoring on "for") — reproduced and fixed by widening this list, not by shrinking the
-// window (a 1-word window would defeat the "third unsuccessful attempt" modifier case below).
-const ORDINAL_ANCHOR_STOPWORDS = new Set([
-  "and", "the", "a", "an", "of", "in", "on", "at", "its", "his", "her", "their", "was", "is", "were",
-  "also", "then", "to", "by", "for", "with", "that", "which", "who", "from", "has", "had", "have",
-  "about", "as", "or", "but", "so", "this", "these", "those", "it", "not", "did", "does", "will",
-  "would", "could", "over", "under", "into", "onto", "than", "there", "here",
-]);
-const ORDINAL_ANCHOR_WINDOW_WORDS = 2;
-
-// Forward-scanning counterpart to lastClauseBoundary above, reusing the same isSentenceTerminator
-// decimal-point guard. Review finding (code-review, high effort): ordinalAnchorWords originally used
-// a raw `search(/[.!?;,]/)`, which — exactly like the bug isSentenceTerminator was introduced to fix
-// for the year gate's negation window — treated the "." inside a dollar figure ("$3.5 million") as a
-// clause end, truncating the anchor window to nothing and silently defeating the whole gate for any
-// claim with a number/decimal/abbreviation near the ordinal.
-function firstClauseBoundaryForward(text: string): number {
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === ";" || ch === "," || ch === "!" || ch === "?") return i;
-    if (ch === "." && isSentenceTerminator(text, i)) return i;
-  }
-  return -1;
-}
-
-/**
- * Up to 2 real content words immediately after the ordinal, never crossing a clause boundary.
- * Deliberately NOT a role-noun whitelist (research.md Decision 2, D030 §3a/§4) — whatever word the
- * claim happens to use becomes the anchor, so this generalizes past any fixed vocabulary the way a
- * whitelist structurally can't. 2 words, not 1, so a single modifier between the ordinal and its
- * noun ("the third unsuccessful attempt") doesn't defeat matching — see data-model.md §1's matrix.
- */
-function ordinalAnchorWords(text: string, matchEnd: number): Set<string> {
-  const rest = text.slice(matchEnd);
-  const clauseEnd = firstClauseBoundaryForward(rest);
-  const window = clauseEnd === -1 ? rest : rest.slice(0, clauseEnd);
-  const words: string[] = [];
-  for (const raw of window.trim().split(/\s+/)) {
-    const word = raw.toLowerCase().replace(/[^a-z]/g, "");
-    if (!word || ORDINAL_ANCHOR_STOPWORDS.has(word)) continue;
-    words.push(word);
-    if (words.length >= ORDINAL_ANCHOR_WINDOW_WORDS) break;
-  }
-  return new Set(words);
-}
-
-function anchorsOverlap(a: Set<string>, b: Set<string>): boolean {
-  if (a.size === 0 || b.size === 0) return false;
-  for (const w of a) if (b.has(w)) return true;
-  return false;
-}
+// ORDINAL_WORDS, ORDINAL_RE_G, ordinalAnchorWords, anchorsOverlap moved to lib/instance-selector.ts
+// (D030 §3f, imported above as ordinalAnchorWords/anchorsOverlap/ORDINAL_WORDS/ORDINAL_RE_G) — same
+// anchor-window machinery, now shared with the new retrieval selector signal instead of drifting
+// into two copies. Behavior here is unchanged.
 
 // Same clause-scoped negation approach as isReasonYearNegated above (reuses lastClauseBoundary).
 // Window matches the year gate's own 60-char constant rather than a smaller guess — this gate has
