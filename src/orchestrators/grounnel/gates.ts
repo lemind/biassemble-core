@@ -25,25 +25,7 @@ export interface ReasonConsistencyResult {
   reason: "contradiction_language_in_model_reason" | null;
 }
 
-/**
- * Forces verdict to `contradicted` when the model's own reason asserts a contradiction but the
- * verdict says otherwise — reuses audit's hardened CONTRADICTION_LANGUAGE_RE (D018 §5.5) rather
- * than a fresh regex. Real live-eval failures (2026-08-06): reason explicitly said "contradicts"/
- * "not Canada" while verdict landed on `unsupported`.
- *
- * One direction only, deliberately: the opposite (reason argues support, verdict says
- * contradicted — also observed live) has no equivalent hardened detector in this codebase yet.
- * A fresh "support-language" regex now would repeat the exact under-tested-heuristic mistake
- * this file's own incident history warns against — a named, not silently dropped, gap.
- *
- * D026 §22, real bug: `unverifiable` is excluded for the same reason applyImplicitNegationGate
- * already excludes it — it's the CONFIDENCE section's deliberate downgrade of a low-confidence
- * relationship, not a different relationship judgment. The reason text still legitimately
- * describes the underlying (possibly CONFLICT-shaped) relationship per the verify prompt's own
- * STEP1-3 binding rule, so without this exclusion this gate was force-flipping every low-confidence
- * conflict read straight back into a hard `contradicted` — the exact high-certainty false positive
- * the CONFIDENCE downgrade exists to prevent.
- */
+/** Forces `contradicted` when the model's own reason asserts a contradiction but the verdict doesn't. `unverifiable` excluded (D026 §22) — it's a CONFIDENCE downgrade. */
 export function applyReasonConsistencyGate(input: ReasonConsistencyInput): ReasonConsistencyResult {
   if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
     return { verdict: input.verdict, overridden: false, reason: null };
@@ -67,24 +49,16 @@ export interface ImplicitNegationResult {
   reason: "bare_negation_matched" | null;
 }
 
-// Matches a bare "X, not Y" correction with no contradiction verb — the shape
-// applyReasonConsistencyGate deliberately doesn't catch (D022 §2, real gap: g05). Y's words must
-// be capitalized (entity-shaped) so the match stops at the entity instead of swallowing trailing
-// lowercase words ("not Canada to the United States" would otherwise capture "Canada to the").
+// Bare "X, not Y" correction with no contradiction verb (D022 §2, g05). Y must be capitalized so the match stops at the entity, not trailing lowercase words.
 const IMPLICIT_NEGATION_RE = /,\s*not\s+(?:the\s+)?([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})/;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Case A gate (D022 §4) — bare "X, not Y" negation applyReasonConsistencyGate misses. Condition
- * 3 trades recall for precision by deliberate design — see D022 §4 before weakening it.
- */
+/** Case A gate (D022 §4) — bare "X, not Y" negation applyReasonConsistencyGate misses. Condition 3 trades recall for precision by design. */
 export function applyImplicitNegationGate(input: ImplicitNegationInput): ImplicitNegationResult {
-  // Only "unsupported" is in scope: "contradicted" is already there, "unverifiable" is a
-  // confidence downgrade this gate shouldn't override, "supported" would mean firing on a
-  // narrative correction the model already resolved correctly (D022 §4 review finding).
+  // Only "unsupported" is in scope — the other verdicts either already cover this or shouldn't be overridden (D022 §4).
   if (input.verdict !== "unsupported" || !input.reason) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
@@ -96,9 +70,7 @@ export function applyImplicitNegationGate(input: ImplicitNegationInput): Implici
   const yInClaim = new RegExp(`\\b${escapeRegExp(y)}\\b`, "i").test(input.claimText);
   if (!yInClaim) return { verdict: input.verdict, overridden: false, reason: null };
 
-  // Y's own words are excluded individually, not as one string — a multi-word Y ("United
-  // Kingdom") must not let its own constituent words ("united", "states") count as the second,
-  // independent entity condition 3 requires (D022 §4 review finding).
+  // Y's own words are excluded individually, not as one string — a multi-word Y must not double as the second entity condition 3 requires.
   const yWords = new Set(y.split(/\s+/));
   const passageLower = input.passageText.toLowerCase();
   const hasSecondEntity = extractKeyTerms(input.claimText)
@@ -118,18 +90,10 @@ function normalizeForSubstringCheck(text: string): string {
   return text.toLowerCase().replace(PUNCTUATION_RE, "").replace(/\s+/g, " ").trim();
 }
 
-// Matches "..." or the single-character "…" the model sometimes uses to join two real, non-adjacent
-// excerpts from the same passage into one evidence string (a live-eval finding, 2026-08-07, g04:
-// "Germany invades Poland ... Japan formally surrenders", both real, ~1000 words apart in the
-// source's dated timeline). Splitting on it, not just stripping it, matters — PUNCTUATION_RE alone
-// would collapse the gap and require the two genuinely non-adjacent fragments to be contiguous.
+// Model sometimes joins two real, non-adjacent excerpts with "..." (g04) — split on it, not just strip it, so each fragment can be checked independently.
 const EVIDENCE_ELLIPSIS_RE = /\.{3,}|…/g;
 
-/**
- * Every fragment (split on an ellipsis) must independently be a real, contiguous substring of the
- * passage — still rejects a single fabricated fragment, doesn't weaken gate #1's hallucination
- * check, just stops requiring multi-excerpt evidence to be one unbroken span (D019 §2, live-eval).
- */
+/** Every fragment (split on an ellipsis) must independently be a real, contiguous substring — still rejects a fabricated fragment, just allows a non-contiguous multi-excerpt span (D019 §2). */
 function evidenceMatchesPassage(evidence: string, passageText: string): boolean {
   const normalizedPassage = normalizeForSubstringCheck(passageText);
   const fragments = evidence
@@ -171,14 +135,7 @@ export interface ClaimReasonOverlapResult {
   reason: "claim_reason_no_overlap" | null;
 }
 
-/**
- * Gate #1b — cross-claim contamination backstop, deterministic (real live-test finding, 2026-08-10:
- * a batched VERIFY call answered the Marie Curie claim with Camp David Accords' reasoning verbatim,
- * citing real — but topically unrelated — evidence resolved from Marie Curie's OWN passage, so
- * gate #1's verbatim-grounding check passed it clean). Reuses extractKeyTerms/scoreKeyTermMatches
- * (D026 §6) rather than a new heuristic — same fail-open convention: no key terms extracted from the
- * claim, nothing to check, gate abstains. `contradicted`-only, same asymmetric scope as gate #1.
- */
+/** Gate #1b — cross-claim contamination backstop: a batched VERIFY call answering one claim with another's reasoning still passes gate #1's grounding check. Reuses extractKeyTerms (D026 §6). */
 export function applyClaimReasonOverlapGate(input: ClaimReasonOverlapInput): ClaimReasonOverlapResult {
   if (input.verdict !== "contradicted" || !input.reason) {
     return { verdict: input.verdict, overridden: false, reason: null };
@@ -210,8 +167,7 @@ export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResu
   if (input.verdict !== "contradicted") {
     return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
   }
-  // Trimmed, not just truthy — a whitespace-only string ("  ") is truthy but carries no real
-  // content, same as null (reviewed finding: naive `!!input.evidence` misclassified it as grounded).
+  // Trimmed, not just truthy — a whitespace-only string is truthy but carries no real content.
   const hasContent = !!input.evidence?.trim();
   const evidenceOk = hasContent && evidenceMatchesPassage(input.evidence!, input.passageText);
   if (evidenceOk) {
@@ -229,10 +185,7 @@ export interface GateTwoInput {
   claimText: string;
   verdict: Verdict;
   evidence: string | null;
-  // D030 §3d — true only when `verdict === "contradicted"` was produced by reason_ordinal
-  // specifically; blocks a numeric MATCH from forcing "supported" over it. Every other caller
-  // omits this (undefined/falsy), leaving gate #2's existing raw-VERIFY-contradicted correction
-  // behavior (e.g. the g11 threshold cases) untouched.
+  // D030 §3d — true only when reason_ordinal produced the current "contradicted"; blocks a numeric MATCH from overriding it.
   contradictionProtectedFromForceSupported?: boolean;
 }
 
@@ -242,15 +195,8 @@ export interface GateTwoResult {
   reason: "threshold_comparison" | "equality_comparison" | null;
 }
 
-// A real live-eval failure (g11, 2026-08-06): "surpassed $3.5 trillion" against evidence stating
-// $3.57 trillion got marked contradicted — the equality-only comparison below treated "3.5 ≠ 3.57"
-// as confirming a mismatch, with no concept of threshold claims where a HIGHER evidence value means
-// the claim holds, not that it's wrong. `compare()`'s own `direction` field already carries what's
-// needed to fix this; it just wasn't used here before.
-// D026 §22/T064, real bug found in self-review: strict comparators ("exceeded") and inclusive
-// comparators ("at least") were previously grouped under one regex/one `holds` formula, so
-// evidence exactly equal to the claimed value wrongly satisfied "exceeded" — an exact match
-// only satisfies the INCLUSIVE wording, never the strict one. Split accordingly; mirrored for at_most.
+// g11: "surpassed $3.5T" vs evidence "$3.57T" was marked contradicted by equality-only comparison; compare()'s direction field fixes it.
+// D026 §22/T064 — strict ("exceeded") and inclusive ("at least") comparators split: an exact match only satisfies the inclusive wording.
 const AT_LEAST_STRICT_RE = /\b(surpassed|exceeded|topped|crossed|more than|greater than|over|above)\b/i;
 const AT_LEAST_INCLUSIVE_RE = /\bat least\b/i;
 const AT_MOST_STRICT_RE = /\b(less than|fewer than|under|below)\b/i;
@@ -266,8 +212,7 @@ function detectThreshold(claimText: string): ThresholdKind | null {
   return null;
 }
 
-// Reviewed finding — excludes a decimal ("2024.5") but not a sentence-ending period, and excludes
-// a preceding "$" so "$1998" isn't misread as a year (D026 §5).
+// Excludes a decimal ("2024.5") and a preceding "$" so "$1998" isn't misread as a year (D026 §5).
 const YEAR_RE = /(?<![\d.$])(?:19|20)\d{2}(?!\d)(?!\.\d)/g;
 
 // Gate #2's temporal-comparability guard — deliberately conservative, known duplication/cost tradeoffs. See D026 §5.
@@ -277,18 +222,13 @@ function yearsConflict(claimText: string, evidenceText: string): boolean {
   return (evidenceText.match(YEAR_RE) ?? []).some((y) => !claimYears.has(y));
 }
 
-// Reviewed finding (D026 §7) — extractNumericFact only ever returns its FIRST match; whole-sentence
-// evidence (T043) makes a second, unrelated number in the same sentence common. Abstain when
-// ambiguous rather than risk comparing against the wrong one, same precedent as yearsConflict.
+// extractNumericFact only returns its FIRST match; abstain when a second, unrelated number is also present (D026 §7).
 const NUMERIC_TOKEN_RE = /\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%/g;
 function hasAmbiguousNumericEvidence(evidenceText: string): boolean {
   return (evidenceText.match(NUMERIC_TOKEN_RE) ?? []).length > 1;
 }
 
-/**
- * Gate #2 — numeric normalization/comparison in code (D019 §2, T004). Row/table-matching and full
- * structured period detection are out of scope, see T004/D026 §5 for why.
- */
+/** Gate #2 — numeric normalization/comparison in code (D019 §2). Row/table-matching and structured period detection are out of scope (T004/D026 §5). */
 export function applyNumericGate(input: GateTwoInput): GateTwoResult {
   if (!input.evidence) return { verdict: input.verdict, overridden: false, reason: null };
 
@@ -307,20 +247,12 @@ export function applyNumericGate(input: GateTwoInput): GateTwoResult {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
 
-  // Reviewed finding (D030 §3d, 2026-08-21): a numeric MATCH must not excuse a genuine mismatch
-  // reason_ordinal already found on a DIFFERENT fact in the same claim ("the third trial showed
-  // 40%" vs. reason "the first trial showed 40%" — same %, different ordinal) — but unlike
-  // applyYearGate's blanket canForceSupported, this can't block EVERY existing "contradicted": gate
-  // #2's own tests (g11, 2026-08-06) rely on correcting a raw, ungated VERIFY "contradicted" to
-  // "supported" when the actual numbers satisfy the claim. Only a contradiction reason_ordinal
-  // itself produced is protected — narrowly scoped to that one gate, not "contradicted" in general.
+  // D030 §3d — a numeric MATCH must not excuse a mismatch reason_ordinal already found; scoped narrowly, not a blanket block like applyYearGate's.
   const canForceSupported = input.verdict !== "supported" && !input.contradictionProtectedFromForceSupported;
 
   const threshold = detectThreshold(input.claimText);
   if (threshold) {
-    // direction is sign(claim - source). Strict wording ("exceeded") only holds on a real
-    // difference (direction !== 0 in the required sense); inclusive wording ("at least") also
-    // holds on an exact match (direction === 0) — see the D026 §22/T064 comment above detectThreshold.
+    // direction is sign(claim - source). Strict wording only holds on a real difference; inclusive wording also holds on an exact match.
     const holds =
       threshold === "at_least_strict"
         ? comparison.direction < 0
@@ -361,17 +293,13 @@ export interface YearGateResult {
   reason: "year_role_match" | "year_role_mismatch" | null;
 }
 
-// A near-identical month list exists in audit/table-parse.ts's DATE_RE (table-column detection, a
-// different concern) — kept separate deliberately rather than a new cross-orchestrator import for
-// one static array, matching this file's existing preference not to widen its coupling to `audit`.
+// Kept separate from audit/table-parse.ts's near-identical month list — avoids widening coupling to `audit` for one static array.
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
 const MONTH_ALT = MONTH_NAMES.join("|");
-// Wider than gate #2's own YEAR_RE (19xx/20xx only) — deliberately scoped to just this gate's
-// regexes, not a change to YEAR_RE's existing behavior elsewhere in this file. Birth years for
-// people-claims (the motivating real case) commonly fall in the 1700s/1800s.
+// Wider than gate #2's YEAR_RE — birth years for people-claims commonly fall in the 1700s/1800s.
 const YEAR_TOKEN = "(?:1[5-9]\\d{2}|20\\d{2})";
 const FULL_DATE_MDY_RE = new RegExp(`\\b(${MONTH_ALT})\\s+(\\d{1,2}),?\\s+(${YEAR_TOKEN})\\b`, "i");
 const FULL_DATE_DMY_RE = new RegExp(`\\b(\\d{1,2})\\s+(${MONTH_ALT})\\s+(${YEAR_TOKEN})\\b`, "i");
@@ -390,8 +318,7 @@ function extractFullDate(text: string): FullDate | null {
   return null;
 }
 
-// Generalized role/year extractor (review finding on the design plan) — a list, not a fixed
-// {birth, death} shape, so a future role (founding, publication) is additive, not a reshape.
+// A list, not a fixed {birth, death} shape, so a future role is additive.
 interface TemporalRoleFact {
   role: string;
   year: string;
@@ -401,9 +328,7 @@ interface TemporalRoleFact {
 // bio-range convention (EXTRACT's prompt already calls this shape out for birth/death splitting).
 const BIRTH_DEATH_RANGE_RE = new RegExp(`\\(\\s*(${YEAR_TOKEN})\\s*[–-]\\s*(${YEAR_TOKEN})\\s*\\)`);
 
-// `established` folded into `founding` (same concept, needs to match the same role string on
-// both sides) — `reclassified`/`launched`/`released` are new roles, added after a real live-run
-// miss (Pluto reclassification year) where the gate abstained entirely for want of a keyword.
+// `established` folded into `founding`; `reclassified`/`launched`/`released` added after a Pluto-reclassification miss.
 const ROLE_KEYWORDS: Array<{ re: RegExp; role: string }> = [
   { re: /\b(?:born|birth)\b/i, role: "birth" },
   { re: /\b(?:died|death|passed away)\b/i, role: "death" },
@@ -414,23 +339,12 @@ const ROLE_KEYWORDS: Array<{ re: RegExp; role: string }> = [
   { re: /\b(?:released|release)\b/i, role: "released" },
 ];
 
-// How far (chars) a role keyword may sit from the year it anchors. Widened from 40 to 80 (real
-// live-run finding, 2026-08-18) to reach the Pluto claim's 74-char keyword-to-year gap. Review
-// finding: 100 was tried first and reproduced a live regression — "nearest year wins" only
-// protects against a second year for the SAME entity, not a nearer year belonging to a genuinely
-// different one (e.g. "...was born in Andernach... while his brother was born in 1925", 93 chars
-// away) — 80 stays under that distance while still covering the real Pluto case, with margin.
+// How far (chars) a role keyword may sit from the year it anchors — widened to 80 to reach the Pluto claim's 74-char gap; 100 reproduced a live regression on a different-entity year nearby.
 const ROLE_YEAR_WINDOW = 80;
-// \b on both sides (review finding) — without it this matched a 4-digit year-shaped substring
-// inside a longer digit run (a record/page number near a role keyword), same class of bug YEAR_RE
-// (line 259) already guards against elsewhere in this file.
+// \b on both sides — without it this matched a year-shaped substring inside a longer digit run.
 const YEAR_TOKEN_RE_G = new RegExp(`\\b${YEAR_TOKEN}\\b`, "g");
 
-// Known limitation, accepted (review finding): only the FIRST occurrence of each role keyword/
-// range is used, so a text naming multiple people (subject and a relative, each with their own
-// birth/death) could anchor to the wrong one. `sameEntity`'s proper-noun overlap check is the
-// mitigation, not a full fix — genuine multi-entity disambiguation is out of scope, same D026 §5
-// precedent this file already follows for not over-building per-fact attribution.
+// Known, accepted limitation: only the FIRST occurrence of each role keyword is used, so multiple people in one text could anchor to the wrong one. sameEntity's overlap check mitigates, doesn't fully fix.
 function extractTemporalRoleFacts(text: string): TemporalRoleFact[] {
   const facts: TemporalRoleFact[] = [];
   const rangeMatch = BIRTH_DEATH_RANGE_RE.exec(text);
@@ -445,9 +359,7 @@ function extractTemporalRoleFacts(text: string): TemporalRoleFact[] {
     const windowEnd = Math.min(text.length, kwMatch.index + kwMatch[0].length + ROLE_YEAR_WINDOW);
     const window = text.slice(windowStart, windowEnd);
     const keywordOffsetInWindow = kwMatch.index - windowStart;
-    // Nearest year to the keyword wins, not just the first one in the window — a window can
-    // legitimately contain a second, farther role's year too (e.g. "born in 1895 and died in
-    // 1948" — the "born" keyword's window also reaches "1948").
+    // Nearest year wins, not just the first in the window — a window can legitimately contain a farther role's year too.
     let nearest: { year: string; distance: number } | null = null;
     for (const yearMatch of window.matchAll(YEAR_TOKEN_RE_G)) {
       const distance = Math.abs(yearMatch.index! - keywordOffsetInWindow);
@@ -458,33 +370,18 @@ function extractTemporalRoleFacts(text: string): TemporalRoleFact[] {
   return facts;
 }
 
-// Coarse entity guard — abstains when claim and evidence name disjoint proper nouns, so a
-// coincidentally-matching date for a clearly different subject doesn't force a verdict either way.
-// Known limitation, accepted: two different people sharing a surname (e.g. father/son) still
-// overlap here and won't be caught — full entity linking is out of scope (D026 §5's own precedent:
-// overly clever per-fact attribution was tried elsewhere in this file and rejected as fragile).
+// Coarse entity guard — abstains when claim and evidence name disjoint proper nouns. Known,
+// accepted gap: two people sharing a surname (father/son) still overlap and won't be caught.
 const PROPER_NOUN_RE = /\b[A-Z][a-zA-Z'-]+\b/g;
-// Review finding — month names are capitalized proper-noun-shaped tokens too, and this gate's own
-// claim/evidence pairs are date-heavy by construction, so without excluding them a shared month
-// name alone (not an actual shared entity) was enough to defeat this guard.
+// Month names are capitalized proper-noun-shaped tokens too, and these date-heavy pairs would otherwise defeat this guard on a shared month alone.
 const SENTENCE_START_STOPWORDS = new Set(
   ["the", "he", "she", "they", "his", "her", "their", "a", "an", "in", "on", "at", "this", "that", "its", ...MONTH_NAMES].map((w) => w.toLowerCase())
 );
 
 function properNounWords(text: string): Set<string> {
   const words = text.match(PROPER_NOUN_RE) ?? [];
-  // Strip a trailing singular possessive ('s) — real prose names an entity once and then refers
-  // back to it possessively ("Nauru's population"), and without this a bare "Nauru" in the claim
-  // never set-matches "nauru's" in the evidence even though they're the same entity (found via
-  // g17's new applySubjectEntityGate, a far more frequent caller of sameEntity than applyYearGate's
-  // narrow original use).
-  // Known, accepted limitation (review finding): a PLURAL possessive ("the Wrights' aircraft")
-  // never reduces further to the singular root "wright" — PROPER_NOUN_RE's own \b already drops the
-  // bare trailing apostrophe before this code sees it, and even a source-text lookahead can't fix
-  // it: "Kansas'" (a singular name that already ends in s) and "Wrights'" (a pluralized surname)
-  // are indistinguishable from the captured text alone, so "strip the trailing s" would silently
-  // break the s-ending-singular case to fix the pluralized-surname one. No regex-only fix disambiguates
-  // this; same class of accepted gap as this file's own "two people sharing a surname" note below.
+  // Strips a trailing singular possessive ('s) so "Nauru's" set-matches bare "Nauru" (g17). Plural
+  // possessives ("Wrights'") are a known, accepted gap — "Kansas'" vs "Wrights'" are indistinguishable text-only.
   return new Set(
     words
       .map((w) => w.toLowerCase().replace(/'s?$/, ""))
@@ -492,10 +389,7 @@ function properNounWords(text: string): Set<string> {
   );
 }
 
-// Shared by both detectors (review finding — Detector 1 previously had no entity guard at all,
-// letting two unrelated subjects that coincidentally share a month+day force a verdict). Abstains
-// only when BOTH sides name at least one proper noun and they share none — a text with no
-// capitalized names at all (pronoun-only) is left to the year/date comparison alone.
+// Shared by both detectors. Abstains only when BOTH sides name at least one proper noun and share none — pronoun-only text is left to the date comparison alone.
 function sameEntity(claimText: string, evidenceText: string): boolean {
   const claimNames = properNounWords(claimText);
   const evidenceNames = properNounWords(evidenceText);
@@ -503,27 +397,15 @@ function sameEntity(claimText: string, evidenceText: string): boolean {
   return [...claimNames].some((n) => evidenceNames.has(n));
 }
 
-// Only gates the forced-`supported` direction (review finding) — a wrong value is wrong
-// regardless of how confidently the source states it, so `contradicted` is never held back by this.
+// Only gates the forced-`supported` direction — a wrong value is wrong regardless of hedging, so `contradicted` is never held back by this.
 const HEDGE_RE = /\b(reportedly|allegedly|disputed|unclear|unreliable|unconfirmed|some sources)\b/i;
 
-/**
- * Gate #2b — deliberately narrower than D026 §5's rejected generic "any differing year" approach:
- * only acts when claim and evidence share a recognizable structural marker (identical month+day,
- * or the same temporal role — birth, death, ...) tying two numbers to the SAME fact, never bare
- * year proximity/set-overlap guessing. `applyNumericGate`'s own `extractNumericFact` only
- * recognizes currency/percent (shared with the `audit` orchestrator) — bare years never reach it.
- */
+/** Gate #2b — narrower than a generic "any differing year": only acts on a shared structural marker (month+day, or same temporal role), never bare year proximity. extractNumericFact never reaches bare years. */
 export function applyYearGate(input: YearGateInput): YearGateResult {
   if (!input.evidence) return { verdict: input.verdict, overridden: false, reason: null };
   const evidence = input.evidence;
 
-  // Review finding — the forced-`supported` direction must also leave an existing `contradicted`
-  // alone: a date MATCH doesn't excuse a genuine mismatch gate #2 (or an earlier gate) already
-  // found on a DIFFERENT fact in the same claim (e.g. a wrong dollar figure alongside a correct
-  // founding date) — reproduced live before this fix, gate #2b was silently undoing gate #2's own
-  // correct contradiction. The forced-`contradicted` direction is unconditional, as before: a
-  // wrong date is wrong regardless of what an already-`contradicted` verdict says about it too.
+  // The forced-`supported` direction must leave an existing `contradicted` alone — a date MATCH doesn't excuse a mismatch on a different fact in the same claim. Forced-`contradicted` stays unconditional.
   const canForceSupported = (verdict: Verdict) => verdict !== "supported" && verdict !== "contradicted";
 
   if (!sameEntity(input.claimText, evidence)) {
@@ -586,11 +468,7 @@ export interface ReasonYearGateResult {
   reason: "reason_year_mismatch" | null;
 }
 
-// Window sized off a real captured VERIFY reason ("None of the provided sentences mention the year
-// 2005...", ~48 chars from "None" to "2005") with margin — same measure-then-set approach as
-// ROLE_YEAR_WINDOW above.
-// "n't" has no leading \b (contractions have no word boundary before 'n') — same fix
-// NEGATED_CONTRADICTION_RE already applies (verify-reconcilers.ts) for the identical reason.
+// Window sized off a real captured VERIFY reason with margin. "n't" has no leading \b (contractions), same fix NEGATED_CONTRADICTION_RE applies.
 const REASON_YEAR_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
 const REASON_YEAR_NEGATION_WINDOW = 60;
 
@@ -616,8 +494,7 @@ function isReasonYearNegated(reason: string, yearIndex: number): boolean {
   return REASON_YEAR_NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
 }
 
-// Rough sentence spans with offsets, just to bound the locality check below — doesn't split mid-
-// number (see isSentenceTerminator); doesn't need to handle abbreviations etc. perfectly otherwise.
+// Rough sentence spans to bound the locality check below — doesn't split mid-number, no need to handle abbreviations perfectly.
 function reasonSentenceSpans(reason: string): Array<{ text: string; start: number; end: number }> {
   const spans: Array<{ text: string; start: number; end: number }> = [];
   let start = 0;
@@ -636,19 +513,7 @@ function reasonSentenceSpans(reason: string): Array<{ text: string; start: numbe
   return spans;
 }
 
-/**
- * Reason/verdict consistency check (external review, 2026-08-18) — NOT a second fact-verification
- * pass. `applyYearGate`'s `ROLE_KEYWORDS` whitelist proved unable to keep up with unbounded evidence
- * phrasing (tasks.md Phase 35 revert); this instead checks whether VERIFY's own `reason` names a
- * different year for the claim's fact than the claim asserts, independent of whether the reason uses
- * applyReasonConsistencyGate's specific contradiction vocabulary.
- *
- * Locality guard: an alternative year only counts when its own sentence shares >=2 of the claim's
- * key terms (extractKeyTerms/scoreKeyTermMatches — same helper applyImplicitNegationGate already
- * uses) — otherwise a reason mentioning an unrelated year for a different fact ("...founded in 1919")
- * would be wrongly treated as contradicting this claim. `contradicted`-only and year-only, matching
- * this file's existing narrow-gate discipline (see applyReasonConsistencyGate above).
- */
+/** Reason/verdict check, not a second fact-verification pass: catches a different year in VERIFY's own `reason` than the claim asserts. Locality guard requires >=2 shared claim key terms in that sentence. */
 export function applyReasonYearGate(input: ReasonYearGateInput): ReasonYearGateResult {
   if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
     return { verdict: input.verdict, overridden: false, reason: null };
@@ -699,16 +564,9 @@ export interface ReasonOrdinalGateResult {
   reason: "reason_ordinal_mismatch" | null;
 }
 
-// ORDINAL_WORDS, ORDINAL_RE_G, ordinalAnchorWords, anchorsOverlap moved to lib/instance-selector.ts
-// (D030 §3f, imported above as ordinalAnchorWords/anchorsOverlap/ORDINAL_WORDS/ORDINAL_RE_G) — same
-// anchor-window machinery, now shared with the new retrieval selector signal instead of drifting
-// into two copies. Behavior here is unchanged.
+// ORDINAL_WORDS/ORDINAL_RE_G/ordinalAnchorWords/anchorsOverlap moved to lib/instance-selector.ts (D030 §3f) — shared, behavior unchanged.
 
-// Same clause-scoped negation approach as isReasonYearNegated above (reuses lastClauseBoundary).
-// Window matches the year gate's own 60-char constant rather than a smaller guess — this gate has
-// no live-captured VERIFY reason to measure a real window off yet (T010, blocked on deployment
-// access), and there's no principled reason to use a NARROWER window than the sibling gate that
-// HAS been validated against real captured data. Revisit once real ordinal-mismatch reasons exist.
+// Same clause-scoped negation approach as isReasonYearNegated (reuses lastClauseBoundary); window matches the year gate's own 60-char constant.
 const ORDINAL_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
 const ORDINAL_NEGATION_WINDOW = 60;
 
@@ -719,22 +577,7 @@ function isOrdinalNegated(reason: string, matchIndex: number): boolean {
   return ORDINAL_NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
 }
 
-/**
- * Reason/verdict consistency gate — ordinal/sequence-position mismatch (D030, tasks.md T002/T003).
- * NOT a token-swapped copy of applyReasonYearGate (research.md Decision 2): an ordinal word
- * ("first", "second"...) is not inherently a fact the way a year is — it's equally likely to be
- * discourse structure ("First, the source says X. Second, it says Y.") as a factual attribute of
- * an event, so extraction anchors on the noun phrase the ordinal attaches to in the CLAIM text
- * itself, not a fixed role-noun vocabulary — the exact abstraction that already failed twice in
- * this codebase (the deleted applyOrdinalGate's ROLE_KEYWORDS, and the sibling year-gate's own
- * ROLE_KEYWORDS whitelist miss on "redesignated"/"downgraded").
- *
- * Confirmation takes precedence over contradiction, deliberately (data-model.md §1's "does NOT
- * fire" / "abstains — ambiguous" matrix rows): if the claim's own ordinal+anchor combination
- * appears anywhere in `reason`, un-negated, that's sufficient to leave the verdict alone — even if
- * a different ordinal on the same anchor also appears elsewhere in the same reason (a reason can
- * legitimately discuss more than one instance of the same anchored noun).
- */
+/** Reason/verdict gate for ordinal/sequence-position mismatch (D030 §3a) — anchors on the claim's own noun phrase, not a fixed role-noun vocabulary. Confirmation takes precedence over contradiction. */
 export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrdinalGateResult {
   if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
     return { verdict: input.verdict, overridden: false, reason: null };
@@ -790,13 +633,7 @@ export interface SubjectEntityGateResult {
   reason: "subject_entity_mismatch" | null;
 }
 
-/**
- * Deterministic backstop for g17 (real prod bug: unrelated real sources coincidentally matching a
- * claim's bare number/generic noun got graded supported). Reuses sameEntity()'s proper-noun-set
- * intersection above — the same trusted mechanism applyYearGate already runs on, not a new fixed
- * word list. Downgrades supported/partially_supported only, matching D019's asymmetry: this is a
- * false-miss risk (a real match happens to share no proper noun), never a false accusation.
- */
+/** Deterministic backstop for g17 — downgrades supported/partially_supported when evidence shares no proper noun with the claim's subject (D030). */
 export function applySubjectEntityGate(input: SubjectEntityGateInput): SubjectEntityGateResult {
   if (input.verdict !== "supported" && input.verdict !== "partially_supported") {
     return { verdict: input.verdict, overridden: false, reason: null };
@@ -804,8 +641,7 @@ export function applySubjectEntityGate(input: SubjectEntityGateInput): SubjectEn
   if (!input.evidence) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
-  // Guards undefined too, not just "" — tests aren't typechecked (tsconfig excludes tests/), so
-  // fixtures predating this field hit this at runtime.
+  // Guards undefined too, not just "" — untyped test fixtures can hit this at runtime.
   const anchor = input.subjectEntity && input.subjectEntity.trim().length > 0 ? input.subjectEntity : input.claimText;
   if (sameEntity(anchor, input.evidence)) {
     return { verdict: input.verdict, overridden: false, reason: null };
