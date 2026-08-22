@@ -369,10 +369,120 @@ exact live-captured appositive phrasing above. One pre-existing lib-level fixtur
 changed from abstain to a (harmless) match now that "came" is found behind it — updated, not a
 production-behavior regression (no `gates.test.ts` case relied on that shape).
 
-**Still open**: one of the 3 live runs had no ordinal token in the reason at all ("the longest flight
-... covered 852 feet" — no "fourth"), a pure superlative with nothing to anchor on — this is §3e's
-already-accepted, deliberately-unfixed gap, not something this anchor-window fix (or any anchor-window
-fix) can reach, since there's no ordinal match to extend anchoring from in the first place.
+**Still open** (addressed in §3g): one of the 3 live runs had no ordinal token in the reason at all
+("the longest flight ... covered 852 feet" — no "fourth"), a pure superlative with nothing to anchor
+on — this is §3e's already-accepted, deliberately-unfixed gap, not something this anchor-window fix
+(or any anchor-window fix) can reach, since there's no ordinal match to extend anchoring from in the
+first place.
+
+**§3g — the superlative gap closed in the consistency classifier, not the ordinal gate.**
+Two live eval runs 10 minutes apart on 2026-08-22 (one red, one green, identical code) made the
+non-determinism explicit: VERIFY answered the same claim with "the **fourth** and final flight covered
+852 feet" in one run (`applyReasonOrdinalGate` fires → `contradicted`, green) and "the **longest**
+flight covered 852 feet" in the other (no ordinal token → gate abstains → `supported` stands, red).
+Same code, same claim; only VERIFY's word choice differed.
+
+**Finding:** the path that *should* have caught the red run already exists and already runs on it.
+`checkReasonVerdictConsistency` (D025 §2) fires on every non-`contradicted` verdict, including this
+`supported` one; a `false` answer sets `applyCounterfactIgnoredGate`'s flag, which raises an
+ERROR diagnostic, which sets `needsRetry`, which forces a VERIFY retry. The whole chain was wired and
+already paid for. It didn't fire because of what its prompt asked: *"a reason that states or implies a
+fact **conflicting** with the claim does NOT support 'supported'"*. Read strictly — and the prompt
+also forbids using outside knowledge — "the longest flight covered 852 feet" does **not** conflict
+with "the first flight covered 852 feet". Nothing in the text says the first flight isn't the longest,
+and both cite 852. `consistent: true` was the correct answer to the question being asked. The prompt
+had no rule about the reason attributing the claim's fact to a *differently-identified instance*.
+
+**Fix**: one rule added to `prompts/grounnel/consistency-check/system.json` (v1.2.0). It fires **only**
+when the claim picks out one member of a set — an ordinal ("the first flight") or a ranking ("the
+longest flight") — and treats a member as *different* only when the reason selects by a criterion the
+claim did not use (a ranking where the claim used a position, or the reverse).
+
+The first draft was materially broader — it triggered on "ordinal, superlative, **date, name, or
+position**" and carved out only *shortenings* of the claim's subject. A pre-commit review found that
+draft would have produced false positives across the existing golden set, which is why the scope above
+is this narrow:
+
+It took **two review rounds** to land, and both drafts were wrong in opposite directions — worth
+recording, because the failure mode is symmetric and easy to repeat:
+
+**Draft 1, too broad.** Triggered on "ordinal, superlative, **date, name, or position**" and carved out
+only *shortenings* of the claim's subject. It would have flagged ordinary co-reference across the
+existing golden set — `g08-napoleon-birthplace` ("born on Corsica" vs a reason saying "born in
+Ajaccio"), `g01-eiffel-tower` ("completed in 1889" vs "dedicated on March 31, 1889"), and most
+sharply `g20-apple-earnings-year-over-year`, whose prior-year-quarter claims were added *the same day*
+by D031's Gap A fix and would have broken while `g17` got fixed.
+
+**Draft 2, too narrow.** Overcorrecting, it defined a different member as a *criterion-type mismatch*
+("a ranking where the claim used a position, or the reverse") and scoped that exclusively with "only
+when". Because the clause was exclusive, it affirmatively **licensed** the very cases this gap is
+about — worse than saying nothing, since the model previously could still fall back on the generic
+conflicting-fact rule:
+
+| Reason phrasing (claim says "the first flight") | Draft 2 verdict | Why it was wrong |
+|---|---|---|
+| "the **fourth** flight" | same member → `true` | both positional, so no criterion mismatch |
+| "the **final** flight" | same member → `true` | positional by definition (§3e says so) — and `SEQUENCE_SELECTOR_WORDS` excludes `final`, so the deterministic gate abstains too: both layers miss it |
+| "the **1904** flight" | same member → `true` | date isn't in the two-item criterion list |
+| "**Wilbur's** flight" | same member → `true` | person isn't in the two-item criterion list |
+
+**Shipped (draft 3)** inverts the logic: the same-member list is exhaustive (only re-wordings of the
+claim's *own* selection — synonyms, aliases/abbreviations, period formats, a narrower name inside the
+claim's own), and *anything else* is a different member, with the four rows above named explicitly as
+examples. The trigger is also re-cut on a cleaner axis: the rule fires only when an ordinal/ranking
+**selects which thing the claim is about** ("the first flight covered 852 feet"), and is explicitly
+ignored when the ranking **is what the claim asserts** ("Everest is the tallest mountain"). That second
+clause is what keeps `g02-mount-everest` safe — its graded claim is `tallest mountain on Earth`, a
+ranking-as-assertion, which draft 2 would still have exposed to a false flag on a reason phrased
+"Everest ranks first in elevation" (position vs ranking).
+
+The "judge only how each names the thing, never whether they coincide in reality" sentence from draft 1
+was dropped in round 1: combined with the prompt's existing no-outside-knowledge instruction, it left
+the model no licensed route to accept *any* co-referring description.
+
+**Why this lever and not another gate**: it generalizes past ordinals in one shot ("longest", "final",
+"last", "the 1904 flight", "Wilbur's flight" all fall under one rule), costs nothing (the classifier
+call already happens), needs no new gate, and does not touch `ORDINAL_WORDS` — leaving §3e's revert
+intact rather than relitigating it. It follows AGENTS.md rule 12 (LLM judgment for a semantic check)
+rather than adding the vocabulary list §3e/§3f both rejected. Distinct from §4's rejected
+"general-purpose `checkClaimReasonConsistency` classifier": that bullet rejects *replacing* the
+deterministic per-type gates with one catch-all LLM call; this adds a rule to the classifier that
+already exists and already runs, and leaves every `applyReason*Gate` in place.
+
+**Contrast with the attempt that already failed** (§1): D030 originally tried a `SEQUENCE POSITION`
+section in the **VERIFY** prompt and it failed live 2/2. That asked VERIFY to self-police while
+simultaneously reading passages, choosing citations, and assigning a verdict. This targets a
+dedicated single-purpose classifier that sees only claim + reason + verdict and is already making
+exactly this class of judgment for other mismatch types.
+
+**Known sharp edge this widens** (found in review, not introduced by it): `checkReasonVerdictConsistency`
+has four call sites in `pipeline.service.ts`, and **only one of them is recoverable**. In
+`processVerifyResults` a `consistent: false` costs a VERIFY retry. In the other three —
+`reconcileContradictedVerdicts`, `guardEscalatedContradictionReversals`, and `checkRetryContradiction`
+— it writes `unsupported` immediately, with no retry. So a false positive from any rule in this prompt
+does not merely waste work on three of four paths: it flips a verdict, unrecoverably.
+
+That asymmetry predates this change and applies to every rule in the prompt equally. But a rule that
+widens the `false` surface makes it more reachable, which — alongside the golden-set exposure above —
+is why the shipped scope is as narrow as it is. Giving the three non-recoverable paths their own retry
+(or their own narrower prompt) is the real fix and is **not** done here — logged as follow-up.
+
+**Verification status — NOT yet verified.** No unit test backs this, deliberately: any such test would
+have to hardcode the classifier's answer through a mock, exercising none of what actually changed (the
+prompt) while duplicating the plumbing coverage the existing D025 case at `pipeline-service.test.ts`
+already provides. CLAUDE.md's coverage rule names that shape directly ("only add one when the bug is in
+orchestration control flow itself... not prompt/LLM behavior"), and the orchestration here was never
+broken.
+
+One throwaway mock-based test was written during investigation and discarded, but it did establish a
+fact worth recording: mutating its mock classifier to answer `consistent: true` reproduced the red run
+exactly — no gate fired, no retry, verdict left `supported` — confirming the plumbing carries a `false`
+answer end to end, and that the *only* missing link was the prompt's judgment.
+
+Whether the real classifier now answers `false` on this phrasing is a live question, and the shipped
+rule has never been run against a model. `g17` flips non-deterministically, so this needs **2–3
+consecutive green live runs** before it counts as fixed — one green run proves nothing, as the
+2026-08-22 red/green pair showed. Both prior drafts looked correct on paper and were not.
 
 ## §4. Explicitly not doing
 
