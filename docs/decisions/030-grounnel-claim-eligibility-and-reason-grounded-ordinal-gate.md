@@ -165,7 +165,7 @@ Conservative policy unchanged: only excludes on a clear non-checkable call with 
 any uncertainty still goes to search — the cost of wrongly excluding a real claim is worse than the
 cost of searching one that turns out unverifiable anyway. Existing regexes stay as-is (cheap, already
 reliable for their narrow categories); the classifier is additive, not a replacement. Full shape in
-`specs/012-grounnel-ordinal-eligibility-gates/data-model.md` §2.
+`src/orchestrators/grounnel/claim-eligibility.ts`.
 
 **§3c — T034 retry can erase a gate-forced contradiction.** Real live-eval capture (2026-08-20,
 g17): `reason_ordinal` correctly forced a verdict to `contradicted` (reason named "the fourth

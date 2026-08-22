@@ -1,14 +1,13 @@
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan:
-specs/012-grounnel-ordinal-eligibility-gates/plan.md
+Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix) is implemented and
+live-verified. The ADR is the authoritative record — read it before changing this area:
 
-Supporting artifacts:
-- specs/012-grounnel-ordinal-eligibility-gates/spec.md — feature specification (2 user stories, 10 functional requirements)
-- specs/012-grounnel-ordinal-eligibility-gates/research.md — technical decisions: reason-grounded (not evidence-grounded) ordinal extraction, claim-anchored attachment over a global whitelist, no generic fact-gate abstraction yet, LLM classifier additive to the existing regex opinion filter
-- specs/012-grounnel-ordinal-eligibility-gates/data-model.md — applyReasonOrdinalGate input/result shape + validation matrix, classifyClaimVerifiability result shape + policy, 4-file persistence union-type extension (deferred until wired in)
-- specs/012-grounnel-ordinal-eligibility-gates/quickstart.md — build order, validation commands, live re-verification steps, "done" definition
-- docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md — ADR (authoritative decision record)
+- docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md
+- specs/012-grounnel-ordinal-eligibility-gates/spec.md — original feature specification
+- specs/012-grounnel-ordinal-eligibility-gates/tasks.md — execution log
+
+(plan.md/research.md/data-model.md/quickstart.md were pre-implementation planning scaffolding,
+removed once superseded by the ADR and the shipped code/tests.)
 
 Prior plan (008-b2b, audit mode) remains at specs/008-b2b/ if still relevant to work in progress there.
 <!-- SPECKIT END -->
