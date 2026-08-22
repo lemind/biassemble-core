@@ -397,16 +397,30 @@ the classifier through the real HTTP path.
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-- [ ] T019 [P] Confirm `verify/system.json` (`MULTIPLE SOURCES` section) is untouched — this is a
+- [x] T019 [P] Confirm `verify/system.json` (`MULTIPLE SOURCES` section) is untouched — this is a
       design-invariant check, not cosmetic polish: this feature deliberately contains the ordinal
       bug's symptom downstream (D030 §2) instead of touching the prompt, and this confirms that
       choice wasn't accidentally violated (D030 §4).
-- [ ] T020 [P] Record the current test-failure baseline (`pnpm test:run`), then run `pnpm typecheck`
+      **Done (2026-08-21)**: `git diff main...HEAD -- src/prompts/verify/system.json` is empty —
+      confirmed untouched across the whole branch.
+- [x] T020 [P] Record the current test-failure baseline (`pnpm test:run`), then run `pnpm typecheck`
       and the full suite again after this feature's changes — confirm no *new* failures beyond that
       recorded baseline. Don't hard-code "16 pre-existing failures" from `CLAUDE.md` as a fixed
       target; that count can go stale as the codebase evolves independently of this feature.
-- [ ] T021 Run `/code-review` at this repo's usual effort level across the full diff before merge
+      **Done (2026-08-21)**: typecheck clean; full suite 87 files, 1108 passed, 1 pre-existing todo,
+      **zero failures** (current baseline is green, better than the stale "16 pre-existing" note).
+- [x] T021 Run `/code-review` at this repo's usual effort level across the full diff before merge
       (plan.md Constitution Check references `code-review-and-quality`).
+      **Done (2026-08-21)**: `/code-review high main...HEAD` (31 files, +3088/-98). Found and fixed
+      across 2 rounds: (1) `ORDINAL_RE_G` hyphen-compound false positive ("second-to-last" misread
+      as ordinal "second"), narrowed in round 2 after the first fix over-blocked genuine hyphenated
+      ordinals ("first-place"); (2) `classifyEligibility` (background, post-202) not marking the run
+      `failed` on a write exception, leaving it stuck at its prior status forever. Commits `b7dfc4b`,
+      `dd83095`. Re-verified clean with a targeted re-review + a low-effort pass. Backlog (documented,
+      not fixed): duplicate negation-check code (`isOrdinalNegated`/`isReasonYearNegated`), N-call
+      eligibility classifier vs a batched call, `protectedContradictionClaimIds` threaded through 4
+      signatures instead of living on the claim record, D029 self-heal not covering the eligibility
+      phase.
 
 ---
 
