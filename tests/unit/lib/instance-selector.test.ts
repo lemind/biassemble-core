@@ -17,8 +17,16 @@ describe("extractInstanceSelector (D030 §3f) — which occurrence of a repeated
     expect(extractInstanceSelector("The first flight was shorter than the fourth flight.")).toBeNull();
   });
 
-  it("abstains when there's no real content word after the selector", () => {
-    expect(extractInstanceSelector("This came first.")).toBeNull();
+  it("abstains when there's no real content word on either side of the selector", () => {
+    expect(extractInstanceSelector("The first of it.")).toBeNull();
+  });
+
+  it("finds a backward anchor when the noun precedes the selector and nothing follows it", () => {
+    // D030 §3f review fix: "This came first" now finds "came" behind the selector — no longer a
+    // true no-anchor case since backward lookup was added (see the g17 appositive fix below).
+    const sel = extractInstanceSelector("This came first.");
+    expect(sel?.selector).toBe("first");
+    expect(sel?.anchor.size).toBeGreaterThan(0);
   });
 
   it("abstains on a ranking descriptor (\"longest\") — not a sequence selector", () => {

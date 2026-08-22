@@ -348,6 +348,32 @@ prompt or any gate.
 for the cases where VERIFY's reason does surface a selector mismatch even with today's retrieval,
 which the 5 captured runs show happens some of the time.
 
+**P3 result (2026-08-22, live, 3 runs post-P2-deploy): 1/3 `contradicted`, 2/3 still `supported`.**
+Not the S2 scenario the plan anticipated — VERIFY's own reasoning was correct in all 3 runs (P2's
+retrieval fix worked: the disambiguating fourth-flight fact reached VERIFY every time, not ~60-70%
+of the time as before). The gap was narrower: `applyReasonOrdinalGate`'s anchor window only looked
+*forward* from the ordinal. Run 1's reason phrased it "the fourth and final **flight**" (noun after
+the ordinal — forward window catches it, fires correctly). Runs 2/3 phrased it "the **flight**, the
+fourth and final **one**" — the anchor noun BEFORE the ordinal, in a comma-joined appositive, with
+the placeholder "one" standing in for it afterward; the forward-only window found only "final"/"one",
+neither overlapping the claim's own "flight" anchor, so the gate abstained.
+
+**Fix**: `anchorWords` (`lib/instance-selector.ts`) now also scans backward from the selector/ordinal
+to the nearest content word(s), deliberately crossing clause (comma) boundaries — unlike the forward
+window — stopping only at the sentence boundary, since the antecedent is often in a separate,
+comma-joined appositive. Additive union with the existing forward window, never a replacement — a
+reason phrased noun-after-ordinal (the common case, everything in §3a's matrix) is completely
+unaffected. Verified against the full existing D030 §3a–§3e test suite (all passing, including T009's
+10/10 held-out recall and the zero-false-downgrade requirement) plus a new regression test using the
+exact live-captured appositive phrasing above. One pre-existing lib-level fixture ("This came first.")
+changed from abstain to a (harmless) match now that "came" is found behind it — updated, not a
+production-behavior regression (no `gates.test.ts` case relied on that shape).
+
+**Still open**: one of the 3 live runs had no ordinal token in the reason at all ("the longest flight
+... covered 852 feet" — no "fourth"), a pure superlative with nothing to anchor on — this is §3e's
+already-accepted, deliberately-unfixed gap, not something this anchor-window fix (or any anchor-window
+fix) can reach, since there's no ordinal match to extend anchoring from in the first place.
+
 ## §4. Explicitly not doing
 
 - **Amending `MULTIPLE SOURCES` in the VERIFY prompt** — plausible contributing cause (§2), but the

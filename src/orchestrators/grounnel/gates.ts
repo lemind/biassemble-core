@@ -746,7 +746,7 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
   }
   const claimMatch = claimMatches[0]!;
   const claimOrdinal = claimMatch[1]!.toLowerCase();
-  const claimAnchor = ordinalAnchorWords(input.claimText, claimMatch.index! + claimMatch[0].length);
+  const claimAnchor = ordinalAnchorWords(input.claimText, claimMatch.index!, claimMatch.index! + claimMatch[0].length);
   if (claimAnchor.size === 0) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
@@ -760,7 +760,7 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
   let competing = false;
   for (const m of reasonMatches) {
     const ordinal = m[1]!.toLowerCase();
-    const anchor = ordinalAnchorWords(reason, m.index! + m[0].length);
+    const anchor = ordinalAnchorWords(reason, m.index!, m.index! + m[0].length);
     if (!anchorsOverlap(claimAnchor, anchor)) continue;
     if (isOrdinalNegated(reason, m.index!)) continue;
     if (ordinal === claimOrdinal) {

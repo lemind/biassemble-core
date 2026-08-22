@@ -60,13 +60,40 @@ const ANCHOR_STOPWORDS = new Set([
 ]);
 const ANCHOR_WINDOW_WORDS = 2;
 
+// Backward-scanning sentence boundary (deliberately NOT clause-scoped like
+// firstClauseBoundaryForward): an anaphoric "one"/pronoun after the selector can refer back to a
+// noun stated BEFORE it in a separate, comma-joined appositive ("the flight, the fourth one") —
+// crossing that comma is the point, only a full sentence boundary stops the backward scan.
+function previousSentenceBoundary(text: string, fromIndex: number): number {
+  for (let i = fromIndex - 1; i >= 0; i--) {
+    const ch = text[i]!;
+    if ((ch === "." || ch === "!" || ch === "?") && isSentenceTerminator(text, i)) return i;
+  }
+  return -1;
+}
+
+function backwardAnchorWords(text: string, matchStart: number): string[] {
+  const boundary = previousSentenceBoundary(text, matchStart);
+  const rawWords = text.slice(boundary + 1, matchStart).trim().split(/\s+/);
+  const words: string[] = [];
+  for (let i = rawWords.length - 1; i >= 0 && words.length < ANCHOR_WINDOW_WORDS; i--) {
+    const word = rawWords[i]!.toLowerCase().replace(/[^a-z]/g, "");
+    if (!word || ANCHOR_STOPWORDS.has(word)) continue;
+    words.push(word);
+  }
+  return words;
+}
+
 /**
- * Up to 2 real content words immediately after the selector, never crossing a clause boundary.
- * Deliberately NOT a role-noun whitelist — whatever word the claim happens to use becomes the
- * anchor. 2 words, not 1, so a single modifier between the selector and its noun ("the third
- * unsuccessful attempt") doesn't defeat matching.
+ * Up to 2 real content words immediately after the selector (never crossing a clause boundary),
+ * UNIONED with up to 2 real content words immediately before it (crossing clause boundaries, up to
+ * the sentence start — see previousSentenceBoundary). Deliberately NOT a role-noun whitelist —
+ * whatever word the text happens to use becomes the anchor. The backward half exists for D030 §3f's
+ * real g17-wright-brothers-ordinal case: "the flight, the fourth and final one..." names the entity
+ * BEFORE the ordinal, and the forward window alone only ever finds the placeholder "one" standing in
+ * for it. Union, not replacement — backward words only add candidates, never remove a forward match.
  */
-export function anchorWords(text: string, matchEnd: number): Set<string> {
+export function anchorWords(text: string, matchStart: number, matchEnd: number): Set<string> {
   const rest = text.slice(matchEnd);
   const clauseEnd = firstClauseBoundaryForward(rest);
   const window = clauseEnd === -1 ? rest : rest.slice(0, clauseEnd);
@@ -77,7 +104,7 @@ export function anchorWords(text: string, matchEnd: number): Set<string> {
     words.push(word);
     if (words.length >= ANCHOR_WINDOW_WORDS) break;
   }
-  return new Set(words);
+  return new Set([...words, ...backwardAnchorWords(text, matchStart)]);
 }
 
 export function anchorsOverlap(a: Set<string>, b: Set<string>): boolean {
@@ -102,7 +129,7 @@ export function extractInstanceSelector(claimText: string): InstanceSelector | n
   const matches = [...claimText.matchAll(SELECTOR_RE_G)];
   if (matches.length !== 1) return null;
   const m = matches[0]!;
-  const anchor = anchorWords(claimText, m.index! + m[0].length);
+  const anchor = anchorWords(claimText, m.index!, m.index! + m[0].length);
   if (anchor.size === 0) return null;
   return { selector: m[1]!.toLowerCase(), anchor };
 }
@@ -117,7 +144,7 @@ export function extractInstanceSelector(claimText: string): InstanceSelector | n
 export function passageMatchesSelector(sel: InstanceSelector, passageText: string): boolean {
   for (const m of passageText.matchAll(SELECTOR_RE_G)) {
     if (m[1]!.toLowerCase() !== sel.selector) continue;
-    const anchor = anchorWords(passageText, m.index! + m[0].length);
+    const anchor = anchorWords(passageText, m.index!, m.index! + m[0].length);
     if (anchorsOverlap(sel.anchor, anchor)) return true;
   }
   return false;

@@ -960,6 +960,21 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
   });
 
+  // Real live-eval capture (2026-08-22, g17-wright-brothers-ordinal, post-D030-§3f retrieval fix):
+  // VERIFY's own reason correctly identified the fourth/longest flight, but phrased it as an
+  // appositive — "the longest flight, the fourth and final one" — naming the anchor noun BEFORE the
+  // ordinal, with "one" standing in for it afterward. The forward-only anchor window found only
+  // "final"/"one" (neither overlaps the claim's "flight" anchor), so this gate abstained and the
+  // wrong `supported` verdict shipped. Fixed by also looking backward across the comma to "flight".
+  it("real live capture: fires when the reason names the anchor noun BEFORE the ordinal, in a comma-joined appositive with an anaphoric 'one' after it", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "Multiple sources state that the longest flight, the fourth and final one on December 17, 1903, covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
   it("fires on a plain second/third-attempt mismatch", () => {
     const result = applyReasonOrdinalGate({
       verdict: "supported",
