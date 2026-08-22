@@ -8,19 +8,17 @@
 import { extractKeyTerms } from "../../lib/claim-terms.js";
 import { extractInstanceSelector, passageMatchesSelector } from "../../lib/instance-selector.js";
 
-/**
- * True when the passage contains at least one of the claim's own key entities/numbers, OR (D030
- * §3f) discusses the specific instance the claim's selector names ("the first flight") even without
- * sharing a key term — a claim like "the first flight covered 852 feet" has "852" as its only key
- * term, which admits pages about a DIFFERENT flight that also covered 852 feet while structurally
- * excluding the page that would actually confirm or refute "the first flight" specifically. Additive
- * only: never used to reject a passage that has no selector at all.
- */
-export function isPassageRelevant(claimText: string, passageText: string): boolean {
-  const terms = extractKeyTerms(claimText);
+/** True when the passage shares at least one of the claim's own key entities/numbers. */
+function hasKeyTermMatch(text: string, passageText: string): boolean {
+  const terms = extractKeyTerms(text);
   if (terms.length === 0) return true;
   const lowerPassage = passageText.toLowerCase();
-  if (terms.some((term) => lowerPassage.includes(term))) return true;
+  return terms.some((term) => lowerPassage.includes(term));
+}
+
+/** True on a key-term match, OR (D030 §3f) a shared instance-selector — additive only, never rejects a passage with no selector. */
+export function isPassageRelevant(claimText: string, passageText: string): boolean {
+  if (hasKeyTermMatch(claimText, passageText)) return true;
   const selector = extractInstanceSelector(claimText);
   return selector !== null && passageMatchesSelector(selector, passageText);
 }
@@ -35,5 +33,9 @@ export function hasSubjectEntity(subjectEntity: string, passageText: string): bo
   // Guards undefined too: tests aren't typechecked (tsconfig excludes tests/), so pre-existing
   // fixtures predating this field hit this at runtime, not just a real "" from EXTRACT.
   if (!subjectEntity) return true;
-  return isPassageRelevant(subjectEntity, passageText);
+  // Review finding (D030 §3f) — deliberately NOT isPassageRelevant's selector rescue: this is g17's
+  // dedicated, stricter entity-anchor safeguard, and any shared generic anchor word (e.g. "brothers")
+  // is enough to satisfy the selector check, which would silently reopen the wrong-entity bleed-
+  // through g17 exists to block.
+  return hasKeyTermMatch(subjectEntity, passageText);
 }

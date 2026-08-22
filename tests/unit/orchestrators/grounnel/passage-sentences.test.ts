@@ -79,6 +79,19 @@ describe("buildPassageSentences (D026 §7, T043)", () => {
     expect(texts).toContain(firstFlightSentence);
     expect(texts).toContain(fourthFlightSentence);
   });
+
+  it("code-review regression: the selector rescue must not evict a real key-term match when the cap is already full of them", () => {
+    // Real bug (D030 §3f review): an earlier additive-score version tied the selector-only
+    // sentence with real "852" matches and evicted whichever real match happened to sort last —
+    // here, 5 independently-real "852" sentences exactly fill maxSentences=5, so a naive rescue
+    // has no room without displacing one of them.
+    const claim = "The first flight covered 852 feet.";
+    const firstFlightSentence = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    const realMatches = Array.from({ length: 5 }, (_, i) => `A source states 852 units were logged on day ${i}.`);
+    const passage = [firstFlightSentence, ...realMatches].join(" ");
+    const result = buildPassageSentences(claim, passage, 5);
+    expect(result.map((s) => s.text)).toContain(firstFlightSentence);
+  });
 });
 
 describe("buildPassageSentencesMulti (D026 §11, T049)", () => {

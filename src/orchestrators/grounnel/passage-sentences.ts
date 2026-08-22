@@ -28,25 +28,38 @@ export interface PassageSentence {
 export function buildPassageSentences(claimText: string, passageText: string, maxSentences = MAX_SENTENCES): PassageSentence[] {
   const sentences = splitIntoSentences(passageText);
   const terms = extractKeyTerms(claimText);
-  // D030 §3f — a claim naming "the first flight" needs the sentence that actually discusses the
-  // first flight to survive this cut even when it shares none of extractKeyTerms's own key terms
-  // (a different flight's page can dominate scoring by number/entity alone — the g17 root cause).
-  const selector = extractInstanceSelector(claimText);
 
   let selected: string[];
-  if ((terms.length === 0 && !selector) || sentences.length <= maxSentences) {
+  // extractKeyTerms's own D026 §21 stopword fallback already means terms.length === 0 implies no
+  // instance-selector either (no SEQUENCE_SELECTOR_WORDS entry is a stopword, so one would always
+  // survive that fallback) — selector only needs computing in the scored branch below.
+  if (terms.length === 0 || sentences.length <= maxSentences) {
     // Fail-open, same convention as isPassageRelevant (passage-filter.ts): nothing to score against.
     selected = sentences.slice(0, maxSentences);
   } else {
-    const scored = sentences.map((text, i) => ({
-      text,
-      i,
-      // Selector match counts as one matched term — additive, never a replacement for key-term
-      // scoring, so it only rescues an otherwise-dropped sentence, never demotes a well-scoring one.
-      score: scoreKeyTermMatches(terms, text) + (selector && passageMatchesSelector(selector, text) ? 1 : 0),
-    }));
+    // D030 §3f — rescues the sentence matching the claim's instance-selector even at zero key-term
+    // score (g17: a different instance's number/entity can otherwise dominate scoring entirely).
+    const selector = extractInstanceSelector(claimText);
+    const scored = sentences.map((text, i) => ({ text, i, score: scoreKeyTermMatches(terms, text) }));
     const matching = scored.filter((s) => s.score > 0);
-    const ranked = (matching.length > 0 ? matching : scored).sort((a, b) => b.score - a.score).slice(0, maxSentences);
+    let ranked = (matching.length > 0 ? matching : scored).sort((a, b) => b.score - a.score).slice(0, maxSentences);
+
+    // Review finding: an earlier additive-score version could tie a selector-only sentence with a
+    // real key-term match and evict the real match by stable-sort position — the opposite of
+    // "rescue." Instead: append when there's room; otherwise replace only the WEAKEST already-
+    // selected sentence, so nothing with a higher real key-term score is ever bumped.
+    if (selector && !ranked.some((r) => passageMatchesSelector(selector, r.text))) {
+      const selectorMatch = scored.find((s) => passageMatchesSelector(selector, s.text));
+      if (selectorMatch) {
+        if (ranked.length < maxSentences) {
+          ranked = [...ranked, selectorMatch];
+        } else {
+          const weakestIndex = ranked.reduce((worst, r, i) => (r.score < ranked[worst]!.score ? i : worst), 0);
+          ranked = ranked.map((r, i) => (i === weakestIndex ? selectorMatch : r));
+        }
+      }
+    }
+
     // Re-sort back into original passage order — numbering should read like the page; score only
     // decided which sentences made the cut, not the order they're presented in.
     selected = ranked.sort((a, b) => a.i - b.i).map((s) => s.text);

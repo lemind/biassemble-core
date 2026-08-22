@@ -113,4 +113,14 @@ describe("code-enforced entity anchor (g17)", () => {
     // @ts-expect-error — exercising the runtime guard for callers that predate this required field.
     expect(hasSubjectEntity(undefined, passage)).toBe(true);
   });
+
+  it("code-review regression (D030 §3f): a lowercase-ordinal subjectEntity must not gain the selector rescue — a shared generic anchor word alone must not admit an unrelated passage", () => {
+    // "first" is lowercase here so it never becomes an extractKeyTerms key term (only "wright"
+    // does), but instance-selector's case-insensitive match still extracts selector=first,
+    // anchor={wright, brothers} — the rescue must be scoped to isPassageRelevant, not inherited by
+    // this stricter g17 safeguard, or a shared generic word like "brothers" alone defeats it.
+    const subjectEntity = "the first Wright brothers flight";
+    const passage = "The first successful brothers' partnership in the confectionery trade began in Ohio in 1901.";
+    expect(hasSubjectEntity(subjectEntity, passage)).toBe(false);
+  });
 });
