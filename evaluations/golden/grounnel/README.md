@@ -1,6 +1,6 @@
 # Grounnel live eval — minimum golden set
 
-18 cases, `live-eval-golden-set.json`, in the same spirit as `evaluations/golden/audit/live-eval-fixtures/`: a real, live run of the actual pipeline (`GrounnelExtractService` + `GrounnelPipelineService`) against real Gemini (EXTRACT, VERIFY, `google_search` discovery) and a real Tavily fallback — no mocks, no recorded/replayed responses for the run itself.
+19 cases, `live-eval-golden-set.json`, in the same spirit as `evaluations/golden/audit/live-eval-fixtures/`: a real, live run of the actual pipeline (`GrounnelExtractService` + `GrounnelPipelineService`) against real Gemini (EXTRACT, VERIFY, `google_search` discovery) and a real Tavily fallback — no mocks, no recorded/replayed responses for the run itself.
 
 ## Labeling discipline
 
@@ -34,6 +34,17 @@ nothing," which is exactly the ambiguity FR-008 exists to eliminate:
   for the Fleming claim that includes the `"said Fleming"` attribution clause — if it doesn't, the
   classifier has no way to make the correct call regardless of prompt quality (T015's own explicit
   concern), and that would be a real gap in EXTRACT's excerpt-matching, not this classifier.
+
+`g20-apple-earnings-year-over-year` (added D031 §7, follow-up fix) targets the EXTRACT prompt fix, not a
+gate. A real live-API run this session (not a hypothetical) came back `contradicted` on both
+`94.04 billion` and `23.43 billion` — Apple's real fiscal Q3 2025 revenue and net profit, verified
+independently via web search before writing this case. The article states them as "the same
+quarter the previous year" relative to "third fiscal quarter 2026," with no literal year in that
+sentence; retrieval matched the boilerplate "year-ago quarter" phrasing in unrelated 2021/2022
+earnings articles instead. `system.json` v1.6.0 extends the EXTRACT self-contained-claim rule from
+pronouns/bare-descriptions to relative time/comparison references — this case is the regression
+guard. `109.4 billion` (the current quarter's own figure, never confused in the live run) is
+included as a control: the fix must not regress correct current-period matching.
 
 `g11-bloomberg-fallback` is the one other case deliberately targeting a different thing than a true/false/silence label: `HybridSearchProvider` only calls Tavily when *every* DIY candidate (Gemini `google_search` discovery + direct fetch) fails for a claim — none of g01–g10 are designed to force that, so the fallback path had zero deliberate coverage. `bloomberg.com` commonly blocks non-browser fetches (403/unreachable), and the fact itself (Apple's market cap) is widely corroborated elsewhere, so Tavily has a real shot at resolving it. **Not guaranteed** — this repo has no per-claim provider-attribution field, so whether it actually fell back to Tavily on a given run has to be confirmed from logs (`"DIY fetch failed for every candidate — falling back"`), not from the eval's JSON output alone.
 

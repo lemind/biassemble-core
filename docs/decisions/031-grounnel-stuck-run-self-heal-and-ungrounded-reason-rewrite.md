@@ -141,6 +141,11 @@ rather than a settled one.
   different risk profile than the containment fixes here, and both need their own verification path
   (a live golden-set re-run for the EXTRACT prompt change; telemetry sized before building a
   sentence-selection rescue). Tracked separately, not bundled into this ADR.
+  **Update, same day**: the first of these (the unresolved-relative-time claim fix) was implemented
+  as a follow-up, not bundled into this ADR's own commit — `prompts/grounnel/extract/system.json`
+  v1.6.0 extends the self-contained-claim rule to relative time/comparison references, verified via
+  a new golden-set case (`g20-apple-earnings-year-over-year`). The sentence-selection bug (Falcon
+  Heavy vs. Atlas V) remains untouched, still pending the telemetry step above.
 - **Not adding a run-level "failed" write to `GrounnelStore`** — would close the §2 asymmetry more
   directly, but `GrounnelStore`'s interface has no run-level failure setter today, only per-claim
   `writeClaimResult` and the `escalating` flag; adding one is a real fix but a separate, larger
