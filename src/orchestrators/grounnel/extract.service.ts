@@ -114,7 +114,7 @@ export class GrounnelExtractService {
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
     const pendingClaims = claims.filter((claim) => !isOpinionClaim(claim.text));
-    const OPINION_REASON = "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).";
+    const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
     await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
     return { id, pendingClaims };

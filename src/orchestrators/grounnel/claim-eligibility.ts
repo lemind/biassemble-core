@@ -91,14 +91,14 @@ export function isEligibilityExcluded(result: ClaimVerifiabilityResult): boolean
 export function eligibilityReason(category: ClaimVerifiabilityResult["category"]): string {
   switch (category) {
     case "personal":
-      return "No public record could confirm or deny this — a private, speaker-relative circumstance (D030 §3b).";
+      return "This describes a private, personal circumstance that no public record could confirm or deny.";
     case "opinion":
-      return "No checkable referent — opinion, not caught by the existing regex filter (D030 §3b).";
+      return "This is a subjective opinion, not a checkable fact.";
     case "prediction":
-      return "No checkable referent — vague prediction, not caught by the existing regex filter (D030 §3b).";
+      return "This is a prediction about the future, not something that can be checked yet.";
     case "checkable":
       // Unreachable — callers only invoke this for isEligibilityExcluded results, which requires
       // category !== "checkable". Kept for exhaustiveness, not a real runtime path.
-      return "No checkable referent (D030 §3b).";
+      return "Not a checkable claim.";
   }
 }
