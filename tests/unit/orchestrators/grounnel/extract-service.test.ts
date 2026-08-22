@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { GrounnelExtractService } from "../../../../src/orchestrators/grounnel/extract.service.js";
 import { RedisGrounnelStore } from "../../../../src/persistence/grounnel-store.js";
 import { PromptRegistry } from "../../../../src/prompts/registry.js";
@@ -383,6 +383,76 @@ describe("GrounnelExtractService (T009)", () => {
       await expect(service.classifyEligibility(id, pendingClaims)).rejects.toThrow();
 
       expect(historyStore.updateRunCalls.some((c) => c.data.status === "failed")).toBe(true);
+    });
+
+    // D031 — real live-test bug: a hung provider call inside the eligibility fan-out used to run
+    // silently until the shared Vercel maxDuration kill, never reaching the catch below at all.
+    it("D031: times out and marks the run failed instead of hanging forever when the eligibility fan-out never resolves", async () => {
+      vi.useFakeTimers();
+      try {
+        const inner = new MockProvider();
+        inner.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
+        const hangingProvider: Provider = {
+          mode: "mock",
+          completeJson: (request) =>
+            request.system.includes("You are a claim-eligibility classifier")
+              ? new Promise(() => {}) // never resolves — simulates a hung provider call
+              : inner.completeJson(request),
+        };
+        const store = new RedisGrounnelStore(new FakeRedisHashClient());
+        const historyStore = new FakeGrounnelHistoryStore();
+        const service = new GrounnelExtractService(hangingProvider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+        const { id, pendingClaims } = await service.run("Some pasted article text.");
+
+        const classifyPromise = service.classifyEligibility(id, pendingClaims);
+        const assertion = expect(classifyPromise).rejects.toThrow(/timed out/);
+        await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 1000);
+        await assertion;
+
+        expect(historyStore.updateRunCalls.some((c) => c.data.status === "failed")).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // D031 (review finding) — Promise.race can't cancel its loser. Without the `abandoned` flag,
+    // a batch that eventually resolves AFTER the phase timeout already fired still wrote its
+    // excluded-claim results, landing in Redis after the run was already reported failed.
+    it("D031 (review finding): does not write excluded-claim results from a batch that resolves after the phase timeout already fired", async () => {
+      vi.useFakeTimers();
+      try {
+        const inner = new MockProvider();
+        inner.setDefault({ claims: [{ claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
+        const slowProvider: Provider = {
+          mode: "mock",
+          completeJson: (request) =>
+            request.system.includes("You are a claim-eligibility classifier")
+              ? new Promise((resolve) =>
+                  // Resolves well AFTER the 2-minute phase timeout — simulates a merely-slow (not
+                  // truly hung) provider call outliving the race it already lost.
+                  setTimeout(() => resolve({ result: { category: "personal", certainty: "clear", reason: "private circumstance" } }), 3 * 60 * 1000)
+                )
+              : inner.completeJson(request),
+        };
+        const store = new RedisGrounnelStore(new FakeRedisHashClient());
+        const historyStore = new FakeGrounnelHistoryStore();
+        const service = new GrounnelExtractService(slowProvider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+        const { id, pendingClaims } = await service.run("Some pasted article text.");
+
+        const classifyPromise = service.classifyEligibility(id, pendingClaims);
+        const assertion = expect(classifyPromise).rejects.toThrow(/timed out/);
+        await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 1000); // fires the phase timeout
+        await assertion;
+
+        await vi.advanceTimersByTimeAsync(2 * 60 * 1000); // lets the abandoned batch's own provider call finally resolve
+
+        const status = await store.getStatus(id);
+        expect(status!.claims[0]!.status).toBe("pending"); // never excluded — the late write never landed
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

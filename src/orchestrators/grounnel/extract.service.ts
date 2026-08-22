@@ -5,6 +5,7 @@ import { callLlmForJson } from "../llm-json-call.js";
 import { isOpinionClaim } from "./opinion-filter.js";
 import { classifyClaimVerifiability, isEligibilityExcluded, eligibilityReason, type ClaimVerifiabilityResult } from "./claim-eligibility.js";
 import { env } from "../../lib/env.js";
+import { logger } from "../../observability/logger.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
@@ -20,6 +21,8 @@ const EXTRACT_ATTEMPTS = 3;
 const MAX_CLAIMS = 100;
 // D030 §3b — one Gemini call per claim, unbatched; same value/rationale as SEARCH_CONCURRENCY (pipeline.service.ts).
 const ELIGIBILITY_CONCURRENCY = 20;
+// D031 — a hung fan-out used to run silently until the shared maxDuration:300 kill; 2min leaves room for pipelineService.run() after.
+const ELIGIBILITY_PHASE_TIMEOUT_MS = 2 * 60 * 1000;
 
 const ExtractResponseSchema = z.object({
   // .default("") — a missing/malformed excerpt must not drop the whole claim via repair.ts's
@@ -129,26 +132,23 @@ export class GrounnelExtractService {
    * resolved on the next /status poll once writeExcludedClaim below lands.
    */
   async classifyEligibility(auditId: string, claims: PipelineClaimInput[]): Promise<PipelineClaimInput[]> {
+    logger.info({ module: MODULE, operation: "classifyEligibility", auditId, claimCount: claims.length }, "Eligibility classification phase starting");
+    // D031 (review finding) — Promise.race can't cancel its loser; this flag stops late writes from an abandoned batch, see ADR.
+    const abandoned = { value: false };
     try {
-      const eligibilityResults: Array<{ claim: PipelineClaimInput; result: ClaimVerifiabilityResult }> = [];
-      for (let i = 0; i < claims.length; i += ELIGIBILITY_CONCURRENCY) {
-        const chunk = claims.slice(i, i + ELIGIBILITY_CONCURRENCY);
-        const chunkResults = await Promise.all(
-          chunk.map(async (claim) => ({
-            claim,
-            result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, auditId, claim.id, {
-              claimText: claim.text,
-              sourceExcerpt: claim.sourceExcerpt,
-            }),
-          }))
-        );
-        eligibilityResults.push(...chunkResults);
-      }
-      const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
-      const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
-      await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
+      const eligibleClaims = await Promise.race([
+        this.classifyEligibilityBatch(auditId, claims, abandoned),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => {
+            abandoned.value = true;
+            reject(new Error(`classifyEligibility timed out after ${ELIGIBILITY_PHASE_TIMEOUT_MS}ms`));
+          }, ELIGIBILITY_PHASE_TIMEOUT_MS)
+        ),
+      ]);
+      logger.info({ module: MODULE, operation: "classifyEligibility", auditId, eligibleCount: eligibleClaims.length }, "Eligibility classification phase finished");
       return eligibleClaims;
     } catch (err) {
+      logger.error({ module: MODULE, operation: "classifyEligibility", auditId, err }, "Eligibility classification phase failed or timed out");
       // Review finding: this runs in routes/grounnel.ts's post-202 background phase, before
       // pipelineService.run() ever sets status "verifying" — without this, a throw here (e.g. one
       // flaky writeExcludedClaim) left the run stuck at its prior status forever, same failure
@@ -158,6 +158,30 @@ export class GrounnelExtractService {
       waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
       throw err;
     }
+  }
+
+  private async classifyEligibilityBatch(auditId: string, claims: PipelineClaimInput[], abandoned: { value: boolean }): Promise<PipelineClaimInput[]> {
+    const eligibilityResults: Array<{ claim: PipelineClaimInput; result: ClaimVerifiabilityResult }> = [];
+    for (let i = 0; i < claims.length; i += ELIGIBILITY_CONCURRENCY) {
+      // D031 — checked between chunks so a mid-fan-out timeout stops the next chunk and every write below.
+      if (abandoned.value) return [];
+      const chunk = claims.slice(i, i + ELIGIBILITY_CONCURRENCY);
+      const chunkResults = await Promise.all(
+        chunk.map(async (claim) => ({
+          claim,
+          result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, auditId, claim.id, {
+            claimText: claim.text,
+            sourceExcerpt: claim.sourceExcerpt,
+          }),
+        }))
+      );
+      eligibilityResults.push(...chunkResults);
+    }
+    if (abandoned.value) return [];
+    const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
+    const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
+    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
+    return eligibleClaims;
   }
 
   /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — see D023 §3 for the dual Redis+Postgres write rationale. */

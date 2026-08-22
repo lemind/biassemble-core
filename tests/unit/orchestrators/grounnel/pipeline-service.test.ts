@@ -969,6 +969,11 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("unsupported"); // not unverifiable — the contradiction failed validation, the claim wasn't unverifiable
     expect(claim.evidence).toBeNull();
+    // D031 (review finding) — the retry's own reason affirmatively says "the passage states...
+    // contradicting the claim", which would read as incoherent beside the now-downgraded
+    // "unsupported" verdict; rewriteUngroundedAffirmativeReason replaces it (citations are always
+    // emptied on this downgrade path, so the rewrite predicate's 0-citations condition always holds here).
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
 
     const events = gateEventStore.calls[0]!.events;
     const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
@@ -1256,6 +1261,10 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("unsupported"); // not a false positive, despite escalation flipping to "supported"
     expect(claim.evidence).toBeNull();
+    // D031 (review finding) — the flipped-away reason affirmatively says "the passage confirms...
+    // supporting the claim", which would read as incoherent beside the downgraded "unsupported"
+    // verdict; rewriteUngroundedAffirmativeReason replaces it here too.
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
 
     const events = gateEventStore.calls.flatMap((c) => c.events);
     expect(events.some((e) => e.gate === "retry_reconciliation" && e.overridden && e.verdictBefore === "supported" && e.verdictAfter === "unsupported")).toBe(true);

@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence, type ResolvedCitation } from "./passage-sentences.js";
-import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonOrdinalGate, applyReasonYearGate, applySubjectEntityGate, applyYearGate } from "./gates.js";
+import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonOrdinalGate, applyReasonYearGate, applySubjectEntityGate, applyYearGate, rewriteUngroundedAffirmativeReason } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -327,7 +327,9 @@ export class GrounnelPipelineService {
       nowContradicted.map(async (c) => {
         const consistent = consistencyMap.get(c.id) ?? true; // fail-open, same convention as D025 §2/§5
         if (consistent) return;
-        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [] });
+        // D031 (review finding) — same incoherence class as the primary VERIFY write site; user-facing only, historyStore keeps raw.
+        const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
+        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
         await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
@@ -365,7 +367,9 @@ export class GrounnelPipelineService {
         const consistent = consistencyMap.get(c.id) ?? true; // fail-open, same convention as D025 §2/§5
         if (consistent) return;
         const verdictBefore = c.verdict as Verdict;
-        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [] });
+        // D031 (review finding) — same incoherence class, and c.reason here most likely of all to be affirmative (was supported).
+        const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
+        await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
         await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore, verdictAfter: "unsupported", overridden: true, reason: "escalation_reversal_invalidated" },
@@ -989,7 +993,9 @@ export class GrounnelPipelineService {
         const sources = toClaimSources(item.sources);
         // D027 §2 — citations survive iff the evidence they back survived the gate chain.
         const citations = evidence !== null ? attachCitationUrls(citationsBeforeGates, item.passages) : [];
-        const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason, sources, citations };
+        // D031 — user-facing text only; historyStore below keeps VERIFY's raw reason for the audit trail.
+        const userFacingReason = rewriteUngroundedAffirmativeReason(verdict, citations.length, reason);
+        const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason: userFacingReason, sources, citations };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
         // D027 §4 — deliberately no `citations` here: historyStore's Postgres row doesn't carry it (out of scope for this change).
         await this.historyStore.createClaim({

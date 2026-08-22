@@ -9,9 +9,10 @@ const MODULE = "grounnel-store";
 // without needing Postgres. Distinct from the search/fetch cache's own TTL by design.
 const AUDIT_TTL_SECONDS = 60 * 60 * 24 * 7;
 
-// D029 — a Vercel maxDuration (300s) kill mid-escalation never clears `escalating`, sticking a
-// run at "verifying" forever even once every claim is done. 8min = maxDuration + a clock-skew buffer.
-const STUCK_ESCALATION_TIMEOUT_MS = 8 * 60 * 1000;
+// D029/D031 — a Vercel maxDuration (300s) kill never clears `escalating` (D029) and never writes a
+// terminal claim/run state (D031) either way. 8min = maxDuration + a clock-skew buffer. Shared by
+// both self-heal checks in getStatus() below — nothing genuinely alive can go silent this long.
+const STUCK_RUN_TIMEOUT_MS = 8 * 60 * 1000;
 
 export interface GrounnelStore {
   createAudit(data: {
@@ -191,16 +192,29 @@ export class RedisGrounnelStore implements GrounnelStore {
     // status (kept monotonic — an already-shown verdict never visibly reverts to "pending").
     const allChecked = total === 0 || checked === total;
     const lastActivityAt = raw[LAST_ACTIVITY_FIELD] ? new Date(raw[LAST_ACTIVITY_FIELD]).getTime() : null;
+    // D031 — a run killed before its first writeClaimResult has no lastActivityAt; falls back to meta.createdAt.
+    const referenceActivityAt = lastActivityAt ?? (meta.createdAt ? new Date(meta.createdAt).getTime() : null);
+    const staleForMs = referenceActivityAt !== null ? Date.now() - referenceActivityAt : null;
+    const isStale = staleForMs !== null && staleForMs > STUCK_RUN_TIMEOUT_MS;
     // Self-heal (D029) — every claim is done but escalating is stuck; report done anyway.
-    const staleWhileEscalating =
-      meta.escalating === true && lastActivityAt !== null && Date.now() - lastActivityAt > STUCK_ESCALATION_TIMEOUT_MS;
+    const staleWhileEscalating = meta.escalating === true && isStale;
     if (staleWhileEscalating) {
       // Observability (review finding) — how often this masks a real maxDuration kill should be
       // visible, not silent.
-      logger.warn({ module: MODULE, operation: "getStatus", auditId: id, staleForMs: Date.now() - lastActivityAt! }, "Stuck-escalation self-heal fired — reporting done despite meta.escalating still true");
+      logger.warn({ module: MODULE, operation: "getStatus", auditId: id, staleForMs }, "Stuck-escalation self-heal fired — reporting done despite meta.escalating still true");
     }
-    const status: StatusResponse["status"] =
-      allChecked && (!meta.escalating || staleWhileEscalating) ? "done" : checked === 0 ? "extracting" : "verifying";
+    // Self-heal (D031) — died before allChecked and stale; never "done" (D026 §14), report "failed" instead of hanging forever.
+    const staleIncomplete = !allChecked && isStale;
+    if (staleIncomplete) {
+      logger.warn({ module: MODULE, operation: "getStatus", auditId: id, staleForMs, checked, total }, "Stuck-run self-heal fired — reporting failed, run never progressed past extracting/verifying");
+    }
+    const status: StatusResponse["status"] = staleIncomplete
+      ? "failed"
+      : allChecked && (!meta.escalating || staleWhileEscalating)
+        ? "done"
+        : checked === 0
+          ? "extracting"
+          : "verifying";
 
     const grounded_n = claims.filter((c) => c.verdict === "supported").length;
     const unclear_n = claims.filter((c) => c.verdict === "partially_supported" || c.verdict === "unverifiable").length;

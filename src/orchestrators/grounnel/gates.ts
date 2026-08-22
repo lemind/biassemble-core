@@ -649,3 +649,19 @@ export function applySubjectEntityGate(input: SubjectEntityGateInput): SubjectEn
   return { verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" };
 }
 
+// D031 — reason/verdict incoherence backstop; regex over VERIFY's own closed vocabulary, see ADR for AGENTS.md rule 12 tradeoff.
+const AFFIRMATIVE_SOURCE_LANGUAGE_RE = /\b(?:sources?|passages?|evidence)\b[^.!?]{0,60}\b(?:states?|confirms?|indicates?|shows?|supports?|reports?)\b/i;
+const UNGROUNDED_REASON_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b|\bcannot\b|\bcan't\b/i;
+const UNGROUNDED_REASON_REPLACEMENT = "The available sources did not provide a specific passage that could be cited to verify this claim.";
+
+/** D031 — rewrites `reason` only, never verdict/confidence/citations; negation checked inside the match span itself, not a preceding window. */
+export function rewriteUngroundedAffirmativeReason(verdict: Verdict, citationsCount: number, reason: string | null): string | null {
+  if (verdict !== "unsupported" && verdict !== "unverifiable") return reason;
+  if (citationsCount > 0) return reason;
+  if (!reason) return reason;
+  const match = AFFIRMATIVE_SOURCE_LANGUAGE_RE.exec(reason);
+  if (!match) return reason;
+  if (UNGROUNDED_REASON_NEGATION_WORD_RE.test(match[0])) return reason;
+  return UNGROUNDED_REASON_REPLACEMENT;
+}
+

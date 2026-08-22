@@ -10,6 +10,7 @@ import {
   applyReasonYearGate,
   applySubjectEntityGate,
   applyYearGate,
+  rewriteUngroundedAffirmativeReason,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
 describe("gate #1 — contradiction evidence gate (T003)", () => {
@@ -1304,5 +1305,58 @@ describe("subject-entity gate — deterministic backstop for g17 (unrelated real
       evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
     });
     expect(result.overridden).toBe(false);
+  });
+});
+
+describe("rewriteUngroundedAffirmativeReason — D031, real live-test finding: unverifiable/unsupported verdict shown beside a reason that affirmatively claims sources confirm the claim", () => {
+  const REPLACEMENT = "The available sources did not provide a specific passage that could be cited to verify this claim.";
+
+  it("rewrites when unverifiable + 0 citations + affirmative reason (real captured example)", () => {
+    const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight lasted 12 seconds.");
+    expect(result).toBe(REPLACEMENT);
+  });
+
+  it("rewrites when unsupported + 0 citations + affirmative reason", () => {
+    const result = rewriteUngroundedAffirmativeReason("unsupported", 0, "The passage confirms this claim is accurate.");
+    expect(result).toBe(REPLACEMENT);
+  });
+
+  it("leaves supported untouched even with 0 citations — only unsupported/unverifiable are in scope", () => {
+    const reason = "Multiple sources state the first flight lasted 12 seconds.";
+    expect(rewriteUngroundedAffirmativeReason("supported", 0, reason)).toBe(reason);
+  });
+
+  it("leaves contradicted untouched even with 0 citations", () => {
+    const reason = "Sources confirm a different figure than the one claimed.";
+    expect(rewriteUngroundedAffirmativeReason("contradicted", 0, reason)).toBe(reason);
+  });
+
+  it("leaves unsupported untouched when citations are present — this bug only exists with zero citations", () => {
+    const reason = "Multiple sources state the first flight lasted 12 seconds.";
+    expect(rewriteUngroundedAffirmativeReason("unsupported", 2, reason)).toBe(reason);
+  });
+
+  it("leaves unverifiable untouched when citations are present", () => {
+    const reason = "Multiple sources state the first flight lasted 12 seconds.";
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 3, reason)).toBe(reason);
+  });
+
+  it("leaves a negated affirmative-shaped reason untouched — 'sources do not confirm' is not a confirmation", () => {
+    const reason = "Sources do not confirm this claim.";
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 0, reason)).toBe(reason);
+  });
+
+  it("leaves an ordinary 'could not verify' reason untouched — no affirmative source-confirmation language at all", () => {
+    const reason = "Could not verify this claim against the retrieved passages.";
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 0, reason)).toBe(reason);
+  });
+
+  it("leaves a null reason untouched", () => {
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 0, null)).toBeNull();
+  });
+
+  it("real captured example: the second Wright-brothers claim from the same live run", () => {
+    const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight covered 120 feet.");
+    expect(result).toBe(REPLACEMENT);
   });
 });
