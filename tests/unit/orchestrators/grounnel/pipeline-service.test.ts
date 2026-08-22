@@ -1414,21 +1414,21 @@ describe("GrounnelPipelineService (T010)", () => {
     // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
     expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
-    // 9 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
+    // 10 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
     // year/date gate added a 7th, T069's reason_year added an 8th, D030's reason_ordinal added a
-    // 9th), plus D025 §5's retry-contradiction check (the retry landed on contradicted, so it ran)
-    // — the original inconsistent pass is not lost.
-    expect(events).toHaveLength(19);
+    // 9th, g17's subject_entity added a 10th), plus D025 §5's retry-contradiction check (the retry
+    // landed on contradicted, so it ran) — the original inconsistent pass is not lost.
+    expect(events).toHaveLength(21);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
     // Index 5, not 4: reason_ordinal (D030) now sits between reason_year and counterfact_ignored.
     expect(events[5]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    // Index 14, not 12: each pass is now 9 gates (contradiction_evidence is offset 5 within a pass).
-    expect(events[14]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 15, not 14: each pass is now 10 gates (contradiction_evidence is offset 5 within a pass).
+    expect(events[15]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
-    expect(events[18]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    expect(events[20]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -1914,8 +1914,9 @@ describe("GrounnelPipelineService (T010)", () => {
       "claim_reason_overlap",
       "numeric",
       "year",
+      "subject_entity",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the nine gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the ten gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 

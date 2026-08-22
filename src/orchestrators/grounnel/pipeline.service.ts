@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence, type ResolvedCitation } from "./passage-sentences.js";
-import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonOrdinalGate, applyReasonYearGate, applyYearGate } from "./gates.js";
+import { applyClaimReasonOverlapGate, applyContradictionEvidenceGate, applyCounterfactIgnoredGate, applyImplicitNegationGate, applyNumericGate, applyReasonConsistencyGate, applyReasonOrdinalGate, applyReasonYearGate, applySubjectEntityGate, applyYearGate } from "./gates.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -669,13 +669,14 @@ export class GrounnelPipelineService {
     );
   }
 
-  /** The 9-gate chain (grew from 5; see the gateEvents.push calls below for the current list), extracted so T034/T035's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
+  /** The 10-gate chain (grew from 5; see the gateEvents.push calls below for the current list), extracted so T034/T035's retry pass can re-run it against a fresh VERIFY result without duplicating the logic. */
   private runGateChain(input: {
     verdict: Verdict;
     reason: string | null;
     evidence: string | null;
     claimText: string;
     passageText: string;
+    subjectEntity: string;
     // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
     reasonSupportsVerdict: boolean | null;
   }): { verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[]; diagnostics: Diagnostic[]; needsRetry: boolean } {
@@ -791,6 +792,15 @@ export class GrounnelPipelineService {
     gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
     verdict = gate2b.verdict;
 
+    // g17 — deterministic backstop, last in the chain: catches a supported/partially_supported
+    // verdict whose evidence shares no proper noun with the claim's own subject (a coincidental
+    // number/generic-noun match to an unrelated real source, not a real match). Downgrades to
+    // unverifiable only — never blocks a real contradicted/unsupported/unverifiable verdict.
+    const gate3 = applySubjectEntityGate({ verdict, claimText: input.claimText, subjectEntity: input.subjectEntity, evidence });
+    gateEvents.push({ gate: "subject_entity", verdictBefore: verdict, verdictAfter: gate3.verdict, overridden: gate3.overridden, reason: gate3.reason });
+    verdict = gate3.verdict;
+    if (gate3.overridden) evidence = null; // stale — it was only meaningful attached to the discarded supported verdict.
+
     // D025 §2 — retry fires on any ERROR-severity diagnostic; today that's every diagnostic this
     // chain produces, but the field exists so a future WARNING/INFO-only gate doesn't force a retry.
     const needsRetry = diagnostics.some((d) => d.severity === "ERROR");
@@ -846,7 +856,7 @@ export class GrounnelPipelineService {
     auditId: string,
     // D026 §6 — deliberately no source_url: it's a page-identity memory cue the model doesn't need.
     // D026 §11 — up to MAX_VERIFY_PASSAGES texts, already rank-ordered (label assignment depends on it).
-    pairs: Array<{ id: string; claim: string; passages: Array<{ text: string }> }>,
+    pairs: Array<{ id: string; claim: string; subjectEntity: string; passages: Array<{ text: string }> }>,
     operation: string,
     callType: "primary" | "consistency_retry" | "fill_in",
     verifyVersion: string,
@@ -859,7 +869,11 @@ export class GrounnelPipelineService {
     const sentencesByClaim = new Map<string, Record<string, PassageSentence[]>>(
       pairs.map((p) => [p.id, buildPassageSentencesMulti(p.claim, p.passages.map((passage, i) => ({ label: passageLabelForIndex(i), text: passage.text })))])
     );
-    const renderedPairs = pairs.map((p) => ({ id: p.id, claim: p.claim, passage_sentences: sentencesByClaim.get(p.id) ?? {} }));
+    // g17 — subject_entity threaded through so VERIFY can itself notice a passage that supports
+    // the claim's literal wording while being about a different real entity (the reranker's own
+    // subject-entity signal, D030-review, only decides which passages get here, not whether the
+    // grounnel-verify prompt's own answer is entity-consistent).
+    const renderedPairs = pairs.map((p) => ({ id: p.id, claim: p.claim, subject_entity: p.subjectEntity, passage_sentences: sentencesByClaim.get(p.id) ?? {} }));
     // Telemetry (reviewed finding) — lets a later recall check distinguish "pooling didn't help"
     // from "few passages were ever pooled." Log line, not a new DB column.
     logger.info(
@@ -924,7 +938,7 @@ export class GrounnelPipelineService {
     previous: { verdict: Verdict; evidence: string | null; reason: string | null },
     diagnostics: Diagnostic[]
   ): Promise<VerifyProcessedResult | RateLimitError | null> {
-    const pairs = [{ id: item.claim.id, claim: item.claim.text, passages: item.passages.map((p) => ({ text: p.text! })) }];
+    const pairs = [{ id: item.claim.id, claim: item.claim.text, subjectEntity: item.claim.subjectEntity, passages: item.passages.map((p) => ({ text: p.text! })) }];
     const user = this.buildReconciliationUser(previous, diagnostics);
     try {
       const parsed = await this.callVerify(auditId, pairs, "retryVerifyClaim", "consistency_retry", verifyVersion, user);
@@ -1106,6 +1120,7 @@ export class GrounnelPipelineService {
           evidence: result.evidence,
           claimText: item.claim.text,
           passageText,
+          subjectEntity: item.claim.subjectEntity,
           reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
         });
         let chain = firstPass;
@@ -1145,6 +1160,7 @@ export class GrounnelPipelineService {
               evidence: retried.evidence,
               claimText: item.claim.text,
               passageText,
+              subjectEntity: item.claim.subjectEntity,
               reasonSupportsVerdict: null,
             });
             // Reviewed finding: concatenate, don't replace — the original self-inconsistent pass
@@ -1186,7 +1202,7 @@ export class GrounnelPipelineService {
 
   /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
   private async runBatch(auditId: string, batch: ResolvedWithPassage[], protectedContradictionClaimIds: Set<string>): Promise<RateLimitError | null> {
-    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, passages: b.passages.map((p) => ({ text: p.text! })) }));
+    const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, subjectEntity: b.claim.subjectEntity, passages: b.passages.map((p) => ({ text: p.text! })) }));
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
     // than tracking "already stamped" across an arbitrary number of batches for one run.
@@ -1234,7 +1250,7 @@ export class GrounnelPipelineService {
         { module: MODULE, operation: "runBatch", auditId, missingIds: missing.map((m) => m.claim.id) },
         "VERIFY response omitted some claims — firing a fill-in retry for exactly those"
       );
-      const fillInPairs = missing.map((b) => ({ id: b.claim.id, claim: b.claim.text, passages: b.passages.map((p) => ({ text: p.text! })) }));
+      const fillInPairs = missing.map((b) => ({ id: b.claim.id, claim: b.claim.text, subjectEntity: b.claim.subjectEntity, passages: b.passages.map((p) => ({ text: p.text! })) }));
       try {
         const fillIn = await this.callVerify(auditId, fillInPairs, "runBatch.fillIn", "fill_in", verifyVersion);
         await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds, gateEventsByClaimId);

@@ -466,7 +466,23 @@ const SENTENCE_START_STOPWORDS = new Set(
 
 function properNounWords(text: string): Set<string> {
   const words = text.match(PROPER_NOUN_RE) ?? [];
-  return new Set(words.map((w) => w.toLowerCase()).filter((w) => !SENTENCE_START_STOPWORDS.has(w)));
+  // Strip a trailing singular possessive ('s) — real prose names an entity once and then refers
+  // back to it possessively ("Nauru's population"), and without this a bare "Nauru" in the claim
+  // never set-matches "nauru's" in the evidence even though they're the same entity (found via
+  // g17's new applySubjectEntityGate, a far more frequent caller of sameEntity than applyYearGate's
+  // narrow original use).
+  // Known, accepted limitation (review finding): a PLURAL possessive ("the Wrights' aircraft")
+  // never reduces further to the singular root "wright" — PROPER_NOUN_RE's own \b already drops the
+  // bare trailing apostrophe before this code sees it, and even a source-text lookahead can't fix
+  // it: "Kansas'" (a singular name that already ends in s) and "Wrights'" (a pluralized surname)
+  // are indistinguishable from the captured text alone, so "strip the trailing s" would silently
+  // break the s-ending-singular case to fix the pluralized-surname one. No regex-only fix disambiguates
+  // this; same class of accepted gap as this file's own "two people sharing a surname" note below.
+  return new Set(
+    words
+      .map((w) => w.toLowerCase().replace(/'s?$/, ""))
+      .filter((w) => !SENTENCE_START_STOPWORDS.has(w))
+  );
 }
 
 // Shared by both detectors (review finding — Detector 1 previously had no entity guard at all,
@@ -816,5 +832,42 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
     return { verdict: input.verdict, overridden: false, reason: null };
   }
   return { verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" };
+}
+
+export interface SubjectEntityGateInput {
+  verdict: Verdict;
+  claimText: string;
+  // "" when EXTRACT gave none — falls back to claimText, same as the rerank prompt's own fallback.
+  subjectEntity: string;
+  evidence: string | null;
+}
+
+export interface SubjectEntityGateResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "subject_entity_mismatch" | null;
+}
+
+/**
+ * Deterministic backstop for g17 (real prod bug: unrelated real sources coincidentally matching a
+ * claim's bare number/generic noun got graded supported). Reuses sameEntity()'s proper-noun-set
+ * intersection above — the same trusted mechanism applyYearGate already runs on, not a new fixed
+ * word list. Downgrades supported/partially_supported only, matching D019's asymmetry: this is a
+ * false-miss risk (a real match happens to share no proper noun), never a false accusation.
+ */
+export function applySubjectEntityGate(input: SubjectEntityGateInput): SubjectEntityGateResult {
+  if (input.verdict !== "supported" && input.verdict !== "partially_supported") {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  if (!input.evidence) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  // Guards undefined too, not just "" — tests aren't typechecked (tsconfig excludes tests/), so
+  // fixtures predating this field hit this at runtime.
+  const anchor = input.subjectEntity && input.subjectEntity.trim().length > 0 ? input.subjectEntity : input.claimText;
+  if (sameEntity(anchor, input.evidence)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  return { verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" };
 }
 

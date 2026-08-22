@@ -8,6 +8,7 @@ import {
   applyReasonConsistencyGate,
   applyReasonOrdinalGate,
   applyReasonYearGate,
+  applySubjectEntityGate,
   applyYearGate,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
@@ -1190,5 +1191,103 @@ describe("reason/verdict consistency gate — ordinal mismatch: held-out general
     });
     console.log(`[T009] ordinal-gate held-out recall: ${caught.length}/${heldOutContradictions.length}`);
     expect(caught).toHaveLength(10);
+  });
+});
+
+describe("subject-entity gate — deterministic backstop for g17 (unrelated real sources coincidentally matching a claim's bare number)", () => {
+  it("downgrades supported when evidence shares no proper noun with subjectEntity — the real g17 repro", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "The second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: "Prof Foster believes Mr Gray's repair work resulted in as many as 34 numbered fragments of the original stone.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" });
+  });
+
+  it("leaves supported alone when the evidence names the subject entity, including in possessive form", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "The second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: "Marwick's second layer contained 34 fragments of pottery.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("regression: a possessive form in evidence ('Nauru's') must still set-match the claim's bare proper noun ('Nauru')", () => {
+    // Real bug found wiring this gate into runGateChain (2026-08-21): properNounWords didn't strip
+    // possessives, so "nauru's" != "nauru" as Set members even though they name the same entity —
+    // every real-prose claim (evidence almost always refers back possessively) was false-downgraded.
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Nauru has a resident population of approximately 12,000 people.",
+      subjectEntity: "",
+      evidence: "Nauru's resident population is approximately 12,000 people.",
+    });
+    expect(result.overridden).toBe(false);
+  });
+
+  it("falls back to claimText when subjectEntity is empty", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Marwick led an excavation at Larkspur Hill.",
+      subjectEntity: "",
+      evidence: "An unrelated passage about the Stone of Destiny and its repair history.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" });
+  });
+
+  it("falls back to claimText when subjectEntity is undefined (pre-g17 caller/fixture)", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Marwick led an excavation at Larkspur Hill.",
+      // @ts-expect-error — exercising the runtime guard for callers that predate this field.
+      subjectEntity: undefined,
+      evidence: "An unrelated passage about the Stone of Destiny and its repair history.",
+    });
+    expect(result.overridden).toBe(true);
+  });
+
+  it("also checks partially_supported, not just supported", () => {
+    const result = applySubjectEntityGate({
+      verdict: "partially_supported",
+      claimText: "Marwick's second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" });
+  });
+
+  it("never touches contradicted, unsupported, or unverifiable — only supported/partially_supported are checked", () => {
+    for (const verdict of ["contradicted", "unsupported", "unverifiable"] as const) {
+      const result = applySubjectEntityGate({
+        verdict,
+        claimText: "Marwick's second layer contained 34 fragments.",
+        subjectEntity: "Marwick",
+        evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
+      });
+      expect(result).toEqual({ verdict, overridden: false, reason: null });
+    }
+  });
+
+  it("no-ops when evidence is null", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Marwick's second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: null,
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains (sameEntity's own convention) when the claim names no proper noun at all", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "The event happened there.",
+      subjectEntity: "",
+      evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
+    });
+    expect(result.overridden).toBe(false);
   });
 });
