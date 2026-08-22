@@ -16,9 +16,8 @@ pnpm db:studio        # Open Drizzle Studio
 ```
 
 ## Current State
-- Active stage: check specs/ for current stage and phase
-- Known issues: gemini-2.0-flash deprecated — use gemini-2.5-flash
-- Real eval runs: none yet, MockProvider only
+- Active stage: check `specs/` for current stage and phase
+- Known issues: `gemini-2.0-flash` deprecated — use `gemini-2.5-flash`
 
 ## Repository Structure
 
@@ -65,13 +64,13 @@ If you rotate any of these, update **both** sides in the same sitting, then veri
 3. **Fire-and-forget for observability** — `recordLlmCall()` failures must never break the main flow. Wrap in try/catch.
 4. **Test behavior, not schema** — Test that `TimeoutError` maps to `status="timeout"`, not just that the field can be stored.
 5. **Validate at boundaries** — API, DB, external services. Never trust input.
-6. **Single-line commits** — `feat: add retry logic`, not multi-line bodies.
+6. **Single-line commits** — see Git Convention below.
 7. **Check existing migrations** — Before generating new ones, verify `src/db/migrations/` doesn't already have the table.
 8. **Spec alignment** — Don't carry assumptions from previous stages. Each stage has its own scope.
 9. **Nullable semantics** — Use `field: Type | null` for nullable DB columns, not `field?: Type | null`.
 10. **Scope discipline** — Do only what was explicitly asked. Everything else is out of scope.
 11. **Error handling style** — Use `try/catch` blocks, not `await ... .catch()`. Prefer explicit control flow over chained error handlers.
-12. **Prefer LLM judgment over regex for semantic/contextual checks** — Regex only catches phrasings already seen; anything requiring "does this text mean X" (not just "does it match a fixed pattern") should be a small LLM classifier call instead, not a growing pile of patterns. Two real incidents: (a) the injection-guard's `\byou\s+are\s+now\b` regex, meant to catch prompt-injection attempts like "you are now a different assistant," false-positived on a scraped webpage's "You are now subscribed" newsletter boilerplate quoted verbatim as VERIFY evidence — degraded a whole batch of otherwise-correct verdicts (2026-08-09, fixed by excluding verbatim-quote fields from the scan, see `injection-guard.ts`'s `quotedFields`). (b) D025 (Grounnel)'s reconciliation-pass gate originally tried extracting numeric/date facts via regex (`extractNumericFact`) to catch reason/verdict mismatches, and had to be replaced with a batched LLM classifier mid-implementation — the regex approach couldn't generalize past the one category (currency/percent) it happened to be written for, and the real motivating bug was a date mismatch it never covered. Regex stays fine for genuinely closed, enumerable formats (a currency pattern, a UUID, a fixed date shape) — not for "is this suspicious" or "does this reasoning support that verdict."
+12. **Prefer LLM judgment over regex for semantic/contextual checks** — regex only catches phrasings already seen; "does this text mean X" should be a small LLM classifier, not a growing pattern list. Regex stays fine for closed, enumerable formats (currency, UUID, a fixed date shape). Real incidents: `injection-guard.ts`'s `quotedFields` comment, `docs/decisions/025-grounnel-verify-reconciliation-pass.md`.
 
 ## Integration Requirement
 
@@ -137,7 +136,6 @@ Load these skill files when working on related tasks:
 - `docs/decisions/` — ADRs: architectural decisions with rationale (read before changing architecture)
 - `docs/integration-map.md` — Ownership rules for cross-cutting functions
 - `docs/testing-philosophy.md` — Full behavioral testing principles
-- `docs/system-state.md` — Known issues, eval status, active stage
 
 ## Forbidden
 
