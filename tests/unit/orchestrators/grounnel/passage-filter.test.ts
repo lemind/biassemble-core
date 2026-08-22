@@ -41,6 +41,49 @@ describe("gate #4 — passage relevance pre-filter (T006)", () => {
   it.todo("passage filter drops valid pronoun-only evidence — D019 §2, no fix designed yet");
 });
 
+describe("gate #4 — instance-selector rescue (D030 §3f, g17-wright-brothers-ordinal root cause)", () => {
+  it("g17 real repro: admits the refuting sentence for the correct instance even though it shares no key term with the claim", () => {
+    // extractKeyTerms("The first flight covered 852 feet.") === ["852"] — this sentence names the
+    // real first flight's distance (120ft, not 852), so without the selector rescue this is
+    // exactly the sentence that gets dropped, leaving only confirming (wrong-instance) evidence.
+    const claim = "The first flight covered 852 feet.";
+    const passage = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    expect(isPassageRelevant(claim, passage)).toBe(true);
+  });
+
+  it("still keeps admitting a passage that matches on the key term alone (unrelated instance, same number)", () => {
+    const claim = "The first flight covered 852 feet.";
+    const passage = "The fourth and final flight covered 852 feet and lasted 59 seconds.";
+    expect(isPassageRelevant(claim, passage)).toBe(true);
+  });
+
+  it("still drops a passage about neither the claim's number nor its instance", () => {
+    const claim = "The first flight covered 852 feet.";
+    const passage = "The second flight covered approximately 175 feet.";
+    expect(isPassageRelevant(claim, passage)).toBe(false);
+  });
+
+  it("a ranking descriptor ('longest') gets no selector rescue — ordinary key-term filtering only, unchanged from before D030 §3f", () => {
+    const claim = "The longest flight covered 852 feet.";
+    const passage = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    expect(isPassageRelevant(claim, passage)).toBe(false);
+  });
+
+  it("does not over-admit on a calendar-period 'first' that isn't a repeated-entity instance", () => {
+    const claim = "The first quarter of 2024 saw revenue growth.";
+    // Shares no key term (no proper noun/number) and no real selector+anchor overlap with a
+    // passage about an unrelated "first" of something else — must not spuriously admit.
+    const passage = "She finished first in the marathon last year.";
+    expect(isPassageRelevant(claim, passage)).toBe(false);
+  });
+
+  it("ordinary numeric retrieval (no selector in the claim at all) is unaffected", () => {
+    const claim = "Apple's market capitalization surpassed $3.5 trillion in 2024.";
+    const passage = "Apple's market cap crossed $3.5 trillion for the first time in 2024, according to filings.";
+    expect(isPassageRelevant(claim, passage)).toBe(true);
+  });
+});
+
 describe("code-enforced entity anchor (g17)", () => {
   it("drops the real g17 repro: a passage that shares the claim's number but is about a different entity", () => {
     const subjectEntity = "Marwick";

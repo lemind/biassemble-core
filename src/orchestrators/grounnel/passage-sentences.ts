@@ -1,6 +1,7 @@
 /** Numbers a claim-relevant subset of a passage's sentences so VERIFY cites a NUMBER, not generated text. See D026 §7, §11. */
 
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
+import { extractInstanceSelector, passageMatchesSelector } from "../../lib/instance-selector.js";
 
 const MAX_SENTENCES = 20;
 
@@ -27,13 +28,23 @@ export interface PassageSentence {
 export function buildPassageSentences(claimText: string, passageText: string, maxSentences = MAX_SENTENCES): PassageSentence[] {
   const sentences = splitIntoSentences(passageText);
   const terms = extractKeyTerms(claimText);
+  // D030 §3f — a claim naming "the first flight" needs the sentence that actually discusses the
+  // first flight to survive this cut even when it shares none of extractKeyTerms's own key terms
+  // (a different flight's page can dominate scoring by number/entity alone — the g17 root cause).
+  const selector = extractInstanceSelector(claimText);
 
   let selected: string[];
-  if (terms.length === 0 || sentences.length <= maxSentences) {
+  if ((terms.length === 0 && !selector) || sentences.length <= maxSentences) {
     // Fail-open, same convention as isPassageRelevant (passage-filter.ts): nothing to score against.
     selected = sentences.slice(0, maxSentences);
   } else {
-    const scored = sentences.map((text, i) => ({ text, i, score: scoreKeyTermMatches(terms, text) }));
+    const scored = sentences.map((text, i) => ({
+      text,
+      i,
+      // Selector match counts as one matched term — additive, never a replacement for key-term
+      // scoring, so it only rescues an otherwise-dropped sentence, never demotes a well-scoring one.
+      score: scoreKeyTermMatches(terms, text) + (selector && passageMatchesSelector(selector, text) ? 1 : 0),
+    }));
     const matching = scored.filter((s) => s.score > 0);
     const ranked = (matching.length > 0 ? matching : scored).sort((a, b) => b.score - a.score).slice(0, maxSentences);
     // Re-sort back into original passage order — numbering should read like the page; score only

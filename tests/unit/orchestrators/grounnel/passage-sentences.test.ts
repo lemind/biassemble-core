@@ -55,6 +55,30 @@ describe("buildPassageSentences (D026 §7, T043)", () => {
     expect(result).toHaveLength(2);
     expect(result[0]!.n).toBe(1);
   });
+
+  it("D030 §3f, g17 root cause: rescues the sentence naming the claim's actual instance even when it shares no key term, instead of the cap filling entirely with a different-instance match", () => {
+    // extractKeyTerms("The first flight covered 852 feet.") === ["852"] — a long page where only
+    // the WRONG (fourth) flight's sentence contains "852" would, pre-D030-§3f, fill every slot
+    // with score>0 sentences and never surface the real first flight's sentence at all.
+    const claim = "The first flight covered 852 feet.";
+    const firstFlightSentence = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    const filler = Array.from({ length: 25 }, (_, i) => `Unrelated background sentence number ${i} about the historical period.`);
+    const passage = [...filler.slice(0, 10), firstFlightSentence, ...filler.slice(10)].join(" ");
+    const result = buildPassageSentences(claim, passage, 5);
+    expect(result.map((s) => s.text)).toContain(firstFlightSentence);
+  });
+
+  it("selector rescue never demotes a real key-term match — the 852ft sentence stays in the top slots when both are present", () => {
+    const claim = "The first flight covered 852 feet.";
+    const firstFlightSentence = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    const fourthFlightSentence = "The fourth and final flight covered 852 feet and lasted 59 seconds.";
+    const filler = Array.from({ length: 20 }, (_, i) => `Unrelated background sentence number ${i} about the historical period.`);
+    const passage = [...filler.slice(0, 10), firstFlightSentence, fourthFlightSentence, ...filler.slice(10)].join(" ");
+    const result = buildPassageSentences(claim, passage, 5);
+    const texts = result.map((s) => s.text);
+    expect(texts).toContain(firstFlightSentence);
+    expect(texts).toContain(fourthFlightSentence);
+  });
 });
 
 describe("buildPassageSentencesMulti (D026 §11, T049)", () => {
