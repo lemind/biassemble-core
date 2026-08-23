@@ -16,15 +16,13 @@ const NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
 const NEGATION_WINDOW = 60;
 
 // D030 §3g follow-up (g17 continued) — number + its immediate unit word, e.g. "852 feet"/"852 ft".
-const NUMBER_UNIT_RE = /(\d[\d,.]*)\s*([a-zA-Z]+)/;
+const NUMBER_UNIT_RE = /(\d[\d,.]*)\s*([a-zA-Z]+)/g;
 // Spelling variants only, scoped to the actually-observed g17 unit (review finding: broader
 // speculative families were untested); an unmapped unit passes through via the `?? unit` fallback.
 const UNIT_ALIASES: Record<string, string> = { ft: "feet", foot: "feet" };
-function nearestNumberUnit(text: string): { value: string; unit: string } | null {
-  const m = NUMBER_UNIT_RE.exec(text);
-  if (!m) return null;
-  const unit = m[2]!.toLowerCase();
-  return { value: m[1]!.replace(/,/g, ""), unit: UNIT_ALIASES[unit] ?? unit };
+function toUnitValue(match: RegExpMatchArray): { value: string; unit: string } {
+  const unit = match[2]!.toLowerCase();
+  return { value: match[1]!.replace(/,/g, ""), unit: UNIT_ALIASES[unit] ?? unit };
 }
 
 function lastClauseBoundary(window: string): number {
@@ -54,12 +52,27 @@ function isOrdinalNegated(reason: string, matchIndex: number): boolean {
   return NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
 }
 
-// D030 §3g follow-up — CLAUSE-scoped (not sentence-scoped), so two ordinal+value pairs sharing one
-// comma-joined sentence don't get the wrong pair's number attributed to a given match.
+// D030 §3g follow-up — CLAUSE-scoped AND proximity-scoped: picks the number+unit NEAREST the
+// ordinal match within its clause, not just the first one. Live regression (2026-08-23): a rounded
+// restatement earlier in the sentence ("$23.4B (or $23.43B)... the third fiscal quarter") otherwise
+// outranked the precise value actually adjacent to the ordinal, forcing a false contradiction.
 function clauseValueNear(text: string, matchIndex: number): { value: string; unit: string } | null {
-  const start = lastClauseBoundary(text.slice(0, matchIndex));
-  const end = firstClauseBoundaryForward(text, matchIndex);
-  return nearestNumberUnit(text.slice(start + 1, end === -1 ? text.length : end));
+  const clauseStart = lastClauseBoundary(text.slice(0, matchIndex)) + 1;
+  const clauseEndAbs = firstClauseBoundaryForward(text, matchIndex);
+  const clauseEnd = clauseEndAbs === -1 ? text.length : clauseEndAbs;
+  const matches = [...text.slice(clauseStart, clauseEnd).matchAll(NUMBER_UNIT_RE)];
+  if (matches.length === 0) return null;
+  const relIndex = matchIndex - clauseStart;
+  let nearest = matches[0]!;
+  let nearestDist = Math.abs((nearest.index ?? 0) - relIndex);
+  for (const m of matches) {
+    const dist = Math.abs((m.index ?? 0) - relIndex);
+    if (dist < nearestDist) {
+      nearest = m;
+      nearestDist = dist;
+    }
+  }
+  return toUnitValue(nearest);
 }
 
 // Rough sentence spans to bound the locality check below — doesn't split mid-number, no need to handle abbreviations perfectly.

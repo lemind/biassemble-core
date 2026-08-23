@@ -1096,6 +1096,20 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
   });
 
+  // Real live-deploy regression (2026-08-23, g20-apple-earnings): the FIRST-in-clause version of
+  // clauseValueNear picked up a rounded restatement ("$23.4 billion") earlier in the sentence,
+  // instead of the precise value actually adjacent to "third" in the parenthetical that follows it —
+  // forcing a real "supported" claim to `contradicted`. Fixed by picking the number nearest the
+  // ordinal match, not just the first one in its clause. This is the exact captured failure.
+  it("(review-caught regression) does not fire when an earlier ROUNDED restatement in the same clause outranks the precise value actually next to the ordinal", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "Apple reported $23.43 billion in net profit in the third fiscal quarter of 2025.",
+      reason: "Multiple sources confirm that Apple reported $23.4 billion (or $23.43 billion) in net profit in the third fiscal quarter of 2025.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
   it("abstains when the claim has zero ordinal words", () => {
     const result = applyReasonOrdinalGate({
       verdict: "supported",
