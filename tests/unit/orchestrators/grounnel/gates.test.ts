@@ -1039,16 +1039,61 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
-  // Reviewer-flagged adversarial case: a competing ordinal on the same anchor coexists with the
-  // claim's own ordinal+anchor also appearing (at a different, unrelated value) — confirmation
-  // precedence means this abstains rather than confidently firing on a genuinely ambiguous case.
-  it("abstains when the claim's own ordinal+anchor also appears in reason, even at a different value", () => {
+  // Reviewer-flagged adversarial case, still a required abstain after the value-aware fix below:
+  // the claim's own ordinal+anchor appears in reason, but its nearby value is a DIFFERENT UNIT
+  // ("59 seconds" vs the claim's "852 ft") — not comparable, so this must not be asserted as a
+  // mismatch. This is the landmine a naive value-check would break (D030 §3g follow-up).
+  it("abstains when the claim's own ordinal+anchor also appears in reason, at a different-UNIT value", () => {
     const result = applyReasonOrdinalGate({
       verdict: "supported",
       claimText: "The first flight covered 852 ft.",
       reason: "The fourth flight covered 852 ft, while the first flight lasted 59 seconds.",
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // D030 §3g follow-up (g17 continued) — value-aware confirmation. The old "ordinal word matches
+  // claim's ordinal -> confirmed, return immediately" rule let a same-word/different-value mismatch
+  // through uncaught: "first" matches, but the reason pairs it with 120 ft, not the claim's 852 ft.
+  it("(g17 continued) fires when the claim's own ordinal+anchor appears in reason but paired with a DIFFERENT value of the SAME unit", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The fourth flight covered 852 ft, while the first flight covered only 120 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Real captured VERIFY output from the labeled-evidence-formatting experiment (2026-08-23) —
+  // the exact case the value-aware fix was built for, not a synthetic approximation.
+  it("(g17 continued, real captured output) fires on VERIFY's actual reason from the evidence-labeling experiment", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "partially_supported",
+      claimText: "The first flight covered 852 feet.",
+      reason:
+        "Source A states the record flight covered 852 feet. Source B states the fourth and final flight covered 852 feet. Source C states the fourth and final flight covered 852 feet. However, Source C explicitly states the first flight covered 120 feet, and Source B states the 852 feet was covered on the fourth flight, not the first. Therefore, the passage partially supports the claim by stating the distance was covered, but not on the first flight.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Unit-spelling variant, not unit MISMATCH — "feet" and "ft" name the same unit and must not be
+  // treated as incomparable (the opposite failure direction from the landmine case above).
+  it("(g17 continued) same value survives a unit-SPELLING variant (feet vs ft) without a false fire", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The passage states the first flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("(g17 continued) a genuine value mismatch still fires across a unit-spelling variant (feet vs ft)", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The passage states the first flight covered 120 ft, and the fourth flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
   });
 
   it("abstains when the claim has zero ordinal words", () => {

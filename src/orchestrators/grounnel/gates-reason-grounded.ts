@@ -5,6 +5,7 @@ import {
   isSentenceTerminator,
   anchorWords as ordinalAnchorWords,
   anchorsOverlap,
+  firstClauseBoundaryForward,
   SELECTOR_RE_G as ORDINAL_RE_G,
 } from "../../lib/instance-selector.js";
 import { sameEntity, type Verdict } from "./gates-shared.js";
@@ -13,6 +14,18 @@ import { YEAR_TOKEN_RE_G } from "./gates-numeric-and-year.js";
 // Window sized off a real captured VERIFY reason with margin. "n't" has no leading \b (contractions), same fix NEGATED_CONTRADICTION_RE applies.
 const NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
 const NEGATION_WINDOW = 60;
+
+// D030 §3g follow-up (g17 continued) — number + its immediate unit word, e.g. "852 feet"/"852 ft".
+const NUMBER_UNIT_RE = /(\d[\d,.]*)\s*([a-zA-Z]+)/;
+// Spelling variants only, scoped to the actually-observed g17 unit (review finding: broader
+// speculative families were untested); an unmapped unit passes through via the `?? unit` fallback.
+const UNIT_ALIASES: Record<string, string> = { ft: "feet", foot: "feet" };
+function nearestNumberUnit(text: string): { value: string; unit: string } | null {
+  const m = NUMBER_UNIT_RE.exec(text);
+  if (!m) return null;
+  const unit = m[2]!.toLowerCase();
+  return { value: m[1]!.replace(/,/g, ""), unit: UNIT_ALIASES[unit] ?? unit };
+}
 
 function lastClauseBoundary(window: string): number {
   let last = -1;
@@ -39,6 +52,14 @@ function isOrdinalNegated(reason: string, matchIndex: number): boolean {
   const window = reason.slice(windowStart, matchIndex);
   const clauseStart = lastClauseBoundary(window);
   return NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
+}
+
+// D030 §3g follow-up — CLAUSE-scoped (not sentence-scoped), so two ordinal+value pairs sharing one
+// comma-joined sentence don't get the wrong pair's number attributed to a given match.
+function clauseValueNear(text: string, matchIndex: number): { value: string; unit: string } | null {
+  const start = lastClauseBoundary(text.slice(0, matchIndex));
+  const end = firstClauseBoundaryForward(text, matchIndex);
+  return nearestNumberUnit(text.slice(start + 1, end === -1 ? text.length : end));
 }
 
 // Rough sentence spans to bound the locality check below — doesn't split mid-number, no need to handle abbreviations perfectly.
@@ -137,6 +158,10 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
   if (claimAnchor.size === 0) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
+  // Clause-scoped like the reason side (review finding) — an unscoped whole-text lookup grabbed a
+  // leading unrelated number ("In 1969, the first flight covered 852 ft" -> "1969") instead of the
+  // claim's own value, silently defeating the mismatch check below.
+  const claimValue = clauseValueNear(input.claimText, claimMatch.index!);
 
   const reason = input.reason;
   const reasonMatches = [...reason.matchAll(ORDINAL_RE_G)];
@@ -151,6 +176,12 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
     if (!anchorsOverlap(claimAnchor, anchor)) continue;
     if (isOrdinalNegated(reason, m.index!)) continue;
     if (ordinal === claimOrdinal) {
+      // D030 §3g follow-up — same ordinal word is confirmation only if its own clause's value+unit doesn't contradict the claim's (see ADR for the g17 same-word/wrong-value case this closes).
+      const localValue = clauseValueNear(reason, m.index!);
+      if (localValue && claimValue && localValue.unit === claimValue.unit && localValue.value !== claimValue.value) {
+        competing = true;
+        continue;
+      }
       // Confirmation found — takes precedence, return immediately (data-model.md §1 step 4).
       return { verdict: input.verdict, overridden: false, reason: null };
     }

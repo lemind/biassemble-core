@@ -1,7 +1,7 @@
 /** Numbers a claim-relevant subset of a passage's sentences so VERIFY cites a NUMBER, not generated text. See D026 §7, §11. */
 
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
-import { extractInstanceSelector, passageMatchesSelector } from "../../lib/instance-selector.js";
+import { extractInstanceSelector, passageMatchesSelector, SELECTOR_RE_G } from "../../lib/instance-selector.js";
 
 const MAX_SENTENCES = 20;
 
@@ -21,6 +21,18 @@ export function splitIntoSentences(text: string): string[] {
 export interface PassageSentence {
   n: number;
   text: string;
+  // Deterministic fact about the text (a sequence-position word it contains), not a relevance/correctness judgment — see D030 §3g follow-up.
+  selector?: string;
+}
+
+// Sequence-selector word this sentence contains, if exactly one DISTINCT word appears — same source
+// of truth extractInstanceSelector/passageMatchesSelector already use for retrieval (D030 §3f).
+// Abstains (review finding) on 2+ distinct words rather than guess which one a value belongs to,
+// e.g. "Not the first attempt, but the fourth flight covered 852 feet." — no negation/proximity
+// analysis here (that lives in gates-reason-grounded.ts), so silence beats a possibly-wrong tag.
+function detectSelectorWord(text: string): string | null {
+  const words = new Set([...text.matchAll(SELECTOR_RE_G)].map((m) => m[1]!.toLowerCase()));
+  return words.size === 1 ? [...words][0]! : null;
 }
 
 /** Selects and numbers up to `maxSentences` claim-relevant sentences, in original passage order.
@@ -65,7 +77,10 @@ export function buildPassageSentences(claimText: string, passageText: string, ma
     selected = ranked.sort((a, b) => a.i - b.i).map((s) => s.text);
   }
 
-  return selected.map((text, i) => ({ n: i + 1, text }));
+  return selected.map((text, i) => {
+    const selector = detectSelectorWord(text);
+    return selector ? { n: i + 1, text, selector } : { n: i + 1, text };
+  });
 }
 
 /** Numbers each of up to MAX_VERIFY_PASSAGES ranked passages independently, grouped by source label ("A" = highest-ranked). D026 §11. */

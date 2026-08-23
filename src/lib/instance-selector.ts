@@ -16,9 +16,11 @@ export function isSentenceTerminator(text: string, index: number): boolean {
   return !(/\d/.test(text[index - 1] ?? "") && /\d/.test(text[index + 1] ?? ""));
 }
 
-// Forward clause boundary for the anchor window below — D030 §3a.
-function firstClauseBoundaryForward(text: string): number {
-  for (let i = 0; i < text.length; i++) {
+// Forward clause boundary for the anchor window below — D030 §3a. `fromIndex` (default 0, review
+// finding) lets a caller scan from an arbitrary position instead of pre-slicing — reused as-is by
+// gates-reason-grounded.ts's clause-scoped value lookup (D030 §3g follow-up) rather than duplicated.
+export function firstClauseBoundaryForward(text: string, fromIndex = 0): number {
+  for (let i = fromIndex; i < text.length; i++) {
     const ch = text[i]!;
     if (ch === ";" || ch === "," || ch === "!" || ch === "?") return i;
     if (ch === "." && isSentenceTerminator(text, i)) return i;

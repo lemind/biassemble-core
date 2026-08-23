@@ -92,6 +92,24 @@ describe("buildPassageSentences (D026 §7, T043)", () => {
     const result = buildPassageSentences(claim, passage, 5);
     expect(result.map((s) => s.text)).toContain(firstFlightSentence);
   });
+
+  // D030 §3g follow-up (g17 continued) — surfaces the same detection already used for retrieval rescue (D030 §3f) directly to VERIFY, as data rather than a prescriptive prompt instruction.
+  it("(g17 continued) tags a sentence with the sequence-selector word it contains", () => {
+    const result = buildPassageSentences("The first flight covered 852 feet.", "The fourth and final flight covered 852 feet.");
+    expect(result).toEqual([{ n: 1, text: "The fourth and final flight covered 852 feet.", selector: "fourth" }]);
+  });
+
+  it("(g17 continued) omits selector when the sentence has no sequence-position word", () => {
+    const result = buildPassageSentences("The Eiffel Tower was completed in 1889.", "The Eiffel Tower opened in 1889.");
+    expect(result).toEqual([{ n: 1, text: "The Eiffel Tower opened in 1889." }]);
+  });
+
+  // Review finding: an earlier version picked the textually-first word regardless of negation,
+  // which would tag this sentence "first" even though its actual value belongs to "fourth".
+  it("(g17 continued, review finding) omits selector when a sentence names two distinct sequence words — abstains rather than guess", () => {
+    const result = buildPassageSentences("The first flight covered 852 feet.", "Not the first attempt, but the fourth flight covered 852 feet.");
+    expect(result).toEqual([{ n: 1, text: "Not the first attempt, but the fourth flight covered 852 feet." }]);
+  });
 });
 
 describe("buildPassageSentencesMulti (D026 §11, T049)", () => {
