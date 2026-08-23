@@ -38,6 +38,11 @@ export function hasPassage(r: ResolvedEvidence): r is ResolvedWithPassage {
   return r.passages.length > 0;
 }
 
+// Escalation-replacement guard (D030 §3h) — citations, not `evidence`, is the reliable ground-truth signal; see the ADR for why citationsInvariant only enforces that direction.
+export function hasValidEvidence(citations: unknown[]): boolean {
+  return citations.length > 0;
+}
+
 export function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
   return sources.map((s) => ({ kind: "web" as const, title: s.title, domain: s.domain, url: s.url, status: s.status, retrievalMethod: s.retrievalMethod }));
 }

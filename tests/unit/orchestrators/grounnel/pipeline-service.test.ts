@@ -2281,4 +2281,147 @@ describe("GrounnelPipelineService (T010)", () => {
       { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
     ]);
   });
+
+  // D030 §3h — live regression (2026-08-23, g12-bukowski-death-year): a grounded "contradicted" verdict survived 2 escalation tiers, then a 3rd's evidence-empty "unsupported" silently overwrote it. See the ADR for why this isn't "protect contradicted" (that would defeat guardEscalatedContradictionReversals' own job).
+  it("D030 §3h: an escalation tier that returns NO usable evidence must not overwrite a prior tier's grounded 'contradicted' verdict", async () => {
+    const claimId = uuid(1);
+    const claimText = "Heinrich Muller died in 1948.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const contradictingPassage = "Heinrich Muller actually died on March 9, 1994, according to public records. ".repeat(10);
+    const irrelevantPassage = "Heinrich Muller was a well-known figure in his community. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        const cap = context?.maxCandidates ?? 3;
+        if (cap <= 3) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
+        if (cap === 5) return [webSource({ text: irrelevantPassage })]; // tier 5: real page, nothing to cite for this fact
+        return [webSource({ status: "unreachable", text: null })]; // tier 8: nothing further, never needed
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = provider.getCallCount() > 1; // first call is the base pool; only tier 5 calls VERIFY again
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "unsupported" : "contradicted",
+          evidenceCitations: wide ? null : citationsFor(claimText, contradictingPassage, "Heinrich Muller actually died on March 9, 1994, according to public records."),
+          reason: wide ? "None of the provided sentences mention the death year of Heinrich Muller." : "The passage states he died in 1994, contradicting the claimed 1948 date.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // The core assertion: tier 5's evidence-empty "unsupported" must NOT overwrite the base pool's grounded "contradicted".
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).toBe("Heinrich Muller actually died on March 9, 1994, according to public records.");
+
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden === true && e.reason === "escalation_no_valid_evidence")).toBe(true);
+  });
+
+  // D030 §3h counterexample #1 — proves this isn't "protect contradicted" under a new name: real new evidence is still free to overturn it; only an evidence-EMPTY replacement gets blocked.
+  it("D030 §3h: an escalation tier with real new evidence still overturns a prior 'contradicted' verdict normally", async () => {
+    const claimId = uuid(1);
+    const claimText = "The bridge opened in 1998.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const wrongPassage = "The bridge officially opened to traffic in 1995, three years ahead of schedule. ".repeat(10);
+    const rightPassage = "Records confirm the bridge opened in 1998 after a lengthy construction delay. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        const cap = context?.maxCandidates ?? 3;
+        if (cap <= 3) return [webSource({ text: wrongPassage })]; // base pool: a real but wrong date
+        return [webSource({ text: rightPassage })]; // tier 5: a real, correct source
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = provider.getCallCount() > 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "supported" : "contradicted",
+          evidenceCitations: wide
+            ? citationsFor(claimText, rightPassage, "Records confirm the bridge opened in 1998 after a lengthy construction delay.")
+            : citationsFor(claimText, wrongPassage, "The bridge officially opened to traffic in 1995, three years ahead of schedule."),
+          reason: wide ? "The passage confirms the bridge opened in 1998." : "The passage states the bridge opened in 1995, contradicting the claimed 1998 date.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+    expect(claim.evidence).toBe("Records confirm the bridge opened in 1998 after a lengthy construction delay.");
+
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden === false && e.verdictBefore === "contradicted" && e.verdictAfter === "supported")).toBe(true);
+  });
+
+  // D030 §3h counterexample #2 — the guard checks citations, not a verdict label, so a confidence-downgraded-but-grounded "unverifiable" is never mistaken for "no evidence".
+  it("D030 §3h: an escalation tier landing on a low-confidence but evidence-backed verdict is not blocked either", async () => {
+    const claimId = uuid(1);
+    // Non-numeric claim, deliberately — a year/number claim here would let applyYearGate's own
+    // independent evidence-text match un-downgrade "unverifiable" back to "supported" on its own
+    // (real, correct, unrelated gate behavior), muddying which mechanism this test is isolating.
+    const claimText = "The novel was written by Jane Smith.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const wrongPassage = "The novel was actually written by John Doe, not Jane Smith. ".repeat(10);
+    const shakyPassage = "Some records suggest Jane Smith may have contributed to the novel. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        const cap = context?.maxCandidates ?? 3;
+        if (cap <= 3) return [webSource({ text: wrongPassage })];
+        return [webSource({ text: shakyPassage })];
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = provider.getCallCount() > 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "supported" : "contradicted",
+          evidenceCitations: wide
+            ? citationsFor(claimText, shakyPassage, "Some records suggest Jane Smith may have contributed to the novel.")
+            : citationsFor(claimText, wrongPassage, "The novel was actually written by John Doe, not Jane Smith."),
+          reason: wide ? "A source suggests Jane Smith may have contributed, though it hedges with 'suggest'." : "The passage states the novel was written by John Doe, not Jane Smith, contradicting the claim.",
+          // Below CONFIDENCE_THRESHOLD (0.6) — the reported verdict is remapped to "unverifiable",
+          // but evidence/citations survive the remap (D025 §2), so hasValidEvidence stays true.
+          confidence: wide ? 0.3 : 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unverifiable");
+    expect(claim.evidence).toBe("Some records suggest Jane Smith may have contributed to the novel.");
+
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden === false && e.verdictBefore === "contradicted" && e.verdictAfter === "unverifiable")).toBe(true);
+  });
 });

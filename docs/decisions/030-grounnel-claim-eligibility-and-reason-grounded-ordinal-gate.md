@@ -484,6 +484,55 @@ rule has never been run against a model. `g17` flips non-deterministically, so t
 consecutive green live runs** before it counts as fixed — one green run proves nothing, as the
 2026-08-22 red/green pair showed. Both prior drafts looked correct on paper and were not.
 
+**§3h — the escalation-result validity floor.** Same-day follow-up (2026-08-23) after §3g's classifier
+fix shipped and was live-verified: a full golden-set run passed 23/23 including `g17`, and a direct
+trace confirmed `reason_ordinal`'s value-aware confirmation check (below) closed it end to end. Two
+more issues surfaced immediately after, from live traffic, unrelated to §3g:
+
+*Bug 1 — `reason_ordinal` confirmed the wrong value.* The gate's "same ordinal word confirms" rule
+took the *first* number+unit in the ordinal's clause, not the one nearest it. Real captured failure
+(`g20-apple-earnings`): reason *"Apple reported $23.4 billion (or $23.43 billion)... the third fiscal
+quarter"* — the claim's own value (23.43) sits in a parenthetical *after* an earlier rounded restatement
+(23.4) in the same clause; the first-match lookup grabbed 23.4, treated it as a mismatch, and forced a
+correct `supported` claim to `contradicted`. Fixed by picking the number nearest the ordinal match
+(character-distance), not the first one in its clause — `clauseValueNear`,
+`src/orchestrators/grounnel/gates-reason-grounded.ts`.
+
+*Bug 2 — an escalation tier with no evidence could overwrite a tier that had some.* Grounnel's
+escalation phase (§3d's `escalateUnresolved`) re-searches and re-verifies any non-`supported` claim
+through up to 2 wider-pool tiers, and the last tier's result unconditionally overwrites the prior one —
+no comparison. Real captured failure (`g12-bukowski-death-year`): the base pool reached a correct,
+classifier-confirmed `contradicted` twice in a row (once per tier), then the 3rd retry's passage
+reranker scored every candidate near zero, VERIFY got nothing to cite, answered `unsupported` — and
+that evidence-empty answer silently overwrote two consecutive grounded, correct answers.
+
+The fix is deliberately **not** "protect `contradicted` from re-escalation" — that would disable
+`guardEscalatedContradictionReversals`' own legitimate job of catching a *wrong* contradiction (grounded
+evidence, wrong entity) when a wider search finds real conflicting or exonerating evidence. Instead: a
+narrow **evidence-validity floor**. `hasValidEvidence(citations)` (`pipeline-helpers.ts`) is `true` when
+a result has real, gate-surviving citations — the codebase's own existing signal (`citationsInvariant`,
+`grounnel.schemas.ts`, already models `evidence===null ⇒ citations===[]`). `escalateUnresolved` snapshots
+each claim's prior verdict + evidence-validity before every tier; at the per-claim write site in
+`processVerifyResults`, a new result is only allowed to replace the prior one if either the prior had no
+valid evidence to protect, or the new one does too. An evidence-empty result never overwrites a
+grounded one; a new evidence-backed result (any verdict, including a confidence-downgraded
+`unverifiable`) still competes and overwrites normally, same as before.
+
+Review-caught gap (fixed same pass, not shipped separately): a claim protected this way still had
+`reconcileContradictedVerdicts` — called unconditionally at the end of the same `runBatch` — immediately
+re-scrutinize it via a fresh classifier call, because `gateEventsByClaimId` for the rejected pass never
+shows a `"contradicted"` origin. Fixed by having the floor add the claim to the same
+`protectedContradictionClaimIds` set `reason_ordinal` protection already populates — one shared
+exclusion, checked by both `reconcileContradictedVerdicts` (stops the immediate re-scrutiny) and
+`findUnresolvedClaims` (stops further escalation tiers from re-exposing the same claim to the same
+race).
+
+Verified: offline replay of both real captured failures (now pass), the full pre-existing
+`reason_ordinal`/escalation test suite (zero regressions), and 3 new integration tests covering the
+three cases that must be told apart — evidence-empty rejected, real-new-evidence accepted (any verdict),
+confidence-downgraded-but-grounded accepted. Live re-verification (fresh golden-set run + direct replay
+of the `g12`/`g20` failures against the deployed fix) is the next step, not yet done as of this writing.
+
 ## §4. Explicitly not doing
 
 - **Amending `MULTIPLE SOURCES` in the VERIFY prompt** — plausible contributing cause (§2), but the

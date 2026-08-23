@@ -9,6 +9,7 @@ import { runGateChain, type Diagnostic } from "./pipeline-gate-chain.js";
 import {
   buildGeminiRateLimitMessage,
   hasPassage,
+  hasValidEvidence,
   toClaimSources,
   passageLabelForIndex,
   originatingContradictionGate,
@@ -36,6 +37,12 @@ import type { SearchProvider, SearchPassage } from "../../providers/search/searc
 // Re-exported for backward compatibility — extract.service.ts and routes/grounnel.ts import these
 // from this file. Implementations moved to pipeline-helpers.ts (D031 file-size split).
 export { buildGeminiRateLimitMessage, type PipelineClaimInput };
+
+// D030 §3h — what an escalation tier's write is compared against; see hasValidEvidence in pipeline-helpers.ts.
+interface PriorResult {
+  verdict: Verdict | null;
+  hasValidEvidence: boolean;
+}
 
 const MODULE = "grounnel-pipeline-service";
 // D018 §2.3 — lowered from 10 to 8 there: batch size, not verdict logic, was why VERDICT/NOTE
@@ -135,9 +142,10 @@ export class GrounnelPipelineService {
       if (pending.length === 0) return;
       logger.info({ module: MODULE, operation: "escalateUnresolved", auditId, tier, claimCount: pending.length }, "Escalating unresolved claims to a wider candidate pool");
 
-      // D026 §17 — snapshot verdicts before this tier overwrites them, for guardEscalatedContradictionReversals.
+      // D026 §17/D030 §3h — one snapshot before this tier overwrites anything, feeding both guardEscalatedContradictionReversals (verdict) and the escalation-replacement floor (verdict+evidence-validity).
       const preTierStatus = await this.grounnelStore.getStatus(auditId);
-      const preVerdictById = new Map((preTierStatus?.claims ?? []).map((c) => [c.id, c.verdict]));
+      const priorResultById = new Map((preTierStatus?.claims ?? []).map((c) => [c.id, { verdict: c.verdict, hasValidEvidence: hasValidEvidence(c.citations) }]));
+      const preVerdictById = new Map([...priorResultById].map(([id, r]) => [id, r.verdict]));
 
       // Waved by SEARCH_CONCURRENCY like resolveAllEvidence; stops early on a Tavily rate limit.
       const reResolved: ResolvedEvidence[] = [];
@@ -157,7 +165,7 @@ export class GrounnelPipelineService {
       // stands (writeNoEvidence's original "unsupported: no evidence found" remains accurate).
 
       for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
-        const geminiRateLimit = await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX), protectedContradictionClaimIds);
+        const geminiRateLimit = await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX), protectedContradictionClaimIds, priorResultById);
         if (geminiRateLimit) {
           logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Gemini rate-limited during escalation — stopping further tiers");
           return;
@@ -209,7 +217,8 @@ export class GrounnelPipelineService {
     const status = await this.grounnelStore.getStatus(auditId);
     if (!status) return;
     const byId = new Map(scope.map((c) => [c.id, c]));
-    const contradicted = status.claims.filter((c) => byId.has(c.id) && c.status === "done" && c.verdict === "contradicted");
+    // D030 §3h review finding — also excludes ids the escalation-replacement floor just protected THIS pass, or they'd be immediately re-scrutinized here off a gateEventsByClaimId entry that never shows "contradicted".
+    const contradicted = status.claims.filter((c) => byId.has(c.id) && c.status === "done" && c.verdict === "contradicted" && !protectedContradictionClaimIds.has(c.id));
     if (contradicted.length === 0) return;
 
     // D030 §3d — a reason_ordinal contradiction is grounded in VERIFY's own textual mismatch; excluded from the classifier call entirely, not just from acting on it.
@@ -687,7 +696,11 @@ export class GrounnelPipelineService {
     verifyVersion: string,
     retryState: { rateLimit: RateLimitError | null },
     answeredIds: Set<string>,
-    gateEventsByClaimId: Map<string, GateEventInput[]>
+    gateEventsByClaimId: Map<string, GateEventInput[]>,
+    // D030 §3d — same set reconcileContradictedVerdicts populates for reason_ordinal; the
+    // escalation-replacement floor below (D030 §3h) adds to it too, for the same reason.
+    protectedContradictionClaimIds: Set<string>,
+    priorResults?: Map<string, PriorResult>
   ): Promise<void> {
     const byId = new Map(items.map((b) => [b.claim.id, b]));
 
@@ -786,6 +799,36 @@ export class GrounnelPipelineService {
         const sources = toClaimSources(item.sources);
         // D027 §2 — citations survive iff the evidence they back survived the gate chain.
         const citations = evidence !== null ? attachCitationUrls(citationsBeforeGates, item.passages) : [];
+
+        // D030 §3h — escalation-result validity floor: an evidence-empty tier must not silently overwrite a prior tier's grounded result. Orthogonal to guardEscalatedContradictionReversals (which only re-checks evidence-backed flips away from "contradicted").
+        const prior = priorResults?.get(item.claim.id);
+        const rejectReplacement = prior?.hasValidEvidence && !hasValidEvidence(citations);
+        // One array, appended to the single recordGateEvents call below — D023 §5/T027's "exactly one gate-events batch per claim per pass" convention holds for this event too.
+        const finalGateEvents: GateEventInput[] = prior
+          ? [
+              ...gateEvents,
+              {
+                gate: "escalation_replacement",
+                verdictBefore: prior.verdict,
+                verdictAfter: rejectReplacement ? prior.verdict : verdict,
+                overridden: Boolean(rejectReplacement),
+                reason: rejectReplacement ? "escalation_no_valid_evidence" : null,
+              },
+            ]
+          : gateEvents;
+
+        if (rejectReplacement) {
+          // D030 §3h review finding — also stops reconcileContradictedVerdicts (end of this runBatch) and findUnresolvedClaims from re-touching an already-settled claim.
+          protectedContradictionClaimIds.add(item.claim.id);
+          this.gateEventStore.recordGateEvents(auditId, item.claim.id, finalGateEvents);
+          gateEventsByClaimId.set(item.claim.id, currentPassGateEvents);
+          logger.info(
+            { module: MODULE, operation: "processVerifyResults", auditId, claimId: item.claim.id, priorVerdict: prior!.verdict, attemptedVerdict: verdict },
+            "Escalation tier produced no usable evidence — keeping the prior grounded result"
+          );
+          return;
+        }
+
         // D031 — user-facing text only; historyStore below keeps VERIFY's raw reason for the audit trail.
         const userFacingReason = rewriteUngroundedAffirmativeReason(verdict, citations.length, reason);
         const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason: userFacingReason, sources, citations };
@@ -804,7 +847,7 @@ export class GrounnelPipelineService {
         });
         // Buffered until here, flushed only after the claim row above — grounnel_gate_events.claimId
         // has a real FK, and gates finish before that row exists (D023 §5/T027).
-        this.gateEventStore.recordGateEvents(auditId, item.claim.id, gateEvents);
+        this.gateEventStore.recordGateEvents(auditId, item.claim.id, finalGateEvents);
         // Current pass only, not the concatenated `gateEvents` above — see the comment where
         // currentPassGateEvents is declared.
         gateEventsByClaimId.set(item.claim.id, currentPassGateEvents);
@@ -813,7 +856,13 @@ export class GrounnelPipelineService {
   }
 
   /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
-  private async runBatch(auditId: string, batch: ResolvedWithPassage[], protectedContradictionClaimIds: Set<string>): Promise<RateLimitError | null> {
+  private async runBatch(
+    auditId: string,
+    batch: ResolvedWithPassage[],
+    protectedContradictionClaimIds: Set<string>,
+    // D030 §3h — only set by escalateUnresolved's tiers; undefined on the primary pass, which has nothing yet to protect.
+    priorResults?: Map<string, PriorResult>
+  ): Promise<RateLimitError | null> {
     const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, subjectEntity: b.claim.subjectEntity, passages: b.passages.map((p) => ({ text: p.text! })) }));
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
@@ -841,7 +890,7 @@ export class GrounnelPipelineService {
     const retryState: { rateLimit: RateLimitError | null } = { rateLimit: null };
     const gateEventsByClaimId = new Map<string, GateEventInput[]>();
 
-    await this.processVerifyResults(auditId, batch, parsed, verifyVersion, retryState, answeredIds, gateEventsByClaimId);
+    await this.processVerifyResults(auditId, batch, parsed, verifyVersion, retryState, answeredIds, gateEventsByClaimId, protectedContradictionClaimIds, priorResults);
 
     if (retryState.rateLimit) {
       logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: retryState.rateLimit.limitType }, "Gemini rate-limited during a T034 retry — stopping remaining batches");
@@ -858,7 +907,7 @@ export class GrounnelPipelineService {
       const fillInPairs = missing.map((b) => ({ id: b.claim.id, claim: b.claim.text, subjectEntity: b.claim.subjectEntity, passages: b.passages.map((p) => ({ text: p.text! })) }));
       try {
         const fillIn = await this.callVerify(auditId, fillInPairs, "runBatch.fillIn", "fill_in", verifyVersion);
-        await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds, gateEventsByClaimId);
+        await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds, gateEventsByClaimId, protectedContradictionClaimIds, priorResults);
         // Cast, not a plain read — TS carries the earlier null-narrowing across the mutating call, wrongly typing this as `never`.
         const fillInRateLimit = retryState.rateLimit as RateLimitError | null;
         if (fillInRateLimit) {
