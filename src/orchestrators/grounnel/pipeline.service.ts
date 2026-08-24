@@ -31,6 +31,7 @@ import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
+import type { GateReason } from "../../persistence/types.js";
 import { NoopGrounnelRerankDecisionStore, type GrounnelRerankDecisionStore } from "../../persistence/grounnel-rerank-decision-store.js";
 import type { SearchProvider, SearchPassage } from "../../providers/search/search-provider.js";
 
@@ -54,6 +55,15 @@ const SEARCH_CONCURRENCY = 20;
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 const CONFIDENCE_THRESHOLD = 0.6;
+// D030 §3i Mode B — checkRetryContradiction's downgrade targets, keyed by the retry's own verdict.
+// One table, not parallel ternaries, so target/reason-code can't drift apart if a verdict is added.
+// `contradicted` reverts to "no evidence" (unsupported); `supported`/`partially_supported` revert to
+// "uncertain" (unverifiable), never `contradicted` — this signal alone isn't grounds for that.
+const RETRY_DOWNGRADE: Partial<Record<Verdict, { target: Verdict; reason: GateReason }>> = {
+  contradicted: { target: "unsupported", reason: "retry_contradiction_invalidated" },
+  supported: { target: "unverifiable", reason: "retry_affirmation_invalidated" },
+  partially_supported: { target: "unverifiable", reason: "retry_affirmation_invalidated" },
+};
 // D026 §11 (T049) — Phase 1 multi-passage evidence, fixed cap; §13 (T053) built the escalation this deferred.
 const MAX_VERIFY_PASSAGES = 3;
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
@@ -243,12 +253,16 @@ export class GrounnelPipelineService {
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
-        logReconciliationDowngrade("reconcileContradictedVerdicts", auditId, c.id, "contradicted", originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? []));
+        logReconciliationDowngrade("reconcileContradictedVerdicts", auditId, c.id, "contradicted", "unsupported", originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? []));
       })
     );
   }
 
-  /** D026 §17 — symmetric counterpart to reconcileContradictedVerdicts: re-checks a flip AWAY from "contradicted" off a noisier escalation pool. */
+  /** D026 §17 — symmetric counterpart to reconcileContradictedVerdicts: re-checks a flip AWAY from
+   * "contradicted" off a noisier escalation pool. Downgrades to "unsupported", not "unverifiable" —
+   * unlike RETRY_DOWNGRADE's supported/partially_supported branch, this reacts to a REAL prior
+   * grounded contradiction being overturned, so reverting to the stronger "no evidence" state is
+   * warranted; RETRY_DOWNGRADE has no such prior in the general case (see D030 §3i Mode B). */
   private async guardEscalatedContradictionReversals(
     auditId: string,
     escalated: PipelineClaimInput[],
@@ -285,7 +299,7 @@ export class GrounnelPipelineService {
         ]);
         // Review finding — was its own inline logger.info, missed the checkRetryContradiction/
         // reconcileContradictedVerdicts consolidation into one aggregatable log stream (tasks.md backlog).
-        logReconciliationDowngrade("guardEscalatedContradictionReversals", auditId, c.id, verdictBefore, null);
+        logReconciliationDowngrade("guardEscalatedContradictionReversals", auditId, c.id, verdictBefore, "unsupported", null);
       })
     );
   }
@@ -643,7 +657,10 @@ export class GrounnelPipelineService {
     }
   }
 
-  /** D025 §5 addendum — re-checks a retry that lands on `contradicted` (the least-scrutinized path capable of a false accusation), single-claim, no second retry. */
+  /** D025 §5 addendum, extended D030 §3i Mode B — re-checks a retry landing on any RETRY_DOWNGRADE
+   * key (was `contradicted`-only). Single-claim, no second retry, downgrade-only. See D030 §3i for
+   * why `supported`/`partially_supported` never force `contradicted`, and why both branches null
+   * evidence rather than just the `contradicted` one. */
   private async checkRetryContradiction(
     auditId: string,
     item: ResolvedWithPassage,
@@ -654,7 +671,8 @@ export class GrounnelPipelineService {
     previousEvidence: string | null,
     previousReason: string | null
   ): Promise<{ verdict: Verdict; evidence: string | null; gateEvents: GateEventInput[] }> {
-    if (chain.verdict !== "contradicted") return chain;
+    const downgrade = RETRY_DOWNGRADE[chain.verdict];
+    if (!downgrade) return chain;
 
     const consistencyMap = await this.checkReasonVerdictConsistency(auditId, [
       { id: item.claim.id, claim: item.claim.text, reason, verdict: chain.verdict },
@@ -667,25 +685,25 @@ export class GrounnelPipelineService {
     const previousTerms = extractKeyTerms(previousReason ?? "");
     const reasonSimilarity = previousTerms.length > 0 ? scoreKeyTermMatches(previousTerms, reason ?? "") / previousTerms.length : null;
     logger.info(
-      { module: MODULE, operation: "checkRetryContradiction", auditId, claimId: item.claim.id, consistent, evidenceChanged, reasonSimilarity },
-      "Retry landed on contradicted — logged reconciliation-quality signals"
+      { module: MODULE, operation: "checkRetryContradiction", auditId, claimId: item.claim.id, verdictBefore: chain.verdict, consistent, evidenceChanged, reasonSimilarity },
+      "Retry landed on a least-scrutinized verdict — logged reconciliation-quality signals"
     );
 
     if (!consistent) {
-      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, "contradicted", originatingContradictionGate(currentPassGateEvents));
+      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, chain.verdict, downgrade.target, originatingContradictionGate(currentPassGateEvents));
     }
 
     const gateEvent: GateEventInput = {
       gate: "retry_reconciliation",
       verdictBefore: chain.verdict,
-      verdictAfter: consistent ? chain.verdict : "unsupported",
+      verdictAfter: consistent ? chain.verdict : downgrade.target,
       overridden: !consistent,
-      reason: consistent ? null : "retry_contradiction_invalidated",
+      reason: consistent ? null : downgrade.reason,
     };
     if (consistent) {
       return { ...chain, gateEvents: [...chain.gateEvents, gateEvent] };
     }
-    return { verdict: "unsupported", evidence: null, gateEvents: [...chain.gateEvents, gateEvent] };
+    return { verdict: downgrade.target, evidence: null, gateEvents: [...chain.gateEvents, gateEvent] };
   }
 
   /** Runs the gate chain + T034 retry + persistence for one VERIFY response — shared by runBatch's primary and fill-in passes (D026 §8, T045). Mutates answeredIds/retryState/gateEventsByClaimId. */
@@ -790,8 +808,12 @@ export class GrounnelPipelineService {
             // (the override that triggered this retry) stays in the audit trail, not just the retry's.
             chain = { ...retryPass, gateEvents: [...firstPass.gateEvents, ...retryPass.gateEvents] };
             currentPassGateEvents = retryPass.gateEvents;
-            // D025 §5 addendum — the retry itself gets one bounded check when it lands on `contradicted`.
+            // D025 §5 addendum, D030 §3i Mode B — the retry itself gets one bounded check (RETRY_DOWNGRADE's verdicts only).
+            const preCheckCount = chain.gateEvents.length;
             chain = { ...chain, ...(await this.checkRetryContradiction(auditId, item, chain, retryPass.gateEvents, reason, result.evidence, result.reason)) };
+            // Review finding — checkRetryContradiction appends at most one event; without this,
+            // gateEventsByClaimId (current-pass-only, unlike chain.gateEvents) silently drops it.
+            currentPassGateEvents = [...currentPassGateEvents, ...chain.gateEvents.slice(preCheckCount)];
           }
         }
 

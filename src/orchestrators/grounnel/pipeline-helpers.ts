@@ -75,10 +75,13 @@ export function originatingContradictionGate(gateEvents: GateEventInput[]): { ga
 }
 
 // Shared by all 3 reconciliation-downgrade sites (tasks.md backlog) — one aggregatable log stream; verdictBefore varies by site.
-export function logReconciliationDowngrade(operation: string, auditId: string, claimId: string, verdictBefore: Verdict, originating: { gate: string; reason: GateReason | null } | null): void {
+// verdictAfter is a real param, not always "unsupported" — D030 §3i Mode B's checkRetryContradiction
+// call site can also downgrade to "unverifiable"; a hardcoded message here would silently mismatch
+// the actual stored verdict on that path, in a codebase whose regression strategy leans on this telemetry.
+export function logReconciliationDowngrade(operation: string, auditId: string, claimId: string, verdictBefore: Verdict, verdictAfter: Verdict, originating: { gate: string; reason: GateReason | null } | null): void {
   logger.info(
-    { module: MODULE, operation, auditId, claimId, verdictBefore, originatingGate: originating?.gate ?? null, originatingReason: originating?.reason ?? null },
-    "Reconciliation classifier downgraded a verdict to unsupported"
+    { module: MODULE, operation, auditId, claimId, verdictBefore, verdictAfter, originatingGate: originating?.gate ?? null, originatingReason: originating?.reason ?? null },
+    `Reconciliation classifier downgraded a verdict to ${verdictAfter}`
   );
 }
 

@@ -512,6 +512,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
       "subject_entity_mismatch",
       "counterfact_ignored",
       "retry_contradiction_invalidated",
+      "retry_affirmation_invalidated",
       "claim_reason_no_overlap",
       "escalation_reversal_invalidated",
       "escalation_no_valid_evidence",

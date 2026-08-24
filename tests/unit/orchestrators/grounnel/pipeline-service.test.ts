@@ -985,6 +985,65 @@ describe("GrounnelPipelineService (T010)", () => {
     });
   });
 
+  it("D030 §3i Mode B: downgrades a retry that lands on 'supported' to unverifiable when the post-retry classifier says its own reason doesn't support it (real live-test finding, g17 'first flight lasted 59 seconds', 2026-08-23)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight lasted 59 seconds.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The brothers took turns on that day to complete three additional flights, the longest lasting 59 seconds and a distance of 852 feet. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      const firstPass = verifyCalls === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          // Both passes land on "supported" — the retry doesn't change its verdict, only rephrases
+          // the same underlying (wrong) attribution. Real evidence, gate #1-grounded either way; the
+          // bug is the reasoning, not a fabricated quote — same shape as the contradicted-side test above.
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, "The brothers took turns on that day to complete three additional flights, the longest lasting 59 seconds and a distance of 852 feet."),
+          reason: firstPass
+            ? "The passage states that the longest flight traveled 852 feet in 59 seconds, which supports the claim that the first flight lasted 59 seconds."
+            : "Both sources state that the longest flight of the day lasted 59 seconds.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    // Pass 1 triggers the retry; pass 2 is D030 §3i Mode B's new re-check of the retry's own reason.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // unverifiable, not unsupported — a wrong affirmation is a different failure than "no evidence
+    // found", and never contradicted — this signal alone isn't grounds for a false accusation.
+    expect(claim.verdict).toBe("unverifiable");
+    expect(claim.evidence).toBeNull();
+    // D031 — the retry's own reason affirmatively implies support ("both sources state..."), which
+    // would read as incoherent beside "unverifiable"; rewriteUngroundedAffirmativeReason replaces it.
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
+
+    const events = gateEventStore.calls[0]!.events;
+    const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
+    expect(retryReconciliation).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "unverifiable",
+      overridden: true,
+      reason: "retry_affirmation_invalidated",
+    });
+  });
+
   it("(live-verification finding, D030 T010) a VERIFY batch response answering the same claim id twice is deduplicated — first answer wins, no concurrent double-processing", async () => {
     const claimId = uuid(1);
     const claimText = "The first flight covered 852 feet.";
@@ -1242,9 +1301,11 @@ describe("GrounnelPipelineService (T010)", () => {
         })),
       };
     });
-    // First classifier call is the normal in-batch check on tier 5's fresh "supported" verdict (says
-    // consistent, so T034's own retry never fires — isolating this test to the NEW escalation guard).
-    // Second is guardEscalatedContradictionReversals' own check, which correctly flags it as bogus.
+    // Call order (traced empirically, not assumed — corrected 2026-08-24, this comment was wrong):
+    // #1 base pool's own reconcileContradictedVerdicts, re-checking the already-correct "contradicted"
+    // (consistent:true, no-op). #2 tier 5's in-batch check on the fresh bogus "supported" (false,
+    // triggers a T034 retry). #3 checkRetryContradiction's own re-check of that retry (false — see
+    // D030 §3i Mode B); its downgrade is what the D030 §3h floor then rejects, below.
     let consistencyCalls = 0;
     provider.setResponseFn("You are a consistency auditor", (request) => {
       consistencyCalls++;
@@ -1259,15 +1320,18 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(claim.verdict).toBe("unsupported"); // not a false positive, despite escalation flipping to "supported"
-    expect(claim.evidence).toBeNull();
-    // D031 (review finding) — the flipped-away reason affirmatively says "the passage confirms...
-    // supporting the claim", which would read as incoherent beside the downgraded "unsupported"
-    // verdict; rewriteUngroundedAffirmativeReason replaces it here too.
-    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
+    // D030 §3i Mode B's checkRetryContradiction catches this before guardEscalatedContradictionReversals
+    // does; its downgrade then trips the D030 §3h floor, restoring the base pool's original verdict
+    // rather than landing on "unverifiable" — see the ADR for the full interaction trace.
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).not.toBeNull();
+    expect(claim.reason).toBe("The passage states the tower was completed in 1887, contradicting the claimed 1889 date.");
 
     const events = gateEventStore.calls.flatMap((c) => c.events);
-    expect(events.some((e) => e.gate === "retry_reconciliation" && e.overridden && e.verdictBefore === "supported" && e.verdictAfter === "unsupported")).toBe(true);
+    // The retry's own downgrade is still on record even though the floor kept the prior data —
+    // the audit trail shows what almost happened, not just what ended up stored.
+    expect(events.some((e) => e.gate === "retry_reconciliation" && e.overridden && e.verdictBefore === "supported" && e.verdictAfter === "unverifiable")).toBe(true);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden && e.reason === "escalation_no_valid_evidence")).toBe(true);
   });
 
   it("D026 §14: clears meta.escalating via finally even when escalation itself throws — a crash mid-escalation must not leave the run permanently stuck reporting 'verifying'", async () => {

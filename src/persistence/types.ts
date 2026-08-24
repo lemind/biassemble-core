@@ -110,6 +110,7 @@ export type GateReason =
   | "reason_ordinal_mismatch"
   | "counterfact_ignored"
   | "retry_contradiction_invalidated"
+  | "retry_affirmation_invalidated"
   | "claim_reason_no_overlap"
   | "escalation_reversal_invalidated"
   | "escalation_no_valid_evidence"

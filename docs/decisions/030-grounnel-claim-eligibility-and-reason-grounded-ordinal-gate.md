@@ -530,8 +530,268 @@ race).
 Verified: offline replay of both real captured failures (now pass), the full pre-existing
 `reason_ordinal`/escalation test suite (zero regressions), and 3 new integration tests covering the
 three cases that must be told apart — evidence-empty rejected, real-new-evidence accepted (any verdict),
-confidence-downgraded-but-grounded accepted. Live re-verification (fresh golden-set run + direct replay
-of the `g12`/`g20` failures against the deployed fix) is the next step, not yet done as of this writing.
+confidence-downgraded-but-grounded accepted.
+
+**Live re-verification, completed 2026-08-23 (deployed).** Direct replay of both real captured
+failures against the live deployment: `g12-bukowski-death-year` → `contradicted` with real citations
+to the 1994 death date; gate trace confirms the floor's own logic on both sides — the primary pass's
+evidence-empty `unsupported` was correctly *not* protected, letting tier 1's evidence-backed
+`contradicted` overwrite it, and that result then survived a further tier via an accept-type
+`escalation_replacement` event. `g20-apple-earnings-year-over-year` → all 13 extracted claims
+correct, including the `$23.43 billion` value the same-day `clauseValueNear` fix targeted. Full
+golden-set run: 22/23 graded claims correct, zero regressions against any previously-green case. The
+sole failure is `g17` — unrelated to either §3h fix; see §3i.
+
+**§3i — `g17` still red after §3g: reclassified from a coverage/rule gap to a reason-representation
+limitation. Investigation plan before any further gate or prompt change.** Same live-verification run
+(2026-08-23) that closed §3h re-ran `g17` and it failed again, but not the way §3f/§3g's fixes were
+built for — two things changed the diagnosis:
+
+*The `59 seconds` claim (extracted alongside the graded `852 feet` one, same article) shows the §3g
+rule is present but not reliably applied, not missing.* Its reason — *"the passages state that the
+**longest flight** ... lasted 59 seconds"* — names the exact phrasing §3g's shipped prompt rule
+(`consistency-check/system.json` v1.2.0, confirmed the live-deployed version via
+`grounnel_llm_calls.prompt_version`) gives as a worked example of a *different member* ("a ranking
+where the claim used a position (**'the longest flight'**)"). The classifier still returned
+`consistent: true`. §3g was written and verified against captured *examples*, not tested for
+adherence under load — this is the first live case that isolates the two.
+
+*The graded `852 feet` claim shows a deeper gap §3g's rule cannot reach by construction.* Its reason —
+*"Multiple sources state **the flight** covered 852 feet"* — contains no ordinal or ranking word at
+all, despite the cited evidence explicitly stating *"the last flight ... was 852 feet ... much longer
+than each of the three previous flights of 120, 175 and 200 feet."* Every check built in §3a–§3g reads
+VERIFY's `reason`, a lossy natural-language summary VERIFY is free to write without preserving the
+claim's discriminating qualifier. No rule refinement fixes a distinction the reason never makes — this
+is upstream of prompt quality, the same shape as §3f's "upstream of the ordinal gate" finding, one
+layer further back.
+
+**Rejected: iterating the prompt or swapping models without measurement.** §3g's own history — three
+drafts, two review rounds, the first two failing in opposite directions (too broad, then too narrow) —
+is direct evidence this axis is subtle enough that blind iteration is expensive and previously
+regressed into false-accusation risk (§3e's `last`/`final` revert). `g17` is a *miss* (false claim
+marked `supported`), not a *false accusation* (true claim marked `contradicted`); ADR-000 §2's
+discipline weighs the latter far worse, which argues against another aggressive deterministic
+heuristic here.
+
+**Plan (P0–P3, read-only/offline, no production change — same before-measurement discipline §3f used
+for its own retrieval fix):**
+- **P0**: run `g17` live 10× against the deployed pipeline; capture full `reason` + verdict + cited
+  evidence per run. One sample (today's) already produced two different failure shapes across its two
+  wrong claims — build the actual phrasing distribution before designing against it.
+- **P1**: replay every `(claim, reason, verdict)` triple captured in P0 through the exact
+  `consistency-check` v1.2.0 prompt on `flash` and `pro`, offline, diffed against `flash-lite`'s actual
+  live answer. Isolates *model-adherence ceiling* (rule present, weakest model didn't apply it — a
+  model-tier change becomes a legitimate low-cost fix) from *rule unlearnability* (no model applies
+  it — stop iterating this prompt).
+- **P2**: offline prototype — run `lib/instance-selector.ts`'s existing extraction against the claim
+  and, separately, against each P0 case's *cited evidence sentences* (not `reason`). Evidence is ground
+  truth the reason is free to omit; measures whether the discriminating fact survives to citation stage
+  even on the `852 feet` shape where the reason drops it entirely.
+- **P3**: same P2 prototype against currently-green cases whose evidence contains legitimate
+  co-reference — `g01` (tower/Eiffel Tower), `g08` (Corsica/Ajaccio), `g13` (wedlock phrasing), `g20`
+  (Q3 FY2025/"third fiscal quarter of 2025"). An evidence-side check must clear the same false-positive
+  bar §3g's shipped rule took two review rounds to clear, before it's a wiring candidate, not after.
+
+**Decision gate** (after P0–P3, not before): a selector word present in most failing reasons and a
+stronger model gets them right → narrow model-tier change for `consistency_check` only. Present but no
+model gets them right → the §3g rule is unlearnable as phrased, stop iterating it. A meaningful
+fraction of failures have no selector word in the reason at all → an evidence-side check is load-bearing
+regardless of P1's result, since reason-only can never catch that shape. P2 false-positives on P3's
+green cases → not ready to wire in; needs the same alias/format-normalization work §3g already did,
+moved earlier in the pipeline.
+
+**Explicitly not doing until P0–P3 report back**: widening `ORDINAL_WORDS` again (§3e's revert
+stands); another `consistency-check` prompt section: another `applyReason*Gate`; protecting `g17`
+specifically; relaxing `ACCEPTABLE.false`; touching escalation semantics again; a production model-tier
+change made without P1's comparison data.
+
+**P0 result (2026-08-23/24, 5 live runs, HTTP-rate-limited to 5/hour before a Gemini daily-quota
+exhaustion stopped further sampling — small-n but enough to separate mechanisms).** Full gate trace
++ `grounnel_llm_calls.consistency_check` output pulled for both graded-relevant claims
+(`852 feet`, `59 seconds`) across all 5 runs — 10 instances total, 4 correct. The 6 wrong instances
+split into **three distinct mechanisms**, not one, only one of which P1 as originally scoped would
+even test:
+
+- **Mode A — genuine classifier miss (3/6).** `consistency_check`'s *first* call on the reason
+  returns `consistent: true` outright, no retry ever triggered, despite the reason using exactly the
+  phrasing §3g's rule targets — e.g. run 3: *"Source A states that the longest flight traveled 852
+  feet in 59 seconds"* → `consistent: true`. This is what P1 tests.
+- **Mode B — retry result never re-checked (2/6, newly found, not anticipated by the P0–P3 plan).**
+  `consistency_check` correctly returns `consistent: false` on the primary reason, which correctly
+  triggers exactly one VERIFY retry (`counterfact_ignored` diagnostic → `needsRetry`) — but the
+  retry's *new* reason is never run back through `consistency_check`, by design (single-retry, no
+  loop). Real trace, run 4, claim `04ea3b3a` ("first flight lasted 59 seconds"): primary reason
+  flagged inconsistent correctly → retry produces a second `supported` verdict with a new reason that
+  happens not to trip any deterministic gate either → stored as final, unchecked. **This is a process
+  gap, not a model-capability gap** — the classifier did its job once; nothing asks it again. A
+  stronger model on the *original* reason (P1) would not touch this mechanism at all, because the
+  original reason was already correctly caught.
+- **Mode C — reason omits the selector entirely (1/6, confirms §3i's core finding above).** Run 5,
+  claim `f8d7f3a7`: reason *"Multiple sentences across sources A, B, and C state that the first
+  flight covered 852 feet"* restates the claim's own ordinal verbatim with no competing selector
+  word anywhere — `consistent: true` is the textbook-correct answer to the question actually asked;
+  there is nothing inconsistent about a reason that doesn't contradict itself. Happened twice in a
+  row for this claim (primary pass, then again independently in the escalation tier's own reason) —
+  not a one-off. Only an evidence-side check (P2/P3) can reach this class.
+
+**Revises the P1 framing above**: P1 alone cannot close Mode B regardless of outcome — a model
+upgrade only helps Mode A. Mode B's fix is cheap and independent of P1/model choice: extend the
+existing `checkRetryContradiction` precedent (already re-checks a retry landing on `contradicted`) to
+also cover a retry landing on `supported`/`partially_supported`, and only in the safe direction — a
+retry still found inconsistent downgrades to `unverifiable`, never forces `contradicted`, matching
+this ADR's standing false-accusation asymmetry. Not implemented yet — flagging here so it isn't lost;
+P1/P2/P3 continue as planned once the Gemini daily quota resets, Mode B fix is a candidate to
+prioritize independently since it needs no model-comparison data to justify.
+
+**Mode B fix — implemented and tested (2026-08-24).** `checkRetryContradiction`'s early-return
+widened from `chain.verdict !== "contradicted"` to also admit `supported`/`partially_supported`; on
+an inconsistent retry, `supported`/`partially_supported` downgrades to `unverifiable` (never
+`contradicted`, per the asymmetry above). One design correction made during testing, not assumed
+upfront: the first version kept the retry's evidence/citations on this downgrade (reasoning it was a
+confidence-level judgment, like D030 §3h's floor). The existing suite caught why that's wrong —
+`rewriteUngroundedAffirmativeReason` only cleans up an affirmative-sounding reason when
+`citations.length === 0`, so keeping citations left the classifier-flagged-as-wrong reason text
+(*"the passage confirms... supporting the claim"*) sitting next to an `unverifiable` verdict,
+reintroducing the exact incoherence D031 fixed for the other two reconciliation paths. Fixed by
+nulling evidence uniformly on both downgrade branches, matching `reconcileContradictedVerdicts` and
+`guardEscalatedContradictionReversals`'s own convention — this is a classifier-caught textual
+inconsistency, not a confidence call, so the distinction from D030 §3h's floor (which legitimately
+keeps evidence) holds up: that floor protects evidence the classifier never disputed.
+
+**Interaction with the D030 §3h escalation-validity floor, discovered via the existing test suite,
+not new test-writing — better than designed, not just "not a conflict."** One pre-existing test
+(D026 §17: an escalation tier's bogus flip away from a correct `contradicted`) failed after this
+change. Root cause, traced with temporary instrumentation rather than assumed: `checkRetryContradiction`
+now catches the bad retry *inside* tier 5's own `runBatch`, before `guardEscalatedContradictionReversals`
+(which runs afterward, at the escalation-tier level) ever sees a `supported` verdict to react to — and
+nulling the retry's evidence, on its own downgrade to `unverifiable`, makes that tier's result look
+evidence-empty to the §3h floor (checked immediately after, same `runBatch`). Since the *prior* tier
+(the base pool) had real, valid evidence for its `contradicted` verdict, the floor rejects tier 5's
+replacement outright — so the claim's final stored state is the base pool's **original `contradicted`
+verdict, untouched, with its real evidence and reason**, not `unverifiable`. Two independently-reasoned
+safety nets — one checking "does this retry's own reason support its own verdict," the other checking
+"can an evidence-empty result overwrite an evidence-backed one" — composed into a strictly better
+outcome than either produces alone: not just "no false affirmation" (what Mode B alone gives) but the
+actual right answer restored, without either mechanism knowing about the other's existence. Test
+updated to expect `contradicted` with real evidence (not `unverifiable`, not `unsupported`) — plus both
+gate events on record (`retry_reconciliation` showing the retry was caught, `escalation_replacement`
+showing the floor rejected it), since the audit trail preserves what almost happened, not just what
+ended up stored. A second, `checkRetryContradiction`-isolated test added (primary-pass retry, no
+escalation tier, so the §3h floor never enters — `priorResults` is only threaded into escalation-tier
+`runBatch` calls, not the primary pass's) to cover the mechanism on its own, using the actual live
+`g17` reason text captured 2026-08-23 ("Both sources state that the longest flight of the day lasted
+59 seconds."). Verified: full suite (1164 tests, 85 files) passes, zero regressions beyond the one
+updated assertion.
+
+**Considered and rejected: adding a Mode B downgrade to `protectedContradictionClaimIds`.** A
+`/code-review` pass (cross-file angle) noted a Mode B `unverifiable` downgrade on the primary pass
+(no prior tier, so the §3h floor never applies) isn't protected from further escalation the way
+`reason_ordinal`'s contradictions are — it gets re-escalated through both remaining tiers at real
+search/LLM cost. Deliberately not fixed: `reason_ordinal` protection exists because that signal is
+trusted as high-precision (D030 §3d — "gate-originated ordinal contradictions... trusted as
+high-precision"). Mode B's signal is the opposite by construction — it downgrades to `unverifiable`
+*because* it's uncertain, not confident — so giving it the same protection would mean permanently
+giving up on a claim a wider search tier might genuinely resolve, for a signal that was never claiming
+to be precise. Letting it re-escalate normally, same as any other `unverifiable` result, is consistent
+with this ADR's own stated basis for when protection is and isn't warranted.
+
+**Also found and fixed in the same review pass** (not spun into their own paragraphs, listed for the
+record): `logReconciliationDowngrade`'s log message hardcoded "...to unsupported" regardless of actual
+target — now takes `verdictAfter` and reports it accurately (`pipeline-helpers.ts`). The downgrade
+target/gate-reason-code pair, previously two independent ternaries on the same `chain.verdict ===
+"contradicted"` test, is now one `RETRY_DOWNGRADE` table keyed by verdict, shared by `checkable`'s own
+check — removes the risk of the two drifting apart. `gateEventsByClaimId` (current-pass-only, unlike
+`chain.gateEvents`) previously never recorded `checkRetryContradiction`'s own gate event — confirmed
+currently harmless (only queried for claims ending `contradicted`, which this path never produces on
+override) but fixed anyway, since the map's completeness is treated as load-bearing elsewhere in this
+file. `verify-experiment.ts`'s P1 comparison ran the two comparison models at `temperature: 0.7`
+while the production arm (`callLlmForJson`) always forces `0` — a real confound on top of the
+already-noted batch-size one; fixed to `0` for a same-conditions comparison, plus added the timeout
+`GeminiProvider` always sets that the direct-SDK comparison path was missing.
+
+**P1 status: blocked on infrastructure, not quota timing.** Retried with pacing once the initial
+daily-quota exhaustion cleared; found two separate hard blocks specific to running Gemini calls
+directly from this dev environment's API key, neither fixable by retrying: `gemini-2.5-flash` fails
+`400: User location is not supported` on 9/9 attempts (not intermittent); `gemini-3.1-pro-preview`
+(the deprecated `gemini-2.5-pro`'s suggested replacement) has `limit: 0` on this key's free tier —
+zero allocated quota, not a rate limit. The only Gemini path that has ever worked this investigation
+is `gemini-2.5-flash-lite` through the deployed Vercel app (P0's successful runs) — presumably
+Vercel's egress sits in a supported region/tier this local machine's key does not. Closing P1 for
+real requires either a different API key/project with `flash`/`pro` quota, or temporarily changing
+the **deployed production** `GEMINI_MODEL` env var and replaying through `/extract` — a live-traffic
+config change requiring explicit sign-off, not attempted here.
+
+**P1 result (2026-08-24, resolved via `src/jobs/verify-experiment.ts`, run on the deployed app where
+Gemini calls actually work).** Rather than a production config change, the local-blocked comparison
+was moved into this repo's existing one-off experiment job (already Inngest-based, already deployed)
+as a second part alongside its original VERIFY-formatting variants: the same 9 real captured
+`(claim, reason, verdict)` triples from P0, replayed through the exact `consistency_check` prompt on
+the current production model plus two stronger candidates, graded against a hand-verified expected
+answer per triple (one of the 9 is a Mode C control whose correct answer is `consistent: true` —
+tests that a stronger model isn't just answering "inconsistent" more often).
+
+| Model | Correct | Errors |
+|---|---|---|
+| `gemini-2.5-flash-lite` (current production) | 8/9 | 0 |
+| `gemini-2.5-flash` | 7/9 | 0 |
+| `gemini-3.1-pro-preview` | **9/9** | 0 |
+
+`gemini-3.1-pro-preview` got every triple right, including the Mode C control (confirming it isn't
+just over-triggering). Mid-tier `flash` scored *worse* than the production `flash-lite`.
+
+**Confound — this does NOT cleanly answer the decision gate, contrary to how it first reads.** The
+replay sends each triple as a **single-item batch**; production batches the whole VERIFY batch into
+one `consistency_check` call (verified: the live calls behind these very fixtures carried
+`batch_size: 5`, with the single-item calls being only the T034 retry re-checks). So production
+`flash-lite` scoring 8/9 *in isolation* is not comparable to its live behaviour on the same triples,
+where it demonstrably missed several — and `pro-preview`'s 9/9 was measured under the same
+easier-than-production conditions, so it is not evidence it would hold up at batch size 5 either.
+The prompt's own standing `INDEPENDENCE: evaluate each pair independently. Do not let one pair
+influence another, even in the same batch.` line indicates batch contamination was already suspected
+when the classifier was written.
+
+**Revised reading**: the Mode A misses are consistent with *either* a model-capability ceiling *or*
+batch-size attention dilution, and this experiment cannot separate them. The cheap discriminating
+follow-up is to re-run the same 9 fixtures at production batch size (pad to 5 with the run's real
+sibling claims) across all three models — same job, one changed variable. Until that runs, a
+model-tier upgrade for `consistency_check` is **not** justified by this data, and neither is ruling
+one out. Mode B/C still need their own independent fixes regardless (§3h/§3i above).
+
+**P2/P3 result (2026-08-23/24, pure deterministic prototype, no LLM calls — `lib/instance-selector.ts`
+reused as-is, evidence scanned for `first`..`tenth`/`last`/`final` on the claim's own anchor).**
+
+*P2, against the same 5 real `g17` runs*: catches the Mode C case exactly as predicted — run 5's
+`852 feet` claim (reason omitted the selector entirely, `consistent: true` was the correct answer to
+the question `consistency_check` was asked) is caught by scanning its *own cited evidence*, which
+contains *"the last flight ... was 852 feet ... much longer than each of the three previous flights of
+120, 175 and 200 feet"*. Reason-only checks structurally cannot reach this; evidence-side does. But it
+missed 3 of the other 5 wrong instances (both `59 seconds` misses, run 3's `852 feet`) — their cited
+evidence uses *"the longest traveling 852 feet in 59 seconds"*, a superlative, and the prototype
+deliberately excludes superlatives (same §3e exclusion, applied to evidence this time). Closing that
+gap means re-litigating §3e's superlative question on evidence text specifically — not done here,
+flagged as the next sub-question if this direction is pursued.
+
+*P3, against real cited evidence from tonight's already-green `g20`/`g01`/`g08`/`g13` claims (13 Apple
+claims tested, the rest skipped — no single extractable selector)*: **2 real false positives**, both
+confirming the exact risk class this prototype was built to test for, just relocated from reason
+prose to evidence prose:
+- `"Apple disclosed its third fiscal quarter 2026 financial results"` vs. cited evidence *"...its
+  third fiscal quarter of 2026, which corresponds to the **second** calendar quarter of the year"* —
+  flagged as a different member; it's a fiscal/calendar quarter-numbering aside, not a different
+  instance.
+- `"Apple reported $94.04 billion in revenue in the third fiscal quarter of 2025"` vs. cited evidence
+  *"...up 10% from the same quarter **last** year..."* — flagged via the `last` widening; it's the
+  identical "last year" idiom §3e's own revert (commit `bb11072`) was written to avoid, now
+  reproduced on evidence text instead of reason text.
+
+**Conclusion**: evidence-side checking is not a free win — the same idiom/dimension-aliasing risk
+§3g took two review rounds to close on reason text applies to evidence text too, confirmed with real
+data, not speculation. Superlatives still need a carve-out to reach Mode A's Apple-style misses. Not
+ready to wire in. Next increment if pursued: exclude `last`/`next`/`this` + `year`/`week`/`month`
+(temporal idiom) and `calendar`/`fiscal` + ordinal (dimension aliasing) before even considering a
+superlative widening — both fixes are prerequisites, not alternatives, since P2 already needs the
+superlative widening to close its own remaining gap and P3 shows the plain widening isn't safe without
+them.
 
 ## §4. Explicitly not doing
 
