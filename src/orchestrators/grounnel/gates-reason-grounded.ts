@@ -44,31 +44,27 @@ function isReasonYearNegated(reason: string, yearIndex: number): boolean {
   return NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
 }
 
-// Same clause-scoped negation approach as isReasonYearNegated (reuses lastClauseBoundary).
-function isOrdinalNegated(reason: string, matchIndex: number): boolean {
+// Generic clause-scoped negation check (reuses lastClauseBoundary) — not ordinal-specific despite
+// the original name; also used below for value-level negation ("900 ft not 852 ft").
+function isNegatedAtPosition(reason: string, matchIndex: number): boolean {
   const windowStart = Math.max(0, matchIndex - NEGATION_WINDOW);
   const window = reason.slice(windowStart, matchIndex);
   const clauseStart = lastClauseBoundary(window);
   return NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
 }
 
-// D030 §3g follow-up — CLAUSE-scoped: every number+unit in the ordinal match's own clause, nearest
-// first. Live regression (2026-08-23): a rounded restatement earlier in the sentence ("$23.4B (or
-// $23.43B)... the third fiscal quarter") outranked the precise value actually adjacent to the
-// ordinal under a nearest-only pick, forcing a false contradiction.
-function clauseValues(text: string, matchIndex: number): Array<{ value: string; unit: string }> {
+// D030 §3g/§3j follow-up — CLAUSE-scoped: every number+unit in the ordinal match's own clause, with
+// each match's own text index kept (needed to check negation per-occurrence, not just per-value —
+// "not 852 ft" mentions 852 without confirming it). A nearest-only single pick (this function's
+// original shape) forced 3 separate false contradictions on real live traffic — a rounded
+// restatement, a hallucinated near-duplicate, and (on the claim side) a claim's own parenthetical
+// aside — each outranking the value that should have been compared, purely by proximity. See ADR.
+function clauseValues(text: string, matchIndex: number): Array<{ value: string; unit: string; index: number }> {
   const clauseStart = lastClauseBoundary(text.slice(0, matchIndex)) + 1;
   const clauseEndAbs = firstClauseBoundaryForward(text, matchIndex);
   const clauseEnd = clauseEndAbs === -1 ? text.length : clauseEndAbs;
-  const relIndex = matchIndex - clauseStart;
   const matches = [...text.slice(clauseStart, clauseEnd).matchAll(NUMBER_UNIT_RE)];
-  matches.sort((a, b) => Math.abs((a.index ?? 0) - relIndex) - Math.abs((b.index ?? 0) - relIndex));
-  return matches.map(toUnitValue);
-}
-
-// Single nearest value — used for the claim side, where one relevant number per clause is the norm.
-function clauseValueNear(text: string, matchIndex: number): { value: string; unit: string } | null {
-  return clauseValues(text, matchIndex)[0] ?? null;
+  return matches.map((m) => ({ ...toUnitValue(m), index: clauseStart + (m.index ?? 0) }));
 }
 
 // Rough sentence spans to bound the locality check below — doesn't split mid-number, no need to handle abbreviations perfectly.
@@ -169,8 +165,11 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
   }
   // Clause-scoped like the reason side (review finding) — an unscoped whole-text lookup grabbed a
   // leading unrelated number ("In 1969, the first flight covered 852 ft" -> "1969") instead of the
-  // claim's own value, silently defeating the mismatch check below.
-  const claimValue = clauseValueNear(input.claimText, claimMatch.index!);
+  // claim's own value, silently defeating the mismatch check below. Every same-clause value kept
+  // (D030 §3j review finding), not just the nearest — a claim phrased with a parenthetical aside
+  // ("$23.4 billion (or precisely $23.43 billion)") has the same nearest-only mispick risk the
+  // reason side had; negated occurrences dropped so "not 852 ft" doesn't count as the claim's own value.
+  const claimValues = clauseValues(input.claimText, claimMatch.index!).filter((v) => !isNegatedAtPosition(input.claimText, v.index));
 
   const reason = input.reason;
   const reasonMatches = [...reason.matchAll(ORDINAL_RE_G)];
@@ -183,16 +182,17 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
     const ordinal = m[1]!.toLowerCase();
     const anchor = ordinalAnchorWords(reason, m.index!, m.index! + m[0].length);
     if (!anchorsOverlap(claimAnchor, anchor)) continue;
-    if (isOrdinalNegated(reason, m.index!)) continue;
+    if (isNegatedAtPosition(reason, m.index!)) continue;
     if (ordinal === claimOrdinal) {
-      // D030 §3g/§3h follow-up — same ordinal word is confirmation unless the clause has values in
-      // the claim's unit and NONE of them match; the claim's own value appearing anywhere in the
-      // clause counts as confirmation, not just whichever value happens to sit nearest the ordinal
-      // (nearest-only forced a false contradiction both when a rounded restatement outranked the
-      // precise value, and when a hallucinated near-duplicate outranked the real one — see ADR).
-      const localValues = clauseValues(reason, m.index!);
-      const sameUnitValues = claimValue ? localValues.filter((v) => v.unit === claimValue.unit) : [];
-      if (sameUnitValues.length > 0 && !sameUnitValues.some((v) => v.value === claimValue!.value)) {
+      // D030 §3g/§3h/§3j follow-up — same ordinal word is confirmation unless the clause has
+      // same-unit values and NONE of them match ANY of the claim's own (unnegated) values. Matching
+      // anywhere, not just at the nearest position, closes: a rounded restatement outranking the
+      // precise value; a hallucinated near-duplicate outranking the real one; and a value negated
+      // ("not 852 ft") being wrongly counted as confirming just because it's textually present — see ADR.
+      const localValues = clauseValues(reason, m.index!).filter((v) => !isNegatedAtPosition(reason, v.index));
+      const hasSameUnitPair = localValues.some((lv) => claimValues.some((cv) => cv.unit === lv.unit));
+      const hasMatch = localValues.some((lv) => claimValues.some((cv) => cv.unit === lv.unit && cv.value === lv.value));
+      if (hasSameUnitPair && !hasMatch) {
         competing = true;
         continue;
       }

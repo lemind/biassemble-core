@@ -829,7 +829,51 @@ original regression (still `supported`, no re-regression), and a genuine value-a
 (still correctly `contradicted`) — all three behave correctly under one rule. Full suite (149
 `gates.test.ts` tests including the unaffected T009 10/10 held-out recall; 1164 tests / 85 files
 repo-wide) passes. New regression test added next to §3h's own, using the exact captured reason text.
-Not yet deployed as of this writing — this section documents the fix, not a live-verified one.
+
+**`/code-review` on this fix (same day, before deploy) found a real second regression the offline
+verification above didn't cover: presence isn't the same as assertion.** `clauseValues`'s any-match
+rule confirms if the claim's value appears anywhere in the clause — but a value can appear while being
+explicitly *rejected*: `claimText: "The first flight covered 852 ft."`, `reason: "The first flight
+covered 900 ft not 852 ft."` — under the §3j fix as first shipped, this wrongly returned `supported`
+(852 is present in the clause, so it "confirmed"), silently swallowing a genuine contradiction the
+prior nearest-only code caught correctly. Verified by diffing the two commits' behavior directly on
+this input.
+
+**Fixed**: `clauseValues` now keeps each match's own text index; the existing ordinal negation-window
+check (`isOrdinalNegated`, renamed `isNegatedAtPosition` — it was never actually ordinal-specific,
+just named for its one prior caller) is reused for values too. A value counts toward confirmation only
+when it appears **unnegated**.
+
+**The same review also found the mirror bug still open on the claim side** (Q4): `claimValue` was
+still single-nearest, unchanged by the first §3j pass. A claim phrased with its own parenthetical
+aside — `"The third fiscal quarter profit was $23.4 billion (or precisely $23.43 billion) for
+Apple."` — could mispick the rounded figure as "the" claim value, then a reason correctly stating only
+the precise one fails to match, forcing exactly the false-accusation class this whole section exists to
+prevent. Verified by diffing the two commits on this input too. **Fixed as part of the same change**,
+not left open the way §3h left an equivalent asymmetry across `checkRetryContradiction`'s two verdict
+branches: `claimValue` (singular) became `claimValues` (every unnegated same-clause value); the
+reason-side check now asks whether *any* unnegated reason value matches *any* unnegated claim value of
+the same unit, rather than comparing a single pick on each side. `clauseValueNear` (now unused by
+both sides) removed; `clauseValues`'s distance-sort (only ever needed for that single-pick use) removed
+with it — the confirmation check is a pure membership test over both value sets, order doesn't matter.
+
+**Also flagged, not fixed — pre-existing, not introduced by this diff**: the `for` loop's `return` on
+any confirming same-ordinal-word occurrence unconditionally discards an earlier iteration's
+`competing = true` from a *different* occurrence in the same reason (documented, deliberate design —
+"confirmation takes precedence," data-model.md §1 step 4). The §3j any-match widening makes each
+individual occurrence marginally easier to confirm, which makes this existing gap marginally easier to
+hit in practice, but doesn't create it. No real captured case has shown this — noted here as a known,
+accepted tradeoff, not chased further, consistent with this ADR's standing discipline of building
+fixes from reproduced live failures, not speculative ones (§3e's `last`/`final` revert is the concrete
+example of what chasing an untested hypothetical cost here before).
+
+Re-verified all 5 cases (2 original regressions, the new negation case, the new claim-side case, one
+genuine mismatch) offline after the negation/claim-side fix — all correct under one unified rule.
+`tsc --noEmit` clean. Full suite: 87 files / 1170 tests (two ad-hoc probe test files a review agent
+left behind inflate this count by a couple of files/tests — untracked, never staged, harmless but not
+yet cleaned up as of this writing; core suite is unchanged at 85 files / 1165 tests plus this section's
+own 1 new test). Not yet deployed as of this writing — this section documents the fix, not a
+live-verified one.
 
 ## §4. Explicitly not doing
 

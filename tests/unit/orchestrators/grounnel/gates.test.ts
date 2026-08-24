@@ -1124,6 +1124,30 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
+  // /code-review finding (2026-08-24, before deploy) — the any-match confirmation above must not
+  // treat a NEGATED occurrence as confirming. "not 852 ft" mentions the claim's value while actually
+  // rejecting it; presence alone (the naive version of the fix above) silently swallowed a real mismatch.
+  it("(review-caught regression) still fires when the claim's value is only present as a NEGATED figure, not an asserted one", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The first flight covered 900 ft not 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // /code-review finding (2026-08-24, before deploy) — the mirror bug on the CLAIM side: claimValue
+  // was still single-nearest, so a claim with its own parenthetical aside could mispick the rounded
+  // figure, then a reason correctly stating only the precise one would fail to match.
+  it("(review-caught regression) does not fire when the CLAIM's own parenthetical aside, not the reason, is what a nearest-only pick would mispick", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The third fiscal quarter profit was $23.4 billion (or precisely $23.43 billion) for Apple.",
+      reason: "Sources confirm Apple's third fiscal quarter profit was $23.43 billion.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
   it("abstains when the claim has zero ordinal words", () => {
     const result = applyReasonOrdinalGate({
       verdict: "supported",
