@@ -16,7 +16,8 @@ import { PromptRegistry } from "../prompts/registry.js";
 import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../providers/search/tavily-provider.js";
 import { DrizzleGrounnelSearchCallStore } from "../persistence/grounnel-search-call-store.js";
-import { runGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
+import { normalizeRepeats, runGrounnelEvalOnce, scoreGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
+import type { GrounnelRun } from "../evaluation/grounnel-live-gate.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 
@@ -41,33 +42,69 @@ export const evalGrounnelRunJob = inngest.createFunction(
     });
 
     const minCorrectRateOverride: number | undefined = event.data?.minCorrectRate;
-    logger.info({ module: MODULE, cases: golden.cases.length }, "Starting Grounnel live eval run");
+    // D030 §3k — this pipeline is stochastic; one repetition is a draw, not a verdict. `repeats`
+    // controls N. `caseIds` runs a subset, because one N=5 pass over all 19 cases costs roughly a
+    // full day of Gemini daily quota (~1130 calls) — see the ADR's cost table.
+    const repeats = normalizeRepeats(event.data?.repeats ?? 1);
+    const caseIds: string[] | undefined = event.data?.caseIds;
+    const selected = caseIds?.length ? golden.cases.filter((c) => caseIds.includes(c.id)) : golden.cases;
+    if (selected.length === 0) {
+      throw new Error(`No golden cases matched caseIds=${JSON.stringify(caseIds)}`);
+    }
+    logger.info({ module: MODULE, cases: selected.length, repeats }, "Starting Grounnel live eval run");
 
-    // One step per case, not one step for the whole golden set — a transient failure on case N
-    // shouldn't force Inngest to re-run (and re-spend real API quota on) cases 1..N-1 that already
-    // succeeded; step.run's own memoization skips a case that's already completed on retry.
+    // One step per (case, repetition), not one per case — a transient failure in repetition 4
+    // shouldn't force Inngest to re-run (and re-spend real API quota on) repetitions 1..3 that
+    // already succeeded; step.run's own memoization skips whatever already completed on retry.
+    // Scoring is a separate pure step for the same reason: it must never re-trigger the network.
     const provider = new GeminiProvider();
     const prompts = new PromptRegistry();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider, new DrizzleGrounnelSearchCallStore());
 
     const cases = [];
-    for (const goldenCase of golden.cases) {
-      const caseResult = await step.run(`case-${goldenCase.id}`, () =>
-        runGrounnelEvalCase({ provider, prompts, searchProvider }, goldenCase, minCorrectRateOverride)
-      );
-      cases.push(caseResult);
+    for (const goldenCase of selected) {
+      const runs: GrounnelRun[] = [];
+      const errors: string[] = [];
+      for (let i = 0; i < repeats; i++) {
+        try {
+          runs.push(
+            await step.run(`case-${goldenCase.id}-run-${i + 1}`, () =>
+              runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase)
+            )
+          );
+        } catch (err) {
+          // One repetition failing must not abandon the case — the remaining repetitions still
+          // carry signal, and a partial case is reported as partial rather than silently passing.
+          errors.push(err instanceof Error ? err.message : String(err));
+        }
+      }
+      cases.push(scoreGrounnelEvalCase(goldenCase, runs, errors, minCorrectRateOverride, repeats));
     }
 
     const summary = summarizeGrounnelEvalCases(cases);
+
+    // Per-case detection distributions — the whole point of repeating. A case at 2/5 and a case at
+    // 5/5 both used to print as "ok"; that is what let g17 sit at ~39% while reporting green.
+    const detection = summary.cases
+      .filter((c) => c.claims.some((cl) => cl.kind === "false"))
+      .map((c) => ({
+        id: c.id,
+        detectionRate: c.detectionRate,
+        runs: c.runs,
+        verdicts: Object.fromEntries(c.claims.filter((cl) => cl.kind === "false").map((cl) => [cl.match, cl.verdicts])),
+      }));
 
     logger.info(
       {
         module: MODULE,
         passed: summary.passed,
+        repeats,
         correctRate: summary.totalMatched === 0 ? null : summary.totalCorrect / summary.totalMatched,
         totalMatched: summary.totalMatched,
         falseAccusations: summary.totalFalseAccusations,
+        safetyOk: summary.cases.every((c) => c.safetyOk),
+        detection,
       },
       summary.passed ? "Grounnel live eval passed" : "Grounnel live eval failed"
     );
@@ -77,14 +114,22 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // Full failed-case detail (claims/reasons/verdicts/violations) is embedded in the thrown
     // message itself, not just referenced — step.run output isn't always where this gets read
     // from (e.g. Vercel/Inngest error capture only shows the thrown message).
+    // At N>1 the full per-repetition claim dump is far too large for an Inngest step output / error
+    // message, so it is replaced by the run ids — the claims themselves are already in Postgres
+    // (`grounnel.grounnel_claims` by `run_id`, source "eval"), which is where Stage 2 reads them.
+    const compact = summary.cases.map(({ runDetails, run: _run, ...rest }) => ({
+      ...rest,
+      runIds: runDetails.map((r) => r.id).filter(Boolean),
+    }));
+
     if (!summary.passed) {
-      const failed = summary.cases.filter((c) => !c.ok);
+      const failed = compact.filter((c) => !c.ok);
       throw new Error(
         `Grounnel live eval failed (${summary.totalCorrect}/${summary.totalMatched} correct, ` +
-          `${summary.totalFalseAccusations} false accusations):\n${JSON.stringify(failed, null, 2)}`
+          `${summary.totalFalseAccusations} false accusations, repeats=${repeats}):\n${JSON.stringify(failed, null, 2)}`
       );
     }
 
-    return summary;
+    return { ...summary, cases: compact };
   }
 );

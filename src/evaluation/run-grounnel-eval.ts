@@ -5,7 +5,7 @@ import { DrizzleGrounnelGateEventStore } from "../persistence/grounnel-gate-even
 import { DrizzleGrounnelRerankDecisionStore } from "../persistence/grounnel-rerank-decision-store.js";
 import { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
-import { evaluateGrounnelRun, type GrounnelRun, type LiveEvalSpec, type Violation } from "./grounnel-live-gate.js";
+import { evaluateGrounnelRun, type ClaimOutcome, type GrounnelRun, type LiveEvalSpec, type Violation } from "./grounnel-live-gate.js";
 import type { Provider } from "../providers/types.js";
 import type { PromptRegistry } from "../prompts/registry.js";
 import type { SearchProvider } from "../providers/search/search-provider.js";
@@ -56,6 +56,8 @@ export interface GoldenCase extends LiveEvalSpec {
   // URLs Gemini's grounding returns isn't controllable), so "tavily" lets a case like
   // g11-bloomberg-fallback actually guarantee it exercises that path instead of gambling on it.
   searchEngine?: "defaultFlow" | "tavily";
+  /** Per-case override of the provisional detection floor at N>1 (D030 §3k). */
+  detectionFloor?: number;
 }
 
 export interface GrounnelEvalDeps {
@@ -67,12 +69,22 @@ export interface GrounnelEvalDeps {
 export interface GrounnelEvalCaseResult {
   id: string;
   ok: boolean;
+  /** Repetitions actually scored (a repetition that threw is excluded and counted in `errors`). */
+  runs: number;
+  safetyOk: boolean;
   correctRate: number;
+  detectionRate: number | null;
   correct: number;
   matched: number;
   falseAccusations: number;
+  claims: ClaimOutcome[];
   violations: Violation[];
+  /** Every scored repetition, not just the first — the raw material for Stage 2 variance attribution. */
+  runDetails: GrounnelRun[];
+  /** Backward-compatible alias for `runDetails[0]`; null when every repetition failed. */
   run: GrounnelRun | null;
+  /** Per-repetition failures (network/quota/etc). Non-empty with runs>0 means a partial case. */
+  errors?: string[];
   error?: string;
 }
 
@@ -84,16 +96,22 @@ export interface GrounnelEvalSummary {
   passed: boolean;
 }
 
-/** One golden case, one real EXTRACT + pipeline run, scored. Exported so callers that need their own checkpointing (the Inngest job, one step per case) don't have to run the whole golden set as a single unit. */
-export async function runGrounnelEvalCase(
-  deps: GrounnelEvalDeps,
-  goldenCase: GoldenCase,
-  minCorrectRateOverride?: number
-): Promise<GrounnelEvalCaseResult> {
+export const MAX_REPEATS = 20;
+
+/** Coerces an untrusted `repeats` (CLI parseFloat, Inngest event JSON) to a whole number in [1, MAX].
+ * A bare clamp lets NaN through — `Math.max(1, Math.min(20, NaN))` is NaN, and `i < NaN` runs the
+ * loop zero times, so a typo'd flag would silently score nothing instead of failing loudly. */
+export function normalizeRepeats(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.min(MAX_REPEATS, Math.trunc(n)));
+}
+
+/** One real EXTRACT + pipeline execution of a case's text. Exported so the Inngest job can wrap each
+ * repetition in its own `step.run` — a repetition that fails then retries alone, not the whole case. */
+export async function runGrounnelEvalOnce(deps: GrounnelEvalDeps, goldenCase: GoldenCase): Promise<GrounnelRun> {
   const { provider, prompts, searchProvider } = deps;
   const grounnelStore = new RedisGrounnelStore(new InMemoryRedisHashClient());
-  // Real DrizzleGrounnelHistoryStore, not a no-op — golden-set runs are exactly what source: "eval"
-  // exists to tag (D023 §3), so this real-call eval harness should exercise the real write path too.
   const historyStore = new DrizzleGrounnelHistoryStore();
   const llmCallStore = new DrizzleGrounnelLlmCallStore();
   const gateEventStore = new DrizzleGrounnelGateEventStore();
@@ -101,26 +119,89 @@ export async function runGrounnelEvalCase(
   const extractService = new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore);
   const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore);
 
-  try {
-    const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
-    // D030 §3b — classifyEligibility runs in the background after /extract's 202 response in
-    // production (routes/grounnel.ts); mirrored here synchronously so this harness actually
-    // exercises the classifier, not just gate #3's regex (T016 finding: this call was missing).
-    const eligibleClaims = await extractService.classifyEligibility(id, pendingClaims);
-    if (eligibleClaims.length > 0) {
-      await pipelineService.run(id, eligibleClaims, goldenCase.searchEngine ?? "defaultFlow");
-    }
-    const status = await grounnelStore.getStatus(id);
-    const run: GrounnelRun = { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };
-
-    const spec: LiveEvalSpec = { id: goldenCase.id, claims: goldenCase.claims, minCorrectRate: minCorrectRateOverride ?? goldenCase.minCorrectRate };
-    const result = evaluateGrounnelRun([run], spec);
-    const falseAccusations = result.violations.filter((v) => v.rule === "no_false_accusation").length;
-
-    return { id: goldenCase.id, ok: result.ok, correctRate: result.correctRate, correct: result.correct, matched: result.matched, falseAccusations, violations: result.violations, run };
-  } catch (err) {
-    return { id: goldenCase.id, ok: false, correctRate: 0, correct: 0, matched: 0, falseAccusations: 0, violations: [], run: null, error: sanitizeErrorMessage(err) };
+  const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
+  const eligibleClaims = await extractService.classifyEligibility(id, pendingClaims);
+  if (eligibleClaims.length > 0) {
+    await pipelineService.run(id, eligibleClaims, goldenCase.searchEngine ?? "defaultFlow");
   }
+  const status = await grounnelStore.getStatus(id);
+  return { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };
+}
+
+/** Scores N already-executed repetitions of one case. Pure — no network — so the Inngest job can run
+ * the repetitions as separate steps and score them here without re-spending API quota on a retry. */
+export function scoreGrounnelEvalCase(
+  goldenCase: GoldenCase,
+  runs: GrounnelRun[],
+  errors: string[],
+  minCorrectRateOverride?: number,
+  expectedRuns?: number
+): GrounnelEvalCaseResult {
+  if (runs.length === 0) {
+    // safetyOk is FALSE, not true: zero observations means the safety property was never checked,
+    // and "not checked" must never aggregate into "safe" (review finding — the job's own
+    // `cases.every(c => c.safetyOk)` would otherwise log safetyOk:true for a case that never ran).
+    return {
+      id: goldenCase.id, ok: false, runs: 0, safetyOk: false, correctRate: 0, detectionRate: null, correct: 0, matched: 0,
+      falseAccusations: 0, claims: [], violations: [], runDetails: [], run: null,
+      errors, error: errors[0] ?? "no repetitions were executed",
+    };
+  }
+  const spec: LiveEvalSpec = {
+    id: goldenCase.id,
+    claims: goldenCase.claims,
+    minCorrectRate: minCorrectRateOverride ?? goldenCase.minCorrectRate,
+    detectionFloor: goldenCase.detectionFloor,
+  };
+  const result = evaluateGrounnelRun(runs, spec);
+
+  // A partially-completed case must not report a pass (review finding). Scoring 2 of a requested 5
+  // repetitions and calling it green is the same underpowered-measurement error this whole protocol
+  // exists to eliminate — the rate is computed over fewer observations than the run asked for.
+  const violations = [...result.violations];
+  if (expectedRuns !== undefined && runs.length < expectedRuns) {
+    violations.push({
+      rule: "incomplete_repetitions",
+      detail: `only ${runs.length}/${expectedRuns} repetitions completed (${errors.length} failed) — rates are computed over fewer observations than requested`,
+    });
+  }
+
+  return {
+    id: goldenCase.id,
+    ok: violations.length === 0,
+    runs: result.runs,
+    safetyOk: result.safetyOk,
+    correctRate: result.correctRate,
+    detectionRate: result.detectionRate,
+    correct: result.correct,
+    matched: result.matched,
+    falseAccusations: violations.filter((v) => v.rule === "no_false_accusation").length,
+    claims: result.claims,
+    violations,
+    runDetails: runs,
+    run: runs[0] ?? null,
+    ...(errors.length > 0 ? { errors } : {}),
+  };
+}
+
+/** One golden case, `repeats` real EXTRACT + pipeline runs, scored together. Exported so callers that need their own checkpointing (the Inngest job, one step per case) don't have to run the whole golden set as a single unit. */
+export async function runGrounnelEvalCase(
+  deps: GrounnelEvalDeps,
+  goldenCase: GoldenCase,
+  minCorrectRateOverride?: number,
+  repeats = 1
+): Promise<GrounnelEvalCaseResult> {
+  const n = normalizeRepeats(repeats);
+  const runs: GrounnelRun[] = [];
+  const errors: string[] = [];
+  for (let i = 0; i < n; i++) {
+    try {
+      runs.push(await runGrounnelEvalOnce(deps, goldenCase));
+    } catch (err) {
+      errors.push(sanitizeErrorMessage(err));
+    }
+  }
+  return scoreGrounnelEvalCase(goldenCase, runs, errors, minCorrectRateOverride, n);
 }
 
 function summarize(cases: GrounnelEvalCaseResult[]): GrounnelEvalSummary {
@@ -140,11 +221,12 @@ function summarize(cases: GrounnelEvalCaseResult[]): GrounnelEvalSummary {
 export async function runGrounnelEval(
   deps: GrounnelEvalDeps,
   golden: { cases: GoldenCase[] },
-  minCorrectRateOverride?: number
+  minCorrectRateOverride?: number,
+  repeats = 1
 ): Promise<GrounnelEvalSummary> {
   const cases: GrounnelEvalCaseResult[] = [];
   for (const goldenCase of golden.cases) {
-    cases.push(await runGrounnelEvalCase(deps, goldenCase, minCorrectRateOverride));
+    cases.push(await runGrounnelEvalCase(deps, goldenCase, minCorrectRateOverride, repeats));
   }
   return summarize(cases);
 }
