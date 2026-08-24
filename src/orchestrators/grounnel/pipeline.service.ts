@@ -814,6 +814,33 @@ export class GrounnelPipelineService {
             // Review finding — checkRetryContradiction appends at most one event; without this,
             // gateEventsByClaimId (current-pass-only, unlike chain.gateEvents) silently drops it.
             currentPassGateEvents = [...currentPassGateEvents, ...chain.gateEvents.slice(preCheckCount)];
+
+            // Telemetry only, never changes verdict — D030 §3k. Before this, "did a retry fire, on
+            // what trigger, did it help or hurt" was only reconstructable by parsing raw llm_calls
+            // JSON and sorting by timestamp (the exact archaeology that traced bd11759e). The
+            // triggering diagnostic's own `code` already reuses GateReason (see Diagnostic's own
+            // comment), so no new reason values are needed — `counterfact_ignored` here means the
+            // consistency classifier said inconsistent; `evidence_null`/`evidence_not_grounded`/
+            // `claim_reason_no_overlap` mean a gate itself raised the ERROR, not the classifier.
+            //
+            // Review finding — appended to chain.gateEvents (persisted to the DB) ONLY, never to
+            // currentPassGateEvents. currentPassGateEvents feeds gateEventsByClaimId, which
+            // originatingContradictionGate (pipeline-helpers.ts) scans via
+            // `findLast(overridden && verdictAfter === "contradicted")` to find the gate that
+            // ACTUALLY produced a contradiction — used by reconcileContradictedVerdicts' reason_ordinal
+            // protection (D030 §3d, line ~235) and by logReconciliationDowngrade's telemetry. This
+            // event's own overridden/verdictAfter shape matches that predicate whenever a retry lands
+            // on "contradicted", so appending it here would shadow the real originating gate — silently
+            // disabling reason_ordinal's protection for every retry-produced contradiction.
+            const triggeringDiagnostic = firstPass.diagnostics.find((d) => d.severity === "ERROR")?.code ?? null;
+            const retryDecisionEvent: GateEventInput = {
+              gate: "retry_decision",
+              verdictBefore: firstPass.verdict,
+              verdictAfter: chain.verdict,
+              overridden: firstPass.verdict !== chain.verdict,
+              reason: triggeringDiagnostic,
+            };
+            chain = { ...chain, gateEvents: [...chain.gateEvents, retryDecisionEvent] };
           }
         }
 

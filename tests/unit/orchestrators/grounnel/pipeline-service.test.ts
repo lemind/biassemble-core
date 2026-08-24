@@ -1490,8 +1490,9 @@ describe("GrounnelPipelineService (T010)", () => {
     // 10 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
     // year/date gate added a 7th, T069's reason_year added an 8th, D030's reason_ordinal added a
     // 9th, g17's subject_entity added a 10th), plus D025 §5's retry-contradiction check (the retry
-    // landed on contradicted, so it ran) — the original inconsistent pass is not lost.
-    expect(events).toHaveLength(21);
+    // landed on contradicted, so it ran), plus D030 §3k's telemetry-only retry_decision summary —
+    // the original inconsistent pass is not lost.
+    expect(events).toHaveLength(22);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
     // Index 5, not 4: reason_ordinal (D030) now sits between reason_year and counterfact_ignored.
@@ -1502,6 +1503,11 @@ describe("GrounnelPipelineService (T010)", () => {
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
     expect(events[20]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    // D030 §3k — telemetry-only summary of the whole retry decision: firstPass ended "unsupported"
+    // (the evidence_null downgrade at events[5]), the retry ultimately landed on "contradicted" —
+    // a real change, so overridden:true — and the reason names the ERROR that triggered the retry
+    // in the first place (evidence_null), not the retry's own outcome.
+    expect(events[21]).toMatchObject({ gate: "retry_decision", verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true, reason: "evidence_null" });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -2235,6 +2241,87 @@ describe("GrounnelPipelineService (T010)", () => {
     const events = gateEventStore.calls.flatMap((c) => c.events);
     expect(events.find((e) => e.gate === "retry_reconciliation")).toBeUndefined();
     expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "contradicted",
+      overridden: true,
+      reason: "reason_ordinal_mismatch",
+    });
+  });
+
+  // D030 §3k (code-review finding, 2026-08-24) — the new telemetry-only retry_decision event
+  // must NEVER be visible to originatingContradictionGate's lookup, or it shadows the gate that
+  // actually produced a retry-path "contradicted" (its own shape — overridden + verdictAfter:
+  // "contradicted" — trivially matches that lookup's predicate). Here reason_ordinal fires INSIDE
+  // the retry pass itself (not the primary pass, unlike the test above), which is exactly the
+  // shape that exposed the bug: currentPassGateEvents gets reassigned from retryPass.gateEvents,
+  // and appending the new telemetry event to that array (the original diff) put a
+  // verdictAfter:"contradicted"/overridden:true entry AFTER reason_ordinal in iteration order —
+  // findLast then picked the telemetry event, not reason_ordinal, and D030 §3d's protection broke.
+  it("D030 §3k (code-review finding): a retry-path reason_ordinal contradiction is still protected from reconciliation, unshadowed by the new retry_decision telemetry", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 feet.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // Call #1 (primary): raises an evidence_null ERROR via reason_consistency + gate #1, the
+      // same proven needsRetry trigger the T034 test above uses — firstPass lands on "unsupported",
+      // never "contradicted", so D030 §3c doesn't skip the retry.
+      // Call #2 (retry): a genuinely wrong "supported" whose OWN reason names a different flight —
+      // retryPass's reason_ordinal gate (not VERIFY) is what forces this to "contradicted".
+      const isPrimary = provider.getCallCount() === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: isPrimary ? "unsupported" : "supported",
+          evidenceCitations: isPrimary ? null : citationsFor(claimText, passageText, factSentence.trim()),
+          reason: isPrimary
+            ? "The passage contradicts the claim about which flight covered 852 feet."
+            : "The passage states the airplane flew 852 feet on its fourth and final flight.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore, gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted");
+
+    // If the shadowing bug were present, reconcileContradictedVerdicts would treat this claim as
+    // unprotected and (per D030 §3d's own test above) findUnresolvedClaims would also treat it as
+    // escalation-eligible (D026 §17), re-verifying it with a SECOND "primary"-tagged VERIFY call —
+    // distinct from the "consistency_retry"-tagged call this test already expects for the retry
+    // itself. Protected, it must not: exactly 1 primary call, matching the D030 §3d test's own
+    // assertion for the non-retry case.
+    const primaryCalls = llmCallStore.recordCallContexts.filter((c) => c.callType === "primary" && c.stage === "verify");
+    expect(primaryCalls).toHaveLength(1);
+
+    // Direct check on the mechanism itself: the persisted trail (DB-bound, from chain.gateEvents)
+    // still carries the new telemetry event for observability...
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.find((e) => e.gate === "retry_decision")).toMatchObject({
+      verdictBefore: "unsupported",
+      verdictAfter: "contradicted",
+      overridden: true,
+    });
+    // ...while reason_ordinal — not retry_decision — remains correctly identifiable as the LAST
+    // overriding-to-contradicted event in that same persisted trail (chain.gateEvents appends the
+    // telemetry event after reason_ordinal too, so this only holds because retry_decision's shape
+    // doesn't retroactively change what fired inside the retry pass — the fix is about which array
+    // gateEventsByClaimId reads, proven above by primaryCalls staying at 1). reason_ordinal appears
+    // TWICE (once per pass) — firstPass's own instance is inert (verdict was already "contradicted"
+    // from reason_consistency by the time it runs, so it early-returns), so filter to the one that
+    // actually overrode, not just the first occurrence.
+    expect(events.find((e) => e.gate === "reason_ordinal" && e.overridden)).toMatchObject({
       verdictBefore: "supported",
       verdictAfter: "contradicted",
       overridden: true,
