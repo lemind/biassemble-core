@@ -1007,6 +1007,77 @@ own small decision that first identifies which ADR introduced it, what regressio
 whether current golden/live traffic actually exercises its trigger path. Recorded here so the
 observation isn't lost, not as a mandate.
 
+### §3l. `subject_entity`: measured, root-caused, and NOT fixed yet (2026-08-24)
+
+**Why this section exists at all.** `applySubjectEntityGate` was added in `ed57831` as a "deterministic
+backstop for g17" and has **no decision record anywhere** — not in this ADR, not in D026, nowhere in
+`docs/` or `specs/`. It is the only gate in the chain in that position. Its ~7.6% lifetime override
+rate (165/2171 evaluations) went unexamined until now. That gap is itself the finding: a gate nobody
+wrote down is a gate nobody re-checks.
+
+**What it does.** Last in the chain, fires only on `supported`/`partially_supported`, downgrades to
+`unverifiable` and nulls evidence when `sameEntity(subjectEntity ?? claimText, evidence)` is false —
+i.e. when both the claim's subject anchor and the cited evidence contain proper nouns but share none.
+It can never produce `contradicted`, so **it cannot cause a false accusation**; every mistake it makes
+is a detection miss, on the safe side of this project's asymmetry.
+
+**Measurement (all 132 distinct claims it ever fired on, reconstructed from history at zero API cost).**
+`subject_entity` recovery is possible because EXTRACT's own `subject_entity` output survives in
+`grounnel_llm_calls.parsed_output` — it is not persisted on `grounnel_claims`, but it is not lost.
+
+| Ground truth | Firings | Ended `supported` | Ended `unverifiable` | Ended `contradicted` |
+| --- | --- | --- | --- | --- |
+| TRUE claim (gate was wrong to fire) | 81 | 49 | **31** | — |
+| FALSE claim (firing had value) | 32 | 13 | 10 | 8 |
+| Unclassified | 19 | 15 | 3 | — |
+
+So ~60% of firings self-corrected on a later pass (costing extra VERIFY round-trips, not accuracy), and
+**31 TRUE claims were permanently suppressed to `unverifiable`** — 29 of them Apple product-line revenue
+figures, plus real production astronomy claims from a JWST article.
+
+**A proposed fix was tested and REFUTED before implementation.** The obvious hypothesis was that the
+gate checks the narrow cited `evidence` span while gate #1 one line above already receives the full
+pooled `passageText`, so it should check that instead. Simulating that change against every historical
+firing with the real `sameEntity`: **130 of 132 firings would stop firing** (131/132 against all
+retrieved pages). Passages are retrieved *by searching for the claim*, so they essentially always
+contain the subject entity — the "fix" is not a fix, it is a silent deletion of the gate wearing a
+one-line diff. Recorded here because it is exactly the change a reasonable reviewer would wave through.
+
+**Actual root cause: `properNounWords` equates "capitalized" with "is an entity name."** Verified by
+running the real function on real rejected evidence:
+
+| Subject anchor | Proper nouns found in evidence | Outcome |
+| --- | --- | --- |
+| `Apple` | `wearables`, `home`, `accessories` | fires — a product *category*, not an entity |
+| `Apple` | `mac`, `perhaps`, `cook`, `parekh` | fires — Apple's own product and its own CEO |
+| `Apple` | `services` | fires — a capitalized line item |
+| `Apple` | *(empty — "iPhone" starts lowercase)* | abstains, by accident of orthography |
+| `WASP-121 b` → tokenizes to `wasp-` | `terminators` | fires — sentence-initial capital |
+
+Three distinct defects compound: capitalized common nouns read as entities; sentence-initial
+capitalization is only partly filtered (`SENTENCE_START_STOPWORDS` misses "Perhaps"); and an entity's
+own products/executives (`Mac`, `Cook`) never string-match the parent name. The premise "evidence names
+proper nouns, none of which is my subject ⇒ evidence is about a different entity" is simply unsound
+over free text.
+
+**Decision: measure and document now, do not fix in this change.** Every remedy on the table is worse
+than the disease at this stage:
+
+- *Stopword/common-noun filtering* is the `ROLE_KEYWORDS` pattern this ADR already reverted once (§1) —
+  an unbounded hand-maintained list over free English.
+- *Real entity resolution* (knowing `Mac`/`Cook` belong to `Apple`) is a genuinely different system, not
+  a gate tweak.
+- *Deleting the gate* is defensible on count (81 wrong firings vs 32 useful ones) but not obviously
+  right on severity: those 32 are cases where it downgraded a wrong `supported` on a genuinely FALSE
+  claim, and 13 of them still ended `supported` anyway. Whether preventing a wrong affirmation is worth
+  suppressing ~2.5x as many true ones is a product judgment about detection-rate tradeoffs, not an
+  engineering one — and it belongs in the repeated-run detection metrics (§3k / Stage 1), where both
+  sides of it are now measurable, rather than being decided off a single reading of history.
+
+The gate stays as-is, unchanged, now documented. It is **safety-neutral by construction**, so leaving it
+costs detection rate, never a false accusation. Revisit once the N≥2 repeated-run baseline can quantify
+its effect on detection rate directly, instead of inferring it from post-hoc verdict archaeology.
+
 ## §4. Explicitly not doing
 
 - **Amending `MULTIPLE SOURCES` in the VERIFY prompt** — plausible contributing cause (§2), but the
