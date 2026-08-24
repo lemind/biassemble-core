@@ -1249,6 +1249,85 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     });
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
   });
+
+  // D030 §3k — the live g20 false accusation this rule exists for: the confirming "$23.43 billion"
+  // sits in a PRIOR sentence, so clause-scoped lookup only sees the rounded "$23.4 billion".
+  it("(g20 live failure 2026-08-24) a rounded restatement across a clause boundary is not a competing value", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "Apple reported $23.43 billion in net profit in the third fiscal quarter of 2025.",
+      reason:
+        "Source A sentence 7 states net income was $23.43 billion. Source B sentence 5 and Source C sentence 4 state net quarterly profit was $23.4 billion for the third fiscal quarter of 2025. The slight difference in cents is negligible and the claim is supported.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // D030 §3k value-agreement rule: round both to the LESSER decimal precision (decimal-exact,
+  // half-up), compare digit strings. Table-driven so the policy is enumerated, not implied.
+  describe("value agreement — decimal-precision boundary table (D030 §3k)", () => {
+    const agree: Array<[string, string, string]> = [
+      ["23.4", "23.43", "the live g20 case"],
+      ["1.20", "1.2", "trailing zero carries no information"],
+      ["0.1", "0.10", "trailing zero, other direction"],
+      ["852", "852.0", "integer vs explicit .0"],
+      ["2.675", "2.68", "exact-half: toFixed says 2.67, decimal says 2.68"],
+      ["23.45", "23.5", "exact-half: toFixed says 23.4, decimal says 23.5"],
+      ["1.005", "1.01", "exact-half: toFixed says 1.00, decimal says 1.01"],
+    ];
+    const conflict: Array<[string, string, string]> = [
+      ["1.20", "1.21", "genuinely different at shared precision"],
+      ["23.4", "24.4", "different integer part"],
+      ["120", "852", "the g17 shape — unrelated magnitudes"],
+      ["23.45", "23.4", "23.45 resolves to 23.5 at 1dp"],
+      ["852", "850", "significant-figure rounding is out of scope by choice"],
+    ];
+
+    for (const [claimVal, reasonVal, why] of agree) {
+      it(`agrees: ${claimVal} vs ${reasonVal} (${why})`, () => {
+        const result = applyReasonOrdinalGate({
+          verdict: "supported",
+          claimText: `The first flight covered ${claimVal} feet.`,
+          reason: `The passage states the first flight covered ${reasonVal} feet.`,
+        });
+        expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+      });
+    }
+
+    for (const [claimVal, reasonVal, why] of conflict) {
+      it(`conflicts: ${claimVal} vs ${reasonVal} (${why})`, () => {
+        const result = applyReasonOrdinalGate({
+          verdict: "supported",
+          claimText: `The first flight covered ${claimVal} feet.`,
+          reason: `The passage states the first flight covered ${reasonVal} feet.`,
+        });
+        expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+      });
+    }
+
+    // Policy call 1 (D030 §3k): conflict. Precisely — the two resolve to different values at their
+    // shared 1dp precision (23.49 -> 23.5). NOT "23.49 isn't a rounding of 23.4": 23.4 is a valid
+    // 1dp form of 23.43/23.44. Conservative: the gate must not silently repair a mis-rounded source.
+    it("policy call: 23.4 vs 23.49 conflicts — they resolve differently at shared 1dp precision", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The first flight covered 23.4 feet.",
+        reason: "The passage states the first flight covered 23.49 feet.",
+      });
+      expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+    });
+
+    // Policy call 2 (D030 §3k): agrees, mechanically (shared precision 0). Recorded as NUMERIC
+    // REPRESENTATIONAL agreement only — not a claim that 59s and 59.4s are interchangeable
+    // measurements. Measurement compatibility would need a domain tolerance; not invented here.
+    it("policy call: 59 vs 59.4 agrees — representational only, not measurement interchangeability", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The first flight lasted 59 seconds.",
+        reason: "The passage states the first flight lasted 59.4 seconds.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+  });
 });
 
 // T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different

@@ -872,8 +872,140 @@ genuine mismatch) offline after the negation/claim-side fix — all correct unde
 `tsc --noEmit` clean. Full suite: 87 files / 1170 tests (two ad-hoc probe test files a review agent
 left behind inflate this count by a couple of files/tests — untracked, never staged, harmless but not
 yet cleaned up as of this writing; core suite is unchanged at 85 files / 1165 tests plus this section's
-own 1 new test). Not yet deployed as of this writing — this section documents the fix, not a
-live-verified one.
+own 1 new test).
+
+**Deployed 2026-08-24 11:25 UTC and live-verified the same day — outcome is mixed, see §3k.** Both
+§3j fixes hold: the two reason phrasings that caused real false accusations (the `$23.4bn (or $23.43bn)`
+rounding restatement and the `$23.42bn` hallucinated near-duplicate) no longer fire, confirmed by
+replaying every historical firing of this gate through the deployed code. A **third** phrasing of the
+same claim, not seen before that day, produced a fresh false accusation within an hour of deploy. §3k
+documents it, and the measurement failure that let §3j be reported as verified on the strength of a
+single green run.
+
+### §3k. Rounded restatements across a clause boundary; and the measurement error that hid it (2026-08-24)
+
+**Trigger.** Eval run `01M0SS52G1PQXR28HE9Z1PN7MZ`, ~20 minutes after the §3j deploy, fired **two
+concurrent passes over the same golden set on the same commit**. Pass A scored 23/23 with zero false
+accusations. Pass B scored 21/23 and produced a false accusation. Same code, same inputs, two minutes
+apart.
+
+**The first finding is methodological, and it is the more important one.** §3h and §3j were each
+reported as live-verified on the strength of one green run. This pipeline is stochastic across
+retrieval, rerank, VERIFY sampling and escalation; a single run is a draw from a distribution, not a
+verdict. Two runs of the same golden set disagreeing by two cases is the direct evidence. Concretely,
+g17's own headline claim lands on the correct `contradicted` in only **9 of 23** eval runs since
+2026-08-22 (39%; `supported` 13, `unverifiable` 1) — meaning every green g17 this ADR has recorded,
+including the one in §3j, was that coin landing well rather than a fix taking hold. No claim of the
+form "verified live" is admissible from a single run anywhere in this ADR going forward. The eval
+protocol change this forces (repeated runs, separate safety and detection gates) is being designed and
+measured first and will get its own ADR **after** a baseline characterization run, deliberately not
+before — writing it now would encode hypotheses as architecture.
+
+**The two Pass-B failures have unrelated causes, and only one of them is this gate's.**
+
+*g20 — this gate, a false accusation.* Claim `Apple reported $23.43 billion in net profit in the third
+fiscal quarter of 2025` is **true**. Gate trace: `reason_ordinal: supported → contradicted
+(reason_ordinal_mismatch)`. VERIFY was correct and said so explicitly — its reason ends *"The slight
+difference in cents is negligible and the claim is supported."* The gate overrode a correct verdict on
+a true claim, which is the exact failure class this ADR exists to prevent. Mechanism:
+
+```
+"…Source A sentence 7 states net income was $23.43 billion.  |  Source B sentence 5 and Source C
+ sentence 4 state net quarterly profit was $23.4 billion for the third fiscal quarter of 2025.  | …"
+   ^ confirming value, sentence 1                                ^ rounded value + the ordinal, sentence 2
+```
+
+The confirming `$23.43 billion` sits in sentence 1. The ordinal `third` and the rounded `$23.4 billion`
+sit in sentence 2. §3j's any-match widening searches only the ordinal's **own clause**, so the
+confirmation is out of scope and `23.4 ≠ 23.43` reads as a competing value. This is a genuinely new
+instance, not a regression of §3j: the two phrasings §3j fixed both had the confirming value inside the
+ordinal's clause. Reproduced deterministically offline against the deployed code.
+
+*g17 — not this gate.* VERIFY's reason claimed *"the first flight covered a distance of 852 feet"*
+while its own retrieved evidence says *"record flight"* and *"the longest of four."* The reason
+confirms the claim's own ordinal, so this gate correctly abstained; escalation then replaced an
+`unverifiable` with that `supported`. No ordinal-gate change can reach this — it is the evidence/verifier
+side (§3i's "Mode C"), and it is why this gate is being frozen below.
+
+**Method — replay, not reasoning.** Every historical firing of this gate (34, across `eval` and
+`production`, 2026-08-19 → 2026-08-24) was extracted with its claim and reason and replayed through
+candidate code. This replaces "does this break the tests" with "what would this have done to every real
+firing on record." Caveat recorded for whoever repeats it: `grounnel_claims.reason` stores the *final*
+user-facing reason, which `rewriteUngroundedAffirmativeReason` may have rewritten after the gate ran,
+so replay fidelity degrades for older rows where the verdict was later reverted; the recent corpus,
+where the stored reason is what the gate saw, is the load-bearing part.
+
+**Fix — a rounded restatement is not a competing value.** The semantic error is that `23.4` and `23.43`
+were treated as different measurements when one is a rounded representation of the other. Fixing the
+*comparison* rather than the clause boundary also avoids adding a fourth positional exception to a gate
+that already has three.
+
+> **Rule.** Two values agree iff, rounded half-up to the **lesser** of their two decimal precisions,
+> their digit strings are identical. Rounding is decimal-exact. Precision means **decimal places only**,
+> never significant figures.
+
+| Pair | Result | Rationale |
+| --- | --- | --- |
+| `23.4` / `23.43` | agree | the live failure above |
+| `1.20` / `1.2`, `0.1` / `0.10`, `852` / `852.0` | agree | trailing zeros carry no information |
+| `2.675` / `2.68`, `23.45` / `23.5`, `1.005` / `1.01` | agree | exact-half, decimal semantics |
+| `1.20` / `1.21`, `23.4` / `24.4`, `120` / `852` | conflict | genuinely different values |
+| `23.45` / `23.4` | conflict | `23.45` resolves to `23.5` at 1 dp |
+| `23.4` / `23.49` | **conflict** | see policy note 1 |
+| `59` / `59.4` | **agree** | see policy note 2 |
+| `852` / `850` | conflict | significant-figure rounding is out of scope, by choice |
+
+*Policy note 1 — `23.4` / `23.49` = conflict.* Stated precisely: under this gate's decimal-precision
+policy the two resolve to different values at their shared one-decimal precision (`23.49` → `23.5`).
+The looser phrasing "23.49 is not a correct rounding of 23.4" is wrong and should not be used — `23.4`
+is a legitimate one-decimal representation of `23.43`, `23.44` and others; it is `23.49` specifically
+that resolves elsewhere. Conflict is the conservative call: accepting it would let the gate silently
+repair a source that may have rounded incorrectly, which is not this gate's job.
+
+*Policy note 2 — `59` / `59.4` = agree.* This follows mechanically from the rule (shared precision 0).
+It is recorded as **numeric representational agreement only** — explicitly *not* a claim that a
+59-second and a 59.4-second measurement are semantically interchangeable. Measurement compatibility is a
+separate concept that would need a domain-specific tolerance, and no such tolerance is being invented
+here on the strength of one example. Noted as known scope, not generalized.
+
+**A defect the boundary table caught before it shipped.** The first candidate used
+`Number.prototype.toFixed`, which rounds in binary rather than decimal: `(2.675).toFixed(2) === "2.67"`,
+`(23.45).toFixed(1) === "23.4"`, `(1.005).toFixed(2) === "1.00"` — all disagreeing with decimal
+half-up. The `2.675` case errs toward **conflict**, i.e. toward a false accusation, the one direction
+this ADR cannot tolerate. Replaced with exact-decimal rounding over the digit string (`BigInt`,
+half-up), never binary float. This is the concrete argument for demanding an explicit, enumerated
+boundary table before adopting any numeric tolerance: the defect was invisible in the motivating case
+and in all 151 unit tests, and surfaced only from deliberately probing exact-half inputs.
+
+**Verification.** `tsc --noEmit` clean; 151/151 gate unit tests; the live failure fixed; both §3j
+variants still fixed; genuine ordinal mismatches and the §3j negation case still fire; and across the
+full 34-firing replay corpus, **19 true positives preserved and 0 false accusations** — the first
+version of this gate to record zero across all of its own history.
+
+**Scope limit, stated deliberately.** The defensible claim is *"no false accusations across the
+recorded firing corpus,"* not *"`reason_ordinal` is solved."* This fixes the **rounding subclass**. The
+clause-scoping blind spot itself remains: a genuinely different value inside the ordinal's clause, with
+the confirming value in a neighbouring sentence, would still false-fire. Three separate phrasings of one
+claim have now each defeated a different version of this gate, which is the real signal — the gate's
+precision depends on how much structure it can recover from free-form reason prose, and prose keeps
+producing new shapes.
+
+**Decision: freeze this gate.** After this change, no further edits to `applyReasonOrdinalGate` unless a
+**new, independently reproduced** failure mode appears — specifically not in response to another g17
+miss. g17 is a verifier/evidence problem (39% catch rate, this section's Pass-B failure being a clean
+example), and further ordinal-gate refinement is now negative-value work for it: each of the last three
+iterations fixed one phrasing and was defeated by another. g17 continues as a measured detection case
+with its fixture semantics unchanged (`kind: false`, `acceptable: ["contradicted"]`) — it is never to be
+weakened or quietly excluded to make a suite look green; §3e is the standing example of what mutating
+the target instead of the system costs here.
+
+**Incidental observation, deliberately not acted on.** Gate-firing rates across all recorded history
+show `counterfact_ignored` at **0 overrides in 7,237 evaluations** — dead in all observed eval and
+production traffic. It is *not* being deleted as part of this work. Establishing that a guard hasn't
+fired recently is not the same as establishing it is unreachable or unnecessary; removing it needs its
+own small decision that first identifies which ADR introduced it, what regression it was built for, and
+whether current golden/live traffic actually exercises its trigger path. Recorded here so the
+observation isn't lost, not as a mandate.
 
 ## §4. Explicitly not doing
 

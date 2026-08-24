@@ -148,6 +148,27 @@ export interface ReasonOrdinalGateResult {
 }
 
 /** Reason/verdict gate for ordinal/sequence-position mismatch (D030 §3a) — anchors on the claim's own noun phrase, not a fixed role-noun vocabulary. Confirmation takes precedence over contradiction. */
+
+function roundDecimal(x: string, p: number): string | null {
+  const m = /^(-?)(\d*)(?:\.(\d*))?$/.exec(x.trim());
+  if (!m) return null;
+  const sign = m[1] === "-" ? "-" : "";
+  const int = m[2] || "0";
+  const frac = m[3] ?? "";
+  if (frac.length <= p) return `${sign}${int}.${frac.padEnd(p, "0")}`;
+  const keep = BigInt(int + frac.slice(0, p));
+  const rounded = frac.charCodeAt(p) >= 53 ? keep + 1n : keep;
+  const t = rounded.toString().padStart(p + 1, "0");
+  return `${sign}${p === 0 ? t : t.slice(0, -p)}.${p === 0 ? "" : t.slice(-p)}`;
+}
+function valuesAgree(a: string, b: string): boolean {
+  if (a === b) return true;
+  const dp = (x: string) => (x.split(".")[1] ?? "").length;
+  const p = Math.min(dp(a), dp(b));
+  const ra = roundDecimal(a, p), rb = roundDecimal(b, p);
+  return ra !== null && rb !== null && ra === rb;
+}
+
 export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrdinalGateResult {
   if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
     return { verdict: input.verdict, overridden: false, reason: null };
@@ -191,7 +212,7 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
       // ("not 852 ft") being wrongly counted as confirming just because it's textually present — see ADR.
       const localValues = clauseValues(reason, m.index!).filter((v) => !isNegatedAtPosition(reason, v.index));
       const hasSameUnitPair = localValues.some((lv) => claimValues.some((cv) => cv.unit === lv.unit));
-      const hasMatch = localValues.some((lv) => claimValues.some((cv) => cv.unit === lv.unit && cv.value === lv.value));
+      const hasMatch = localValues.some((lv) => claimValues.some((cv) => cv.unit === lv.unit && valuesAgree(cv.value, lv.value)));
       if (hasSameUnitPair && !hasMatch) {
         competing = true;
         continue;
