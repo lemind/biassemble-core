@@ -52,27 +52,23 @@ function isOrdinalNegated(reason: string, matchIndex: number): boolean {
   return NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
 }
 
-// D030 §3g follow-up — CLAUSE-scoped AND proximity-scoped: picks the number+unit NEAREST the
-// ordinal match within its clause, not just the first one. Live regression (2026-08-23): a rounded
-// restatement earlier in the sentence ("$23.4B (or $23.43B)... the third fiscal quarter") otherwise
-// outranked the precise value actually adjacent to the ordinal, forcing a false contradiction.
-function clauseValueNear(text: string, matchIndex: number): { value: string; unit: string } | null {
+// D030 §3g follow-up — CLAUSE-scoped: every number+unit in the ordinal match's own clause, nearest
+// first. Live regression (2026-08-23): a rounded restatement earlier in the sentence ("$23.4B (or
+// $23.43B)... the third fiscal quarter") outranked the precise value actually adjacent to the
+// ordinal under a nearest-only pick, forcing a false contradiction.
+function clauseValues(text: string, matchIndex: number): Array<{ value: string; unit: string }> {
   const clauseStart = lastClauseBoundary(text.slice(0, matchIndex)) + 1;
   const clauseEndAbs = firstClauseBoundaryForward(text, matchIndex);
   const clauseEnd = clauseEndAbs === -1 ? text.length : clauseEndAbs;
-  const matches = [...text.slice(clauseStart, clauseEnd).matchAll(NUMBER_UNIT_RE)];
-  if (matches.length === 0) return null;
   const relIndex = matchIndex - clauseStart;
-  let nearest = matches[0]!;
-  let nearestDist = Math.abs((nearest.index ?? 0) - relIndex);
-  for (const m of matches) {
-    const dist = Math.abs((m.index ?? 0) - relIndex);
-    if (dist < nearestDist) {
-      nearest = m;
-      nearestDist = dist;
-    }
-  }
-  return toUnitValue(nearest);
+  const matches = [...text.slice(clauseStart, clauseEnd).matchAll(NUMBER_UNIT_RE)];
+  matches.sort((a, b) => Math.abs((a.index ?? 0) - relIndex) - Math.abs((b.index ?? 0) - relIndex));
+  return matches.map(toUnitValue);
+}
+
+// Single nearest value — used for the claim side, where one relevant number per clause is the norm.
+function clauseValueNear(text: string, matchIndex: number): { value: string; unit: string } | null {
+  return clauseValues(text, matchIndex)[0] ?? null;
 }
 
 // Rough sentence spans to bound the locality check below — doesn't split mid-number, no need to handle abbreviations perfectly.
@@ -189,9 +185,14 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
     if (!anchorsOverlap(claimAnchor, anchor)) continue;
     if (isOrdinalNegated(reason, m.index!)) continue;
     if (ordinal === claimOrdinal) {
-      // D030 §3g follow-up — same ordinal word is confirmation only if its own clause's value+unit doesn't contradict the claim's (see ADR for the g17 same-word/wrong-value case this closes).
-      const localValue = clauseValueNear(reason, m.index!);
-      if (localValue && claimValue && localValue.unit === claimValue.unit && localValue.value !== claimValue.value) {
+      // D030 §3g/§3h follow-up — same ordinal word is confirmation unless the clause has values in
+      // the claim's unit and NONE of them match; the claim's own value appearing anywhere in the
+      // clause counts as confirmation, not just whichever value happens to sit nearest the ordinal
+      // (nearest-only forced a false contradiction both when a rounded restatement outranked the
+      // precise value, and when a hallucinated near-duplicate outranked the real one — see ADR).
+      const localValues = clauseValues(reason, m.index!);
+      const sameUnitValues = claimValue ? localValues.filter((v) => v.unit === claimValue.unit) : [];
+      if (sameUnitValues.length > 0 && !sameUnitValues.some((v) => v.value === claimValue!.value)) {
         competing = true;
         continue;
       }

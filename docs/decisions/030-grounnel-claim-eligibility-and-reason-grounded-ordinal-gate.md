@@ -793,6 +793,44 @@ superlative widening — both fixes are prerequisites, not alternatives, since P
 superlative widening to close its own remaining gap and P3 shows the plain widening isn't safe without
 them.
 
+**§3j — live false accusation, same day as the Mode B deploy (2026-08-24): `clauseValueNear`'s
+nearest-value pick was never the right rule, just under-tested in one direction.** User-reported
+golden-set failure minutes after deploying `da17192`: `g20-apple-earnings-year-over-year` regressed
+to a false accusation — `"Apple reported $23.43 billion in net profit in the third fiscal quarter of
+2025."` (real, evidence-grounded) forced to `contradicted`. Traced via the gate trace: `reason_ordinal`
+fired directly, no `retry_reconciliation` event anywhere in the trace — unrelated to the Mode B deploy
+that had just gone out; a separate, pre-existing bug in `clauseValueNear` (§3h's own fix, shipped
+hours earlier) surfacing on a new phrasing.
+
+**Root cause**: the real captured reason — *"Multiple sources state that Apple reported $23.43 billion
+(or $23.42 billion) in profit for the third fiscal quarter of 2025."* — contains `$23.42 billion`, a
+value that appears in **neither the evidence nor the claim** (evidence has `$23.43 billion` precise
+and `$23.4 billion` rounded only). VERIFY itself generated this near-duplicate — a paraphrase/rounding
+artifact, not evidence-grounded. It happened to sit closer to "third" than the claim's real value
+(`$23.43 billion`), so `clauseValueNear`'s nearest-only pick chose the hallucinated one, mismatched
+against the claim, and forced a contradiction. **Exact mirror image** of §3h's own original bug (there,
+a *rounded* value was nearest and wrongly outranked the claim's precise one; here, a *hallucinated*
+value was nearest and wrongly outranked the claim's real one) — proving "nearest wins" was never
+correct, just under-tested against only one direction of the failure.
+
+**Fix**: `clauseValueNear` (single nearest pick) kept only for the claim side, where one relevant
+number per clause is the norm. A new `clauseValues` returns every number+unit in the ordinal's own
+clause, nearest-first. The reason-side same-ordinal-word confirmation check (§3g) now asks "does the
+claim's own value appear **anywhere** in the clause's same-unit values" rather than "is the single
+nearest value an exact match" — the claim's value being present anywhere is confirmation regardless of
+which value happens to sit physically closest to the ordinal word. This fixes both directions with one
+rule: a rounded restatement or a hallucinated near-duplicate can sit as close to the ordinal as they
+like: the real value being present anywhere in the clause still confirms. Genuine mismatch detection
+(a different ordinal *word* — "fourth" vs "first") is untouched — that branch never depended on value
+proximity at all.
+
+Verified offline against three real cases: this new regression (now `supported`, unchanged), §3h's
+original regression (still `supported`, no re-regression), and a genuine value-and-ordinal mismatch
+(still correctly `contradicted`) — all three behave correctly under one rule. Full suite (149
+`gates.test.ts` tests including the unaffected T009 10/10 held-out recall; 1164 tests / 85 files
+repo-wide) passes. New regression test added next to §3h's own, using the exact captured reason text.
+Not yet deployed as of this writing — this section documents the fix, not a live-verified one.
+
 ## §4. Explicitly not doing
 
 - **Amending `MULTIPLE SOURCES` in the VERIFY prompt** — plausible contributing cause (§2), but the

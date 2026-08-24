@@ -1110,6 +1110,20 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
+  // Real live-deploy regression (2026-08-24, g20-apple-earnings, false accusation) — the mirror image
+  // of the case above: a HALLUCINATED near-duplicate value ("$23.42 billion", present in neither the
+  // evidence nor the claim) landed nearest the ordinal, still forcing a false contradiction under a
+  // nearest-value-must-match rule. Fixed by confirming when the claim's own value appears ANYWHERE in
+  // the clause, not only when it happens to be the single nearest one. This is the exact captured failure.
+  it("(review-caught regression) does not fire when a HALLUCINATED near-duplicate value outranks the claim's real value by proximity", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "Apple reported $23.43 billion in net profit in the third fiscal quarter of 2025.",
+      reason: "Multiple sources state that Apple reported $23.43 billion (or $23.42 billion) in profit for the third fiscal quarter of 2025.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
   it("abstains when the claim has zero ordinal words", () => {
     const result = applyReasonOrdinalGate({
       verdict: "supported",
