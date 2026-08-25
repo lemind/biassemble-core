@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { ExtractRequestSchema } from "../contracts/grounnel.schemas.js";
 import { authHook } from "../lib/auth.js";
+import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 import { RateLimitError } from "../providers/gemini.js";
 import { buildGeminiRateLimitMessage, type GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
@@ -12,6 +13,24 @@ import type { RateLimiter } from "../lib/rate-limit.js";
 
 const MODULE = "routes-grounnel";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** D020 §4 fix — x-grounnel-client-ip is only honored from the trusted biassemble/backend proxy,
+ * proven by a secret AI_CORE_API_KEY doesn't grant (any other holder of that key could otherwise
+ * forge someone else's IP and dodge their own bucket). Fails closed: no secret configured, no
+ * header, or a mismatch all fall back to request.ip the same way — never trust an unverified header. */
+function resolveClientIp(request: { headers: Record<string, unknown>; ip: string }): string {
+  const proxySecret = request.headers["x-grounnel-internal-secret"];
+  const forwardedIp = request.headers["x-grounnel-client-ip"];
+  if (
+    typeof proxySecret === "string" &&
+    typeof forwardedIp === "string" &&
+    env.GROUNNEL_INTERNAL_PROXY_SECRET &&
+    proxySecret === env.GROUNNEL_INTERNAL_PROXY_SECRET
+  ) {
+    return forwardedIp;
+  }
+  return request.ip;
+}
 
 export function registerGrounnelRoutes(
   server: FastifyInstance,
@@ -24,10 +43,11 @@ export function registerGrounnelRoutes(
 ) {
   server.post("/extract", { preHandler: [authHook] }, async (request, reply) => {
     // ADR-001 §4 (biassemble/backend) — request.ip is the proxy's own egress IP, not the real
-    // end-user; the header carries the real one, request.ip is the local-dev/no-proxy fallback.
-    const clientIp = (request.headers["x-grounnel-client-ip"] as string | undefined) || request.ip;
+    // end-user; x-grounnel-client-ip carries the real one, but only once resolveClientIp has
+    // verified it came from the trusted proxy (D020 §4) — never trusted from just any caller.
+    const clientIp = resolveClientIp(request);
     // Defense-in-depth behind authHook, not the primary control (D020 §4, spec.md).
-    if (!services.rateLimiter.checkAndConsume(clientIp)) {
+    if (!(await services.rateLimiter.checkAndConsume(clientIp))) {
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 

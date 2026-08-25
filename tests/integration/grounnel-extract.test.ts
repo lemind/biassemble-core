@@ -4,7 +4,7 @@ import { registerGrounnelRoutes } from "../../src/routes/grounnel.js";
 import { GrounnelExtractService } from "../../src/orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../src/persistence/grounnel-store.js";
-import { RateLimiter } from "../../src/lib/rate-limit.js";
+import { InMemoryRateLimiter } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { RateLimitError } from "../../src/providers/gemini.js";
 import { MockProvider } from "../mocks/mock-provider.js";
@@ -32,7 +32,7 @@ function buildServer(provider: Provider, searchProvider: SearchProvider = NEVER_
     pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
     grounnelStore,
     // High limit — this file exercises /extract's own contract, not rate limiting (T016's job).
-    rateLimiter: new RateLimiter(1000, 60_000),
+    rateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return server;
 }
@@ -147,7 +147,7 @@ describe("POST /extract (T014)", () => {
       extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, new NoopGrounnelLlmCallStore()),
       pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
       grounnelStore,
-      rateLimiter: new RateLimiter(1000, 60_000),
+      rateLimiter: new InMemoryRateLimiter(1000, 60_000),
     });
 
     const res = await server.inject({
