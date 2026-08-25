@@ -1078,41 +1078,33 @@ The gate stays as-is, unchanged, now documented. It is **safety-neutral by const
 costs detection rate, never a false accusation. Revisit once the N≥2 repeated-run baseline can quantify
 its effect on detection rate directly, instead of inferring it from post-hoc verdict archaeology.
 
-## §4. Explicitly not doing
+### §3m. `subject_entity` recovery + fix candidates + decision (2026-08-25)
 
-- **Amending `MULTIPLE SOURCES` in the VERIFY prompt** — plausible contributing cause (§2), but the
-  reason-grounded gate already neutralizes its effect on the stored verdict. Revisit only if
-  `applyReasonOrdinalGate` itself is observed to abstain on a live failure (i.e. the model's `reason`
-  field stops correctly naming the true ordinal, unlike every case observed so far).
-- **A generic `applyReasonFactGate<T>` abstraction** unifying year/ordinal (and future
-  currency/percent/entity) extraction behind one parameterized function. Premature: the two known
-  instances aren't actually structurally identical (years are context-free tokens; ordinals need
-  claim-anchored attachment, see §3a), so a shared interface today would either leak
-  ordinal-specific logic through a "generic" API or force year-extraction into ordinal-shaped
-  complexity it doesn't need. Only genuinely common mechanics (e.g. the negation check, the
-  key-term-overlap helper combination `applyClaimReasonOverlapGate` already exposes) should be
-  shared as small helpers, not a unifying type. Revisit extraction into a shared framework only once
-  a *third*
-  instance shows the same structure as the first two — one shared pattern plus one adaptation isn't
-  enough evidence for a generic abstraction yet.
-- **A general-purpose `checkClaimReasonConsistency` LLM classifier** covering all contradiction
-  types (ordinal/numeric/entity/scope) in one call — the deterministic, per-type `applyReason*Gate`
-  pattern is cheaper (zero LLM cost) and has a live track record (T069). Revisit only if per-type
-  gates keep needing to be added faster than new failure classes actually recur.
-- **A global ordinal role-noun whitelist** (the deleted `applyOrdinalGate`'s approach applied to
-  `reason` instead of evidence) — claim-anchored attachment (§3a) avoids needing one at all; a
-  whitelist reintroduces the exact "can only cover phrasings already seen" ceiling this ADR is
-  trying to get away from.
-- **Extending `applyReasonOrdinalGate` to the value-less role+ordinal-only form** ("someone says
-  fourth, claim says third, no shared value to anchor them") — same danger flagged and deliberately
-  excluded from the deleted `applyOrdinalGate` v1: proving two ordinals refer to the same underlying
-  fact without a shared anchor is unsolved, not just deferred.
-- **Designing now for "the reason itself is eventually wrong, not just the verdict."** Every
-  observed case so far (Wright, Pluto, COBOL/Hopper attribution) has the model's `reason` correctly
-  naming the true fact while the verdict is wrong — `reason > verdict` in every sample collected.
-  Building speculative hedges against `reason` itself being wrong has no observed case to design
-  against yet; revisit if one appears, consistent with this repo's gates all being born from
-  reproduced live failures, never hypothetical ones.
+**Reason.** A 50-claim stress article produced a claim that flip-flopped `supported`/`unverifiable`
+across identical repeated runs — same code, same input.
+
+**Research.**
+- N=10 live repeats, isolated case (`g22`): 11% recovery from a false `subject_entity` trigger (18%
+  pooled with an earlier N=2 sample). Cause: claim's stored subject is `"Wright brothers' fourth and
+  final flight"`; evidence correctly cites `"Wilbur"` — same person, no literal token match.
+- 4 fix candidates simulated offline against the 132 historical firings (no LLM calls): **A** (skip
+  override if any citation exists) suppresses 94% — too blunt, ~same failure as an already-refuted
+  fix. **C** (require low term-overlap too) suppresses 99% — no discrimination. **B** (null an
+  anchor inferred cross-sentence) suppresses 66%, genuinely targeted, but removes protection for
+  fully entity-less claims. **B-tight** (only null if claim has its own proper noun) refuted directly:
+  fails on sentence-initial "One" (same `SENTENCE_START_STOPWORDS` gap already on record) and drops
+  the founding case ("first flight covered 852 feet").
+- Full population (159 firings, not just `g22`): **51% aggregate recovery** — `g22` is the worst
+  case, not typical. Concentrated in 2 claim families (Apple financials, Wright-brothers flights).
+- Cost: ~25–30 true claims/1000 evaluations permanently suppressed (`eval` 3.62%, `production`
+  4.02% — checked that repeated test runs aren't inflating this; they aren't).
+
+**Result.** Keep `subject_entity` unchanged. No coreference project — deferred because no affordable
+fix exists (4 tested, 4 refuted), not because the cost is low. `sameEntity` is literal proper-noun
+overlap, not entity resolution; documented at the function and gate call site. Reopen if: suppression
+materially raises detection loss, the gate shows up in a meaningful share of user-visible wrong
+verdicts, the failure shape spreads past 2 domains, or a bounded coreference mechanism is demonstrated
+sufficient. Keep per-firing recovery outcome + suppression-rate/1000 telemetry going forward.
 
 ## Consequences
 

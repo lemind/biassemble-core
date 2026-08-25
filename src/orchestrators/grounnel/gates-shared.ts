@@ -29,6 +29,8 @@ export function properNounWords(text: string): Set<string> {
   );
 }
 
+// NAME OVERCLAIMS: this is literal proper-noun overlap, NOT entity resolution — "Wilbur" vs "Wright
+// brothers" reads as different entities. Measured cost and four refuted fixes: D030 §3l/§3m/§3n.
 // Shared by applyYearGate and applySubjectEntityGate. Abstains only when BOTH sides name at least
 // one proper noun and share none — pronoun-only text is left to the date comparison alone.
 export function sameEntity(claimText: string, evidenceText: string): boolean {

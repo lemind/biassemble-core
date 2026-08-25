@@ -127,7 +127,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
   verdict = gate2b.verdict;
 
-  // g17 — deterministic backstop, last in the chain: downgrades supported/partially_supported to unverifiable when evidence shares no proper noun with the claim's subject.
+  // g17 — lexical backstop (proper-noun overlap, not entity resolution), last in the chain: downgrades supported/partially_supported to unverifiable. Known ~11-18% recovery on false triggers, D030 §3l/§3m/§3n.
   const gate3 = applySubjectEntityGate({ verdict, claimText: input.claimText, subjectEntity: input.subjectEntity, evidence });
   gateEvents.push({ gate: "subject_entity", verdictBefore: verdict, verdictAfter: gate3.verdict, overridden: gate3.overridden, reason: gate3.reason });
   verdict = gate3.verdict;
