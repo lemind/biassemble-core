@@ -269,6 +269,61 @@
           "kind": "false"
         }
       ]
+    },
+    {
+      "id": "g25-microsoft-not-iphone",
+      "text": "Microsoft did not create the iPhone. Apple introduced the iPhone in 2007.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "Microsoft did not create the iPhone",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g26-eiffel-not-london",
+      "text": "The Eiffel Tower is not located in London. It stands in Paris, France.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "not located in London",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g27-aldrin-not-first",
+      "text": "Buzz Aldrin was not the first man to walk on the Moon. Neil Armstrong was the first, in July 1969.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "Buzz Aldrin was not the first man to walk on the Moon",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g28-wwii-not-1943",
+      "text": "World War II did not end in 1943. It ended in 1945 with the surrender of Japan.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "World War II did not end in 1943",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g29-great-wall-not-roman",
+      "text": "The Great Wall of China was not built by the Roman Empire. It was built by various Chinese dynasties over centuries.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "not built by the Roman Empire",
+          "kind": "true"
+        }
+      ]
     }
   ]
 }
