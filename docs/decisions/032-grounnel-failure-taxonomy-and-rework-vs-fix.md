@@ -234,6 +234,46 @@ fires. Recommendation: leave T13 gated as specced — this is not evidence for r
 just evidence that the decision is low-stakes whenever it's made. Revisit if production volume of
 this category increases.
 
+### §3j. MEASURE-4: reranker source-authority counterfactual — 7.5% of flippable claims
+
+Spec 013 T14, run 2026-08-26 against all persisted `grounnel_rerank_decisions` (n=3,874 claims,
+18,330 candidate rows). Question: not "does authority correlate with rank" but the counterfactual —
+*on how many claims would adding a domain-authority term have changed the top-`MAX_VERIFY_PASSAGES`
+(3) set VERIFY actually received?*
+
+**Method:** for each claim's rerank decisions, took only the **final invocation** (a claim can have
+up to 3 — initial plus 2 escalation-tier retries at wider candidate pools, `ESCALATION_TIERS=[5,8]`;
+using an earlier invocation would score a passage set VERIFY never actually saw for that claim's
+final verdict). Added a flat +15 (on the 0–100 `combined_score` scale — §3c's real rank1/rank2 gap
+was ~10 points) to any candidate on a `.gov`/`.edu`/`.int`/`.mil` domain or in a small fixed set of
+major reference/wire domains (Wikipedia, Britannica, Reuters, AP, BBC, Nature, ScienceDirect).
+Re-ranked, re-sliced top-3, compared the URL set to what was actually persisted as `selected`.
+
+**First pass was wrong and is not the number below** — merging all of a claim's invocations
+together (instead of isolating the final one) inflated apparent "selected" counts past 3 per
+invocation and produced a spurious 85% flip rate. Caught via a sanity check (no single invocation
+should ever have `selected=true` on more than 3 rows) before this got written down as a result.
+
+**Result, final-invocation-only:**
+
+| | n | % |
+| --- | --- | --- |
+| Claims with a rerank decision | 3,874 | — |
+| Claims with >3 candidates (only these *can* flip — ≤3 candidates means the "top 3" is everything) | 881 | 22.7% |
+| Top-3 set changes under the authority term | 66 | **1.7% of all claims / 7.5% of flippable claims** |
+
+**Reading it:** this is a real, non-trivial minority, not noise, and not a crisis. It confirms §3c's
+mechanism exists beyond the single case-1 draw — reranking does sometimes hand VERIFY a different
+passage set when authority is weighted in — but at ~7.5% of the claims where it's even possible, it
+bounds R3's ceiling rather than dominating it: even if every one of these 66 claims was *also* a
+predicate-structure misread, R3 could only ever be "responsible for" the other 92.5% of flippable
+cases, and most claims (77.3%) have so few candidates the question doesn't even arise.
+
+**Decision, per D032 §5's ordering correction:** does not clear or kill R4/R3 outright. It gives R4
+a concrete, bounded number instead of one anecdote — enough to say "worth a real design pass if R3
+is ever picked up," not enough to say "rerank is broken" or "R3 is unnecessary." Characterisation
+only, per this task's own scope note; no reranker change is made here.
+
 ### §3e. Cost distribution (context for any proposal that adds calls)
 
 128 LLM calls, ~435K tokens, for 44 claims. Reranking alone is 68 calls / 171K tokens — comparable

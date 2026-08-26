@@ -158,7 +158,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 
 ## Phase 4 — Research measurement (informs the deferred reworks, ships no code)
 
-- [ ] **T14 — MEASURE-4: reranker source-authority bias**
+- [x] **T14 — MEASURE-4: reranker source-authority bias**
   - Acceptance: across all persisted `grounnel_rerank_decisions`, answer the **counterfactual**, not
     just a correlation (review finding): *on how many claims would an authority feature have changed
     which passages VERIFY actually received?* Recompute ranking with a domain-authority term added,
@@ -172,6 +172,10 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     systematically mis-ranking, an unknown share of "VERIFY interpretation failure" is really
     "VERIFY was handed the wrong passage", which bounds what R3 is responsible for.
   - Note: characterisation only. Changing the reranker is a separate decision, not this task.
+  - **Result (2026-08-26, D032 §3j): 66/881 flippable claims (7.5%), 66/3874 of all claims (1.7%).
+    Bounded, non-trivial — doesn't kill or confirm R3, gives it a real number instead of one
+    anecdote.** First-pass measurement (85%) was a bug — merged separate escalation-retry
+    invocations together; caught and fixed before being recorded.
 
 ---
 
