@@ -30,7 +30,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Verify: D032 §7 Q1 reads *answered*, not *awaiting*.
   - Files: `docs/decisions/032-*.md`
   - Blocks: T9, SC-6. **If B is chosen, this spec is void** — see spec Assumption 1.
-  - Note: human decision, not an implementation task. All three external reviews recommended A.
+  - Note: human decision, not an implementation task. All four external reviews recommended A.
 
 - [ ] **T2 — Answer: does the frontend distinguish exclusion via `reason`?**
   - Acceptance: a yes/no answer with the evidence (the frontend code path that reads `reason`, or
@@ -97,6 +97,21 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     are distinguishable in the API response and in `grounnel_claims`. Satisfies SC-1.
   - Files: `src/orchestrators/grounnel/extract.service.ts`
   - Depends on: T5.
+  - Scope note (D032 §3f): this covers **41.9%** of historical `unverifiable` claims. It does not
+    address the 24.9% produced by `subject_entity` downgrades — see T6b.
+
+- [ ] **T6b — Label `subject_entity` downgrades distinctly**
+  - Acceptance: a claim downgraded to `unverifiable` by the `subject_entity` gate is distinguishable
+    — in `grounnel_claims` and/or the API — from one that genuinely could not be verified. Minimum
+    viable form: a distinct `reason` string; fuller form: its own verdict/status value.
+  - Verify: query the three §3f causes and confirm each is separable without joining
+    `grounnel_gate_events`. Extends SC-1.
+  - Files: `src/orchestrators/grounnel/pipeline-gate-chain.ts` or `pipeline.service.ts`'s write path
+  - Depends on: T5 (if it takes an enum value) — otherwise none.
+  - Note: **does not change gate behaviour.** D030 §3m's decision to keep `subject_entity` as-is
+    stands; this only stops its downgrades from masquerading as genuine verification failures. That
+    24.9% slice is the same population D030 §3m measured as ~25–30 wrongly-suppressed true claims
+    per 1,000 — labelling it makes that cost visible in production instead of only in archaeology.
 
 ---
 
@@ -151,10 +166,13 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 ## Phase 4 — Research measurement (informs the deferred reworks, ships no code)
 
 - [ ] **T14 — MEASURE-4: reranker source-authority bias**
-  - Acceptance: across all persisted `grounnel_rerank_decisions`, quantify whether rank correlates
-    with lexical density over source authority — e.g. compare mean rank of
-    `.gov`/`.edu`/primary-source domains against listicle/SEO domains for the same claim. Report with
-    N and an explicit statement of what the sample can and cannot support.
+  - Acceptance: across all persisted `grounnel_rerank_decisions`, answer the **counterfactual**, not
+    just a correlation (review finding): *on how many claims would an authority feature have changed
+    which passages VERIFY actually received?* Recompute ranking with a domain-authority term added,
+    and count the claims whose top-`MAX_VERIFY_PASSAGES` set changes. A correlation between domain
+    type and rank is not decision-relevant on its own — a systematic bias that never flips the
+    selected set costs nothing. Report with N and an explicit statement of what the sample can and
+    cannot support.
   - Verify: written number in D032 or a new ADR section (SC-7). Zero API cost — reads persisted rows.
   - Files: `scratchpad/` script (untracked).
   - Blocks: any future R3 work. **Runs before R3 by D032 §5's ordering correction** — if rerank is
@@ -188,6 +206,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 ```
 T1 (contract) ─────────────────────────────► T9 ──► SC-6
 T2 (frontend) ──► T5 ──► T6 ──────────────────────► SC-1
+                  └──► T6b (subject_entity labelling) ──► SC-1
 T7 (reason text, no gate) ────────────────────────► SC-2
 T3 (MEASURE-1) ──► T8 ────────────────────────────► SC-4
 T4 (MEASURE-2) ──► T13

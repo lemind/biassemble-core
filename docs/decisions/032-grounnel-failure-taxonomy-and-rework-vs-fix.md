@@ -42,8 +42,8 @@ article as containing misinformation, which inverts the product's purpose. A is 
 code implements. Recording it prevents this from being re-litigated the next time an adversarial
 story is run. **Not yet ratified — this is a product call, deliberately left open here.**
 
-**Proposed ratification wording** (all three reviews converged on A; this phrasing is the strongest
-of the three, and deliberately broader than "what the text asserts as true" so it covers quotation
+**Proposed ratification wording** (all four reviews converged on A; this phrasing is the strongest
+of them, and deliberately broader than "what the text asserts as true" so it covers quotation
 and hypotheticals, not just self-correction):
 
 > EXTRACT identifies claims the submitted text presents as **current assertions**, excluding
@@ -160,6 +160,31 @@ claim, and for any negatively-phrased claim, absence of support is the expected 
 no signal.
 
 **Consequence: what looks like three retrieval/VERIFY bugs is one missing pipeline stage.**
+
+### §3f. `unverifiable` collapses three distinct states (review-4 finding, measured)
+
+The original draft framed #8/#9 as a two-way conflation (excluded vs. genuinely-unverifiable). It is
+a **three-way** collapse. Across every `unverifiable` claim ever stored (n=277), classified by
+whether search ran and whether `subject_entity` fired:
+
+| Cause | n | % | What it actually means |
+| --- | --- | --- | --- |
+| Excluded by eligibility — never searched | 116 | **41.9%** | Correctly identified as opinion/personal/prediction. Zero search calls. Not a verification outcome at all. |
+| `subject_entity` downgrade | 69 | **24.9%** | Searched, evidence retrieved, then the gate rejected the evidence on lexical entity mismatch (D030 §3l). |
+| Genuine verification failure | 92 | **33.2%** | Searched, evidence retrieved, genuinely could not resolve. |
+
+**Only a third of `unverifiable` means what the word implies.** Same pattern in the source run
+(2 excluded / 3 gate-downgraded / 1 genuine out of 6).
+
+**Consequence, and it changes #8/#9's scope:** adding an `excluded` verdict fixes the 41.9% slice
+only. The 24.9% `subject_entity` slice remains conflated with genuine failure — and that slice is
+precisely the one D030 §3m measured as ~25–30 true claims per 1,000 evaluations wrongly suppressed.
+A user (or an analyst) currently cannot distinguish "we never checked this" from "we checked, found
+evidence, and a lexical heuristic threw it away" from "we checked and genuinely don't know."
+
+This does **not** argue for changing `subject_entity`'s behaviour (D030 §3m stands, R2 unchanged) —
+it argues that its downgrades should be *labelled distinctly*, which is a telemetry/contract change
+of the same class as #8/#9 and carries the same near-zero risk.
 
 ### §3e. Cost distribution (context for any proposal that adds calls)
 
@@ -284,7 +309,7 @@ predicate-structure detector before knowing that share risks solving the smaller
 
 ## §8. Review round (2026-08-26) — what changed and why
 
-Three independent external reviews of the first draft. Corrections applied:
+Four independent external reviews of the first draft. Corrections applied:
 
 | # | Correction | Verified how | Severity |
 | --- | --- | --- | --- |
@@ -295,8 +320,18 @@ Three independent external reviews of the first draft. Corrections applied:
 | 5 | R4 must be investigated **before** R3 — reranker bias bounds how much of case 1 is VERIFY's fault at all. | Ordering argument; rerank scores already persisted. | Medium — reordered the research track. |
 | 6 | §3a's zero-firing result must not be read as "gates are useless" or as a licence to optimise hit rate. | Own `contradiction_evidence` counter-example. | Medium — prevents a foreseeable misreading. |
 | 7 | Prediction exclusion (#7) is more dangerous than the draft implied; blocked on a held-out misclassification measurement. | Two reviews flagged independently. | Low — tightened an existing caveat. |
+| 8 | `unverifiable` collapses **three** states, not two — measured at 41.9% / 24.9% / 33.2% (§3f). Adding `excluded` fixes only the largest slice. | SQL over all 277 historical `unverifiable` claims. | **High — expanded #8/#9's scope.** |
+| 9 | MEASURE-4 should ask the *counterfactual* ("would authority features have flipped the rank?") rather than report a correlation. | Reasoning; rerank scores already persisted per claim. | Low — sharpened an existing task. |
 
 Points where the reviews were **not** followed: one review proposed a manual labelling study of
 ~50 historical `unsupported` claims to decide R1's value. Correction #4 makes R1 moot on principle
 rather than on prevalence, so the study would measure something we have already decided not to act
 on. A reranker-authority study (R4) is the better use of the same effort.
+
+**Methodological note — reviewer consensus was wrong once, and it mattered.** Three of four reviews
+(plus this ADR's own first draft) recommended deleting `CONFIDENCE_THRESHOLD` as dead code. Exactly
+one review instead said *verify its consumers first*. That check found it interpolated into the
+VERIFY prompt, where the model self-applies it — making deletion a behaviour change, not a cleanup
+(correction #1). Agreement across independent reviewers is not evidence; the single reviewer who
+asked for verification was right against the majority. Worth remembering the next time several
+reviews converge on the same "obvious" cleanup.
