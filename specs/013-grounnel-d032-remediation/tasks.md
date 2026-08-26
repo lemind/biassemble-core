@@ -1,0 +1,211 @@
+---
+description: "Task list for Grounnel D032 remediation — bounded fixes and gated measurements"
+---
+
+# Tasks: Grounnel D032 Remediation
+
+**Input**: [spec.md](./spec.md), [D032](../../docs/decisions/032-grounnel-failure-taxonomy-and-rework-vs-fix.md)
+(incl. §8 review round), [D030](../../docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md).
+
+**Tests**: Selectively included. Per CLAUDE.md's coverage cap, unit tests are added only for
+contract/orchestration logic (T5, T12). Prompt and LLM-behaviour changes (T8, T14) are verified by
+live golden-set runs, not fixtures — writing a unit test for those duplicates what the golden set
+already proves.
+
+**Organization**: Grouped by phase. **Phase 0 is a hard gate** — three of the five fixes cannot be
+correctly scoped until their measurement returns, and one (T2) can invalidate an entire work item.
+Ordering is by dependency, not importance.
+
+**Sequencing rule inherited from D030 §3n**: simulate against persisted telemetry before writing
+production code. Every fix task below that touches behaviour has a measurement or simulation
+predecessor. This is the step that killed 4/4 `subject_entity` fixes before they shipped.
+
+---
+
+## Phase 0 — Decisions and measurements (blocks nearly everything)
+
+- [ ] **T1 — Ratify the extraction contract (A or B)**
+  - Acceptance: D032 §2's proposed wording is accepted, amended, or rejected in favour of B; the
+    decision is recorded in D032 with a date.
+  - Verify: D032 §7 Q1 reads *answered*, not *awaiting*.
+  - Files: `docs/decisions/032-*.md`
+  - Blocks: T9, SC-6. **If B is chosen, this spec is void** — see spec Assumption 1.
+  - Note: human decision, not an implementation task. All three external reviews recommended A.
+
+- [ ] **T2 — Answer: does the frontend distinguish exclusion via `reason`?**
+  - Acceptance: a yes/no answer with the evidence (the frontend code path that reads `reason`, or
+    confirmation that it switches on `verdict` alone).
+  - Verify: recorded in D032 §7 Q3.
+  - Files: none in this repo — requires the frontend repo.
+  - Blocks: T5, T6, T7. Also resolves spec Open Question 3's urgency.
+
+- [ ] **T3 — MEASURE-1: does the case-1 false affirmation reproduce?**
+  - Acceptance: a new golden case for "the first computer mouse was wireless" (`kind: false`) run at
+    N≥10; the `supported` rate is recorded with N stated.
+  - Verify: `pnpm tsx scripts/trigger-eval-grounnel.ts --cases g24-mouse-superlative --repeats 10`,
+    then query `grounnel_claims` for the verdict distribution.
+  - Files: `evaluations/golden/grounnel/live-eval-golden-set.json`
+  - Blocks: T8. **If it never reproduces, T8 is cancelled** — do not harden a prompt against a
+    single unlucky draw.
+  - Cost: ~120 Gemini calls.
+
+- [ ] **T4 — MEASURE-2: prediction-classifier misclassification rate**
+  - Acceptance: from historical `grounnel_llm_calls` (`call_type='eligibility_check'`), pull every
+    claim classified `prediction`; hand-label whether each is genuinely checkable — specifically
+    including dated/scheduled future events ("will report earnings on October 15"), which are
+    checkable despite being future-tense. Report the rate with N.
+  - Verify: written number in D032 or a new ADR section; zero API cost (reads persisted telemetry).
+  - Files: `scratchpad/` script (untracked).
+  - Blocks: T13. **If the rate exceeds ~5%, T13 is cancelled** and D030 §3b's conservative policy
+    stands — two reviews independently flagged T13 as the most over-confident item in the draft.
+
+---
+
+## Phase 1 — Zero-gate fix (start immediately, independent of Phase 0)
+
+- [ ] **T7 — FIX-2: enriched `reason` for no-evidence verdicts**
+  - Acceptance: `NO_EVIDENCE_REASON` (and the `rewriteUngroundedAffirmativeReason` path) states both
+    that no supporting evidence was found *and* that this is not a finding of falsehood. No verdict
+    logic changes.
+  - Verify: live smoke on a claim known to return no evidence; read the stored `reason`. Satisfies
+    SC-2.
+  - Files: `src/orchestrators/grounnel/pipeline.service.ts`, possibly `gates.ts`
+  - Depends on: T2 only if the wording turns out to be frontend-owned (spec Open Question 4);
+    otherwise none.
+  - Note: this task *replaces* D032's R1. Do not let it grow into a refutation search.
+
+---
+
+## Phase 2 — Contract fix (needs T2)
+
+- [ ] **T5 — FIX-1a: add `excluded` to the verdict contract**
+  - Acceptance: `excluded` exists in `GrounnelVerdictEnum` (Zod), `db/schema.ts`, `db/queries.ts`,
+    and the persistence types — all declaration sites updated together, matching the
+    `retry_decision` precedent. Migration generated and hand-verified.
+  - Verify: `npx tsc --noEmit`; `npx vitest run`; migration SQL reviewed against
+    `.skills/drizzle-migrations.md`.
+  - Files: `src/contracts/grounnel.schemas.ts`, `src/db/schema.ts`, `src/db/queries.ts`,
+    `src/persistence/types.ts`, `src/db/migrations/`
+  - Depends on: T2. **Ask before applying the migration** (spec Boundaries).
+  - Note: resolve spec Open Question 3 first — enum value vs. separate status field. A never-checked
+    claim arguably has no verdict at all.
+
+- [ ] **T6 — FIX-1b: write `excluded` from the eligibility path**
+  - Acceptance: `writeExcludedClaim` persists `excluded`, not `unverifiable`. The distinct per-
+    category `reason` strings are retained.
+  - Verify: live smoke with one opinion claim + one genuinely-unverifiable claim; confirm the two
+    are distinguishable in the API response and in `grounnel_claims`. Satisfies SC-1.
+  - Files: `src/orchestrators/grounnel/extract.service.ts`
+  - Depends on: T5.
+
+---
+
+## Phase 3 — Behaviour fixes (each needs its Phase 0 measurement)
+
+- [ ] **T8 — FIX-4: extend the VERIFY prompt's superlative section**
+  - Acceptance: `QUALIFIED RANK VS ABSOLUTE SUPERLATIVE` in `verify/system.json` covers
+    modifier-narrowed superlatives — evidence naming a *narrower* qualified extreme
+    ("first **wireless** mouse") does not establish a *broader* one ("first mouse"), because the
+    modifier changes the referent class. Follows the section's existing worked-example format.
+  - Verify: re-run T3's fixture at N≥10 — `supported` must not appear (SC-4). Then full golden set
+    at N≥5 for regression (SC-5).
+  - Files: `src/prompts/grounnel/verify/system.json`
+  - Depends on: T3. **Ask before editing any prompt** (spec Boundaries).
+  - Note: this is an *extension of an existing section*, not a new gate — see D032 §3c's correction.
+    Do not add a gate for this.
+
+- [ ] **T10 — MEASURE-3: do negative claims fail systematically?**
+  - Acceptance: 3–5 negative-claim golden cases ("X did not do Y", positive form well documented),
+    run at N≥10. Failure rate recorded.
+  - Verify: golden-set run; verdict distribution per case.
+  - Files: `evaluations/golden/grounnel/live-eval-golden-set.json`
+  - Blocks: T11, T12. **If negatives mostly succeed, T11/T12 are cancelled** — #4 was one case.
+
+- [ ] **T11 — FIX-3a: design negative-claim reframing**
+  - Acceptance: a written design for detecting a negative claim and inverting its search query,
+    including how VERIFY evaluates the negation against the positive answer, and an explicit
+    argument that no `contradicted`-from-absence path is introduced.
+  - Verify: design reviewed before implementation; simulate the detection predicate against
+    historical claim text (zero API cost) to estimate false-positive rate.
+  - Files: design note in `specs/013-grounnel-d032-remediation/`
+  - Depends on: T10.
+
+- [ ] **T12 — FIX-3b: implement negative-claim reframing**
+  - Acceptance: negatively-phrased claims search the positive form; verdicts follow from ordinary
+    VERIFY logic. Unit tests cover the detection predicate (pure logic — in-scope per CLAUDE.md).
+  - Verify: T10's fixtures reach `supported` in ≥8/10 (SC-3); full golden set N≥5 for regression
+    (SC-5).
+  - Files: `src/orchestrators/grounnel/pipeline.service.ts`,
+    `tests/unit/orchestrators/grounnel/`
+  - Depends on: T11.
+
+- [ ] **T13 — FIX-5: prediction exclusion policy**
+  - Acceptance: `isEligibilityExcluded` excludes `prediction` regardless of `certainty` — **only if
+    T4 cleared it**. D030 §3b updated to record the reversal and its evidence.
+  - Verify: `npx vitest run`; golden set N≥5 confirming no checkable claim became excluded (SC-5).
+  - Files: `src/orchestrators/grounnel/claim-eligibility.ts`, `docs/decisions/030-*.md`
+  - Depends on: T4. **Ask first — this reverses a documented ADR policy** (spec Boundaries).
+
+---
+
+## Phase 4 — Research measurement (informs the deferred reworks, ships no code)
+
+- [ ] **T14 — MEASURE-4: reranker source-authority bias**
+  - Acceptance: across all persisted `grounnel_rerank_decisions`, quantify whether rank correlates
+    with lexical density over source authority — e.g. compare mean rank of
+    `.gov`/`.edu`/primary-source domains against listicle/SEO domains for the same claim. Report with
+    N and an explicit statement of what the sample can and cannot support.
+  - Verify: written number in D032 or a new ADR section (SC-7). Zero API cost — reads persisted rows.
+  - Files: `scratchpad/` script (untracked).
+  - Blocks: any future R3 work. **Runs before R3 by D032 §5's ordering correction** — if rerank is
+    systematically mis-ranking, an unknown share of "VERIFY interpretation failure" is really
+    "VERIFY was handed the wrong passage", which bounds what R3 is responsible for.
+  - Note: characterisation only. Changing the reranker is a separate decision, not this task.
+
+---
+
+## Phase 5 — Close-out
+
+- [ ] **T9 — Align the eval harness with the ratified contract**
+  - Acceptance: scoring reflects T1's decision; the contract is stated in the golden set's own
+    documentation so a future reviewer applies the same rubric.
+  - Verify: re-score run `c94d2954` under the ratified contract; the number matches D032 §2's table
+    for the chosen contract. Satisfies SC-6.
+  - Files: `src/evaluation/`, `evaluations/golden/grounnel/`
+  - Depends on: T1.
+
+- [ ] **T15 — Record every measurement outcome**
+  - Acceptance: MEASURE-1..4 each have a written result with N stated. A measurement that changed no
+    decision says so explicitly.
+  - Verify: D032 (or a successor ADR) contains all four. Satisfies SC-7.
+  - Files: `docs/decisions/`
+  - Depends on: T3, T4, T10, T14.
+
+---
+
+## Dependency graph
+
+```
+T1 (contract) ─────────────────────────────► T9 ──► SC-6
+T2 (frontend) ──► T5 ──► T6 ──────────────────────► SC-1
+T7 (reason text, no gate) ────────────────────────► SC-2
+T3 (MEASURE-1) ──► T8 ────────────────────────────► SC-4
+T4 (MEASURE-2) ──► T13
+T10 (MEASURE-3) ─► T11 ──► T12 ───────────────────► SC-3
+T14 (MEASURE-4) ─► [future R3 decision]
+T3,T4,T10,T14 ───► T15 ───────────────────────────► SC-7
+all fixes ────────────────────────────────────────► SC-5 (regression, N≥5)
+```
+
+**Parallelisable now:** T1, T2, T3, T4, T7, T10, T14 — no interdependencies.
+**Start with T7** if any code is to be written today: it is the only fix with no gate.
+
+## Notes
+
+- **Cancellation is a valid outcome.** T8, T11/T12, and T13 each have a named condition under which
+  they are cancelled rather than implemented. That is the design, not a failure — D030 §3n's four
+  refuted `subject_entity` fixes are why this spec gates behaviour changes behind measurement.
+- **Cost.** T3 ≈ 120 Gemini calls; T10 ≈ 300–500; regression runs (SC-5) ≈ 110 per N=5 pass over 22
+  cases. T4 and T14 are free (persisted telemetry only). Full golden set at N=5 is roughly a day's
+  quota — see D030 §3k's cost table before batching runs.
+- **Nothing here is committed without an explicit request** (CLAUDE.md).
