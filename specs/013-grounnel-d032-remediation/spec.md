@@ -9,10 +9,8 @@ measurements that gate the rest. The rework candidates R1–R4 are explicitly ou
 Stated up front, per the `spec-driven-development` skill's Phase 1. **Correct these before
 implementation begins** — three of them can invalidate whole work items.
 
-1. **Contract A will be ratified** (D032 §2). Every scoring change in SC-6 depends on it. All three
-   external reviews recommended A; the product call itself is still outstanding. *If B is chosen
-   instead, this spec's SC-6 and TASK-9 are void and EXTRACT itself needs redesign — a different
-   feature entirely.*
+1. ~~Contract A will be ratified~~ **RATIFIED (2026-08-26).** Every scoring change in SC-6 depends
+   on it; T9 unblocked.
 2. **`unsupported` remains the correct verdict for a false-but-unsupported claim** (D032 §7 Q2,
    answered). FIX-2 assumes we are improving the *explanation*, not the verdict. *If reversed, FIX-2
    becomes R1 and this spec is the wrong shape.*
@@ -191,10 +189,10 @@ Numbered so tasks can cite them.
 
 ## Open Questions
 
-1. **Contract A ratification** (D032 §2, §7 Q1) — blocks SC-6. Reviews unanimously recommend A;
-   awaiting the product call.
-2. **Frontend `reason` handling** (D032 §7 Q3) — determines whether FIX-1 ships coordinated or
-   backend-first. Not answerable from this repo.
+1. ~~Contract A ratification~~ **ANSWERED (2026-08-26): Contract A ratified** (D032 §7 Q1). SC-6
+   unblocked.
+2. ~~Frontend `reason` handling~~ **ANSWERED (2026-08-26): no, frontend switches on `verdict` alone**
+   (D032 §7 Q3). FIX-1 ships backend-first; frontend styling tracked separately as tasks.md T16.
 3. **Does `excluded` belong in `GrounnelVerdictEnum`, or as a separate `status`?** A claim that was
    never checked arguably has no *verdict* at all. The enum is the smaller change; a status field is
    arguably the more correct model. Not decided — affects FIX-1's shape.

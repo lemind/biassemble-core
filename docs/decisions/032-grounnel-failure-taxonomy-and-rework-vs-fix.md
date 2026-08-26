@@ -186,6 +186,54 @@ This does **not** argue for changing `subject_entity`'s behaviour (D030 §3m sta
 it argues that its downgrades should be *labelled distinctly*, which is a telemetry/contract change
 of the same class as #8/#9 and carries the same near-zero risk.
 
+### §3g. MEASURE-1: case-1 does NOT reproduce at N=10 — T8 cancelled
+
+Spec 013's T3 re-ran the exact case-1 fixture (`g24-mouse-superlative`, "The first computer mouse
+was wireless") 10 times against the live pipeline (2026-08-26, run window 13:07–13:11 UTC).
+
+**Result: 10/10 `contradicted`, 0/10 `supported`.** Every repetition correctly distinguished the
+1984 Logitech "first *wireless* mouse" from the 1964 corded Engelbart prototype — the exact
+qualifier-narrowing distinction §3c described VERIFY missing. This is the inverse of §4 case 1's
+outcome and satisfies SC-3's bar (`contradicted`/`unsupported`, never `supported`) *without* the
+planned prompt extension.
+
+**This changes T8's status.** Spec 013 T3 states explicitly: *"If it never reproduces, T8 is
+cancelled — do not harden a prompt against a single unlucky draw."* That condition is met.
+**T8 is cancelled.** §4 case 1's fix confidence is revised from Medium to **N/A — not reproducing**;
+no prompt change is scheduled against this failure mode.
+
+**What this does and doesn't mean.** It does not mean the original observation was fabricated — the
+rerank scores in §3c were read from real persisted telemetry for that one run. It means a single
+draw is not evidence of a *systematic* failure, which is the entire reason MEASURE-1 existed as a
+gate rather than shipping the prompt change on the strength of one example. Reranking is
+non-deterministic (§3c: "a reranker that rewards lexical density over source authority" — density
+scoring over a stochastic retrieval set), so which passage lands on top varies run to run; the
+original occurrence may have been the unlucky tail, not the mode.
+
+**Not fully closed:** N=10 rules out "this fails often." It does not rule out a lower-frequency
+recurrence (e.g. 1-in-20). Given the qualifier-narrowing section already exists in the prompt
+(§3c's correction) and this is a zero-risk, zero-cost, do-nothing outcome, the pragmatic call is to
+leave it uninstrumented rather than spend a MEASURE-1-sized budget again chasing a tail rate — flag
+here so a future recurrence isn't mistaken for a new bug.
+
+### §3h. MEASURE-2: `prediction` misclassification rate — N too small to answer
+
+Spec 013 T4 pulled every historical `eligibility_check` call (n=2,724) and filtered to
+`category='prediction'`. **Result: n=1.** It is the same claim as §4 case 7 ("AI would eliminate
+most programming jobs within five years"), `certainty: uncertain`, so `isEligibilityExcluded`
+correctly did not exclude it; it ran the full pipeline and landed `unsupported` — a genuinely
+unfalsifiable claim (no fixed timeframe), correctly not excluded and correctly not force-verified
+as true or false either.
+
+**This does not clear or fail T13's ~5% cancellation threshold — a rate needs a denominator, and 1
+isn't one.** What it does show: `prediction` is a vanishingly rare classification in real traffic
+(1 in 2,724 eligibility checks). Whatever T13's policy ends up being (exclude `prediction`
+regardless of certainty, per D030 §3b's proposed reversal, vs. the current conservative fallback),
+**the blast radius of getting it wrong is small either direction**, because the category barely
+fires. Recommendation: leave T13 gated as specced — this is not evidence for reversing D030 §3b,
+just evidence that the decision is low-stakes whenever it's made. Revisit if production volume of
+this category increases.
+
 ### §3e. Cost distribution (context for any proposal that adds calls)
 
 128 LLM calls, ~435K tokens, for 44 claims. Reranking alone is 68 calls / 171K tokens — comparable
@@ -198,7 +246,7 @@ Ten symptoms; **seven distinct causes** (cases 2/3, 5/6, and 8/9 are each one ca
 
 | # | Case | Guilty | What happened | Fix | Confidence |
 | --- | --- | --- | --- | --- | --- |
-| 1 | "First computer mouse was wireless" → `supported` | **VERIFY** | Qualifier-narrowing conflation: *"the first **wireless** mouse"* read as support for *"the first mouse was wireless."* The modifier changes the referent. Refuting sources were retrieved but ranked lower (§3c). Only false affirmation in 44. | **Extend the VERIFY prompt's existing `QUALIFIED RANK VS ABSOLUTE SUPERLATIVE` section** (see correction below) to cover modifier-narrowed superlatives, not just lesser ranks. Prompt change in an established pattern, not a new gate. | **Medium** (revised up from Low). The prompt already encodes this reasoning class with two worked examples; this is an extension, not a new mechanism. Still needs N≥10 to confirm the failure is stable, and prompt edits are behaviour changes requiring live re-verification. |
+| 1 | "First computer mouse was wireless" → `supported` | **VERIFY** | Qualifier-narrowing conflation: *"the first **wireless** mouse"* read as support for *"the first mouse was wireless."* The modifier changes the referent. Refuting sources were retrieved but ranked lower (§3c). Only false affirmation in 44. | ~~Extend the VERIFY prompt's `QUALIFIED RANK VS ABSOLUTE SUPERLATIVE` section~~ — **cancelled, §3g.** Re-run at N=10 (spec 013 T3): 10/10 `contradicted`, 0/10 `supported`. Does not reproduce; no prompt change scheduled. | **N/A.** Confidence was Medium pending N≥10 confirmation; the confirmation came back negative. |
 | 2 | "Roman Empire began in Greece" → `unsupported` | **Pipeline design** (§3d) | No supporting evidence → `unsupported`. Absence of support never converted into refutation. | Refutation search stage: on a checkable claim with no support, issue a second query seeking contradiction. | **Low–medium.** Mechanically clear, but it is a new path that *creates* `contradicted` verdicts — new false-accusation surface, the risk this project guards hardest. |
 | 3 | "Vikings discovered Australia" → `unsupported` | **Pipeline design** (§3d) | Same mechanism as #2. | Same as #2 — one stage covers both. | Same as #2. |
 | 4 | "Microsoft did not create the iPhone" → `unverifiable` | **Pipeline design** (§3d) | Negative claim; evidence empty. Searching for proof a thing did *not* happen is structurally unsupported by a support-seeking design. | Reframe negatives before search (query the positive, evaluate the negation against it). | **Medium.** Failure well understood, but a real feature with its own edge cases. |
@@ -297,15 +345,24 @@ predicate-structure detector before knowing that share risks solving the smaller
 ## §7. Open questions blocking work
 
 1. **Ratify the extraction contract (§2).** Blocks any re-scoring; changes the denominator of every
-   future measurement. *Status: all three external reviews independently recommended A. Wording
-   proposed in §2. Awaiting the product call — this ADR does not self-ratify.*
+   future measurement. *Status: **ANSWERED (2026-08-26) — Contract A ratified.** EXTRACT identifies
+   claims the submitted text presents as current assertions, excluding propositions explicitly
+   retracted, corrected, quoted only as mistaken beliefs, or otherwise negated by the surrounding
+   discourse (exact wording, §2). T9 (align the eval harness) is unblocked.*
 2. **Should a confidently-false, unsupported claim read `contradicted`, or is `unsupported` correct
    and the real gap a user-facing one?** *Status: answered — `unsupported` is correct. Two reviews
    converged on the principle that a claim becomes `contradicted` only on affirmative
    counter-evidence, which the Cardinal Rule already implies. R1 is therefore **not built**; the
    remedy is the enriched-`reason` reporting fix in §5, and #4 splits out as its own bounded item.*
 3. **Does the frontend already distinguish exclusion via `reason`?** Determines the sequencing (not
-   the merit) of #8/#9. Not answerable from this repo.
+   the merit) of #8/#9. *Status: **ANSWERED (2026-08-26)** — no. Checked
+   `biassemble/frontend/src`: `verdictStyle.ts`'s `VERDICT_HIGHLIGHT_CLASS`/`VERDICT_DOT_CLASS` key
+   only on `ClaimVerdict`; a repo-wide grep for `.reason` usage outside the type declaration itself
+   returns zero hits — `Claim.reason` is fetched but never rendered or branched on. `Score`'s
+   `not_checked_n` field is likewise declared but unread by any component. **FIX-1 ships
+   backend-only**; the frontend needs its own small follow-up (one `VERDICT_*_CLASS` case each,
+   plus a UI decision for what `excluded` looks like) before a user actually sees the distinction —
+   tracked as new task T16, not blocking T5/T6.*
 
 ## §8. Review round (2026-08-26) — what changed and why
 

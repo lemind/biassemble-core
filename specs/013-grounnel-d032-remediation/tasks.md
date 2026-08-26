@@ -24,40 +24,40 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 
 ## Phase 0 — Decisions and measurements (blocks nearly everything)
 
-- [ ] **T1 — Ratify the extraction contract (A or B)**
+- [x] **T1 — Ratify the extraction contract (A or B)**
   - Acceptance: D032 §2's proposed wording is accepted, amended, or rejected in favour of B; the
     decision is recorded in D032 with a date.
   - Verify: D032 §7 Q1 reads *answered*, not *awaiting*.
   - Files: `docs/decisions/032-*.md`
-  - Blocks: T9, SC-6. **If B is chosen, this spec is void** — see spec Assumption 1.
-  - Note: human decision, not an implementation task. All four external reviews recommended A.
+  - **Result (2026-08-26): Contract A ratified.** T9, SC-6 unblocked.
 
-- [ ] **T2 — Answer: does the frontend distinguish exclusion via `reason`?**
+- [x] **T2 — Answer: does the frontend distinguish exclusion via `reason`?**
   - Acceptance: a yes/no answer with the evidence (the frontend code path that reads `reason`, or
     confirmation that it switches on `verdict` alone).
   - Verify: recorded in D032 §7 Q3.
   - Files: none in this repo — requires the frontend repo.
-  - Blocks: T5, T6, T7. Also resolves spec Open Question 3's urgency.
+  - **Result (2026-08-26): No.** Frontend switches on `verdict` alone (`verdictStyle.ts`); `.reason`
+    is fetched but never rendered anywhere in `biassemble/frontend/src`. FIX-1 ships backend-only.
+    T5, T6, T7 unblocked. New follow-up: T16 (frontend `excluded` styling, separate small PR).
 
-- [ ] **T3 — MEASURE-1: does the case-1 false affirmation reproduce?**
+- [x] **T3 — MEASURE-1: does the case-1 false affirmation reproduce?**
   - Acceptance: a new golden case for "the first computer mouse was wireless" (`kind: false`) run at
     N≥10; the `supported` rate is recorded with N stated.
   - Verify: `pnpm tsx scripts/trigger-eval-grounnel.ts --cases g24-mouse-superlative --repeats 10`,
     then query `grounnel_claims` for the verdict distribution.
   - Files: `evaluations/golden/grounnel/live-eval-golden-set.json`
-  - Blocks: T8. **If it never reproduces, T8 is cancelled** — do not harden a prompt against a
-    single unlucky draw.
-  - Cost: ~120 Gemini calls.
+  - **Result (2026-08-26, D032 §3g): 10/10 `contradicted`, 0/10 `supported`. Does not reproduce.
+    T8 cancelled** — do not harden a prompt against a single unlucky draw.
 
-- [ ] **T4 — MEASURE-2: prediction-classifier misclassification rate**
+- [x] **T4 — MEASURE-2: prediction-classifier misclassification rate**
   - Acceptance: from historical `grounnel_llm_calls` (`call_type='eligibility_check'`), pull every
     claim classified `prediction`; hand-label whether each is genuinely checkable — specifically
     including dated/scheduled future events ("will report earnings on October 15"), which are
     checkable despite being future-tense. Report the rate with N.
   - Verify: written number in D032 or a new ADR section; zero API cost (reads persisted telemetry).
   - Files: `scratchpad/` script (untracked).
-  - Blocks: T13. **If the rate exceeds ~5%, T13 is cancelled** and D030 §3b's conservative policy
-    stands — two reviews independently flagged T13 as the most over-confident item in the draft.
+  - **Result (2026-08-26, D032 §3h): n=1 across 2,724 eligibility checks — too small for a rate.
+    T13 stays gated** (not cleared, not failed — the category is too rare to decide from).
 
 ---
 
@@ -117,17 +117,10 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 
 ## Phase 3 — Behaviour fixes (each needs its Phase 0 measurement)
 
-- [ ] **T8 — FIX-4: extend the VERIFY prompt's superlative section**
-  - Acceptance: `QUALIFIED RANK VS ABSOLUTE SUPERLATIVE` in `verify/system.json` covers
-    modifier-narrowed superlatives — evidence naming a *narrower* qualified extreme
-    ("first **wireless** mouse") does not establish a *broader* one ("first mouse"), because the
-    modifier changes the referent class. Follows the section's existing worked-example format.
-  - Verify: re-run T3's fixture at N≥10 — `supported` must not appear (SC-4). Then full golden set
-    at N≥5 for regression (SC-5).
-  - Files: `src/prompts/grounnel/verify/system.json`
-  - Depends on: T3. **Ask before editing any prompt** (spec Boundaries).
-  - Note: this is an *extension of an existing section*, not a new gate — see D032 §3c's correction.
-    Do not add a gate for this.
+- [x] ~~**T8 — FIX-4: extend the VERIFY prompt's superlative section**~~ **CANCELLED (2026-08-26)**
+  - T3 came back 10/10 `contradicted`, 0/10 `supported` — the failure does not reproduce (D032 §3g).
+    Per this task's own cancellation clause, no prompt change is made. SC-4 is satisfied as a side
+    effect of the measurement itself, without touching `verify/system.json`.
 
 - [ ] **T10 — MEASURE-3: do negative claims fail systematically?**
   - Acceptance: 3–5 negative-claim golden cases ("X did not do Y", positive form well documented),
@@ -192,6 +185,14 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Files: `src/evaluation/`, `evaluations/golden/grounnel/`
   - Depends on: T1.
 
+- [ ] **T16 — Frontend: style the `excluded` verdict**
+  - Acceptance: `VERDICT_HIGHLIGHT_CLASS`/`VERDICT_DOT_CLASS` in `verdictStyle.ts` handle `excluded`;
+    a UI decision made for what it looks like to a user (distinct from `unverifiable`'s `bg-info`).
+  - Verify: manual check — an excluded claim renders distinctly, not unstyled/undefined.
+  - Files: `biassemble/frontend/src/lib/verdictStyle.ts`, `biassemble/frontend/src/types/grounnel.ts`
+  - Depends on: T5 (the enum value must exist first). **Different repo — out of this spec's own
+    scope, tracked here only so it isn't lost** (D032 §7 Q3).
+
 - [ ] **T15 — Record every measurement outcome**
   - Acceptance: MEASURE-1..4 each have a written result with N stated. A measurement that changed no
     decision says so explicitly.
@@ -204,19 +205,21 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 ## Dependency graph
 
 ```
-T1 (contract) ─────────────────────────────► T9 ──► SC-6
-T2 (frontend) ──► T5 ──► T6 ──────────────────────► SC-1
-                  └──► T6b (subject_entity labelling) ──► SC-1
+T1 ✅ (contract=A) ─────────────────────────► T9 ──► SC-6
+T2 ✅ (frontend=no) ─► T5 ──► T6 ──────────────────► SC-1
+                       ├──► T6b (subject_entity labelling) ──► SC-1
+                       └──► T16 (frontend styling, other repo)
 T7 (reason text, no gate) ────────────────────────► SC-2
-T3 (MEASURE-1) ──► T8 ────────────────────────────► SC-4
-T4 (MEASURE-2) ──► T13
+T3 ✅ (MEASURE-1: does not reproduce) ─► T8 ❌ CANCELLED ─► SC-4 (satisfied without T8)
+T4 ✅ (MEASURE-2: n=1, inconclusive) ──► T13 (stays gated)
 T10 (MEASURE-3) ─► T11 ──► T12 ───────────────────► SC-3
 T14 (MEASURE-4) ─► [future R3 decision]
 T3,T4,T10,T14 ───► T15 ───────────────────────────► SC-7
 all fixes ────────────────────────────────────────► SC-5 (regression, N≥5)
 ```
 
-**Parallelisable now:** T1, T2, T3, T4, T7, T10, T14 — no interdependencies.
+**Phase 0 is closed** (2026-08-26): T1, T2, T3, T4 all answered/measured. T8 cancelled as a direct
+result. **Now unblocked and parallelisable:** T5 (→ T6, T6b), T7, T9, T10 (→ T11 → T12), T14.
 **Start with T7** if any code is to be written today: it is the only fix with no gate.
 
 ## Notes
