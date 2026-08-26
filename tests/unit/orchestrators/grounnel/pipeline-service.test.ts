@@ -95,7 +95,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.status).toBe("done");
     expect(claim.verdict).toBe("unsupported");
-    expect(claim.reason).toBe("No relevant source found for this claim.");
+    expect(claim.reason).toBe("No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.");
     expect(claim.sources[0]).toMatchObject({ status: "unreachable" });
     expect(provider.getCallCount()).toBe(0);
   });
@@ -120,7 +120,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.status).toBe("done");
     expect(claim.verdict).toBe("unsupported");
-    expect(claim.reason).toBe("No relevant source found for this claim.");
+    expect(claim.reason).toBe("No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.");
     expect(provider.getCallCount()).toBe(0);
   });
 
@@ -201,7 +201,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("supported");
-    expect(claim.reason).not.toBe("No relevant source found for this claim.");
+    expect(claim.reason).not.toBe("No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.");
     expect(claim.sources.map((s) => s.url)).toEqual(["https://irrelevant.example", "https://relevant.example"]);
   });
 
@@ -973,7 +973,7 @@ describe("GrounnelPipelineService (T010)", () => {
     // contradicting the claim", which would read as incoherent beside the now-downgraded
     // "unsupported" verdict; rewriteUngroundedAffirmativeReason replaces it (citations are always
     // emptied on this downgrade path, so the rewrite predicate's 0-citations condition always holds here).
-    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.");
 
     const events = gateEventStore.calls[0]!.events;
     const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
@@ -1032,7 +1032,7 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBeNull();
     // D031 — the retry's own reason affirmatively implies support ("both sources state..."), which
     // would read as incoherent beside "unverifiable"; rewriteUngroundedAffirmativeReason replaces it.
-    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.");
 
     const events = gateEventStore.calls[0]!.events;
     const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;

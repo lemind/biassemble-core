@@ -1485,7 +1485,8 @@ describe("subject-entity gate — deterministic backstop for g17 (unrelated real
 });
 
 describe("rewriteUngroundedAffirmativeReason — D031, real live-test finding: unverifiable/unsupported verdict shown beside a reason that affirmatively claims sources confirm the claim", () => {
-  const REPLACEMENT = "The available sources did not provide a specific passage that could be cited to verify this claim.";
+  const REPLACEMENT =
+    "The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.";
 
   it("rewrites when unverifiable + 0 citations + affirmative reason (real captured example)", () => {
     const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight lasted 12 seconds.");

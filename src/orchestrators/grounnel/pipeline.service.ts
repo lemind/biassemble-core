@@ -70,7 +70,9 @@ const MAX_VERIFY_PASSAGES = 3;
 // gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
 const ESCALATION_TIERS = [5, 8];
 
-const NO_EVIDENCE_REASON = "No relevant source found for this claim.";
+// D032 §5/T7 — states both that evidence is missing AND that this isn't a falsehood finding (SC-2).
+const NO_EVIDENCE_REASON =
+  "No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.";
 const TAVILY_RATE_LIMITED_REASON = "This claim could not be checked right now — our search provider's rate limit was reached. Try again later.";
 
 /** Per-claim loop: search -> gate #4 -> VERIFY (batched) -> gates #1/#2 -> store (D019 §1, T010). No-evidence claims skip VERIFY (cost saving, §4.1). Gemini/Tavily rate limits get distinct messages. */

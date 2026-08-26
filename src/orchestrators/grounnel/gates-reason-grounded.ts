@@ -262,7 +262,9 @@ export function applySubjectEntityGate(input: SubjectEntityGateInput): SubjectEn
 // D031 — reason/verdict incoherence backstop; regex over VERIFY's own closed vocabulary, see ADR for AGENTS.md rule 12 tradeoff.
 const AFFIRMATIVE_SOURCE_LANGUAGE_RE = /\b(?:sources?|passages?|evidence)\b[^.!?]{0,60}\b(?:states?|confirms?|indicates?|shows?|supports?|reports?)\b/i;
 const UNGROUNDED_REASON_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b|\bcannot\b|\bcan't\b/i;
-const UNGROUNDED_REASON_REPLACEMENT = "The available sources did not provide a specific passage that could be cited to verify this claim.";
+// D032 §5/T7 — states both that evidence is missing AND that this isn't a falsehood finding (SC-2).
+const UNGROUNDED_REASON_REPLACEMENT =
+  "The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.";
 
 /** D031 — rewrites `reason` only, never verdict/confidence/citations; negation checked inside the match span itself, not a preceding window. */
 export function rewriteUngroundedAffirmativeReason(verdict: Verdict, citationsCount: number, reason: string | null): string | null {
