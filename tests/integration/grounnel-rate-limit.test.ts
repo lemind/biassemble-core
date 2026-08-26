@@ -4,7 +4,7 @@ import { registerGrounnelRoutes } from "../../src/routes/grounnel.js";
 import { GrounnelExtractService } from "../../src/orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../src/persistence/grounnel-store.js";
-import { RateLimiter } from "../../src/lib/rate-limit.js";
+import { InMemoryRateLimiter } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
@@ -33,7 +33,7 @@ function buildServer(limit: number) {
     extractService: new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore()),
     pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
     grounnelStore,
-    rateLimiter: new RateLimiter(limit, 60_000),
+    rateLimiter: new InMemoryRateLimiter(limit, 60_000),
   });
   return server;
 }
@@ -83,13 +83,14 @@ describe("POST /extract rate limiting (T016, defense-in-depth behind authHook �
     expect(res.statusCode).toBe(401);
   });
 
-  it("T028/ADR-001 §4: prefers X-Grounnel-Client-IP over the raw connection IP — every request from biassemble/backend shares one egress IP, real end-users must not share one rate-limit bucket", async () => {
+  it("T028/ADR-001 §4 + D020 §4: prefers X-Grounnel-Client-IP over the raw connection IP, but only WITH the internal proxy secret — every request from biassemble/backend shares one egress IP, real end-users must not share one rate-limit bucket", async () => {
     const server = buildServer(1);
 
     // Same remoteAddress (the proxy's own egress IP) for both — but different real end-user IPs
-    // via the header. If the header weren't honored, the second request would incorrectly 429.
-    const userA = await post(server, "10.10.10.10", { "x-grounnel-client-ip": "203.0.113.1" });
-    const userB = await post(server, "10.10.10.10", { "x-grounnel-client-ip": "203.0.113.2" });
+    // via the header, authenticated as the trusted proxy. If the header weren't honored, the
+    // second request would incorrectly 429.
+    const userA = await post(server, "10.10.10.10", { "x-grounnel-client-ip": "203.0.113.1", "x-grounnel-internal-secret": "test-internal-proxy-secret" });
+    const userB = await post(server, "10.10.10.10", { "x-grounnel-client-ip": "203.0.113.2", "x-grounnel-internal-secret": "test-internal-proxy-secret" });
 
     expect(userA.statusCode).toBe(202);
     expect(userB.statusCode).toBe(202);
@@ -100,6 +101,29 @@ describe("POST /extract rate limiting (T016, defense-in-depth behind authHook �
 
     const first = await post(server, "7.7.7.7");
     const second = await post(server, "7.7.7.7");
+
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(429);
+  });
+
+  it("D020 §4 fix: a forged X-Grounnel-Client-IP with no internal secret is ignored — holding AI_CORE_API_KEY alone must not be enough to forge someone else's rate-limit identity", async () => {
+    const server = buildServer(1);
+
+    // Both requests carry the same remoteAddress AND spoof different x-grounnel-client-ip values,
+    // but never present the internal secret — every request must fall back to remoteAddress and
+    // land in the SAME bucket, so the second one 429s.
+    const first = await post(server, "8.8.8.8", { "x-grounnel-client-ip": "203.0.113.9" });
+    const second = await post(server, "8.8.8.8", { "x-grounnel-client-ip": "203.0.113.10" });
+
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(429);
+  });
+
+  it("D020 §4 fix: a WRONG internal secret is treated the same as no secret — fails closed to remoteAddress, not to trusting the header", async () => {
+    const server = buildServer(1);
+
+    const first = await post(server, "9.9.9.9", { "x-grounnel-client-ip": "203.0.113.20", "x-grounnel-internal-secret": "not-the-real-secret" });
+    const second = await post(server, "9.9.9.9", { "x-grounnel-client-ip": "203.0.113.21", "x-grounnel-internal-secret": "also-not-the-real-secret" });
 
     expect(first.statusCode).toBe(202);
     expect(second.statusCode).toBe(429);

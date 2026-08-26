@@ -3,7 +3,9 @@ import { z } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isOpinionClaim } from "./opinion-filter.js";
+import { classifyClaimVerifiability, isEligibilityExcluded, eligibilityReason, type ClaimVerifiabilityResult } from "./claim-eligibility.js";
 import { env } from "../../lib/env.js";
+import { logger } from "../../observability/logger.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
@@ -17,11 +19,16 @@ const EXTRACT_ATTEMPTS = 3;
 // spec.md Assumption 6 — the real number is still an open, ask-first question. This is a
 // placeholder so the service is runnable, not a tuned decision (tasks.md T009).
 const MAX_CLAIMS = 100;
+// D030 §3b — one Gemini call per claim, unbatched; same value/rationale as SEARCH_CONCURRENCY (pipeline.service.ts).
+const ELIGIBILITY_CONCURRENCY = 20;
+// D031 — a hung fan-out used to run silently until the shared maxDuration:300 kill; 2min leaves room for pipelineService.run() after.
+const ELIGIBILITY_PHASE_TIMEOUT_MS = 2 * 60 * 1000;
 
 const ExtractResponseSchema = z.object({
   // .default("") — a missing/malformed excerpt must not drop the whole claim via repair.ts's
-  // salvageArrays (D028 §4); empty string reads as no-excerpt below.
-  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default("") })),
+  // salvageArrays (D028 §4); empty string reads as no-excerpt below. subject_entity (g17) follows
+  // the same convention — "" just means EXTRACT found no distinguishing entity for this claim.
+  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default(""), subject_entity: z.string().default("") })),
   truncated: z.boolean(),
 });
 
@@ -97,6 +104,9 @@ export class GrounnelExtractService {
       id: randomUUID(),
       text: c.claim,
       sourceExcerpt: c.source_excerpt.length > 0 && text.includes(c.source_excerpt) ? c.source_excerpt : null,
+      // g17 — no substring check against `text` (unlike sourceExcerpt): a canonical name, not a
+      // verbatim quote, so it can legitimately differ from the article's own wording.
+      subjectEntity: c.subject_entity.trim(),
     }));
     const { id } = await this.grounnelStore.createAudit({ id: runId, text, maxClaims: MAX_CLAIMS, claims, truncated });
 
@@ -107,34 +117,95 @@ export class GrounnelExtractService {
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
     const pendingClaims = claims.filter((claim) => !isOpinionClaim(claim.text));
-    const OPINION_REASON = "No checkable referent — opinion, prediction, or vague claim (gate #3, D019 §2).";
-    await Promise.all(
-      opinionClaims.map(async (claim) => {
-        await this.grounnelStore.writeClaimResult(id, claim.id, {
-          status: "done",
-          verdict: "unverifiable",
-          evidence: null,
-          confidence: null,
-          reason: OPINION_REASON,
-          sources: [],
-          citations: [],
-        });
-        // Reviewed finding: gate #3 claims were only ever written to Redis — never to
-        // grounnel_claims, permanently absent from history/analytics (D023 §3).
-        await this.historyStore.createClaim({
-          claimId: claim.id,
-          runId,
-          claimText: claim.text,
-          verdict: "unverifiable",
-          evidence: null,
-          confidence: null,
-          reason: OPINION_REASON,
-          sources: [],
-          status: "done",
-        });
-      })
-    );
+    const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
+    await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
     return { id, pendingClaims };
+  }
+
+  /**
+   * D030 §3b (tasks.md T014) — the eligibility classifier runs AFTER the 202 response, unlike gate
+   * #3's regex above (review finding: one Gemini call per claim was blocking the response on the
+   * client's critical path, the exact cost the rest of this pipeline defers via waitUntil for).
+   * Called from routes/grounnel.ts's background phase, before pipelineService.run(). A claim this
+   * excludes still shows `pending` in the meantime — same as any claim still being searched/verified,
+   * resolved on the next /status poll once writeExcludedClaim below lands.
+   */
+  async classifyEligibility(auditId: string, claims: PipelineClaimInput[]): Promise<PipelineClaimInput[]> {
+    logger.info({ module: MODULE, operation: "classifyEligibility", auditId, claimCount: claims.length }, "Eligibility classification phase starting");
+    // D031 (review finding) — Promise.race can't cancel its loser; this flag stops late writes from an abandoned batch, see ADR.
+    const abandoned = { value: false };
+    try {
+      const eligibleClaims = await Promise.race([
+        this.classifyEligibilityBatch(auditId, claims, abandoned),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => {
+            abandoned.value = true;
+            reject(new Error(`classifyEligibility timed out after ${ELIGIBILITY_PHASE_TIMEOUT_MS}ms`));
+          }, ELIGIBILITY_PHASE_TIMEOUT_MS)
+        ),
+      ]);
+      logger.info({ module: MODULE, operation: "classifyEligibility", auditId, eligibleCount: eligibleClaims.length }, "Eligibility classification phase finished");
+      return eligibleClaims;
+    } catch (err) {
+      logger.error({ module: MODULE, operation: "classifyEligibility", auditId, err }, "Eligibility classification phase failed or timed out");
+      // Review finding: this runs in routes/grounnel.ts's post-202 background phase, before
+      // pipelineService.run() ever sets status "verifying" — without this, a throw here (e.g. one
+      // flaky writeExcludedClaim) left the run stuck at its prior status forever, same failure
+      // mode pipeline.service.ts's own catch (line ~226) already guards against. waitUntil, not
+      // await (round-2 review finding): an await here would let a second failure on this same
+      // write path replace and obscure the original error `err` being rethrown below.
+      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
+      throw err;
+    }
+  }
+
+  private async classifyEligibilityBatch(auditId: string, claims: PipelineClaimInput[], abandoned: { value: boolean }): Promise<PipelineClaimInput[]> {
+    const eligibilityResults: Array<{ claim: PipelineClaimInput; result: ClaimVerifiabilityResult }> = [];
+    for (let i = 0; i < claims.length; i += ELIGIBILITY_CONCURRENCY) {
+      // D031 — checked between chunks so a mid-fan-out timeout stops the next chunk and every write below.
+      if (abandoned.value) return [];
+      const chunk = claims.slice(i, i + ELIGIBILITY_CONCURRENCY);
+      const chunkResults = await Promise.all(
+        chunk.map(async (claim) => ({
+          claim,
+          result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, auditId, claim.id, {
+            claimText: claim.text,
+            sourceExcerpt: claim.sourceExcerpt,
+          }),
+        }))
+      );
+      eligibilityResults.push(...chunkResults);
+    }
+    if (abandoned.value) return [];
+    const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
+    const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
+    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
+    return eligibleClaims;
+  }
+
+  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — see D023 §3 for the dual Redis+Postgres write rationale. */
+  private async writeExcludedClaim(auditId: string, claim: PipelineClaimInput, reason: string): Promise<void> {
+    await this.grounnelStore.writeClaimResult(auditId, claim.id, {
+      status: "done",
+      verdict: "unverifiable",
+      evidence: null,
+      confidence: null,
+      reason,
+      sources: [],
+      citations: [],
+    });
+    await this.historyStore.createClaim({
+      claimId: claim.id,
+      runId: auditId,
+      claimText: claim.text,
+      sourceExcerpt: claim.sourceExcerpt,
+      verdict: "unverifiable",
+      evidence: null,
+      confidence: null,
+      reason,
+      sources: [],
+      status: "done",
+    });
   }
 }

@@ -563,6 +563,54 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(provider.getCallCount()).toBe(2); // VERIFY + consistency classifier only — no reranker call attempted
   });
 
+  it("g17 review: subjectEntity reaches the rerank prompt as an explicit signal (multi-candidate LLM path)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The second layer contained 34 fragments.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const marwickPassage = "Marwick's second layer contained 34 fragments of pottery. ".repeat(5);
+    const unrelatedPassage = "Prof Foster believes the repair work resulted in 34 numbered fragments of the stone. ".repeat(5);
+    const search = new FakeSearchProvider(
+      new Map([[claimText, [webSource({ url: "https://a.example", text: marwickPassage }), webSource({ url: "https://b.example", text: unrelatedPassage })]]])
+    );
+
+    let sawSubjectEntity: string | undefined;
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      sawSubjectEntity = request.system.match(/SUBJECT ENTITY: (.*)/)?.[1];
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string }>;
+      return { results: candidates.map((c) => ({ id: c.id, score: 80 })) };
+    });
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: [{ source: "A", n: 1 }], reason: "Confirmed.", confidence: 0.95 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText, subjectEntity: "Marwick" }]);
+
+    expect(sawSubjectEntity).toBe("Marwick");
+  });
+
+  it("g17 review: an entity-mismatched source is dropped on the single-candidate lexical fallback path", async () => {
+    const claimId = uuid(1);
+    const claimText = "The second layer contained 34 fragments.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    // Shares the claim's own key terms ("second", "34", "fragments") but never mentions Marwick —
+    // the real g17 repro shape (Stone-of-Destiny page coincidentally matching a fragment count).
+    const unrelatedPassage = "The second batch of repairs left 34 numbered fragments of the stone. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: unrelatedPassage })]]]));
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText, subjectEntity: "Marwick" }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // Only one candidate was fetched, so rerankPassages never calls the LLM (D026 §18) — the
+    // lexical-only fallback (isPassageRelevant + hasSubjectEntity) must still catch the mismatch.
+    expect(claim.verdict).not.toBe("supported");
+  });
+
   it("gate #1 downgrades a contradicted verdict citing a sentence number that doesn't exist (D026 §7: the model can no longer fabricate quote TEXT, so this is the new equivalent of the old free-text fabrication case)", async () => {
     const claimId = uuid(1);
     const claimText = "Bukowski attended Harvard.";
@@ -921,6 +969,11 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("unsupported"); // not unverifiable — the contradiction failed validation, the claim wasn't unverifiable
     expect(claim.evidence).toBeNull();
+    // D031 (review finding) — the retry's own reason affirmatively says "the passage states...
+    // contradicting the claim", which would read as incoherent beside the now-downgraded
+    // "unsupported" verdict; rewriteUngroundedAffirmativeReason replaces it (citations are always
+    // emptied on this downgrade path, so the rewrite predicate's 0-citations condition always holds here).
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
 
     const events = gateEventStore.calls[0]!.events;
     const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
@@ -930,6 +983,114 @@ describe("GrounnelPipelineService (T010)", () => {
       overridden: true,
       reason: "retry_contradiction_invalidated",
     });
+  });
+
+  it("D030 §3i Mode B: downgrades a retry that lands on 'supported' to unverifiable when the post-retry classifier says its own reason doesn't support it (real live-test finding, g17 'first flight lasted 59 seconds', 2026-08-23)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight lasted 59 seconds.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The brothers took turns on that day to complete three additional flights, the longest lasting 59 seconds and a distance of 852 feet. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      const firstPass = verifyCalls === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          // Both passes land on "supported" — the retry doesn't change its verdict, only rephrases
+          // the same underlying (wrong) attribution. Real evidence, gate #1-grounded either way; the
+          // bug is the reasoning, not a fabricated quote — same shape as the contradicted-side test above.
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, "The brothers took turns on that day to complete three additional flights, the longest lasting 59 seconds and a distance of 852 feet."),
+          reason: firstPass
+            ? "The passage states that the longest flight traveled 852 feet in 59 seconds, which supports the claim that the first flight lasted 59 seconds."
+            : "Both sources state that the longest flight of the day lasted 59 seconds.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    // Pass 1 triggers the retry; pass 2 is D030 §3i Mode B's new re-check of the retry's own reason.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // unverifiable, not unsupported — a wrong affirmation is a different failure than "no evidence
+    // found", and never contradicted — this signal alone isn't grounds for a false accusation.
+    expect(claim.verdict).toBe("unverifiable");
+    expect(claim.evidence).toBeNull();
+    // D031 — the retry's own reason affirmatively implies support ("both sources state..."), which
+    // would read as incoherent beside "unverifiable"; rewriteUngroundedAffirmativeReason replaces it.
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
+
+    const events = gateEventStore.calls[0]!.events;
+    const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
+    expect(retryReconciliation).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "unverifiable",
+      overridden: true,
+      reason: "retry_affirmation_invalidated",
+    });
+  });
+
+  it("(live-verification finding, D030 T010) a VERIFY batch response answering the same claim id twice is deduplicated — first answer wins, no concurrent double-processing", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 feet.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The first flight covered 852 feet in 59 seconds. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // Two distinct answer objects for the same id, real observed live shape (Gemini returned a
+      // duplicate `results` entry for one claim in a batched response).
+      return {
+        results: ids.flatMap((id) => [
+          {
+            id,
+            verdict: "supported",
+            evidenceCitations: citationsFor(claimText, passageText, "The first flight covered 852 feet in 59 seconds."),
+            reason: "first answer",
+            confidence: 1,
+          },
+          {
+            id,
+            verdict: "unverifiable",
+            evidenceCitations: null,
+            reason: "second, duplicate answer for the same id",
+            confidence: 0.2,
+          },
+        ]),
+      };
+    });
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: true })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // The first answer wins — deterministic, matches array order, not a race.
+    expect(claim.verdict).toBe("supported");
+    expect(claim.reason).toBe("first answer");
+    // Exactly one gate-chain pass recorded for this claim, not two concurrent ones.
+    expect(gateEventStore.calls.filter((c) => c.claimId === claimId)).toHaveLength(1);
   });
 
   it("D026 §12: gate #1b catches cross-claim contamination in a batched VERIFY call — one claim's id answered with a DIFFERENT claim's reasoning (real live-test finding, Marie Curie / Camp David Accords, 2026-08-10)", async () => {
@@ -1140,9 +1301,11 @@ describe("GrounnelPipelineService (T010)", () => {
         })),
       };
     });
-    // First classifier call is the normal in-batch check on tier 5's fresh "supported" verdict (says
-    // consistent, so T034's own retry never fires — isolating this test to the NEW escalation guard).
-    // Second is guardEscalatedContradictionReversals' own check, which correctly flags it as bogus.
+    // Call order (traced empirically, not assumed — corrected 2026-08-24, this comment was wrong):
+    // #1 base pool's own reconcileContradictedVerdicts, re-checking the already-correct "contradicted"
+    // (consistent:true, no-op). #2 tier 5's in-batch check on the fresh bogus "supported" (false,
+    // triggers a T034 retry). #3 checkRetryContradiction's own re-check of that retry (false — see
+    // D030 §3i Mode B); its downgrade is what the D030 §3h floor then rejects, below.
     let consistencyCalls = 0;
     provider.setResponseFn("You are a consistency auditor", (request) => {
       consistencyCalls++;
@@ -1157,11 +1320,18 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    expect(claim.verdict).toBe("unsupported"); // not a false positive, despite escalation flipping to "supported"
-    expect(claim.evidence).toBeNull();
+    // D030 §3i Mode B's checkRetryContradiction catches this before guardEscalatedContradictionReversals
+    // does; its downgrade then trips the D030 §3h floor, restoring the base pool's original verdict
+    // rather than landing on "unverifiable" — see the ADR for the full interaction trace.
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).not.toBeNull();
+    expect(claim.reason).toBe("The passage states the tower was completed in 1887, contradicting the claimed 1889 date.");
 
     const events = gateEventStore.calls.flatMap((c) => c.events);
-    expect(events.some((e) => e.gate === "retry_reconciliation" && e.overridden && e.verdictBefore === "supported" && e.verdictAfter === "unsupported")).toBe(true);
+    // The retry's own downgrade is still on record even though the floor kept the prior data —
+    // the audit trail shows what almost happened, not just what ended up stored.
+    expect(events.some((e) => e.gate === "retry_reconciliation" && e.overridden && e.verdictBefore === "supported" && e.verdictAfter === "unverifiable")).toBe(true);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden && e.reason === "escalation_no_valid_evidence")).toBe(true);
   });
 
   it("D026 §14: clears meta.escalating via finally even when escalation itself throws — a crash mid-escalation must not leave the run permanently stuck reporting 'verifying'", async () => {
@@ -1317,21 +1487,27 @@ describe("GrounnelPipelineService (T010)", () => {
     // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
     expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
-    // 8 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
-    // year/date gate added a 7th, T069's reason_year added an 8th), plus D025 §5's
-    // retry-contradiction check (the retry landed on contradicted, so it ran) — the original
-    // inconsistent pass is not lost.
-    expect(events).toHaveLength(17);
+    // 10 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
+    // year/date gate added a 7th, T069's reason_year added an 8th, D030's reason_ordinal added a
+    // 9th, g17's subject_entity added a 10th), plus D025 §5's retry-contradiction check (the retry
+    // landed on contradicted, so it ran), plus D030 §3k's telemetry-only retry_decision summary —
+    // the original inconsistent pass is not lost.
+    expect(events).toHaveLength(22);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
-    // Index 4, not 3: reason_year (T069) now sits between implicit_negation and counterfact_ignored.
-    expect(events[4]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
+    // Index 5, not 4: reason_ordinal (D030) now sits between reason_year and counterfact_ignored.
+    expect(events[5]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    // Index 12, not 10: each pass is now 8 gates (contradiction_evidence is offset 4 within a pass).
-    expect(events[12]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 15, not 14: each pass is now 10 gates (contradiction_evidence is offset 5 within a pass).
+    expect(events[15]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
-    expect(events[16]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    expect(events[20]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    // D030 §3k — telemetry-only summary of the whole retry decision: firstPass ended "unsupported"
+    // (the evidence_null downgrade at events[5]), the retry ultimately landed on "contradicted" —
+    // a real change, so overridden:true — and the reason names the ERROR that triggered the retry
+    // in the first place (evidence_null), not the retry's own outcome.
+    expect(events[21]).toMatchObject({ gate: "retry_decision", verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true, reason: "evidence_null" });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -1811,13 +1987,15 @@ describe("GrounnelPipelineService (T010)", () => {
       "reason_consistency",
       "implicit_negation",
       "reason_year",
+      "reason_ordinal",
       "counterfact_ignored",
       "contradiction_evidence",
       "claim_reason_overlap",
       "numeric",
       "year",
+      "subject_entity",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the eight gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the ten gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 
@@ -1854,5 +2032,547 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(implicitNegation).toMatchObject({ verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true });
     // reason_consistency runs first and doesn't catch this bare negation (no contradiction verb) — abstains.
     expect(events.find((e) => e.gate === "reason_consistency")).toMatchObject({ overridden: false });
+  });
+
+  // T006 (D030) — integration coverage for applyReasonOrdinalGate through the real runGateChain,
+  // not just the pure-function unit tests in gates.test.ts: proves the pipeline actually invokes it
+  // at the right point and that its result survives gate #1's downstream evidence-grounding check.
+  it("T006 (D030): reason_ordinal fires end-to-end — the Wright-brothers regression shape, wired through runGateChain", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 ft.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          // The bug itself: VERIFY's raw verdict says supported even though its own reason names
+          // a different flight — reason_ordinal is the only thing that can catch this.
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, factSentence.trim()),
+          reason: "The passage states the airplane flew 852 feet on its fourth and final flight.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // Survives gate #1's grounding check (the cited evidence is a real substring of the passage),
+    // so the final stored verdict is "contradicted", not downgraded back to "unsupported".
+    expect(claim.verdict).toBe("contradicted");
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "contradicted",
+      overridden: true,
+      reason: "reason_ordinal_mismatch",
+    });
+  });
+
+  it("T006 (D030): reason_ordinal correctly abstains end-to-end and leaves a genuinely correct verdict untouched", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 ft.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's first flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, factSentence.trim()),
+          reason: "The passage confirms the first flight covered 852 feet.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "supported",
+      overridden: false,
+      reason: null,
+    });
+  });
+
+  it("D030 §3c (real live-eval finding, 2026-08-20): a T034 retry is never fired once reason_ordinal has already forced a verdict to contradicted, even when the raw pre-gate verdict looked self-inconsistent", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 ft.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    // Same self-inconsistent shape as the real capture: raw verdict says "supported" while the
+    // reason names a different flight — this is exactly what makes checkReasonVerdictConsistency
+    // flag it (see the consistency-auditor override below), which is what used to feed needsRetry.
+    // If a retry fires anyway, this response function would answer it identically (call count would
+    // reveal it), so a second VERIFY call is the failure signature this test guards against.
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, factSentence.trim()),
+          reason: "The passage states the airplane flew 852 feet on its fourth and final flight.",
+          confidence: 0.9,
+        })),
+      };
+    });
+    // Overrides the beforeEach default: judges the RAW "supported" verdict inconsistent with its
+    // own reason (realistic — a human reviewer would flag this too), but judges the gate-corrected
+    // "contradicted" verdict (same reason, different verdict) as consistent — same distinction
+    // reconcileContradictedVerdicts' own grounding pass makes at the end of runBatch.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const match = request.system.match(/REASON_VERDICT_PAIRS: (\[.*\])/s);
+      const pairs = JSON.parse(match![1]!) as Array<{ id: string; verdict: string }>;
+      return { results: pairs.map((p) => ({ id: p.id, consistent: p.verdict === "contradicted" })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore, gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // The gate-forced contradiction survives — not overwritten by a retry, and not downgraded by
+    // reconcileContradictedVerdicts either (its own check judges this exact reason/verdict pairing
+    // consistent, same as a real reviewer would).
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).toBe("The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum.");
+
+    // The real assertion: no T034 retry ("consistency_retry") ever fires for this claim, even
+    // though its raw pre-gate verdict looked self-inconsistent — retryVerifyClaim is the one path
+    // that could silently overwrite the gate-forced contradiction above with a weaker re-answer.
+    expect(llmCallStore.recordCallContexts.some((c) => c.callType === "consistency_retry")).toBe(false);
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "contradicted",
+      overridden: true,
+      reason: "reason_ordinal_mismatch",
+    });
+  });
+
+  it("D030 §3d (production trace + 10-case replay matrix, 2026-08-21): reconcileContradictedVerdicts never downgrades a reason_ordinal contradiction, and escalation never gets a chance to re-verify it away either", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 ft.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, factSentence.trim()),
+          reason: "The passage states the airplane flew 852 feet on its fourth and final flight.",
+          confidence: 0.9,
+        })),
+      };
+    });
+    // Unconditionally inconsistent — proves protection holds regardless of what the classifier
+    // says, matching the captured production failure where it wrongly answered consistent:false
+    // on a reason that plainly named "the fourth flight".
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore, gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).toBe("The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum.");
+
+    // Exactly 1 primary VERIFY call — no escalation re-verify. If findUnresolvedClaims didn't
+    // exclude this protected claim, its "contradicted" verdict is escalation-eligible by design
+    // (D026 §17) and a second primary call would appear here.
+    const primaryCalls = llmCallStore.recordCallContexts.filter((c) => c.callType === "primary" && c.stage === "verify");
+    expect(primaryCalls).toHaveLength(1);
+
+    // Exactly 1 consistency_check call — processVerifyResults' own check on the RAW pre-gate
+    // "supported" verdict (unaffected by this fix). reconcileContradictedVerdicts must make ZERO
+    // additional consistency_check calls for this claim — it's excluded before the call, not just
+    // after the answer comes back.
+    const consistencyCalls = llmCallStore.recordCallContexts.filter((c) => c.callType === "consistency_check");
+    expect(consistencyCalls).toHaveLength(1);
+
+    // No retry of any kind touched this claim.
+    expect(llmCallStore.recordCallContexts.some((c) => c.callType === "consistency_retry")).toBe(false);
+
+    // No retry_reconciliation downgrade event — reconciliation never acted on this claim at all.
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.find((e) => e.gate === "retry_reconciliation")).toBeUndefined();
+    expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "contradicted",
+      overridden: true,
+      reason: "reason_ordinal_mismatch",
+    });
+  });
+
+  // D030 §3k (code-review finding, 2026-08-24) — the new telemetry-only retry_decision event
+  // must NEVER be visible to originatingContradictionGate's lookup, or it shadows the gate that
+  // actually produced a retry-path "contradicted" (its own shape — overridden + verdictAfter:
+  // "contradicted" — trivially matches that lookup's predicate). Here reason_ordinal fires INSIDE
+  // the retry pass itself (not the primary pass, unlike the test above), which is exactly the
+  // shape that exposed the bug: currentPassGateEvents gets reassigned from retryPass.gateEvents,
+  // and appending the new telemetry event to that array (the original diff) put a
+  // verdictAfter:"contradicted"/overridden:true entry AFTER reason_ordinal in iteration order —
+  // findLast then picked the telemetry event, not reason_ordinal, and D030 §3d's protection broke.
+  it("D030 §3k (code-review finding): a retry-path reason_ordinal contradiction is still protected from reconciliation, unshadowed by the new retry_decision telemetry", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 feet.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The Wright Flyer's fourth and final flight covered 852 feet, according to the National Air and Space Museum. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      // Call #1 (primary): raises an evidence_null ERROR via reason_consistency + gate #1, the
+      // same proven needsRetry trigger the T034 test above uses — firstPass lands on "unsupported",
+      // never "contradicted", so D030 §3c doesn't skip the retry.
+      // Call #2 (retry): a genuinely wrong "supported" whose OWN reason names a different flight —
+      // retryPass's reason_ordinal gate (not VERIFY) is what forces this to "contradicted".
+      const isPrimary = provider.getCallCount() === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: isPrimary ? "unsupported" : "supported",
+          evidenceCitations: isPrimary ? null : citationsFor(claimText, passageText, factSentence.trim()),
+          reason: isPrimary
+            ? "The passage contradicts the claim about which flight covered 852 feet."
+            : "The passage states the airplane flew 852 feet on its fourth and final flight.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore, gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted");
+
+    // If the shadowing bug were present, reconcileContradictedVerdicts would treat this claim as
+    // unprotected and (per D030 §3d's own test above) findUnresolvedClaims would also treat it as
+    // escalation-eligible (D026 §17), re-verifying it with a SECOND "primary"-tagged VERIFY call —
+    // distinct from the "consistency_retry"-tagged call this test already expects for the retry
+    // itself. Protected, it must not: exactly 1 primary call, matching the D030 §3d test's own
+    // assertion for the non-retry case.
+    const primaryCalls = llmCallStore.recordCallContexts.filter((c) => c.callType === "primary" && c.stage === "verify");
+    expect(primaryCalls).toHaveLength(1);
+
+    // Direct check on the mechanism itself: the persisted trail (DB-bound, from chain.gateEvents)
+    // still carries the new telemetry event for observability...
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.find((e) => e.gate === "retry_decision")).toMatchObject({
+      verdictBefore: "unsupported",
+      verdictAfter: "contradicted",
+      overridden: true,
+    });
+    // ...while reason_ordinal — not retry_decision — remains correctly identifiable as the LAST
+    // overriding-to-contradicted event in that same persisted trail (chain.gateEvents appends the
+    // telemetry event after reason_ordinal too, so this only holds because retry_decision's shape
+    // doesn't retroactively change what fired inside the retry pass — the fix is about which array
+    // gateEventsByClaimId reads, proven above by primaryCalls staying at 1). reason_ordinal appears
+    // TWICE (once per pass) — firstPass's own instance is inert (verdict was already "contradicted"
+    // from reason_consistency by the time it runs, so it early-returns), so filter to the one that
+    // actually overrode, not just the first occurrence.
+    expect(events.find((e) => e.gate === "reason_ordinal" && e.overridden)).toMatchObject({
+      verdictBefore: "supported",
+      verdictAfter: "contradicted",
+      overridden: true,
+      reason: "reason_ordinal_mismatch",
+    });
+  });
+
+  // D030 §3d (code-review finding, 2026-08-21) — a numeric-bearing ordinal claim is a real,
+  // reachable case where gate #2 (numeric) runs AFTER reason_ordinal in the same chain and would
+  // otherwise silently un-contradict it on a matching value, bypassing reconciliation/escalation
+  // protection entirely since the claim's PERSISTED verdict would never even read "contradicted".
+  it("(review finding) a numeric match does not silently un-contradict a reason_ordinal catch end-to-end", async () => {
+    const claimId = uuid(1);
+    const claimText = "The third trial showed a 40% success rate.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "Researchers reported that the first trial showed a 40% success rate. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: "supported",
+          evidenceCitations: citationsFor(claimText, passageText, factSentence.trim()),
+          reason: "The passage states the first trial showed a 40% success rate.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore, gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted");
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.find((e) => e.gate === "reason_ordinal")).toMatchObject({ verdictBefore: "supported", verdictAfter: "contradicted", overridden: true });
+    // The real regression: numeric must NOT flip this back to supported on the matching 40%.
+    expect(events.find((e) => e.gate === "numeric")).toMatchObject({ verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false });
+  });
+
+  // D030 §3d (code-review finding, 2026-08-21) — D030 §3d protection must attribute origin using
+  // only the pass that produced the FINAL verdict, not the firstPass+retryPass concatenated trail.
+  it("(review finding) a fresh, ungated contradiction from a T034 retry is NOT wrongly protected by a stale reason_ordinal event from the discarded firstPass", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 feet.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const factSentence = "The flight distance of 852 feet was later found to be a recording error. ";
+    const passageText = factSentence.repeat(3);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const isFirstPass = provider.getCallCount() === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          // firstPass: reason_ordinal fires (supported -> contradicted via "fourth flight" in the
+          // reason), but the citation is fabricated (n: 999) so gate #1 downgrades it to
+          // unsupported and triggers a T034 retry — the reason_ordinal event stays in the audit
+          // trail (concatenated) but is now stale, not what produced the final verdict.
+          verdict: isFirstPass ? "supported" : "contradicted",
+          evidenceCitations: isFirstPass ? [{ source: "A", n: 999 }] : citationsFor(claimText, passageText, factSentence.trim()),
+          reason: isFirstPass
+            ? "The passage states the airplane flew 852 feet on its fourth and final flight."
+            : "The flight distance of 852 feet was later found to be a recording error.",
+          confidence: 0.9,
+        })),
+      };
+    });
+    // Ordered: (1) processVerifyResults' own pre-retry check on firstPass's raw "supported" —
+    // answer doesn't matter here, gate #1's bad citation alone triggers the retry regardless.
+    // (2) checkRetryContradiction's check on the retry's fresh "contradicted" — must say
+    // consistent so it does NOT downgrade here (that would test checkRetryContradiction, not the
+    // bug this test targets). (3) reconcileContradictedVerdicts' own check, at the end of the
+    // primary pass's runBatch — says inconsistent, so IT downgrades — proving the claim reached
+    // this point still "contradicted" (not wrongly protected) and got evaluated on its own merits.
+    // Any further calls (escalation may independently re-verify an "unsupported" claim afterward,
+    // unrelated to what this test checks) stay consistent so they don't further complicate the trace.
+    let consistencyCallCount = 0;
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      consistencyCallCount++;
+      const consistent = consistencyCallCount !== 3;
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCallStore, gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    // The proof this test targets: the primary pass's own reconcileContradictedVerdicts call
+    // (gateEventStore.calls[1], right after the retry, before escalation gets any chance to run)
+    // correctly downgraded the retry's fresh, ungated contradiction — proving it was NOT silently
+    // protected by the stale, discarded firstPass reason_ordinal event. What happens afterward
+    // (escalation may independently re-verify) is a separate concern this test doesn't assert on.
+    const reconciliationCallEvents = gateEventStore.calls[1]!.events;
+    expect(reconciliationCallEvents).toEqual([
+      { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
+    ]);
+  });
+
+  // D030 §3h — live regression (2026-08-23, g12-bukowski-death-year): a grounded "contradicted" verdict survived 2 escalation tiers, then a 3rd's evidence-empty "unsupported" silently overwrote it. See the ADR for why this isn't "protect contradicted" (that would defeat guardEscalatedContradictionReversals' own job).
+  it("D030 §3h: an escalation tier that returns NO usable evidence must not overwrite a prior tier's grounded 'contradicted' verdict", async () => {
+    const claimId = uuid(1);
+    const claimText = "Heinrich Muller died in 1948.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const contradictingPassage = "Heinrich Muller actually died on March 9, 1994, according to public records. ".repeat(10);
+    const irrelevantPassage = "Heinrich Muller was a well-known figure in his community. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        const cap = context?.maxCandidates ?? 3;
+        if (cap <= 3) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
+        if (cap === 5) return [webSource({ text: irrelevantPassage })]; // tier 5: real page, nothing to cite for this fact
+        return [webSource({ status: "unreachable", text: null })]; // tier 8: nothing further, never needed
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = provider.getCallCount() > 1; // first call is the base pool; only tier 5 calls VERIFY again
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "unsupported" : "contradicted",
+          evidenceCitations: wide ? null : citationsFor(claimText, contradictingPassage, "Heinrich Muller actually died on March 9, 1994, according to public records."),
+          reason: wide ? "None of the provided sentences mention the death year of Heinrich Muller." : "The passage states he died in 1994, contradicting the claimed 1948 date.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    // The core assertion: tier 5's evidence-empty "unsupported" must NOT overwrite the base pool's grounded "contradicted".
+    expect(claim.verdict).toBe("contradicted");
+    expect(claim.evidence).toBe("Heinrich Muller actually died on March 9, 1994, according to public records.");
+
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden === true && e.reason === "escalation_no_valid_evidence")).toBe(true);
+  });
+
+  // D030 §3h counterexample #1 — proves this isn't "protect contradicted" under a new name: real new evidence is still free to overturn it; only an evidence-EMPTY replacement gets blocked.
+  it("D030 §3h: an escalation tier with real new evidence still overturns a prior 'contradicted' verdict normally", async () => {
+    const claimId = uuid(1);
+    const claimText = "The bridge opened in 1998.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const wrongPassage = "The bridge officially opened to traffic in 1995, three years ahead of schedule. ".repeat(10);
+    const rightPassage = "Records confirm the bridge opened in 1998 after a lengthy construction delay. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        const cap = context?.maxCandidates ?? 3;
+        if (cap <= 3) return [webSource({ text: wrongPassage })]; // base pool: a real but wrong date
+        return [webSource({ text: rightPassage })]; // tier 5: a real, correct source
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = provider.getCallCount() > 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "supported" : "contradicted",
+          evidenceCitations: wide
+            ? citationsFor(claimText, rightPassage, "Records confirm the bridge opened in 1998 after a lengthy construction delay.")
+            : citationsFor(claimText, wrongPassage, "The bridge officially opened to traffic in 1995, three years ahead of schedule."),
+          reason: wide ? "The passage confirms the bridge opened in 1998." : "The passage states the bridge opened in 1995, contradicting the claimed 1998 date.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("supported");
+    expect(claim.evidence).toBe("Records confirm the bridge opened in 1998 after a lengthy construction delay.");
+
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden === false && e.verdictBefore === "contradicted" && e.verdictAfter === "supported")).toBe(true);
+  });
+
+  // D030 §3h counterexample #2 — the guard checks citations, not a verdict label, so a confidence-downgraded-but-grounded "unverifiable" is never mistaken for "no evidence".
+  it("D030 §3h: an escalation tier landing on a low-confidence but evidence-backed verdict is not blocked either", async () => {
+    const claimId = uuid(1);
+    // Non-numeric claim, deliberately — a year/number claim here would let applyYearGate's own
+    // independent evidence-text match un-downgrade "unverifiable" back to "supported" on its own
+    // (real, correct, unrelated gate behavior), muddying which mechanism this test is isolating.
+    const claimText = "The novel was written by Jane Smith.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const wrongPassage = "The novel was actually written by John Doe, not Jane Smith. ".repeat(10);
+    const shakyPassage = "Some records suggest Jane Smith may have contributed to the novel. ".repeat(10);
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        const cap = context?.maxCandidates ?? 3;
+        if (cap <= 3) return [webSource({ text: wrongPassage })];
+        return [webSource({ text: shakyPassage })];
+      },
+    };
+
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const wide = provider.getCallCount() > 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          verdict: wide ? "supported" : "contradicted",
+          evidenceCitations: wide
+            ? citationsFor(claimText, shakyPassage, "Some records suggest Jane Smith may have contributed to the novel.")
+            : citationsFor(claimText, wrongPassage, "The novel was actually written by John Doe, not Jane Smith."),
+          reason: wide ? "A source suggests Jane Smith may have contributed, though it hedges with 'suggest'." : "The passage states the novel was written by John Doe, not Jane Smith, contradicting the claim.",
+          // Below CONFIDENCE_THRESHOLD (0.6) — the reported verdict is remapped to "unverifiable",
+          // but evidence/citations survive the remap (D025 §2), so hasValidEvidence stays true.
+          confidence: wide ? 0.3 : 0.9,
+        })),
+      };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unverifiable");
+    expect(claim.evidence).toBe("Some records suggest Jane Smith may have contributed to the novel.");
+
+    const events = gateEventStore.calls.flatMap((c) => c.events);
+    expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden === false && e.verdictBefore === "contradicted" && e.verdictAfter === "unverifiable")).toBe(true);
   });
 });

@@ -31,7 +31,7 @@ import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
 import { TavilySearchProvider } from "./providers/search/tavily-provider";
-import { RateLimiter } from "./lib/rate-limit";
+import { RedisRateLimiter, UpstashRateLimitRedisClient, type RateLimiter } from "./lib/rate-limit";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -100,7 +100,10 @@ export function buildApp() {
       extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore),
       pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore),
       grounnelStore,
-      rateLimiter: new RateLimiter(),
+      // D020 §4 fix — shared across every Lambda instance via the same Upstash connection as
+      // grounnelStore, unlike the old in-memory RateLimiter (buckets were per-process, so 5/hour
+      // was only ever enforced per instance, not globally).
+      rateLimiter: new RedisRateLimiter(new UpstashRateLimitRedisClient(redis)),
     };
   } else {
     logger.warn(

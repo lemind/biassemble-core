@@ -45,6 +45,12 @@ describe("extractKeyTerms (D026 §21) — stopword fallback when the entity/numb
   it("still returns empty for a claim that's genuinely all stopwords — the fallback isn't unconditional", () => {
     expect(extractKeyTerms("It was there before that.")).toEqual([]);
   });
+
+  it("regression: strips a trailing possessive so a term set-matches the same entity phrased without it (sibling bug to gates.ts's properNounWords)", () => {
+    const terms = extractKeyTerms("Nauru's population declined sharply after independence.");
+    expect(terms).toContain("nauru");
+    expect(scoreKeyTermMatches(terms, "Nauru declared independence in 1968.")).toBeGreaterThan(0);
+  });
 });
 
 describe("buildSearchQuery (D026 §8, T046/T050) — deterministic stopword-dropping query, no LLM call", () => {

@@ -233,7 +233,7 @@ describe("RedisGrounnelStore (T007)", () => {
     await store.setEscalating(id, true);
 
     // Simulate a background function killed mid-escalation: the last write is far in the past,
-    // well past STUCK_ESCALATION_TIMEOUT_MS, with escalating never cleared.
+    // well past STUCK_RUN_TIMEOUT_MS, with escalating never cleared.
     const staleTimestamp = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     await redis.hset(`audit:${id}`, { lastActivityAt: staleTimestamp });
 
@@ -241,7 +241,7 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status!.status).toBe("done");
   });
 
-  it("real bug, 2026-08-16: does NOT self-heal while checked < total, even if escalating is stale — an incomplete run must never be reported done", async () => {
+  it("D031: self-heals to 'failed' (not 'done') while checked < total and stale — an incomplete run must never be reported done, but must still get a terminal state", async () => {
     const redis = new FakeRedisHashClient();
     const store = new RedisGrounnelStore(redis);
     const claimA = "11111111-1111-4111-8111-111111111111";
@@ -263,10 +263,42 @@ describe("RedisGrounnelStore (T007)", () => {
     await redis.hset(`audit:${id}`, { lastActivityAt: staleTimestamp });
 
     const status = await store.getStatus(id);
-    expect(status!.status).toBe("verifying");
+    expect(status!.status).toBe("failed");
   });
 
-  it("real bug, 2026-08-16 (review finding, boundary case): still 'verifying' while stale by less than STUCK_ESCALATION_TIMEOUT_MS — must not self-heal a genuinely still-running escalation early", async () => {
+  it("D031: self-heals to 'failed' when a run dies before its first writeClaimResult — no lastActivityAt exists yet, falls back to meta.createdAt", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: "Claim A" }], truncated: false });
+
+    // Simulate a run killed mid-classifyEligibility: nothing ever wrote a claim result, so
+    // lastActivityAt was never set — only meta.createdAt exists, and it's stale.
+    const existingRaw = await redis.hget(`audit:${id}`, "meta");
+    const meta = JSON.parse(existingRaw!);
+    meta.createdAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { meta: JSON.stringify(meta) });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("failed");
+  });
+
+  it("D031: does NOT self-heal to 'failed' while checked < total and fresh (createdAt recent, no activity yet) — a genuinely still-extracting run must stay 'extracting'", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: "11111111-1111-4111-8111-111111111111", text: "Claim A" }], truncated: false });
+
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("extracting");
+  });
+
+  it("D031: does NOT self-heal a 0-claim fresh run", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [], truncated: false });
+    const status = await store.getStatus(id);
+    expect(status!.status).toBe("done");
+  });
+
+  it("real bug, 2026-08-16 (review finding, boundary case): still 'verifying' while stale by less than STUCK_RUN_TIMEOUT_MS — must not self-heal a genuinely still-running escalation early", async () => {
     const redis = new FakeRedisHashClient();
     const store = new RedisGrounnelStore(redis);
     const claimId = "11111111-1111-4111-8111-111111111111";
@@ -275,7 +307,7 @@ describe("RedisGrounnelStore (T007)", () => {
     await store.writeClaimResult(id, claimId, { status: "done", verdict: "unsupported", evidence: null, confidence: null, reason: "no evidence found", sources: [] });
     await store.setEscalating(id, true);
 
-    // 3 minutes stale — well under the 8-minute STUCK_ESCALATION_TIMEOUT_MS, still plausibly a
+    // 3 minutes stale — well under the 8-minute STUCK_RUN_TIMEOUT_MS, still plausibly a
     // genuinely-running escalation.
     const nearlyStaleTimestamp = new Date(Date.now() - 3 * 60 * 1000).toISOString();
     await redis.hset(`audit:${id}`, { lastActivityAt: nearlyStaleTimestamp });

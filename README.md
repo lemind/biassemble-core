@@ -76,13 +76,13 @@ See `specs/008-b2b/quickstart.md` for example `curl` commands and `docs/decision
 
 `POST /extract` fact-checks arbitrary text against the open web — no source documents required, unlike B2B Audit Mode above. Built to answer "is this actually true?" for any claim-bearing article, not just an AI's own output.
 
-- **Claim pipeline**: EXTRACT (pull atomic, checkable factual claims) → SEARCH (Gemini `google_search` grounding for URL discovery only, DIY fetch, Tavily fallback) → semantic reranking → VERIFY (an LLM classifies each claim against its retrieved passages) → a 6-gate deterministic verdict-correction chain → adaptive escalation (3→5→8 sources) for claims still unresolved
+- **Claim pipeline**: EXTRACT (pull atomic, checkable factual claims) → an eligibility pre-filter (drops personal/opinion/prediction claims no public record could ever confirm or deny) → SEARCH (Gemini `google_search` grounding for URL discovery only, DIY fetch, Tavily fallback) → semantic reranking → VERIFY (an LLM classifies each claim against its retrieved passages) → a 10-gate deterministic verdict-correction chain → adaptive escalation (3→5→8 sources) for claims still unresolved
 - **Verdicts**: `supported`, `partially_supported`, `contradicted`, `unsupported`, `unverifiable` (low-confidence downgrade)
 - **Grounded by construction**: passages are split into numbered sentences in code; VERIFY cites sentence numbers, never generates quote text — evidence can't be fabricated
-- **Deterministic gate chain**: reason/verdict consistency, evidence-groundedness, numeric threshold/equality comparison, temporal-scope comparability, implicit-negation detection, cross-claim contamination — each backed by real production incidents, see `docs/decisions/026-verify-retrieval-first-grounding.md`
-- **Recent reliability fixes** (self-review, 2026-08-11): a `contradicted` verdict landing straight off VERIFY's ordinary first pass now gets the same reason-consistency scrutiny previously only given to retries and escalation rounds, closing a false-positive gap on the pipeline's most common path; the numeric threshold gate no longer treats an exact-equality value as satisfying a strict "exceeded/surpassed" claim; adaptive search escalation now actually widens the candidate pool under the Tavily-forced search flow instead of silently re-issuing the identical call every tier
+- **Deterministic gate chain**: reason/verdict consistency, implicit negation, cross-claim contamination (a flags-only counterfact check plus a claim/reason overlap backstop), evidence-groundedness, numeric threshold/equality comparison, temporal-scope comparability (both evidence-side and reason-side year mismatch), ordinal/sequence-position mismatch, and a subject-entity backstop for claims about one of several similar events — each backed by real production incidents, see `docs/decisions/026-verify-retrieval-first-grounding.md`
+- **Ordinal/instance-selector fix** (`docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`): retrieval used to score only capitalized words/numbers as a claim's "key terms," so a claim like "the first flight covered 852 feet" — sharing a subject with several similar events in the same article — could retrieve and confirm evidence about the wrong one of those events. Fixed with a dedicated selector/anchor signal that scopes retrieval to the instance the claim actually names, plus a subject-entity gate as a deterministic backstop.
 
-See `specs/009-grounnel/` for the full spec and `docs/decisions/026-verify-retrieval-first-grounding.md` for the design history (22+ addenda, each a real traced production or live-test finding).
+See `specs/009-grounnel/` for the full spec, `specs/012-grounnel-ordinal-eligibility-gates/` for the eligibility/ordinal-gate feature spec, and `docs/decisions/026-verify-retrieval-first-grounding.md` / `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md` for the design history.
 
 ## Evaluation
 
@@ -128,7 +128,7 @@ curl http://localhost:3001/health
 
 # run tests
 pnpm test
-# → all tests passing (1002 as of this writing — grows with each feature)
+# → all tests passing (1136 as of this writing — grows with each feature)
 ```
 
 ### Local Dev vs Vercel Deployment

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { GrounnelExtractService } from "../../../../src/orchestrators/grounnel/extract.service.js";
 import { RedisGrounnelStore } from "../../../../src/persistence/grounnel-store.js";
 import { PromptRegistry } from "../../../../src/prompts/registry.js";
@@ -98,6 +98,8 @@ describe("GrounnelExtractService (T009)", () => {
     const { id } = await service.run("text");
     const status = await store.getStatus(id);
     expect(status!.claims).toHaveLength(1);
+    // D030 §3b (review finding) — classifyEligibility runs after run() returns, in the background
+    // (routes/grounnel.ts), not inside run() itself, so run()'s own call count is EXTRACT-only.
     expect(provider.getCallCount()).toBe(2);
   });
 
@@ -263,6 +265,8 @@ describe("GrounnelExtractService (T009)", () => {
 
     const { id } = await service.run("Some pasted article text.");
 
+    // D030 §3b (review finding) — classifyEligibility runs after run() returns (routes/grounnel.ts's
+    // background phase), so run() itself only ever makes the one EXTRACT call.
     expect(llmCallStore.recordCallContexts).toHaveLength(1);
     expect(llmCallStore.recordCallContexts[0]).toMatchObject({
       runId: id,
@@ -322,5 +326,133 @@ describe("GrounnelExtractService (T009)", () => {
 
     expect(historyStore.updateRunCalls).toHaveLength(1);
     expect(historyStore.updateRunCalls[0]!.data).toMatchObject({ status: "failed" });
+  });
+
+  // D030 §3b (review finding) — classifyEligibility runs in the background, after run() has already
+  // returned and the 202 response was sent (routes/grounnel.ts), not inside run() itself.
+  describe("classifyEligibility (background, after run())", () => {
+    it("excludes a clearly non-checkable claim and returns only the still-eligible ones", async () => {
+      provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }, { claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
+      provider.setResponseFn("You are a claim-eligibility classifier", (request) => {
+        // Match the exact CLAIM: line, not a raw substring — the prompt's own instructions
+        // (test-authoring bug found via this) already contain unrelated example claim text.
+        const isPersonal = request.system.includes("CLAIM: My pet cat is named Whiskers.");
+        return isPersonal ? { category: "personal", certainty: "clear", reason: "private circumstance" } : { category: "checkable", certainty: "clear", reason: "public fact" };
+      });
+      const { service, store } = makeService(provider);
+
+      const { id, pendingClaims } = await service.run("Some pasted article text.");
+      const eligible = await service.classifyEligibility(id, pendingClaims);
+
+      expect(eligible).toHaveLength(1);
+      expect(eligible[0]!.text).toBe("The Eiffel Tower was completed in 1889.");
+      const status = await store.getStatus(id);
+      const excluded = status!.claims.find((c) => c.text.includes("Whiskers"))!;
+      expect(excluded.status).toBe("done");
+      expect(excluded.verdict).toBe("unverifiable");
+    });
+
+    it("records a grounnel_llm_calls completion with stage extract / callType eligibility_check", async () => {
+      provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
+      provider.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a" });
+      const store = new RedisGrounnelStore(new FakeRedisHashClient());
+      const prompts = new PromptRegistry();
+      const llmCallStore = new FakeGrounnelLlmCallStore();
+      const service = new GrounnelExtractService(provider, prompts, store, new NoopGrounnelHistoryStore(), llmCallStore);
+
+      const { id, pendingClaims } = await service.run("Some pasted article text.");
+      await service.classifyEligibility(id, pendingClaims);
+
+      const eligibilityCalls = llmCallStore.recordCallContexts.filter((c) => c.callType === "eligibility_check");
+      expect(eligibilityCalls).toHaveLength(1);
+      expect(eligibilityCalls[0]).toMatchObject({ runId: id, stage: "extract", promptVersion: prompts.getGrounnelEligibilityVersion() });
+    });
+
+    // Review finding (code-review high, full-branch pass): classifyEligibility runs in
+    // routes/grounnel.ts's post-202 background phase, before pipelineService.run() ever sets a
+    // status — an uncaught write failure here left the run stuck at its prior status forever.
+    it("(review finding) marks the run 'failed' in history when writing an excluded claim throws", async () => {
+      provider.setDefault({ claims: [{ claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
+      provider.setResponse("You are a claim-eligibility classifier", { category: "personal", certainty: "clear", reason: "private circumstance" });
+      const store = new RedisGrounnelStore(new FakeRedisHashClient());
+      const historyStore = new FakeGrounnelHistoryStore();
+      const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+      const { id, pendingClaims } = await service.run("Some pasted article text.");
+      historyStore.failCreateClaim = true;
+
+      await expect(service.classifyEligibility(id, pendingClaims)).rejects.toThrow();
+
+      expect(historyStore.updateRunCalls.some((c) => c.data.status === "failed")).toBe(true);
+    });
+
+    // D031 — real live-test bug: a hung provider call inside the eligibility fan-out used to run
+    // silently until the shared Vercel maxDuration kill, never reaching the catch below at all.
+    it("D031: times out and marks the run failed instead of hanging forever when the eligibility fan-out never resolves", async () => {
+      vi.useFakeTimers();
+      try {
+        const inner = new MockProvider();
+        inner.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
+        const hangingProvider: Provider = {
+          mode: "mock",
+          completeJson: (request) =>
+            request.system.includes("You are a claim-eligibility classifier")
+              ? new Promise(() => {}) // never resolves — simulates a hung provider call
+              : inner.completeJson(request),
+        };
+        const store = new RedisGrounnelStore(new FakeRedisHashClient());
+        const historyStore = new FakeGrounnelHistoryStore();
+        const service = new GrounnelExtractService(hangingProvider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+        const { id, pendingClaims } = await service.run("Some pasted article text.");
+
+        const classifyPromise = service.classifyEligibility(id, pendingClaims);
+        const assertion = expect(classifyPromise).rejects.toThrow(/timed out/);
+        await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 1000);
+        await assertion;
+
+        expect(historyStore.updateRunCalls.some((c) => c.data.status === "failed")).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // D031 (review finding) — Promise.race can't cancel its loser. Without the `abandoned` flag,
+    // a batch that eventually resolves AFTER the phase timeout already fired still wrote its
+    // excluded-claim results, landing in Redis after the run was already reported failed.
+    it("D031 (review finding): does not write excluded-claim results from a batch that resolves after the phase timeout already fired", async () => {
+      vi.useFakeTimers();
+      try {
+        const inner = new MockProvider();
+        inner.setDefault({ claims: [{ claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
+        const slowProvider: Provider = {
+          mode: "mock",
+          completeJson: (request) =>
+            request.system.includes("You are a claim-eligibility classifier")
+              ? new Promise((resolve) =>
+                  // Resolves well AFTER the 2-minute phase timeout — simulates a merely-slow (not
+                  // truly hung) provider call outliving the race it already lost.
+                  setTimeout(() => resolve({ result: { category: "personal", certainty: "clear", reason: "private circumstance" } }), 3 * 60 * 1000)
+                )
+              : inner.completeJson(request),
+        };
+        const store = new RedisGrounnelStore(new FakeRedisHashClient());
+        const historyStore = new FakeGrounnelHistoryStore();
+        const service = new GrounnelExtractService(slowProvider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+        const { id, pendingClaims } = await service.run("Some pasted article text.");
+
+        const classifyPromise = service.classifyEligibility(id, pendingClaims);
+        const assertion = expect(classifyPromise).rejects.toThrow(/timed out/);
+        await vi.advanceTimersByTimeAsync(2 * 60 * 1000 + 1000); // fires the phase timeout
+        await assertion;
+
+        await vi.advanceTimersByTimeAsync(2 * 60 * 1000); // lets the abandoned batch's own provider call finally resolve
+
+        const status = await store.getStatus(id);
+        expect(status!.claims[0]!.status).toBe("pending"); // never excluded — the late write never landed
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

@@ -78,6 +78,13 @@
       "when": 1786431477547,
       "tag": "0013_petite_mikhail_rasputin",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1787730395076,
+      "tag": "0014_giant_warstar",
+      "breakpoints": true
     }
   ]
 }

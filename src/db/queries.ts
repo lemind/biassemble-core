@@ -651,6 +651,7 @@ export async function insertGrounnelClaim(data: {
   claimId: string;
   runId: string;
   claimText: string;
+  sourceExcerpt: string | null;
   verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
   evidence: string | null;
   confidence: number | null;
@@ -676,7 +677,7 @@ export async function insertGrounnelLlmCall(data: {
   runId: string;
   claimId?: string | null;
   stage: "extract" | "verify";
-  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check";
   provider: string;
   model: string;
   promptVersion: string;
@@ -732,7 +733,7 @@ export async function insertGrounnelGateEvents(
   rows: Array<{
     runId: string;
     claimId: string;
-    gate: "reason_consistency" | "implicit_negation" | "reason_year" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "year" | "retry_reconciliation";
+    gate: "reason_consistency" | "implicit_negation" | "reason_year" | "reason_ordinal" | "subject_entity" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "year" | "retry_reconciliation" | "escalation_replacement" | "retry_decision";
     verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
     overridden: boolean;

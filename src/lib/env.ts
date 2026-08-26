@@ -35,6 +35,10 @@ const envSchema = z.object({
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
   KV_REST_API_URL: z.url().optional(),
   KV_REST_API_TOKEN: z.string().min(1).optional(),
+  // D020 §4 fix — separate from AI_CORE_API_KEY on purpose: that key means "authorized API caller",
+  // this one means "authorized to assert x-grounnel-client-ip on someone else's behalf." Optional;
+  // unset (or a header mismatch) fails closed to request.ip, never to trusting an unverified header.
+  GROUNNEL_INTERNAL_PROXY_SECRET: z.string().min(1).optional(),
 });
 
 function loadEnv() {

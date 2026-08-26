@@ -1,20 +1,22 @@
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan:
-specs/008-b2b/plan.md
+Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix) is implemented and
+live-verified. The ADR is the authoritative record — read it before changing this area:
 
-Supporting artifacts:
-- specs/008-b2b/spec.md — feature specification (3 user stories, 21 functional requirements)
-- specs/008-b2b/research.md — technical decisions: retrieval stub, ID strategy, prompt registry reuse, numeric fact shape, score computation, VERIFY batching, injection hard-stop
-- specs/008-b2b/data-model.md — new `audit` pg schema entities: Audit, Claim, Verdict, SourcePassage, ScoreSummary
-- specs/008-b2b/contracts/audit-endpoint.md — POST /audit request/result contract
-- specs/008-b2b/quickstart.md — golden-set validation commands, pass bars, "done" definition
-- docs/decisions/018-audit-mode-flag.md — ADR (authoritative decision record)
+- docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md
+- specs/012-grounnel-ordinal-eligibility-gates/spec.md — original feature specification
+- specs/012-grounnel-ordinal-eligibility-gates/tasks.md — execution log
+
+(plan.md/research.md/data-model.md/quickstart.md were pre-implementation planning scaffolding,
+removed once superseded by the ADR and the shipped code/tests.)
+
+Prior plan (008-b2b, audit mode) remains at specs/008-b2b/ if still relevant to work in progress there.
 <!-- SPECKIT END -->
 
 ## Conventions
 
 **Commit messages**: one line, `feat|fix|chore|docs(T0XX): <short desc>`. `docs` may omit `(T0XX)` when the commit spans multiple tasks or isn't task-scoped (e.g. an ADR-only update). Never commit without explicit user request.
+
+**PR descriptions**: plain human language, no code identifiers, file paths, line numbers, or test/finding counts. Describe what changed for a person reading it, not what changed in the diff.
 
 **Code comments**: max ~200 chars per comment. State what/why in one line; point to the decision doc (`docs/decisions/0NN-*.md` §X) for rationale, incident history, or design tradeoffs — never restate them inline. If a comment needs more than one line to justify itself, that justification belongs in the ADR, not the code.
 

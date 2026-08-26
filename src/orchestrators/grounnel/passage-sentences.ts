@@ -1,6 +1,7 @@
 /** Numbers a claim-relevant subset of a passage's sentences so VERIFY cites a NUMBER, not generated text. See D026 §7, §11. */
 
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
+import { extractInstanceSelector, passageMatchesSelector, SELECTOR_RE_G } from "../../lib/instance-selector.js";
 
 const MAX_SENTENCES = 20;
 
@@ -20,6 +21,18 @@ export function splitIntoSentences(text: string): string[] {
 export interface PassageSentence {
   n: number;
   text: string;
+  // Deterministic fact about the text (a sequence-position word it contains), not a relevance/correctness judgment — see D030 §3g follow-up.
+  selector?: string;
+}
+
+// Sequence-selector word this sentence contains, if exactly one DISTINCT word appears — same source
+// of truth extractInstanceSelector/passageMatchesSelector already use for retrieval (D030 §3f).
+// Abstains (review finding) on 2+ distinct words rather than guess which one a value belongs to,
+// e.g. "Not the first attempt, but the fourth flight covered 852 feet." — no negation/proximity
+// analysis here (that lives in gates-reason-grounded.ts), so silence beats a possibly-wrong tag.
+function detectSelectorWord(text: string): string | null {
+  const words = new Set([...text.matchAll(SELECTOR_RE_G)].map((m) => m[1]!.toLowerCase()));
+  return words.size === 1 ? [...words][0]! : null;
 }
 
 /** Selects and numbers up to `maxSentences` claim-relevant sentences, in original passage order.
@@ -29,19 +42,45 @@ export function buildPassageSentences(claimText: string, passageText: string, ma
   const terms = extractKeyTerms(claimText);
 
   let selected: string[];
+  // extractKeyTerms's own D026 §21 stopword fallback already means terms.length === 0 implies no
+  // instance-selector either (no SEQUENCE_SELECTOR_WORDS entry is a stopword, so one would always
+  // survive that fallback) — selector only needs computing in the scored branch below.
   if (terms.length === 0 || sentences.length <= maxSentences) {
     // Fail-open, same convention as isPassageRelevant (passage-filter.ts): nothing to score against.
     selected = sentences.slice(0, maxSentences);
   } else {
+    // D030 §3f — rescues the sentence matching the claim's instance-selector even at zero key-term
+    // score (g17: a different instance's number/entity can otherwise dominate scoring entirely).
+    const selector = extractInstanceSelector(claimText);
     const scored = sentences.map((text, i) => ({ text, i, score: scoreKeyTermMatches(terms, text) }));
     const matching = scored.filter((s) => s.score > 0);
-    const ranked = (matching.length > 0 ? matching : scored).sort((a, b) => b.score - a.score).slice(0, maxSentences);
+    let ranked = (matching.length > 0 ? matching : scored).sort((a, b) => b.score - a.score).slice(0, maxSentences);
+
+    // Review finding: an earlier additive-score version could tie a selector-only sentence with a
+    // real key-term match and evict the real match by stable-sort position — the opposite of
+    // "rescue." Instead: append when there's room; otherwise replace only the WEAKEST already-
+    // selected sentence, so nothing with a higher real key-term score is ever bumped.
+    if (selector && !ranked.some((r) => passageMatchesSelector(selector, r.text))) {
+      const selectorMatch = scored.find((s) => passageMatchesSelector(selector, s.text));
+      if (selectorMatch) {
+        if (ranked.length < maxSentences) {
+          ranked = [...ranked, selectorMatch];
+        } else {
+          const weakestIndex = ranked.reduce((worst, r, i) => (r.score < ranked[worst]!.score ? i : worst), 0);
+          ranked = ranked.map((r, i) => (i === weakestIndex ? selectorMatch : r));
+        }
+      }
+    }
+
     // Re-sort back into original passage order — numbering should read like the page; score only
     // decided which sentences made the cut, not the order they're presented in.
     selected = ranked.sort((a, b) => a.i - b.i).map((s) => s.text);
   }
 
-  return selected.map((text, i) => ({ n: i + 1, text }));
+  return selected.map((text, i) => {
+    const selector = detectSelectorWord(text);
+    return selector ? { n: i + 1, text, selector } : { n: i + 1, text };
+  });
 }
 
 /** Numbers each of up to MAX_VERIFY_PASSAGES ranked passages independently, grouped by source label ("A" = highest-ranked). D026 §11. */

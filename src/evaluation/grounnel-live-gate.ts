@@ -1,6 +1,6 @@
 /** Live-run eval gate for Grounnel — scores a real run against expected outcomes. Same design as audit-live-gate.ts (loose match, kind->verdict mapping, aggregate floor). */
 
-export type ClaimKind = "true" | "false" | "silence";
+export type ClaimKind = "true" | "false" | "silence" | "excluded" | "not_excluded";
 
 export interface ExpectedClaim {
   /** Substring of the claim text as EXTRACT produced it — matched loosely, since EXTRACT rewords. */
@@ -11,8 +11,10 @@ export interface ExpectedClaim {
 export interface LiveEvalSpec {
   id: string;
   claims: ExpectedClaim[];
-  /** Aggregate floor: fraction of matched claims that must land on an acceptable verdict. */
+  /** Aggregate floor: fraction of matched claims that must land on an acceptable verdict. N=1 only. */
   minCorrectRate: number;
+  /** Per-case override of the provisional detection floor (N>1). Defaults to DETECTION_RATE_INITIAL_FLOOR. */
+  detectionFloor?: number;
 }
 
 export interface GrounnelClaim {
@@ -28,15 +30,39 @@ export interface GrounnelRun {
 }
 
 export interface Violation {
-  rule: "no_false_accusation" | "below_correct_rate";
+  rule: "no_false_accusation" | "below_correct_rate" | "below_detection_rate" | "incomplete_repetitions";
   detail: string;
+}
+
+/** D030 §3k — provisional engineering bar, NOT a scientifically justified threshold. At N=5 the only
+ * reachable rates are 0/.2/.4/.6/.8/1, so this means "at least 4 of 5". Revise after Stage 2. */
+export const DETECTION_RATE_INITIAL_FLOOR = 0.8;
+
+/** Per-expected-claim outcome across N repetitions — the distribution, not a collapsed boolean. */
+export interface ClaimOutcome {
+  match: string;
+  kind: ClaimKind;
+  /** Repetitions in which EXTRACT actually produced this claim. Unproduced ones aren't scored. */
+  observations: number;
+  correct: number;
+  /** correct / observations; null when EXTRACT never produced it in any repetition. */
+  rate: number | null;
+  /** verdict -> count, e.g. { contradicted: 2, supported: 3 } — the g17-style coin-flip detector. */
+  verdicts: Record<string, number>;
 }
 
 export interface LiveEvalResult {
   ok: boolean;
+  /** How many repetitions of the same input were scored. */
+  runs: number;
+  /** Hard gate: zero `contradicted` observations on any non-`false` kind, across every repetition. */
+  safetyOk: boolean;
   correctRate: number;
+  /** Over `kind: "false"` claims only — "did we actually catch the lie". Null when the case has none. */
+  detectionRate: number | null;
   correct: number;
   matched: number;
+  claims: ClaimOutcome[];
   violations: Violation[];
 }
 
@@ -45,6 +71,11 @@ const ACCEPTABLE: Record<ClaimKind, string[]> = {
   false: ["contradicted"],
   // Absent from the web is honestly reported either way; only `contradicted` is a false accusation.
   silence: ["unsupported", "unverifiable"],
+  // D030 §3b (tasks.md T015/T016/T017) — `silence`'s ["unsupported", "unverifiable"] pair can't tell
+  // "correctly excluded pre-search" apart from "searched, found nothing" (the exact ambiguity FR-008
+  // exists to eliminate), so a true-exclusion/hard-negative fixture needs its own stricter kinds.
+  excluded: ["unverifiable"],
+  not_excluded: ["supported", "partially_supported", "unsupported", "contradicted"],
 };
 
 function norm(s: string): string {
@@ -58,24 +89,40 @@ function findClaim(run: GrounnelRun, match: string): GrounnelClaim | null {
 }
 
 /**
- * `runs` is one or more executions of the SAME input text — a single run still scores every rule.
+ * `runs` is one or more repetitions of the SAME input text. D030 §3k: this pipeline is stochastic, so
+ * one repetition is a draw from a distribution, not a verdict — every claim is scored in EVERY
+ * repetition it appears in, and the result carries rates plus the raw verdict distribution.
+ * N=1 keeps the original semantics exactly, so existing single-run callers are unaffected.
  */
 export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): LiveEvalResult {
   const violations: Violation[] = [];
+  const claims: ClaimOutcome[] = [];
   let matched = 0;
   let correct = 0;
+  let detectionObservations = 0;
+  let detectionCorrect = 0;
 
   for (const expected of spec.claims) {
     const found = runs.map((r) => findClaim(r, expected.match));
     if (found.every((c) => c === null)) continue; // EXTRACT never produced it — counted separately, not scored
-    matched++;
 
     const acceptable = ACCEPTABLE[expected.kind];
+    const outcome: ClaimOutcome = { match: expected.match, kind: expected.kind, observations: 0, correct: 0, rate: null, verdicts: {} };
+
     for (const [i, claim] of found.entries()) {
       if (!claim) continue;
+      const verdict = claim.verdict ?? "null";
+      outcome.observations++;
+      outcome.verdicts[verdict] = (outcome.verdicts[verdict] ?? 0) + 1;
+      if (acceptable.includes(verdict)) outcome.correct++;
+
       // A true or absent claim marked `contradicted` is the worst outcome the product can produce —
-      // the single case ADR-000 §2's FP-discipline promise is actually about.
-      if (expected.kind !== "false" && claim.verdict === "contradicted") {
+      // the single case ADR-000 §2's FP-discipline promise is actually about. `not_excluded`'s own
+      // ACCEPTABLE list already allows `contradicted` (review finding: it isn't a ground-truth-true
+      // kind like `true`/`silence`/`excluded`, it only asserts "reached search," so exempt it here too
+      // — otherwise a correctly-scored `contradicted` outcome also forces a false violation.
+      // Scanned in EVERY repetition: one false accusation in five runs is still a false accusation.
+      if (expected.kind !== "false" && expected.kind !== "not_excluded" && claim.verdict === "contradicted") {
         violations.push({
           rule: "no_false_accusation",
           detail: `run ${i}: ${expected.kind} claim "${claim.text.slice(0, 70)}" → contradicted`,
@@ -83,17 +130,48 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
       }
     }
 
-    const primary = found.find((c) => c !== null)!;
-    if (acceptable.includes(primary.verdict ?? "")) correct++;
+    outcome.rate = outcome.observations === 0 ? null : outcome.correct / outcome.observations;
+    claims.push(outcome);
+    matched += outcome.observations;
+    correct += outcome.correct;
+    if (expected.kind === "false") {
+      detectionObservations += outcome.observations;
+      detectionCorrect += outcome.correct;
+    }
   }
 
+  const safetyOk = !violations.some((v) => v.rule === "no_false_accusation");
   const correctRate = matched === 0 ? 0 : correct / matched;
-  if (correctRate < spec.minCorrectRate) {
+  const detectionRate = detectionObservations === 0 ? null : detectionCorrect / detectionObservations;
+
+  // Nothing observed is not a pass. At N=1 the floor below already caught this (0 < any floor), but
+  // at N>1 a case whose claims EXTRACT never produced has detectionRate === null and would otherwise
+  // fall through every gate and report ok — a vacuous green, the exact thing §3k exists to stop.
+  if (matched === 0) {
     violations.push({
       rule: "below_correct_rate",
-      detail: `${correct}/${matched} = ${correctRate.toFixed(2)} below floor ${spec.minCorrectRate}`,
+      detail: `no expected claim was produced in any of the ${runs.length} repetition(s) — nothing was scored`,
     });
+  } else if (runs.length === 1) {
+    // N=1 keeps the original all-kinds floor. At N>1 only the two gates the protocol actually
+    // defines apply: safety (hard, above) and detection (soft) — a `true` claim landing
+    // `unsupported` in 1 of 5 runs is a recorded miss, not a deploy blocker, and must not be
+    // laundered into a pass/fail bit.
+    if (correctRate < spec.minCorrectRate) {
+      violations.push({
+        rule: "below_correct_rate",
+        detail: `${correct}/${matched} = ${correctRate.toFixed(2)} below floor ${spec.minCorrectRate}`,
+      });
+    }
+  } else if (detectionRate !== null) {
+    const floor = spec.detectionFloor ?? DETECTION_RATE_INITIAL_FLOOR;
+    if (detectionRate < floor) {
+      violations.push({
+        rule: "below_detection_rate",
+        detail: `${detectionCorrect}/${detectionObservations} = ${detectionRate.toFixed(2)} below provisional floor ${floor}`,
+      });
+    }
   }
 
-  return { ok: violations.length === 0, correctRate, correct, matched, violations };
+  return { ok: violations.length === 0, runs: runs.length, safetyOk, correctRate, detectionRate, correct, matched, claims, violations };
 }

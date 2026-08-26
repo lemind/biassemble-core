@@ -169,6 +169,95 @@
           "kind": "true"
         }
       ]
+    },
+    {
+      "id": "g17-wright-brothers-ordinal",
+      "text": "On December 17, 1903, the Wright brothers made the first successful powered airplane flights near Kitty Hawk, North Carolina. The brothers made four flights that day, each longer than the last. The first flight covered 852 feet and lasted 59 seconds.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "first flight covered 852 feet",
+          "kind": "false"
+        }
+      ]
+    },
+    {
+      "id": "g18-eligibility-personal-exclusion",
+      "text": "Yesterday, I felt exhausted after spending three hours gardening in my own backyard.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "gardening",
+          "kind": "excluded"
+        }
+      ]
+    },
+    {
+      "id": "g19-eligibility-hard-negatives",
+      "text": "Alexander Fleming, the Scottish bacteriologist, made one of the most important discoveries in medical history. \"I discovered penicillin in 1928,\" said Fleming, describing the accidental contamination of a culture plate in his laboratory. Fleming was born in 1881 in Ayrshire, Scotland.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "discovered penicillin in 1928",
+          "kind": "not_excluded"
+        },
+        {
+          "match": "born in 1881",
+          "kind": "not_excluded"
+        }
+      ]
+    },
+    {
+      "id": "g20-apple-earnings-year-over-year",
+      "text": "Apple has disclosed its third fiscal quarter 2026 financial results. The technology company achieved $109.4 billion in total revenue, $29.8 billion in net profit, and $2.02 in earnings per share. This represents a 16 percent year-over-year increase in revenue. During the same quarter the previous year, Apple reported $94.04 billion in revenue, $23.43 billion in net profit, and $1.57 in earnings per share. The company's product category performance included iPhone revenue of $54.3 billion, Mac revenue of $10.4 billion, iPad revenue of $6.2 billion, and Wearables, Home, and Accessories revenue of $7.9 billion. Services generated $30.7 billion in revenue.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "94.04 billion",
+          "kind": "true"
+        },
+        {
+          "match": "23.43 billion",
+          "kind": "true"
+        },
+        {
+          "match": "109.4 billion",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g21-boeing747-reason-year-thrash",
+      "text": "The Boeing 747 made its first commercial flight in 1970, becoming one of the most influential aircraft in aviation history.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "first commercial flight in 1970",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g22-subject-entity-low-context-subclause",
+      "text": "The Wright brothers achieved the first successful powered flight in 1903. The fourth and final flight that day covered 852 feet.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "fourth and final flight that day covered 852 feet",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g23-confidence-floor-despite-agreeing-reason",
+      "text": "The Wright brothers' first successful powered flight, in 1903, lasted 12 seconds.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "lasted 12 seconds",
+          "kind": "true"
+        }
+      ]
     }
   ]
 }

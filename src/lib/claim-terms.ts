@@ -66,7 +66,10 @@ export function extractKeyTerms(claimText: string): string[] {
   const terms: string[] = [];
   for (const { clean, isKey } of tokenize(claimText)) {
     if (!isKey) continue;
-    const lower = clean.toLowerCase();
+    // Strip a trailing singular possessive ('s) so "Nauru's" set-matches the bare entity "Nauru"
+    // elsewhere — same fix, same real bug, as gates.ts's properNounWords (see its comment for why
+    // the plural-possessive case, "Wrights'", is a known, accepted gap rather than fixed here too).
+    const lower = clean.toLowerCase().replace(/'s?$/, "");
     if (seen.has(lower)) continue;
     seen.add(lower);
     terms.push(lower);

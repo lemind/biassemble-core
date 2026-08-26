@@ -346,6 +346,12 @@ export const grounnelClaims = grounnel.table("grounnel_claims", {
   claimId: uuid("claim_id").primaryKey(), // same id as the API/Redis contract
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimText: text("claim_text").notNull(),
+  // EXTRACT's own cited span for this claim — previously only reachable via grounnel_llm_calls'
+  // parsed_output JSON (stage=extract), one join + one JSON-key lookup per claim. Promoted to a
+  // column so "what text did EXTRACT actually read to produce this claim" is a plain column read,
+  // not archaeology — needed routinely once blame-attribution across EXTRACT/SEARCH/VERIFY/gates
+  // became a real, recurring investigation shape this session.
+  sourceExcerpt: text("source_excerpt"),
   verdict: text("verdict", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   evidence: text("evidence"),
   confidence: doublePrecision("confidence"),
@@ -380,7 +386,7 @@ export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id"),
   stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
-  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank"] }).notNull().default("primary"),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank", "eligibility_check"] }).notNull().default("primary"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),
@@ -492,7 +498,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id").notNull().references(() => grounnelClaims.claimId, { onDelete: "cascade" }),
-  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "counterfact_ignored", "contradiction_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation"] }).notNull(),
+  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "reason_ordinal", "subject_entity", "counterfact_ignored", "contradiction_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation", "escalation_replacement", "retry_decision"] }).notNull(),
   verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   verdictAfter: text("verdict_after", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   overridden: boolean("overridden").notNull(),
@@ -508,10 +514,14 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
       "year_role_match",
       "year_role_mismatch",
       "reason_year_mismatch",
+      "reason_ordinal_mismatch",
+      "subject_entity_mismatch",
       "counterfact_ignored",
       "retry_contradiction_invalidated",
+      "retry_affirmation_invalidated",
       "claim_reason_no_overlap",
       "escalation_reversal_invalidated",
+      "escalation_no_valid_evidence",
     ],
   }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

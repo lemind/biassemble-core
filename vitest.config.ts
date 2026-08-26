@@ -13,6 +13,7 @@ export default defineConfig({
       RAG_ENGINE_URL: "http://localhost:8080",
       RAG_API_KEY: "test-rag-key",
       RAG_TIMEOUT_MS: "500",
+      GROUNNEL_INTERNAL_PROXY_SECRET: "test-internal-proxy-secret",
     },
     include: ["tests/**/*.test.ts"],
   },

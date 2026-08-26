@@ -7,6 +7,7 @@ import grounnelExtractData from "./grounnel/extract/system.json" with { type: "j
 import grounnelVerifyData from "./grounnel/verify/system.json" with { type: "json" };
 import grounnelConsistencyCheckData from "./grounnel/consistency-check/system.json" with { type: "json" };
 import grounnelPassageRerankData from "./grounnel/passage-rerank/system.json" with { type: "json" };
+import grounnelEligibilityData from "./grounnel/eligibility/system.json" with { type: "json" };
 
 export type PromptTemplate =
   | "question-batch"
@@ -16,7 +17,8 @@ export type PromptTemplate =
   | "grounnel-extract"
   | "grounnel-verify"
   | "grounnel-consistency-check"
-  | "grounnel-passage-rerank";
+  | "grounnel-passage-rerank"
+  | "grounnel-eligibility";
 
 interface PromptFile {
   content: string;
@@ -69,6 +71,11 @@ export class PromptRegistry {
     return (grounnelPassageRerankData as PromptFile).version;
   }
 
+  /** D030 §3b — the pre-search claim-eligibility classifier, versioned independently of EXTRACT/VERIFY. */
+  getGrounnelEligibilityVersion(): string {
+    return (grounnelEligibilityData as PromptFile).version;
+  }
+
   render(template: PromptTemplate, variables: Record<string, string>): string {
     let raw: string;
 
@@ -97,14 +104,22 @@ export class PromptRegistry {
       case "grounnel-passage-rerank":
         raw = grounnelPassageRerankData.content;
         break;
+      case "grounnel-eligibility":
+        raw = grounnelEligibilityData.content;
+        break;
       default:
         throw new Error(`Unknown template: ${template satisfies never}`);
     }
 
-    let rendered = raw.replace("{{guardrails}}", this.guardrails);
+    // Review finding — a string 2nd argument to .replace() treats $$/$&/$`/$' in VALUE as special
+    // replacement patterns even though the search pattern is a plain string, not a regex. `variables`
+    // carries raw external text (a whole pasted article, claim substrings, source excerpts) that can
+    // contain any of those sequences — a replacer FUNCTION sidesteps this entirely (its return value
+    // is inserted verbatim, no $-pattern interpretation).
+    let rendered = raw.replace("{{guardrails}}", () => this.guardrails);
 
     for (const [key, value] of Object.entries(variables)) {
-      rendered = rendered.replace(`{{${key}}}`, value);
+      rendered = rendered.replace(`{{${key}}}`, () => value);
     }
 
     return rendered;

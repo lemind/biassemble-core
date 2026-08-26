@@ -55,6 +55,61 @@ describe("buildPassageSentences (D026 §7, T043)", () => {
     expect(result).toHaveLength(2);
     expect(result[0]!.n).toBe(1);
   });
+
+  it("D030 §3f, g17 root cause: rescues the sentence naming the claim's actual instance even when it shares no key term, instead of the cap filling entirely with a different-instance match", () => {
+    // extractKeyTerms("The first flight covered 852 feet.") === ["852"] — a long page where only
+    // the WRONG (fourth) flight's sentence contains "852" would, pre-D030-§3f, fill every slot
+    // with score>0 sentences and never surface the real first flight's sentence at all.
+    const claim = "The first flight covered 852 feet.";
+    const firstFlightSentence = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    const filler = Array.from({ length: 25 }, (_, i) => `Unrelated background sentence number ${i} about the historical period.`);
+    const passage = [...filler.slice(0, 10), firstFlightSentence, ...filler.slice(10)].join(" ");
+    const result = buildPassageSentences(claim, passage, 5);
+    expect(result.map((s) => s.text)).toContain(firstFlightSentence);
+  });
+
+  it("selector rescue never demotes a real key-term match — the 852ft sentence stays in the top slots when both are present", () => {
+    const claim = "The first flight covered 852 feet.";
+    const firstFlightSentence = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    const fourthFlightSentence = "The fourth and final flight covered 852 feet and lasted 59 seconds.";
+    const filler = Array.from({ length: 20 }, (_, i) => `Unrelated background sentence number ${i} about the historical period.`);
+    const passage = [...filler.slice(0, 10), firstFlightSentence, fourthFlightSentence, ...filler.slice(10)].join(" ");
+    const result = buildPassageSentences(claim, passage, 5);
+    const texts = result.map((s) => s.text);
+    expect(texts).toContain(firstFlightSentence);
+    expect(texts).toContain(fourthFlightSentence);
+  });
+
+  it("code-review regression: the selector rescue must not evict a real key-term match when the cap is already full of them", () => {
+    // Real bug (D030 §3f review): an earlier additive-score version tied the selector-only
+    // sentence with real "852" matches and evicted whichever real match happened to sort last —
+    // here, 5 independently-real "852" sentences exactly fill maxSentences=5, so a naive rescue
+    // has no room without displacing one of them.
+    const claim = "The first flight covered 852 feet.";
+    const firstFlightSentence = "Orville Wright piloted the first flight, which covered 120 feet in 12 seconds.";
+    const realMatches = Array.from({ length: 5 }, (_, i) => `A source states 852 units were logged on day ${i}.`);
+    const passage = [firstFlightSentence, ...realMatches].join(" ");
+    const result = buildPassageSentences(claim, passage, 5);
+    expect(result.map((s) => s.text)).toContain(firstFlightSentence);
+  });
+
+  // D030 §3g follow-up (g17 continued) — surfaces the same detection already used for retrieval rescue (D030 §3f) directly to VERIFY, as data rather than a prescriptive prompt instruction.
+  it("(g17 continued) tags a sentence with the sequence-selector word it contains", () => {
+    const result = buildPassageSentences("The first flight covered 852 feet.", "The fourth and final flight covered 852 feet.");
+    expect(result).toEqual([{ n: 1, text: "The fourth and final flight covered 852 feet.", selector: "fourth" }]);
+  });
+
+  it("(g17 continued) omits selector when the sentence has no sequence-position word", () => {
+    const result = buildPassageSentences("The Eiffel Tower was completed in 1889.", "The Eiffel Tower opened in 1889.");
+    expect(result).toEqual([{ n: 1, text: "The Eiffel Tower opened in 1889." }]);
+  });
+
+  // Review finding: an earlier version picked the textually-first word regardless of negation,
+  // which would tag this sentence "first" even though its actual value belongs to "fourth".
+  it("(g17 continued, review finding) omits selector when a sentence names two distinct sequence words — abstains rather than guess", () => {
+    const result = buildPassageSentences("The first flight covered 852 feet.", "Not the first attempt, but the fourth flight covered 852 feet.");
+    expect(result).toEqual([{ n: 1, text: "Not the first attempt, but the fourth flight covered 852 feet." }]);
+  });
 });
 
 describe("buildPassageSentencesMulti (D026 §11, T049)", () => {

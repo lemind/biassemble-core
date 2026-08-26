@@ -6,8 +6,11 @@ import {
   applyImplicitNegationGate,
   applyNumericGate,
   applyReasonConsistencyGate,
+  applyReasonOrdinalGate,
   applyReasonYearGate,
+  applySubjectEntityGate,
   applyYearGate,
+  rewriteUngroundedAffirmativeReason,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
 describe("gate #1 — contradiction evidence gate (T003)", () => {
@@ -286,6 +289,39 @@ describe("gate #2 — numeric normalization/comparison in code (T004)", () => {
       evidence: "Unemployment was 3.9% in 2024.",
     });
     expect(result).toEqual({ verdict: "supported", overridden: true, reason: "threshold_comparison" });
+  });
+
+  // D030 §3d (code-review finding, 2026-08-21) — a numeric MATCH must not silently un-contradict
+  // a verdict reason_ordinal itself produced (same %, different ordinal position); real reachable
+  // shape via runGateChain's actual gate order, unlike the g11 case above which stays correctable
+  // (contradictionProtectedFromForceSupported omitted/false there).
+  it("(review finding) does NOT override to supported on an equality match when the contradiction is protected (reason_ordinal-originated)", () => {
+    const result = applyNumericGate({
+      claimText: "The third trial showed a 40% success rate.",
+      verdict: "contradicted",
+      evidence: "The first trial showed a 40% success rate.",
+      contradictionProtectedFromForceSupported: true,
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("(review finding) still overrides to supported on an equality match when NOT protected — the g11-style correction path stays intact", () => {
+    const result = applyNumericGate({
+      claimText: "The third trial showed a 40% success rate.",
+      verdict: "contradicted",
+      evidence: "The first trial showed a 40% success rate.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: true, reason: "equality_comparison" });
+  });
+
+  it("(review finding) forcing contradicted on a genuine mismatch stays unconditional even when the protected flag is set", () => {
+    const result = applyNumericGate({
+      claimText: "The third trial showed a 40% success rate.",
+      verdict: "supported",
+      evidence: "The first trial showed a 55% success rate.",
+      contradictionProtectedFromForceSupported: true,
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "equality_comparison" });
   });
 
   it("overrides to contradicted when an 'under X' threshold claim's evidence is actually above X", () => {
@@ -910,5 +946,593 @@ describe("reason/verdict consistency gate — year mismatch (candidate; NOT wire
       const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
       expect(result.verdict).toBe("contradicted");
     });
+  });
+});
+
+describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T002/T003)", () => {
+  // The real regression this gate exists for (tasks.md Phase 34, D030 §1): VERIFY's own reason
+  // correctly named the fourth-and-final flight, but the stored verdict still said `supported`.
+  it("real Wright-brothers regression: forces contradicted when reason names a different ordinal on the same anchor", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The passage states the airplane flew 852 ft on its fourth and final flight.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Real live-eval capture (2026-08-22, g17-wright-brothers-ordinal, post-D030-§3f retrieval fix):
+  // VERIFY's own reason correctly identified the fourth/longest flight, but phrased it as an
+  // appositive — "the longest flight, the fourth and final one" — naming the anchor noun BEFORE the
+  // ordinal, with "one" standing in for it afterward. The forward-only anchor window found only
+  // "final"/"one" (neither overlaps the claim's "flight" anchor), so this gate abstained and the
+  // wrong `supported` verdict shipped. Fixed by also looking backward across the comma to "flight".
+  it("real live capture: fires when the reason names the anchor noun BEFORE the ordinal, in a comma-joined appositive with an anaphoric 'one' after it", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "Multiple sources state that the longest flight, the fourth and final one on December 17, 1903, covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  it("fires on a plain second/third-attempt mismatch", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The second attempt reached 100m.",
+      reason: "The evidence indicates the third attempt reached 100m.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  it("(data-model.md §1 matrix) fires when a modifier sits between the ordinal and its anchor noun", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The second attempt reached 100m.",
+      reason: "The third unsuccessful attempt reached 100m.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  it("fires under negation — 'it was not the first flight'", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "It was not the first flight; the fourth and final flight reached 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  it("fires when a real competing ordinal is mixed with a discourse-enumeration ordinal in the same reason", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "First, the source discusses the history of the program. The fourth flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  it("does NOT fire when reason restates the claim's own ordinal+anchor, even alongside a different ordinal at the same value", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The passage states the first flight reached 852 ft, while the fourth flight also reached 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains on discourse-enumeration ordinals with no anchor noun attached ('First,... Second,...')", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "First, the source reports 852 ft. Second, it says the flight lasted 59 seconds.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains (via confirmation precedence) when reason mentions the claim's own ordinal+anchor ambiguously alongside another", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The passage discusses the first flight and later the fourth flight.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Reviewer-flagged adversarial case, still a required abstain after the value-aware fix below:
+  // the claim's own ordinal+anchor appears in reason, but its nearby value is a DIFFERENT UNIT
+  // ("59 seconds" vs the claim's "852 ft") — not comparable, so this must not be asserted as a
+  // mismatch. This is the landmine a naive value-check would break (D030 §3g follow-up).
+  it("abstains when the claim's own ordinal+anchor also appears in reason, at a different-UNIT value", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The fourth flight covered 852 ft, while the first flight lasted 59 seconds.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // D030 §3g follow-up (g17 continued) — value-aware confirmation. The old "ordinal word matches
+  // claim's ordinal -> confirmed, return immediately" rule let a same-word/different-value mismatch
+  // through uncaught: "first" matches, but the reason pairs it with 120 ft, not the claim's 852 ft.
+  it("(g17 continued) fires when the claim's own ordinal+anchor appears in reason but paired with a DIFFERENT value of the SAME unit", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The fourth flight covered 852 ft, while the first flight covered only 120 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Real captured VERIFY output from the labeled-evidence-formatting experiment (2026-08-23) —
+  // the exact case the value-aware fix was built for, not a synthetic approximation.
+  it("(g17 continued, real captured output) fires on VERIFY's actual reason from the evidence-labeling experiment", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "partially_supported",
+      claimText: "The first flight covered 852 feet.",
+      reason:
+        "Source A states the record flight covered 852 feet. Source B states the fourth and final flight covered 852 feet. Source C states the fourth and final flight covered 852 feet. However, Source C explicitly states the first flight covered 120 feet, and Source B states the 852 feet was covered on the fourth flight, not the first. Therefore, the passage partially supports the claim by stating the distance was covered, but not on the first flight.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Unit-spelling variant, not unit MISMATCH — "feet" and "ft" name the same unit and must not be
+  // treated as incomparable (the opposite failure direction from the landmine case above).
+  it("(g17 continued) same value survives a unit-SPELLING variant (feet vs ft) without a false fire", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The passage states the first flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("(g17 continued) a genuine value mismatch still fires across a unit-spelling variant (feet vs ft)", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The passage states the first flight covered 120 ft, and the fourth flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Real live-deploy regression (2026-08-23, g20-apple-earnings): the FIRST-in-clause version of
+  // clauseValueNear picked up a rounded restatement ("$23.4 billion") earlier in the sentence,
+  // instead of the precise value actually adjacent to "third" in the parenthetical that follows it —
+  // forcing a real "supported" claim to `contradicted`. Fixed by picking the number nearest the
+  // ordinal match, not just the first one in its clause. This is the exact captured failure.
+  it("(review-caught regression) does not fire when an earlier ROUNDED restatement in the same clause outranks the precise value actually next to the ordinal", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "Apple reported $23.43 billion in net profit in the third fiscal quarter of 2025.",
+      reason: "Multiple sources confirm that Apple reported $23.4 billion (or $23.43 billion) in net profit in the third fiscal quarter of 2025.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Real live-deploy regression (2026-08-24, g20-apple-earnings, false accusation) — the mirror image
+  // of the case above: a HALLUCINATED near-duplicate value ("$23.42 billion", present in neither the
+  // evidence nor the claim) landed nearest the ordinal, still forcing a false contradiction under a
+  // nearest-value-must-match rule. Fixed by confirming when the claim's own value appears ANYWHERE in
+  // the clause, not only when it happens to be the single nearest one. This is the exact captured failure.
+  it("(review-caught regression) does not fire when a HALLUCINATED near-duplicate value outranks the claim's real value by proximity", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "Apple reported $23.43 billion in net profit in the third fiscal quarter of 2025.",
+      reason: "Multiple sources state that Apple reported $23.43 billion (or $23.42 billion) in profit for the third fiscal quarter of 2025.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // /code-review finding (2026-08-24, before deploy) — the any-match confirmation above must not
+  // treat a NEGATED occurrence as confirming. "not 852 ft" mentions the claim's value while actually
+  // rejecting it; presence alone (the naive version of the fix above) silently swallowed a real mismatch.
+  it("(review-caught regression) still fires when the claim's value is only present as a NEGATED figure, not an asserted one", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The first flight covered 900 ft not 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // /code-review finding (2026-08-24, before deploy) — the mirror bug on the CLAIM side: claimValue
+  // was still single-nearest, so a claim with its own parenthetical aside could mispick the rounded
+  // figure, then a reason correctly stating only the precise one would fail to match.
+  it("(review-caught regression) does not fire when the CLAIM's own parenthetical aside, not the reason, is what a nearest-only pick would mispick", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The third fiscal quarter profit was $23.4 billion (or precisely $23.43 billion) for Apple.",
+      reason: "Sources confirm Apple's third fiscal quarter profit was $23.43 billion.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains when the claim has zero ordinal words", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The flight covered 852 ft.",
+      reason: "The fourth flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains on a compound claim with 2+ ordinal words — scope-limiting guard, same precedent as applyReasonYearGate's 2+ year abstain", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft and the second flight covered 900 ft.",
+      reason: "The fourth flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains when reason contains no ordinal words at all", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The passage confirms the distance figure.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("no-ops on a verdict already contradicted", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "contradicted",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The fourth flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("no-ops on 'unverifiable' — CONFIDENCE-downgrade exclusion, same precedent as applyReasonYearGate", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "unverifiable",
+      claimText: "The first flight covered 852 ft.",
+      reason: "The fourth flight covered 852 ft.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("no-ops when reason is null", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 ft.",
+      reason: null,
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Review finding (code-review, high effort): a decimal point near the ordinal was being treated
+  // as a clause boundary, truncating the anchor window to nothing and silently defeating the gate —
+  // same bug class isSentenceTerminator was introduced to fix for the year gate's negation window.
+  it("(review finding) a decimal-figure near the ordinal doesn't collapse the anchor window to empty", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "This was the third $3.5 million funding round for the company.",
+      reason: "Filings show this was the fourth $3.5 million funding round for the company.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // Review finding (code-review, high effort): two unrelated ordinal mentions sharing only a
+  // generic preposition ("for") as their second anchor word were wrongly treated as the same
+  // anchor, forcing a false contradiction between claims about entirely different facts.
+  it("(review finding) a shared generic preposition alone does not count as anchor overlap", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "This was the third time for the team.",
+      reason: "Sources say it was the second attempt for the group.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Review finding (code-review high, full-branch pass): \b treats "-" as a boundary, so the bare
+  // regex matched "second" inside "second-to-last" — a penultimate-position compound, not "2nd" —
+  // and forced a genuinely supported claim to contradicted.
+  it("(review finding) a hyphen-compound ordinal (e.g. second-to-last) does not false-fire", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The first flight covered 852 feet.",
+      reason: "The second-to-last flight covered 852 feet.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // Round-2 review finding: the first fix (blanket hyphen-adjacency ban) was too broad and traded
+  // the false positive for a new false negative — genuine ordinal-hyphen compounds ("first-place",
+  // "second-place") stopped matching at all, so the gate silently abstained on a real contradiction.
+  it("(review finding, round 2) still fires on a genuine ordinal-hyphen compound (e.g. first-place vs second-place)", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "The runner finished in first-place at the marathon.",
+      reason: "Official results show the runner finished in second-place at the marathon.",
+    });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+  });
+
+  // D030 §3k — the live g20 false accusation this rule exists for: the confirming "$23.43 billion"
+  // sits in a PRIOR sentence, so clause-scoped lookup only sees the rounded "$23.4 billion".
+  it("(g20 live failure 2026-08-24) a rounded restatement across a clause boundary is not a competing value", () => {
+    const result = applyReasonOrdinalGate({
+      verdict: "supported",
+      claimText: "Apple reported $23.43 billion in net profit in the third fiscal quarter of 2025.",
+      reason:
+        "Source A sentence 7 states net income was $23.43 billion. Source B sentence 5 and Source C sentence 4 state net quarterly profit was $23.4 billion for the third fiscal quarter of 2025. The slight difference in cents is negligible and the claim is supported.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  // D030 §3k value-agreement rule: round both to the LESSER decimal precision (decimal-exact,
+  // half-up), compare digit strings. Table-driven so the policy is enumerated, not implied.
+  describe("value agreement — decimal-precision boundary table (D030 §3k)", () => {
+    const agree: Array<[string, string, string]> = [
+      ["23.4", "23.43", "the live g20 case"],
+      ["1.20", "1.2", "trailing zero carries no information"],
+      ["0.1", "0.10", "trailing zero, other direction"],
+      ["852", "852.0", "integer vs explicit .0"],
+      ["2.675", "2.68", "exact-half: toFixed says 2.67, decimal says 2.68"],
+      ["23.45", "23.5", "exact-half: toFixed says 23.4, decimal says 23.5"],
+      ["1.005", "1.01", "exact-half: toFixed says 1.00, decimal says 1.01"],
+    ];
+    const conflict: Array<[string, string, string]> = [
+      ["1.20", "1.21", "genuinely different at shared precision"],
+      ["23.4", "24.4", "different integer part"],
+      ["120", "852", "the g17 shape — unrelated magnitudes"],
+      ["23.45", "23.4", "23.45 resolves to 23.5 at 1dp"],
+      ["852", "850", "significant-figure rounding is out of scope by choice"],
+    ];
+
+    for (const [claimVal, reasonVal, why] of agree) {
+      it(`agrees: ${claimVal} vs ${reasonVal} (${why})`, () => {
+        const result = applyReasonOrdinalGate({
+          verdict: "supported",
+          claimText: `The first flight covered ${claimVal} feet.`,
+          reason: `The passage states the first flight covered ${reasonVal} feet.`,
+        });
+        expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+      });
+    }
+
+    for (const [claimVal, reasonVal, why] of conflict) {
+      it(`conflicts: ${claimVal} vs ${reasonVal} (${why})`, () => {
+        const result = applyReasonOrdinalGate({
+          verdict: "supported",
+          claimText: `The first flight covered ${claimVal} feet.`,
+          reason: `The passage states the first flight covered ${reasonVal} feet.`,
+        });
+        expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+      });
+    }
+
+    // Policy call 1 (D030 §3k): conflict. Precisely — the two resolve to different values at their
+    // shared 1dp precision (23.49 -> 23.5). NOT "23.49 isn't a rounding of 23.4": 23.4 is a valid
+    // 1dp form of 23.43/23.44. Conservative: the gate must not silently repair a mis-rounded source.
+    it("policy call: 23.4 vs 23.49 conflicts — they resolve differently at shared 1dp precision", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The first flight covered 23.4 feet.",
+        reason: "The passage states the first flight covered 23.49 feet.",
+      });
+      expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+    });
+
+    // Policy call 2 (D030 §3k): agrees, mechanically (shared precision 0). Recorded as NUMERIC
+    // REPRESENTATIONAL agreement only — not a claim that 59s and 59.4s are interchangeable
+    // measurements. Measurement compatibility would need a domain tolerance; not invented here.
+    it("policy call: 59 vs 59.4 agrees — representational only, not measurement interchangeability", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The first flight lasted 59 seconds.",
+        reason: "The passage states the first flight lasted 59.4 seconds.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+  });
+});
+
+// T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different
+// domains/phrasing from T002's fixture set (flights/attempts) so this isn't just re-testing the
+// same cases the implementation was tuned against.
+describe("reason/verdict consistency gate — ordinal mismatch: held-out generalization (T009, SC-002)", () => {
+  // Must NOT fire — genuinely correct claim/reason pairs. False-downgrade rate on this set is a
+  // hard requirement of zero (SC-002); this is the dangerous failure direction.
+  const heldOutCorrect: Array<{ claim: string; reason: string }> = [
+    { claim: "The second novel in the series was published in 1998.", reason: "The series' second novel was published in 1998, according to the publisher's archive." },
+    { claim: "The third experiment yielded a positive result.", reason: "Researchers confirmed the third experiment yielded a positive result in their published paper." },
+    { claim: "The fifth season premiered in March.", reason: "The network's fifth season premiered in March, ahead of the previous year's April launch." },
+    { claim: "The first candidate withdrew from the race.", reason: "News reports confirm the first candidate withdrew from the race shortly before the primary." },
+    { claim: "The seventh album topped the charts.", reason: "The artist's seventh album topped the charts upon release, label records show." },
+    { claim: "The fourth prototype passed all tests.", reason: "Engineers confirmed the fourth prototype passed all tests during the final review." },
+    { claim: "The second referendum failed to pass.", reason: "Official results show the second referendum failed to pass by a narrow margin." },
+    { claim: "The eighth episode revealed the twist.", reason: "Viewers were surprised when the eighth episode revealed the twist, critics noted." },
+    { claim: "The third quarter showed revenue growth.", reason: "The company's third quarter showed revenue growth compared to the prior year." },
+    { claim: "The sixth chapter introduced the villain.", reason: "The book's sixth chapter introduced the villain, per a published summary." },
+  ];
+
+  // Must fire — genuine ordinal contradictions, same domains as above with a different competing
+  // ordinal on the same anchor. Recall on this set is measured and reported, not required to hit
+  // 100% (SC-002) — 100% on a hand-built set isn't evidence of generalization by itself.
+  const heldOutContradictions: Array<{ claim: string; reason: string }> = [
+    { claim: "The second novel in the series was published in 1998.", reason: "Records show the third novel in the series was published in 1998." },
+    { claim: "The third experiment yielded a positive result.", reason: "The report states the second experiment yielded a positive result." },
+    { claim: "The fifth season premiered in March.", reason: "According to the network, the sixth season premiered in March." },
+    { claim: "The first candidate withdrew from the race.", reason: "News sources confirm the second candidate withdrew from the race." },
+    { claim: "The seventh album topped the charts.", reason: "Chart data shows the eighth album topped the charts upon release." },
+    { claim: "The fourth prototype passed all tests.", reason: "Engineering logs show the fifth prototype passed all tests." },
+    { claim: "The second referendum failed to pass.", reason: "Official records show the first referendum failed to pass." },
+    { claim: "The eighth episode revealed the twist.", reason: "Critics noted that the ninth episode revealed the twist." },
+    { claim: "The third quarter showed revenue growth.", reason: "Financial filings show the fourth quarter showed revenue growth." },
+    { claim: "The sixth chapter introduced the villain.", reason: "Reviewers noted the seventh chapter introduced the villain." },
+  ];
+
+  it("false-downgrade rate on held-out correct claims is zero (hard requirement, SC-002)", () => {
+    const falseDowngrades = heldOutCorrect.filter(({ claim, reason }) => {
+      const result = applyReasonOrdinalGate({ verdict: "supported", claimText: claim, reason });
+      return result.overridden;
+    });
+    expect(falseDowngrades, `Unexpected false downgrades: ${JSON.stringify(falseDowngrades)}`).toHaveLength(0);
+  });
+
+  // Reports the actual recall rate rather than asserting a specific number — this is a measurement,
+  // not a pass/fail gate (SC-002 explicitly does not require 100%). Observed: 10/10 on this set —
+  // recorded here so a future change to the anchor/negation logic has a concrete regression signal.
+  it("contradiction-detection recall on held-out mismatches (measured, not required to hit 100%)", () => {
+    const caught = heldOutContradictions.filter(({ claim, reason }) => {
+      const result = applyReasonOrdinalGate({ verdict: "supported", claimText: claim, reason });
+      return result.overridden && result.reason === "reason_ordinal_mismatch";
+    });
+    console.log(`[T009] ordinal-gate held-out recall: ${caught.length}/${heldOutContradictions.length}`);
+    expect(caught).toHaveLength(10);
+  });
+});
+
+describe("subject-entity gate — deterministic backstop for g17 (unrelated real sources coincidentally matching a claim's bare number)", () => {
+  it("downgrades supported when evidence shares no proper noun with subjectEntity — the real g17 repro", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "The second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: "Prof Foster believes Mr Gray's repair work resulted in as many as 34 numbered fragments of the original stone.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" });
+  });
+
+  it("leaves supported alone when the evidence names the subject entity, including in possessive form", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "The second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: "Marwick's second layer contained 34 fragments of pottery.",
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("regression: a possessive form in evidence ('Nauru's') must still set-match the claim's bare proper noun ('Nauru')", () => {
+    // Real bug found wiring this gate into runGateChain (2026-08-21): properNounWords didn't strip
+    // possessives, so "nauru's" != "nauru" as Set members even though they name the same entity —
+    // every real-prose claim (evidence almost always refers back possessively) was false-downgraded.
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Nauru has a resident population of approximately 12,000 people.",
+      subjectEntity: "",
+      evidence: "Nauru's resident population is approximately 12,000 people.",
+    });
+    expect(result.overridden).toBe(false);
+  });
+
+  it("falls back to claimText when subjectEntity is empty", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Marwick led an excavation at Larkspur Hill.",
+      subjectEntity: "",
+      evidence: "An unrelated passage about the Stone of Destiny and its repair history.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" });
+  });
+
+  it("falls back to claimText when subjectEntity is undefined (pre-g17 caller/fixture)", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Marwick led an excavation at Larkspur Hill.",
+      // @ts-expect-error — exercising the runtime guard for callers that predate this field.
+      subjectEntity: undefined,
+      evidence: "An unrelated passage about the Stone of Destiny and its repair history.",
+    });
+    expect(result.overridden).toBe(true);
+  });
+
+  it("also checks partially_supported, not just supported", () => {
+    const result = applySubjectEntityGate({
+      verdict: "partially_supported",
+      claimText: "Marwick's second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
+    });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "subject_entity_mismatch" });
+  });
+
+  it("never touches contradicted, unsupported, or unverifiable — only supported/partially_supported are checked", () => {
+    for (const verdict of ["contradicted", "unsupported", "unverifiable"] as const) {
+      const result = applySubjectEntityGate({
+        verdict,
+        claimText: "Marwick's second layer contained 34 fragments.",
+        subjectEntity: "Marwick",
+        evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
+      });
+      expect(result).toEqual({ verdict, overridden: false, reason: null });
+    }
+  });
+
+  it("no-ops when evidence is null", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "Marwick's second layer contained 34 fragments.",
+      subjectEntity: "Marwick",
+      evidence: null,
+    });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("abstains (sameEntity's own convention) when the claim names no proper noun at all", () => {
+    const result = applySubjectEntityGate({
+      verdict: "supported",
+      claimText: "The event happened there.",
+      subjectEntity: "",
+      evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
+    });
+    expect(result.overridden).toBe(false);
+  });
+});
+
+describe("rewriteUngroundedAffirmativeReason — D031, real live-test finding: unverifiable/unsupported verdict shown beside a reason that affirmatively claims sources confirm the claim", () => {
+  const REPLACEMENT = "The available sources did not provide a specific passage that could be cited to verify this claim.";
+
+  it("rewrites when unverifiable + 0 citations + affirmative reason (real captured example)", () => {
+    const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight lasted 12 seconds.");
+    expect(result).toBe(REPLACEMENT);
+  });
+
+  it("rewrites when unsupported + 0 citations + affirmative reason", () => {
+    const result = rewriteUngroundedAffirmativeReason("unsupported", 0, "The passage confirms this claim is accurate.");
+    expect(result).toBe(REPLACEMENT);
+  });
+
+  it("leaves supported untouched even with 0 citations — only unsupported/unverifiable are in scope", () => {
+    const reason = "Multiple sources state the first flight lasted 12 seconds.";
+    expect(rewriteUngroundedAffirmativeReason("supported", 0, reason)).toBe(reason);
+  });
+
+  it("leaves contradicted untouched even with 0 citations", () => {
+    const reason = "Sources confirm a different figure than the one claimed.";
+    expect(rewriteUngroundedAffirmativeReason("contradicted", 0, reason)).toBe(reason);
+  });
+
+  it("leaves unsupported untouched when citations are present — this bug only exists with zero citations", () => {
+    const reason = "Multiple sources state the first flight lasted 12 seconds.";
+    expect(rewriteUngroundedAffirmativeReason("unsupported", 2, reason)).toBe(reason);
+  });
+
+  it("leaves unverifiable untouched when citations are present", () => {
+    const reason = "Multiple sources state the first flight lasted 12 seconds.";
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 3, reason)).toBe(reason);
+  });
+
+  it("leaves a negated affirmative-shaped reason untouched — 'sources do not confirm' is not a confirmation", () => {
+    const reason = "Sources do not confirm this claim.";
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 0, reason)).toBe(reason);
+  });
+
+  it("leaves an ordinary 'could not verify' reason untouched — no affirmative source-confirmation language at all", () => {
+    const reason = "Could not verify this claim against the retrieved passages.";
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 0, reason)).toBe(reason);
+  });
+
+  it("leaves a null reason untouched", () => {
+    expect(rewriteUngroundedAffirmativeReason("unverifiable", 0, null)).toBeNull();
+  });
+
+  it("real captured example: the second Wright-brothers claim from the same live run", () => {
+    const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight covered 120 feet.");
+    expect(result).toBe(REPLACEMENT);
   });
 });
