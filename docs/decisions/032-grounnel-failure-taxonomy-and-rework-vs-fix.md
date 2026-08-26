@@ -274,6 +274,64 @@ a concrete, bounded number instead of one anecdote — enough to say "worth a re
 is ever picked up," not enough to say "rerank is broken" or "R3 is unnecessary." Characterisation
 only, per this task's own scope note; no reranker change is made here.
 
+### §3k. MEASURE-3: negative claims false-accuse at 14% — and it's not a retrieval problem (§3d revised)
+
+Spec 013 T10, run 2026-08-26. 5 new golden cases, "X did not do Y" with a well-documented positive
+form, N=10 each (50 repetitions total).
+
+| Case | supported | unsupported | contradicted |
+| --- | --- | --- | --- |
+| "Microsoft did not create the iPhone" | 10 | 0 | 0 |
+| "The Eiffel Tower is not located in London" | 10 | 0 | 0 |
+| "Buzz Aldrin was not the first man to walk on the Moon" | 7 | 0 | **3** |
+| "World War II did not end in 1943" | 1 | 5 | **4** |
+
+**Aggregate: 38/50 (76%) `supported`, 5/50 `unsupported`, 7/50 (14%) `contradicted`.**
+
+**The 7/50 `contradicted` result is a Cardinal Rule violation, live, today, with no fix applied.**
+These are `kind: true` claims (the negation is factually correct) — `contradicted` on a true claim
+is the one unsafe failure this entire project is built to prevent, and this measurement produced it
+at a rate an order of magnitude above the "essentially never" bar every other golden case holds to.
+
+**§3d's diagnosis of this failure mode is wrong, and this data is why.** §3d said: *"the pipeline
+searched for evidence supporting the claim, found none, and stopped... absence of support is the
+expected outcome."* **The retrieved evidence is not absent and not the problem.** Every `contradicted`
+case's own `reason` field cites correct, on-topic, sufficient evidence:
+
+> *"Source A states World War II ended on September 2, 1945... which **contradicts** the claim that
+> it did not end in 1943."*
+
+"Ended in 1945" does not contradict "did not end in 1943" — those two facts are simultaneously true.
+VERIFY found exactly the right passage and then **inverted the polarity of its own conclusion**: it
+pattern-matched "evidence names a different date than the claim" onto "contradicted," without
+checking whether the claim's own negation already accounts for that difference. The Aldrin cases are
+the same mechanism: evidence correctly says Armstrong was first and Aldrin second — which *supports*
+"Aldrin was not first" — read instead as contradicting it.
+
+**This also shows up sub-verdict, not just cross-verdict.** Two of the `unsupported` WWII
+repetitions have a `reason` that explicitly states the opposite of the stored verdict: *"World War
+II... ended in 1945... which **directly supports** the claim that it did not end in 1943"* — reason
+says supports, verdict says unsupported. The existing D031 reason/verdict consistency backstop
+(§3d's neighbor mechanism) does not catch this, because it only fires on affirmative language paired
+with **zero citations**; these calls have citations, so the backstop's precondition never triggers.
+
+**Consequence for T11/T12: the planned fix targets the wrong layer.** D032 §5 (and spec 013's T11
+acceptance) describes the fix as *"detect a negative claim and invert the search query... let VERIFY
+evaluate the negation against the positive answer"* — a retrieval-side fix, on the premise that
+support-seeking search returns nothing for a negative claim. **Search is not failing here.** The
+correct passage is retrieved in every single one of these 50 repetitions, including all 7 false
+accusations. The defect is entirely inside VERIFY's polarity handling once it already has the right
+evidence. Reframing the query changes nothing about a bug that happens after retrieval succeeds.
+
+**T11's design (not yet started) must change scope before any code is written**: this looks like
+either a VERIFY prompt gap (the model has no explicit instruction for double-negative/polarity
+checking, the same class of gap §3c found and fixed for qualified superlatives) or a deterministic
+post-hoc gate in the reason/verdict-consistency family (`gates-reason-grounded.ts` already has
+`AFFIRMATIVE_SOURCE_LANGUAGE_RE`-style backstops for exactly this shape of incoherence — extending
+that family, rather than building new query-reframing logic, may be the smaller and more targeted
+fix). **Not decided here — flagging for the design step**, not implementing either option in this
+measurement task.
+
 ### §3e. Cost distribution (context for any proposal that adds calls)
 
 128 LLM calls, ~435K tokens, for 44 claims. Reranking alone is 68 calls / 171K tokens — comparable

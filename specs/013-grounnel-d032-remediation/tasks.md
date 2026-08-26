@@ -122,14 +122,20 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     Per this task's own cancellation clause, no prompt change is made. SC-4 is satisfied as a side
     effect of the measurement itself, without touching `verify/system.json`.
 
-- [ ] **T10 — MEASURE-3: do negative claims fail systematically?**
+- [x] **T10 — MEASURE-3: do negative claims fail systematically?**
   - Acceptance: 3–5 negative-claim golden cases ("X did not do Y", positive form well documented),
     run at N≥10. Failure rate recorded.
   - Verify: golden-set run; verdict distribution per case.
   - Files: `evaluations/golden/grounnel/live-eval-golden-set.json`
-  - Blocks: T11, T12. **If negatives mostly succeed, T11/T12 are cancelled** — #4 was one case.
+  - **Result (2026-08-26, D032 §3k): 38/50 supported, 7/50 (14%) `contradicted` on `kind:true`
+    claims — a live Cardinal Rule violation, not a coverage gap. T11/T12 are NOT cancelled and are
+    now higher priority than originally scoped. ⚠ T11's premise is also wrong** — search is not
+    failing (correct evidence retrieved in all 7 false-accusation cases); this is a VERIFY
+    polarity/negation-handling defect downstream of retrieval. **T11's design must be redone against
+    this mechanism before any code is written** — query reframing does not address it.
 
-- [ ] **T11 — FIX-3a: design negative-claim reframing**
+- [ ] **T11 — FIX-3a: design negative-claim reframing** ⚠ SCOPE MUST BE REVISED (see T10 result,
+  D032 §3k) before starting — the query-reframing premise is refuted by measured data.
   - Acceptance: a written design for detecting a negative claim and inverting its search query,
     including how VERIFY evaluates the negation against the positive answer, and an explicit
     argument that no `contradicted`-from-absence path is introduced.
