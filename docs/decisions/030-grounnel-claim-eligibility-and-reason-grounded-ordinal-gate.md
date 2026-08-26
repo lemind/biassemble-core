@@ -999,6 +999,18 @@ with its fixture semantics unchanged (`kind: false`, `acceptable: ["contradicted
 weakened or quietly excluded to make a suite look green; §3e is the standing example of what mutating
 the target instead of the system costs here.
 
+**Amendment (2026-08-26, D032 §3k/§9): unfrozen, on this freeze's own exemption.** Spec 013's T10
+measured a new class this freeze did not anticipate: `applyReasonOrdinalGate` overriding `supported`
+to `contradicted` on a **negated** claim ("Buzz Aldrin was not the first man to walk on the Moon"),
+because the gate compared its extracted ordinal against the reason with no check for whether that
+ordinal sat inside the claim's own negation — a different reason's "second" then read as a competing
+value instead of confirmation of the negation. This is exactly what the freeze's own clause carves
+out: *"a new, independently reproduced failure mode"*, reproduced 3/10 on a fresh golden case, not
+"another g17 miss" (g17 has no negation). The fix (D032 §9) is a negation-scope **precondition** —
+one more reason to abstain, not a fourth positional exception layered onto the three this section
+already added. `applyReasonOrdinalGate` may be edited again for this class only; the freeze's
+original scope (phrasing-variant whack-a-mole against g17) still stands.
+
 **Incidental observation, deliberately not acted on.** Gate-firing rates across all recorded history
 show `counterfact_ignored` at **0 overrides in 7,237 evaluations** — dead in all observed eval and
 production traffic. It is *not* being deleted as part of this work. Establishing that a guard hasn't

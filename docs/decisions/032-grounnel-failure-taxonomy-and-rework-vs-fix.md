@@ -306,7 +306,7 @@ Every single wrong verdict was produced by a deterministic gate overriding it.**
 
 | Gate | Cases | Override | n |
 | --- | --- | --- | --- |
-| `reason_ordinal` (FROZEN, D030 §3m) | Aldrin | `supported` → `contradicted` | 3 |
+| `reason_ordinal` (FROZEN, D030 §3k) | Aldrin | `supported` → `contradicted` | 3 |
 | `reason_year` | WWII | `supported` → `contradicted` | 4 |
 | `reason_consistency` | WWII | `supported` → `contradicted` | 7 |
 | `retry_reconciliation` | WWII | `contradicted` → `unsupported` (partial rescue) | 5 |
@@ -567,8 +567,14 @@ cost. And it fixes the layer the evidence actually indicts.
 
 ### §9c. Constraints and open items
 
-- **`reason_ordinal` is FROZEN** (D030 §3m). This design requires unfreezing it. That is an explicit
-  decision, not an implementation detail — it must be taken before T12 starts.
+- **`reason_ordinal` is FROZEN** (D030 §3k). This design requires unfreezing it. **Decided
+  2026-08-26: unfreeze, on the freeze's own terms** — D030 §3k's freeze exempts *"a new,
+  independently reproduced failure mode"* and explicitly distinguishes that from *"another g17
+  miss."* This is a different gate anchor (year/ordinal-token negation-scope, not a reason-phrasing
+  variant), independently reproduced (3/10 on a new golden case, not a single g17 draw), and
+  structurally different from the churn the freeze was guarding against — a precondition that can
+  only *reduce* firings, not a fourth positional exception layered onto the existing three. See
+  D030 §3k, amended entry recording this.
 - **`reason_consistency` needs a trust-ordering decision, not just a regex.** Its real defect is
   preferring fallible reason prose over VERIFY's own verdict. Narrowing it to "abstain when the claim
   is negated" fixes the measured cases; the general question — should a prose-driven gate *ever*
@@ -583,4 +589,63 @@ cost. And it fixes the layer the evidence actually indicts.
 - **Simulate before implementing** (D030 §3n). The 12 captured repetitions plus all historical
   `reason_year`/`reason_ordinal`/`reason_consistency` firings in `grounnel_gate_events` are the
   simulation corpus: the fix must clear the 12 and must not gut the gates' legitimate firings. This
-  step killed 4/4 `subject_entity` fixes and is not optional here.
+  step killed 4/4 `subject_entity` fixes and is not optional here. **Result (2026-08-26): of 109
+  historical `overridden=true` firings, exactly 31 change — the negated-claim set, all from T10's own
+  measurement, all confirmed false accusations. The other 78 are untouched**; verified by isolating
+  the new guard's claim-text-only precondition from a confound in the replay itself (retry/escalation
+  can rewrite `grounnel_claims.reason` after a gate ran, so replaying against the *final* stored
+  reason is unreliable for the general historical corpus — exactly this section's own documented
+  caveat, reproduced directly during this replay).
+- **Review finding, fixed: negation must be checked in both directions.** The first implementation's
+  `isNegatedAtPosition` only scanned backward from the extracted token, so it caught "did not end in
+  1943" but missed the equally natural postposed phrasing "1943 is not the year it ended" — the exact
+  same bug, undetected. `reason_year`/`reason_ordinal` now use a bidirectional
+  `isClaimTokenNegated`, scanning forward via the file's existing `firstClauseBoundaryForward`
+  helper too. `isNegatedAtPosition` itself is untouched and still backward-only at its four
+  pre-existing call sites (reason-side checks, value-negation filtering) — deliberately not widened
+  there, to avoid changing already-tested behaviour outside this fix's scope.
+- **Review finding, accepted as a documented gap, not fixed: `reason_consistency`'s presence-only
+  check can suppress a genuine, unrelated contradiction.** Unlike `reason_year`/`reason_ordinal`,
+  this gate has no single extracted claim token to scope a check around — it abstains on ANY
+  negation cue anywhere in the claim. Concrete counter-example: claim *"The unarmed suspect, who did
+  not resist arrest, was taken into custody in 1990"* with reason correctly contradicting the 1990
+  date — the unrelated "did not resist" now suppresses that catch too. This is safe-side (lost
+  detection, not a manufactured accusation — the same asymmetry the Cardinal Rule already accepts
+  elsewhere) and rests on EXTRACT's atomicity rule (a compound claim like this should already have
+  been split before reaching VERIFY) — a rule that is prompt-level, not code-enforced, so the gap is
+  real, not hypothetical. Documented with a test (`gates.test.ts`, "known gap" case) rather than
+  silently left implicit. Not fixed here: a precise fix needs either parenthetical/relative-clause
+  stripping (comma-scoped, risks new bugs of its own — a bare comma also appears in legitimate
+  non-parenthetical claims like "ended in 1945, not 1943") or the trust-ordering redesign this
+  section already left open above. Revisit together if `reason_consistency` is ever redesigned.
+
+## §10. New finding (2026-08-26, SC-5 regression run): `SELECTOR_RE_G` matches "second" inside "12-second"
+
+Found incidentally while running T12's SC-5 regression subset (not caused by T12 — see below).
+`g23-confidence-floor-despite-agreeing-reason` produced a real false accusation: `contradicted` on
+the true claim *"The Wright brothers' first successful powered flight lasted 12 seconds."*
+
+**Mechanism.** `instance-selector.ts`'s `SELECTOR_RE_G` is
+`` \b(first|second|third|...|tenth)\b(?!-to-) ``. `\b` is a zero-width transition between a word
+character and a non-word character — a hyphen is non-word, so `\b` fires on **both** sides of it.
+VERIFY's reason described the flight as *"the Wright brothers' 12-second flight"* — the regex reads
+`second` out of `12-second` as if it were the ordinal word, not the duration unit. That spurious
+match then anchors against the claim's real `first` via `ordinalAnchorWords` (both share "flight"),
+`applyReasonOrdinalGate` treats `first` vs `second` as a competing ordinal, and forces `contradicted`
+on a claim the reason never actually disputed.
+
+**Confirmed NOT a T12 regression.** `isClaimTokenNegated` correctly found no negation on this claim
+(there isn't one) and returned `false`, so T12's new guard took no action — control reached the
+*unmodified* downstream matching logic that has contained this bug all along. Reproduced directly:
+`[...claim.matchAll(SELECTOR_RE_G)]` → `first`; `[...reason.matchAll(SELECTOR_RE_G)]` → `second` (at
+the position inside `12-second`). This class of bug (a hyphenated compound reading as a bare
+sequence word) could fire identically with or without T12's change, on any reason phrasing that
+happens to name a duration as "N-second"/"N-third" etc.
+
+**Scope note.** `reason_ordinal` is the FROZEN gate (D030 §3k). This is a **different, independently
+reproduced failure mode** from both the original phrasing-whack-a-mole class the freeze targeted and
+from T12's negation-scope class — a tokenization bug, not a comparison-logic bug. Not fixed here;
+recorded so it isn't lost and isn't mistaken for a T12 defect if it recurs. Candidate fix (not
+implemented): exclude a selector-word match immediately preceded by a hyphen and a digit (the
+"N-second"/"N-third" shape specifically), the same narrow, evidence-driven scoping this file's other
+positional exceptions use — not a general prose-parsing fix.

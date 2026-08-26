@@ -48,7 +48,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   const diagnostics: Diagnostic[] = [];
 
   // Reason-consistency gate (g04/g05) — runs before gate #1 so a flip to contradicted still clears its evidence check.
-  const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: input.reason });
+  const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: input.reason, claimText: input.claimText });
   gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden, reason: reasonConsistency.reason });
   verdict = reasonConsistency.verdict;
 

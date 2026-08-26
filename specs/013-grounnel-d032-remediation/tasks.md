@@ -144,20 +144,57 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Verify: design reviewed before implementation; simulate the predicate against the 12 captured
     repetitions + all historical firings of the three gates (zero API cost).
   - Files: `docs/decisions/032-*.md` §9.
-  - **Blocked on a decision: `reason_ordinal` is FROZEN (D030 §3m) and this design requires
-    unfreezing it.** Must be taken before T12 starts.
+  - **`reason_ordinal` is FROZEN (D030 §3k, not §3m — corrected citation).** Unfreeze decided
+    2026-08-26 on the freeze's own exemption terms (D032 §9c). T12 unblocked.
 
-- [ ] **T12 — FIX-3b: implement the negation-scope guard**
+- [x] **T12 — FIX-3b: implement the negation-scope guard**
   - Acceptance: `reason_year`, `reason_ordinal`, and `reason_consistency` abstain when the compared
     claim token sits inside a negation scope. No new gate is added; no verdict-escalation path is
     added. Unit tests cover the negation predicate and each gate's abstain path (pure logic —
     in-scope per CLAUDE.md, and `gates.ts` is the one place kept exhaustive).
-  - Verify: the 12 captured T10 repetitions no longer produce `contradicted`/`unsupported`;
-    simulation shows the gates' legitimate historical firings are not gutted (D030 §3n);
-    T10's fixtures reach `supported` in ≥8/10 (SC-3); full golden set N≥5 for regression (SC-5).
-  - Files: `src/orchestrators/grounnel/gates-reason-grounded.ts`, `gates.ts`,
-    `tests/unit/orchestrators/grounnel/gates.test.ts`
-  - Depends on: T11 (done) + the `reason_ordinal` unfreeze decision.
+  - Verify: `npx tsc --noEmit` clean; `npx vitest run` 84 files / 1208 tests pass (14 new negation-
+    guard tests added). D030 §3n replay against all 109 historical `overridden=true` firings of the
+    three gates: **exactly 31/109 change — the negated-claim set, all from T10's own measurement,
+    all confirmed false accusations. The other 78 (all legitimate historical firings) are
+    untouched — the guard is claim-text-only and structurally cannot reach them.** A naive full
+    replay first showed 76 changed; the extra 45 were stale `grounnel_claims.reason` (retry/
+    escalation rewrites it after a gate ran — D030 §3n's own documented caveat, reproduced directly:
+    a historical `reason_ordinal` firing replayed against its now-stale stored reason abstained via
+    a *pre-existing, unmodified* code path — `reasonMatches.length === 0` — before the new guard was
+    even reached). Isolating the guard's claim-text-only precondition from that confound resolved it.
+  - Files: `src/orchestrators/grounnel/gates-shared.ts` (new `containsNegationCue`/`NEGATION_CUE_RE`,
+    shared with `gates-reason-grounded.ts`'s existing position-scoped `isNegatedAtPosition`),
+    `gates-reason-grounded.ts`, `gates-text-grounding.ts`, `pipeline-gate-chain.ts` (threaded
+    `claimText` into `applyReasonConsistencyGate`'s call), `tests/unit/orchestrators/grounnel/gates.test.ts`
+  - Depends on: T11 (done) + the `reason_ordinal` unfreeze (done, D030 §3k amendment).
+  - **`/code-review medium` run (2026-08-26), 4 findings fixed:** stale `D030 §3m` citation in a code
+    comment (missed when other citations were corrected — should have been §3k); every new comment
+    exceeded CLAUDE.md's ~200-char rule, trimmed to one-liners + ADR pointers; negation detection was
+    backward-only, missing postposed phrasing ("1943 is not the year it ended") — now bidirectional
+    via new `isClaimTokenNegated`, 2 new tests added; `reason_consistency`'s presence-only scoping can
+    suppress a genuine unrelated contradiction in a compound claim — accepted as a documented,
+    safe-side gap (not fixed — a real fix needs either risky comma-scoping or the trust-ordering
+    redesign §9c already left open), 1 new "known gap" test added. Re-ran the D030 §3n replay after
+    the postposed-negation fix: still exactly 31/109, unchanged. Final: 84 files / 1211 tests pass.
+  - **Live verification (2026-08-26), deployed uncommitted (see commit note below):**
+    - **SC-3 — PASS, 50/50.** All 5 T10 golden cases re-run at N=10: 100% `supported`, 0 `contradicted`,
+      0 `unsupported` (was 38/50 supported, 7/50 false-accused pre-fix). Confirmed at the mechanism
+      level too — `reason_year`/`reason_ordinal`/`reason_consistency` all ran and correctly abstained
+      (`overridden=false`), not merely silent.
+    - **SC-5 — targeted subset run** (10 cases × N=5 ≈ 600 calls, not the full 28-case/1680-call set —
+      user chose the cheaper option given ~1300 calls already spent today; full-set SC-5 remains open).
+      Scored with the real `evaluateGrounnelRun` harness, not by hand. 8/10 clean. Two anomalies, both
+      **confirmed unrelated to T12**: g22's correctRate 0.00 is the pre-existing, documented, safe
+      `subject_entity` downgrade (D030 §3l/§3m) — not new. g23 produced one real safety violation
+      (`contradicted` on a true claim) traced to a **newly-discovered, pre-existing, unrelated bug**
+      (D032 §10 — `SELECTOR_RE_G` reads "second" out of "12-second") that T12's guard demonstrably did
+      not cause (`isClaimTokenNegated` correctly found no negation and deferred to untouched code).
+  - **Not yet committed.** Deployed via the working-tree upload the user's `vercel --prod` uses from
+    this directory (confirmed: results reflect the fix), but `git log` still stops at `e1ba84f` —
+    committing needs to happen before this state is anything but local+deployed.
+  - Remaining before this ships: live re-verification of T10's 5 golden cases (SC-3: Aldrin/WWII
+    should now reach `supported` ≥8/10) and full golden-set regression (SC-5) — not yet run, needs
+    deployment same as T3/T10 did.
 
 - [ ] **T13 — FIX-5: prediction exclusion policy**
   - Acceptance: `isEligibilityExcluded` excludes `prediction` regardless of `certainty` — **only if
@@ -208,6 +245,22 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Files: `biassemble/frontend/src/lib/verdictStyle.ts`, `biassemble/frontend/src/types/grounnel.ts`
   - Depends on: T5 (the enum value must exist first). **Different repo — out of this spec's own
     scope, tracked here only so it isn't lost** (D032 §7 Q3).
+
+- [ ] **T17 — Fix `SELECTOR_RE_G` matching a sequence word inside a hyphenated compound**
+  - Acceptance: `\b(first|second|...|tenth)\b` no longer matches "second" in "12-second",
+    "third" in "one-third", etc. — a word boundary next to a hyphen currently reads either side as
+    a standalone word. Candidate scope: exclude a match immediately preceded by `\d+-`.
+  - Verify: the exact g23 repro (D032 §10) — `applyReasonOrdinalGate` must no longer force
+    `contradicted` on "The Wright brothers' first successful powered flight lasted 12 seconds"
+    against a reason mentioning "the Wright brothers' 12-second flight." Simulate against historical
+    `reason_ordinal`/`subject_entity`/any other `SELECTOR_RE_G` consumer's firings first (D030 §3n) —
+    this regex is shared infrastructure (`instance-selector.ts`), not gate-local.
+  - Files: `src/lib/instance-selector.ts`
+  - **Found 2026-08-26 during T12's SC-5 regression run — real, live, false-accusation-producing,
+    and independent of T12** (confirmed: T12's negation guard did not fire on the failing case).
+    Not part of this spec's original scope; not blocking T12's completion. Same class of bug as
+    D030 §3k's freeze was written to prevent recurrence of, but a genuinely new mechanism
+    (tokenization, not phrasing) — likely needs its own unfreeze/scope decision before starting.
 
 - [ ] **T15 — Record every measurement outcome**
   - Acceptance: MEASURE-1..4 each have a written result with N stated. A measurement that changed no

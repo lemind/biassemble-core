@@ -2,11 +2,12 @@
 
 import { CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
-import type { Verdict } from "./gates-shared.js";
+import { containsNegationCue, type Verdict } from "./gates-shared.js";
 
 export interface ReasonConsistencyInput {
   verdict: Verdict;
   reason: string | null;
+  claimText: string;
 }
 
 export interface ReasonConsistencyResult {
@@ -19,6 +20,11 @@ export interface ReasonConsistencyResult {
 /** Forces `contradicted` when the model's own reason asserts a contradiction but the verdict doesn't. `unverifiable` excluded (D026 §22) — it's a CONFIDENCE downgrade. */
 export function applyReasonConsistencyGate(input: ReasonConsistencyInput): ReasonConsistencyResult {
   if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  // D032 §9/§3k — abstain on a negated claim; presence-only, a known coarser check than the
+  // position-scoped gates (accepted tradeoff, see ADR §9c and containsNegationCue's own comment).
+  if (containsNegationCue(input.claimText)) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
   if (!CONTRADICTION_LANGUAGE_RE.test(input.reason) || NEGATED_CONTRADICTION_RE.test(input.reason)) {
