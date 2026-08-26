@@ -258,6 +258,17 @@
           "kind": "true"
         }
       ]
+    },
+    {
+      "id": "g24-mouse-superlative",
+      "text": "The first computer mouse was wireless. It was invented by Douglas Engelbart at SRI International and first demonstrated in 1968.",
+      "minCorrectRate": 1.0,
+      "claims": [
+        {
+          "match": "first computer mouse was wireless",
+          "kind": "false"
+        }
+      ]
     }
   ]
 }
