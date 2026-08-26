@@ -134,24 +134,30 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     polarity/negation-handling defect downstream of retrieval. **T11's design must be redone against
     this mechanism before any code is written** — query reframing does not address it.
 
-- [ ] **T11 — FIX-3a: design negative-claim reframing** ⚠ SCOPE MUST BE REVISED (see T10 result,
-  D032 §3k) before starting — the query-reframing premise is refuted by measured data.
-  - Acceptance: a written design for detecting a negative claim and inverting its search query,
-    including how VERIFY evaluates the negation against the positive answer, and an explicit
-    argument that no `contradicted`-from-absence path is introduced.
-  - Verify: design reviewed before implementation; simulate the detection predicate against
-    historical claim text (zero API cost) to estimate false-positive rate.
-  - Files: design note in `specs/013-grounnel-d032-remediation/`
-  - Depends on: T10.
+- [x] **T11 — FIX-3a: design** — ~~negative-claim reframing~~ **RE-SCOPED: negation-scope guard for
+  the reason-family gates.** Design written: **D032 §9**. Options A (VERIFY prompt) and B (new gate)
+  scored 14/50 and 32/50 and both rejected; adopted option C — add a negation-scope precondition to
+  the three *existing* gates that produced 100% of the wrong verdicts.
+  - Acceptance: ~~detecting a negative claim and inverting its search query~~ superseded. Design
+    covers: which gates change, the abstain-on-negation precondition, why it is downgrade-only by
+    construction, and the simulation corpus.
+  - Verify: design reviewed before implementation; simulate the predicate against the 12 captured
+    repetitions + all historical firings of the three gates (zero API cost).
+  - Files: `docs/decisions/032-*.md` §9.
+  - **Blocked on a decision: `reason_ordinal` is FROZEN (D030 §3m) and this design requires
+    unfreezing it.** Must be taken before T12 starts.
 
-- [ ] **T12 — FIX-3b: implement negative-claim reframing**
-  - Acceptance: negatively-phrased claims search the positive form; verdicts follow from ordinary
-    VERIFY logic. Unit tests cover the detection predicate (pure logic — in-scope per CLAUDE.md).
-  - Verify: T10's fixtures reach `supported` in ≥8/10 (SC-3); full golden set N≥5 for regression
-    (SC-5).
-  - Files: `src/orchestrators/grounnel/pipeline.service.ts`,
-    `tests/unit/orchestrators/grounnel/`
-  - Depends on: T11.
+- [ ] **T12 — FIX-3b: implement the negation-scope guard**
+  - Acceptance: `reason_year`, `reason_ordinal`, and `reason_consistency` abstain when the compared
+    claim token sits inside a negation scope. No new gate is added; no verdict-escalation path is
+    added. Unit tests cover the negation predicate and each gate's abstain path (pure logic —
+    in-scope per CLAUDE.md, and `gates.ts` is the one place kept exhaustive).
+  - Verify: the 12 captured T10 repetitions no longer produce `contradicted`/`unsupported`;
+    simulation shows the gates' legitimate historical firings are not gutted (D030 §3n);
+    T10's fixtures reach `supported` in ≥8/10 (SC-3); full golden set N≥5 for regression (SC-5).
+  - Files: `src/orchestrators/grounnel/gates-reason-grounded.ts`, `gates.ts`,
+    `tests/unit/orchestrators/grounnel/gates.test.ts`
+  - Depends on: T11 (done) + the `reason_ordinal` unfreeze decision.
 
 - [ ] **T13 — FIX-5: prediction exclusion policy**
   - Acceptance: `isEligibilityExcluded` excludes `prediction` regardless of `certainty` — **only if

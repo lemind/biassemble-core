@@ -293,44 +293,77 @@ These are `kind: true` claims (the negation is factually correct) — `contradic
 is the one unsafe failure this entire project is built to prevent, and this measurement produced it
 at a rate an order of magnitude above the "essentially never" bar every other golden case holds to.
 
-**§3d's diagnosis of this failure mode is wrong, and this data is why.** §3d said: *"the pipeline
-searched for evidence supporting the claim, found none, and stopped... absence of support is the
-expected outcome."* **The retrieved evidence is not absent and not the problem.** Every `contradicted`
-case's own `reason` field cites correct, on-topic, sufficient evidence:
+#### VERIFY is not the guilty layer. Our own gates are.
 
-> *"Source A states World War II ended on September 2, 1945... which **contradicts** the claim that
-> it did not end in 1943."*
+**Correction to this section's own first draft.** It originally concluded that VERIFY "inverted the
+polarity of its own conclusion," inferred from reading the `reason` prose. That was wrong, and it
+was wrong for a specific, repeatable methodological reason: **the `reason` field was read without
+checking `grounnel_gate_events`** — exactly the archaeology step D030 §3n exists to force. Querying
+the gate events inverts the conclusion completely.
 
-"Ended in 1945" does not contradict "did not end in 1943" — those two facts are simultaneously true.
-VERIFY found exactly the right passage and then **inverted the polarity of its own conclusion**: it
-pattern-matched "evidence names a different date than the claim" onto "contradicted," without
-checking whether the claim's own negation already accounts for that difference. The Aldrin cases are
-the same mechanism: evidence correctly says Armstrong was first and Aldrin second — which *supports*
-"Aldrin was not first" — read instead as contradicting it.
+**In all 20 repetitions of the two failing cases, VERIFY returned `supported` — the correct answer.
+Every single wrong verdict was produced by a deterministic gate overriding it.**
 
-**This also shows up sub-verdict, not just cross-verdict.** Two of the `unsupported` WWII
-repetitions have a `reason` that explicitly states the opposite of the stored verdict: *"World War
-II... ended in 1945... which **directly supports** the claim that it did not end in 1943"* — reason
-says supports, verdict says unsupported. The existing D031 reason/verdict consistency backstop
-(§3d's neighbor mechanism) does not catch this, because it only fires on affirmative language paired
-with **zero citations**; these calls have citations, so the backstop's precondition never triggers.
+| Gate | Cases | Override | n |
+| --- | --- | --- | --- |
+| `reason_ordinal` (FROZEN, D030 §3m) | Aldrin | `supported` → `contradicted` | 3 |
+| `reason_year` | WWII | `supported` → `contradicted` | 4 |
+| `reason_consistency` | WWII | `supported` → `contradicted` | 7 |
+| `retry_reconciliation` | WWII | `contradicted` → `unsupported` (partial rescue) | 5 |
 
-**Consequence for T11/T12: the planned fix targets the wrong layer.** D032 §5 (and spec 013's T11
-acceptance) describes the fix as *"detect a negative claim and invert the search query... let VERIFY
-evaluate the negation against the positive answer"* — a retrieval-side fix, on the premise that
-support-seeking search returns nothing for a negative claim. **Search is not failing here.** The
-correct passage is retrieved in every single one of these 50 repetitions, including all 7 false
-accusations. The defect is entirely inside VERIFY's polarity handling once it already has the right
-evidence. Reframing the query changes nothing about a bug that happens after retrieval succeeds.
+`verdict_before` is `supported` on **100%** of the overrides that produced a `contradicted` verdict.
+Not one false accusation originated in the LLM.
 
-**T11's design (not yet started) must change scope before any code is written**: this looks like
-either a VERIFY prompt gap (the model has no explicit instruction for double-negative/polarity
-checking, the same class of gap §3c found and fixed for qualified superlatives) or a deterministic
-post-hoc gate in the reason/verdict-consistency family (`gates-reason-grounded.ts` already has
-`AFFIRMATIVE_SOURCE_LANGUAGE_RE`-style backstops for exactly this shape of incoherence — extending
-that family, rather than building new query-reframing logic, may be the smaller and more targeted
-fix). **Not decided here — flagging for the design step**, not implementing either option in this
-measurement task.
+**Total gate damage: 12/50 repetitions (24%)** — the 7 `contradicted` plus the 5 `unsupported`.
+The `unsupported` five are *also* wrong (the claims are true); they are cases where
+`retry_reconciliation` caught the bad `contradicted` and downgraded it, but to `unsupported` rather
+than restoring VERIFY's original `supported`. The safety net works and is still not enough: it
+converts an unsafe wrong answer into a safe wrong answer.
+
+#### The mechanism: negation-scope blindness
+
+Each gate extracts a token from the claim and compares it against the reason, with **no check for
+whether that token sits inside a negation scope**:
+
+| Claim | Token extracted | Reason states | Gate's inference | Reality |
+| --- | --- | --- | --- | --- |
+| "WWII did **not** end in **1943**" | year `1943` | `1945` | mismatch → contradicted | a different year **confirms** the negation |
+| "Aldrin was **not** the **first**" | ordinal `first` | `second` | mismatch → contradicted | "second" **confirms** the negation |
+
+This is a textbook negation-scope bug: a negation cue (`not`) has a syntactic scope, and any
+token-level comparison must know whether the compared token falls inside it. Ours don't.
+
+`reason_consistency` fails differently and more subtly. It fires on contradiction language in the
+reason prose. VERIFY's prose here reads *"...which contradicts the claim that it did not end in
+1943"* — garbled wording — **while its verdict was `supported`**. The gate treated the prose as
+authoritative and overrode the verdict. That inverts the correct trust ordering: the verdict is
+VERIFY's actual judgment; the prose is a fallible narration of it.
+
+#### Consequence for T11/T12: the planned fix targets the wrong layer twice over
+
+D032 §5 (and spec 013's T11 acceptance) describes the fix as *"detect a negative claim and invert
+the search query... let VERIFY evaluate the negation against the positive answer"* — a retrieval-side
+fix, premised on support-seeking search returning nothing for a negative claim. **Both halves of
+that premise are refuted:** search retrieved the correct passage in all 50 repetitions, and VERIFY
+evaluated it correctly in all 50. Neither retrieval nor VERIFY needs changing. Query reframing would
+not move a single one of these 12 outcomes.
+
+**§3d's framing is narrowed accordingly.** Its claim that the pipeline is support-seeking-only still
+stands for cases #2/#3 (a confidently *false* positive claim with no supporting evidence). It does
+**not** explain case #4 or this measurement — negatively-phrased claims are retrieved and verified
+correctly, then broken by the gate chain.
+
+#### Architectural observation, larger than this fix
+
+All three culprit gates share a direction: they can only escalate a verdict **toward
+`contradicted`**, the one verdict the Cardinal Rule treats as unsafe, and they do it on the strength
+of reason prose that this measurement shows is unreliable on negated claims. `subject_entity`, by
+contrast, is downgrade-only. A guard family whose only available move is to manufacture the unsafe
+verdict is worth revisiting on its own terms, independently of the negation fix — recorded here, not
+proposed as work.
+
+**T11's design is re-scoped by this finding — see §9 for the design and the options scored against
+it.**
 
 ### §3e. Cost distribution (context for any proposal that adds calls)
 
@@ -490,3 +523,64 @@ VERIFY prompt, where the model self-applies it — making deletion a behaviour c
 (correction #1). Agreement across independent reviewers is not evidence; the single reviewer who
 asked for verification was right against the majority. Worth remembering the next time several
 reviews converge on the same "obvious" cleanup.
+
+## §9. T11 re-scoped: negation-scope guard for the reason-family gates
+
+Supersedes the query-reframing design in §5 for case #4. Written after §3k's gate-event archaeology
+established that VERIFY is correct 50/50 and the gate chain produces 100% of the wrong verdicts.
+
+### §9a. The two options that were on the table, scored
+
+Scored against this ADR's own constraints — the Cardinal Rule, D030 §3n's simulate-first rule,
+CLAUDE.md's coverage cap and prompt-change policy.
+
+| Criterion | **A — VERIFY prompt fix** | **B — new deterministic gate** |
+| --- | --- | --- |
+| Targets the actual defect | **0/10** — VERIFY returned the correct verdict in 50/50 repetitions; there is no defect here to fix | **4/10** — right layer (gate chain), wrong shape: needs three *existing* gates corrected, not a fourth added |
+| Cardinal Rule fit | 2/10 — prompt tuning has no floor; a reduced rate still ships false accusations | 7/10 — a downgrade-only gate can only remove accusations |
+| Verifiability | 3/10 — stochastic, needs live N≥10 per D030 §3k, real quota | 9/10 — pure/sync, unit-testable against the 12 captured real cases at zero cost |
+| Regression risk | 4/10 — a new section competes for attention with the existing `QUALIFIED RANK` section (§3c) | 6/10 — a fourth gate stacking on three buggy ones adds interaction surface |
+| Precedent in this codebase | 5/10 — §3c is prompt-shaped, but D031's backstops are gate-shaped | 6/10 — right family, but D030 §3n refuted 4/4 gate fixes at the simulation step |
+| **Total** | **14/50** | **32/50** |
+
+**Neither was adopted.** A is disqualified outright: changing a prompt whose output was correct
+50/50 is a behaviour change with no defect to justify it, and it would be verified against the very
+gates that are actually broken. B is directionally right but misidentifies the work as additive.
+
+### §9b. Adopted: correct the three existing gates (option C)
+
+Add a **negation-scope check** to the gates in the reason family. Before a gate compares an extracted
+claim token against the reason, it must establish that the token is **not inside a negation scope in
+the claim**. If it is, the gate **abstains** — which returns VERIFY's own verdict, already correct in
+100% of the observed cases.
+
+| Gate | Current trigger | Added precondition |
+| --- | --- | --- |
+| `reason_year` | claim's single year token ≠ a positively-stated year in reason | claim's year token is not inside a negation scope |
+| `reason_ordinal` (FROZEN) | claim's ordinal ≠ reason's ordinal | claim's ordinal is not inside a negation scope |
+| `reason_consistency` | contradiction language present in reason prose | claim carries no negation cue **and** the override does not contradict VERIFY's own `supported` verdict |
+
+**Why this scores ~44/50 where A and B did not:** it removes overrides rather than adding
+logic — the heuristic surface *shrinks*. It is downgrade-only by construction (a gate that abstains
+can never manufacture a verdict). It is testable against 12 captured real repetitions with zero API
+cost. And it fixes the layer the evidence actually indicts.
+
+### §9c. Constraints and open items
+
+- **`reason_ordinal` is FROZEN** (D030 §3m). This design requires unfreezing it. That is an explicit
+  decision, not an implementation detail — it must be taken before T12 starts.
+- **`reason_consistency` needs a trust-ordering decision, not just a regex.** Its real defect is
+  preferring fallible reason prose over VERIFY's own verdict. Narrowing it to "abstain when the claim
+  is negated" fixes the measured cases; the general question — should a prose-driven gate *ever*
+  override an explicit verdict toward `contradicted`? — is the §3k architectural observation and is
+  deliberately left open here.
+- **Negation detection must be conservative, not complete.** Litotes, double negation, and "not
+  only… but" are out of scope; the predicate should abstain when unsure. Under-firing costs detection
+  (safe side); over-firing costs a false accusation (unsafe side). D030 §1's ban on hand-maintained
+  keyword whitelists over free English applies to *claim-text semantics*, not to detecting a closed
+  set of negation cues in the claim's own surface form — but the predicate stays small and its
+  false-positive behaviour is the thing to test.
+- **Simulate before implementing** (D030 §3n). The 12 captured repetitions plus all historical
+  `reason_year`/`reason_ordinal`/`reason_consistency` firings in `grounnel_gate_events` are the
+  simulation corpus: the fix must clear the 12 and must not gut the gates' legitimate firings. This
+  step killed 4/4 `subject_entity` fixes and is not optional here.
