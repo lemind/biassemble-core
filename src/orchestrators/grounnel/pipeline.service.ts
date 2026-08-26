@@ -249,7 +249,7 @@ export class GrounnelPipelineService {
         // D031 (review finding) — same incoherence class as the primary VERIFY write site; user-facing only, historyStore keeps raw.
         const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
         await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
-        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
@@ -293,7 +293,7 @@ export class GrounnelPipelineService {
         // D031 (review finding) — same incoherence class, and c.reason here most likely of all to be affirmative (was supported).
         const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
         await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
-        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore, verdictAfter: "unsupported", overridden: true, reason: "escalation_reversal_invalidated" },
         ]);
@@ -455,6 +455,7 @@ export class GrounnelPipelineService {
       claimId: r.claim.id,
       runId: auditId,
       claimText: r.claim.text,
+      sourceExcerpt: r.claim.sourceExcerpt,
       verdict: "unsupported",
       evidence: null,
       confidence: null,
@@ -481,6 +482,7 @@ export class GrounnelPipelineService {
           claimId: b.claim.id,
           runId: auditId,
           claimText: b.claim.text,
+          sourceExcerpt: b.claim.sourceExcerpt,
           verdict: null,
           evidence: null,
           confidence: null,
@@ -887,6 +889,7 @@ export class GrounnelPipelineService {
           claimId: item.claim.id,
           runId: auditId,
           claimText: item.claim.text,
+          sourceExcerpt: item.claim.sourceExcerpt,
           verdict,
           evidence,
           confidence,

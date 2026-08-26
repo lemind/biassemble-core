@@ -346,6 +346,12 @@ export const grounnelClaims = grounnel.table("grounnel_claims", {
   claimId: uuid("claim_id").primaryKey(), // same id as the API/Redis contract
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimText: text("claim_text").notNull(),
+  // EXTRACT's own cited span for this claim — previously only reachable via grounnel_llm_calls'
+  // parsed_output JSON (stage=extract), one join + one JSON-key lookup per claim. Promoted to a
+  // column so "what text did EXTRACT actually read to produce this claim" is a plain column read,
+  // not archaeology — needed routinely once blame-attribution across EXTRACT/SEARCH/VERIFY/gates
+  // became a real, recurring investigation shape this session.
+  sourceExcerpt: text("source_excerpt"),
   verdict: text("verdict", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable"] }),
   evidence: text("evidence"),
   confidence: doublePrecision("confidence"),

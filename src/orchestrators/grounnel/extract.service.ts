@@ -199,6 +199,7 @@ export class GrounnelExtractService {
       claimId: claim.id,
       runId: auditId,
       claimText: claim.text,
+      sourceExcerpt: claim.sourceExcerpt,
       verdict: "unverifiable",
       evidence: null,
       confidence: null,

@@ -45,3 +45,6 @@ api/evaluations/
 .agents/skills/
 .claude/skills/*
 !.claude/skills/speckit-*
+
+# Supabase CLI local link state (machine-specific, created by `supabase link`)
+supabase/.temp/
