@@ -167,6 +167,19 @@ cost of searching one that turns out unverifiable anyway. Existing regexes stay 
 reliable for their narrow categories); the classifier is additive, not a replacement. Full shape in
 `src/orchestrators/grounnel/claim-eligibility.ts`.
 
+**Amendment (2026-08-27, spec 013 T4/T13): the conservative policy is CONFIRMED, not reversed.**
+Spec 013 opened T13 to consider excluding `prediction` regardless of `certainty` — i.e. reversing the
+rule above for that one category. **It was measured first and then closed won't-do.** T4 pulled every
+historical `eligibility_check` call (**n=2,724**) and found **exactly one** claim classified
+`prediction`. That one case behaved correctly: `certainty: uncertain` → not excluded → full pipeline →
+`unsupported`, which is the right outcome for a claim with no fixed timeframe to check against.
+One data point is not a rate. Reversing a documented policy on n=1 is the same reasoning that produced
+the four refuted `subject_entity` fixes in §3n, and it would risk excluding dated-but-checkable claims
+("will report earnings on October 15") that this section's own third bullet exists to protect. The
+category fires roughly 1 in 2,724 classifications, so the blast radius is small in *either* direction —
+which is an argument for leaving a documented policy alone, not for churning it. Reopen only on
+materially higher `prediction` volume or a real harmful case.
+
 **§3c — T034 retry can erase a gate-forced contradiction.** Real live-eval capture (2026-08-20,
 g17): `reason_ordinal` correctly forced a verdict to `contradicted` (reason named "the fourth
 flight"), but `needsRetry` — computed from diagnostics on the *raw pre-gate* verdict, which never
@@ -1010,6 +1023,19 @@ out: *"a new, independently reproduced failure mode"*, reproduced 3/10 on a fres
 one more reason to abstain, not a fourth positional exception layered onto the three this section
 already added. `applyReasonOrdinalGate` may be edited again for this class only; the freeze's
 original scope (phrasing-variant whack-a-mole against g17) still stands.
+
+**Re-frozen (2026-08-27, spec 013 T20).** T12 shipped and is live-verified; the scoped unfreeze above
+is spent. `applyReasonOrdinalGate` is frozen again on the original terms. This is stated explicitly
+because a fresh measurement immediately created pressure to reopen it: g17 was measured at a **~33%**
+catch rate (n=82 — `supported` 42, `contradicted` 24, `unverifiable` 6, `unsupported` 1), and the
+obvious-looking response is to tune this gate. **That is the wrong move and this freeze exists to stop
+it.** The gate is not the defect: 25/25 historical g17 catches still fire on current code, and it
+overrides correctly whenever VERIFY names a competing ordinal. The miss happens upstream — VERIFY
+often reports "the distance covered was 852 feet" without saying *which* flight, leaving the gate
+nothing to compare (`reasonMatches.length === 0`, abstain). Tuning a correct gate to compensate for an
+unreliable input is how §3k's original whack-a-mole started, and how T17's live false accusation
+("12-second" read as the ordinal "second") became possible. g17 stays **red at `minCorrectRate: 1.0`**
+— the measured 33% is a measurement, not a revised requirement.
 
 **Incidental observation, deliberately not acted on.** Gate-firing rates across all recorded history
 show `counterfact_ignored` at **0 overrides in 7,237 evaluations** — dead in all observed eval and

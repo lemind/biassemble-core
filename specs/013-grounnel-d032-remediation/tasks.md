@@ -268,14 +268,35 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     flight, there is no ordinal to compare and the gate abstains (`reasonMatches.length === 0`, a
     pre-existing path). The gate is working; its **input** is unreliable. D030 built this gate for
     g17 and it does catch g17 — but only when VERIFY happens to name the competing ordinal.
-  - Candidate directions (none chosen — needs a scoping decision, and D030 §3k's freeze history
-    argues for measuring before building): make VERIFY consistently state which instance it matched;
-    or detect the instance mismatch without depending on VERIFY's prose (evidence-side, not
-    reason-side); or accept ~33% and correct `minCorrectRate` to reflect measured reality.
+  - **Decision (2026-08-27): keep `minCorrectRate: 1.0`. g17 stays RED.**
+    **Observed performance is a measurement, not a requirement.** Relaxing the threshold to 33% would
+    make the evaluator lie about the requirement and convert a real detection gap into a green tick.
+    The honest signal is worth more than a passing suite. Rejected: "accept ~33% and correct the bar".
+  - **What changes instead: reporting, not the target.** The eval already emits per-case detection
+    distributions (`detection` in `eval-grounnel-run.ts` — `detectionRate` plus the per-verdict
+    spread), which is what makes a 3/10 case distinguishable from a 10/10 one. g17 is recorded as a
+    **known stochastic detection gap**, red and visible, not silenced.
+  - **`reason_ordinal` is re-FROZEN** (D030 §3k, re-frozen 2026-08-27 after T12's scoped unfreeze).
+    Do not tune it for g17. The gate is not the defect — it fires correctly whenever VERIFY names a
+    competing ordinal (25/25 historical catches still fire post-T17).
+  - **Prompt-only intervention is NOT the next move either.** This exact class already has a failed
+    prompt attempt on record (D030 §1: the `SEQUENCE POSITION` VERIFY section failed live 2/2 and was
+    reverted). Next step is investigation, not implementation: does evidence-side instance attribution
+    — or a stronger verifier — show enough **measured** benefit to justify the work? Simulate before
+    building (D030 §3n).
   - **Do not "fix" this by loosening the gate** — the same pressure produced the D030 §3k freeze and
     T17's false accusation. Downgrade-only discipline stands.
 
-- [ ] **T13 — FIX-5: prediction exclusion policy**
+- [x] ~~**T13 — FIX-5: prediction exclusion policy**~~ **CLOSED WON'T-DO (2026-08-27)**
+  - **Decision: do not reverse D030 §3b.** T4 measured **n=1 across 2,724 eligibility checks**, and
+    that single case behaved correctly (`prediction` + `certainty: uncertain` → not excluded → full
+    pipeline → `unsupported`, the right outcome for an unfalsifiable claim with no fixed timeframe).
+  - Reversing a documented ADR policy on n=1 is precisely the speculative change this spec exists to
+    prevent — D030 §3n killed 4 `subject_entity` fixes on exactly that reasoning. It would also risk
+    excluding dated-but-checkable claims ("will report earnings on October 15").
+  - **Reopen if** `prediction` classification volume rises materially, or an actual harmful case
+    appears. No code, no ADR reversal. Original task terms retained below for that reopening.
+
   - Acceptance: `isEligibilityExcluded` excludes `prediction` regardless of `certainty` — **only if
     T4 cleared it**. D030 §3b updated to record the reversal and its evidence.
   - Verify: `npx vitest run`; golden set N≥5 confirming no checkable claim became excluded (SC-5).
@@ -454,8 +475,9 @@ all fixes ───────────────────────�
 ```
 
 **Phase 0, Phase 3's core fixes, T9, and T15 are all closed** (2026-08-27). Remaining open:
-**T13** (stays gated, T4 inconclusive) and **T20** (new — g17's ~33% catch rate, measured
-2026-08-27, needs a scoping decision). **T16**/**T17**/**T18**/**T19** are closed; T17 is
+**T13 closed won't-do** (2026-08-27 — n=1 does not justify reversing D030 §3b; amendment recorded
+there) and **T20 decided** (g17 stays RED at `minCorrectRate: 1.0`; the measured ~33% is a
+measurement, not a revised requirement — `reason_ordinal` re-frozen, D030 §3k). **T16**/**T17**/**T18**/**T19** are closed; T17 is
 live-verified on the 2026-08-27 core deploy. **T19 still needs a `biassemble` deploy** — it is a
 live 502 on any run containing an excluded claim, reproduced A/B against production Core. Live verification: **SC-1**'s `excluded` half
 is confirmed live (2026-08-27), and its `subject_entity`-labelling half is now closed too — via a
