@@ -253,6 +253,42 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     should now reach `supported` ≥8/10) and full golden-set regression (SC-5) — not yet run, needs
     deployment same as T3/T10 did.
 
+- [ ] **T21 — Passage-grounded instance attribution: prompt-variant experiment (simulation only)**
+  - **Why:** T20 blamed VERIFY, and blame analysis of the last 3 g17 failures split it in two —
+    **commission** (VERIFY wrote *"Source A explicitly states this was the first flight"*; Source A
+    says the fourth) and **omission** (*"the distance covered was 852 feet"*, no member named).
+    Neither is reachable by the gates: the existing second call (`consistency_check`) receives
+    `{id, claim, reason, verdict}` and **no passages**, so it audits the model against itself. Its
+    v1.2.0 instance-identity rule even has an escape hatch — *"unless the reason explicitly says the
+    two are the same one"* — which the fabrication satisfied. A self-consistency check cannot catch a
+    coherent lie about what a source says (D032 §3a: *"confident wrongness"*, a different detector class).
+  - **What is being tested:** move the question from `claim → VERIFY reason → consistency` to
+    `claim → cited passages → attribution`. 4 prompt variants (`a-neutral`, `b-conflict-framed`,
+    `c-expanded`, `d-minimal`) × 12 fixtures × N repeats, run by `attribution-experiment.ts`.
+  - **Semantics settled before spending calls** (review finding — the first draft got this wrong):
+    `same` / `different` / `absent` / `conflict`, where **`different` requires the passage to name
+    another member explicitly**. A passage attributing the fact to *"the longest of four"* is
+    **`absent`, not `different`** — that the longest *was* the fourth flight is outside knowledge the
+    passage never states. Inferring it would recreate, in a new component, the exact
+    ambiguity→contradiction leap this whole spec has been fighting.
+  - **Decision gate: `falseDifferentPerRun` must be 0.** A wrong `different` is what can eventually
+    reach a user as a false accusation (Cardinal Rule); a wrong `absent` merely abstains. Variants are
+    ranked on false-`different` first, accuracy second. `fabricatedCitationsPerRun` is also counted —
+    each citation is checked as a verbatim substring of the passages, because the design leans on
+    citations being real.
+  - **`b-conflict-framed` is deliberately in the arm set**, not assumed harmful: priming a model with
+    "this is disputed" may improve recall on real misattributions or may manufacture conflict. That is
+    a measurable question, so it gets measured rather than argued.
+  - Files: `src/jobs/attribution-experiment.ts`, `src/prompts/grounnel/instance-attribution/variants/*`,
+    `scripts/trigger-attribution-experiment.ts`. Commit `4bf0bd2`.
+  - **NOT WIRED and must not be** until the gate above passes (D030 §3n; D030 §1 records a prompt fix
+    for this same class that failed live 2/2 and was reverted). Replaces the dead `verify-experiment.ts`,
+    whose two questions are answered (D030 §3g/§3i) — that file and its trigger script still need deleting.
+  - **Known fixture gap:** case-2's `grounnel_claims.evidence` was nulled by a gate, so a full replay
+    against *production* passages must reconstruct them from `grounnel_search_calls`/rerank rows, not
+    from claim rows. The 12 fixtures include the real captured g17 passages carried over from
+    `verify-experiment.ts`, so the experiment is meaningful without that reconstruction.
+
 - [ ] **T20 — g17 catches its false claim only ~33% of the time** ⚠ **measured, not a regression**
   - **Finding (2026-08-27, n=82 historical runs of g17's own claim text):** `supported` 42,
     `contradicted` 24, `unverifiable` 6, `unsupported` 1 — a **~33% catch rate**, and the dominant
