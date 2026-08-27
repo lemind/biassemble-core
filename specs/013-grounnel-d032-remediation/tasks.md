@@ -253,7 +253,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     should now reach `supported` ≥8/10) and full golden-set regression (SC-5) — not yet run, needs
     deployment same as T3/T10 did.
 
-- [ ] **T21 — Passage-grounded instance attribution: prompt-variant experiment (simulation only)**
+- [x] **T21 — Passage-grounded instance attribution** — experiment ✅, **wired and live-proven 2026-08-27**
   - **Why:** T20 blamed VERIFY, and blame analysis of the last 3 g17 failures split it in two —
     **commission** (VERIFY wrote *"Source A explicitly states this was the first flight"*; Source A
     says the fourth) and **omission** (*"the distance covered was 852 feet"*, no member named).
@@ -281,9 +281,49 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     a measurable question, so it gets measured rather than argued.
   - Files: `src/jobs/attribution-experiment.ts`, `src/prompts/grounnel/instance-attribution/variants/*`,
     `scripts/trigger-attribution-experiment.ts`. Commit `4bf0bd2`.
-  - **NOT WIRED and must not be** until the gate above passes (D030 §3n; D030 §1 records a prompt fix
-    for this same class that failed live 2/2 and was reverted). Replaces the dead `verify-experiment.ts`,
-    whose two questions are answered (D030 §3g/§3i) — that file and its trigger script still need deleting.
+  - **Original bar — "NOT WIRED until the decision gate passes"** (D030 §3n; D030 §1 records a prompt
+    fix for this same class that failed live 2/2 and was reverted). The gate passed, then it shipped.
+    Replaces the dead `verify-experiment.ts` (D030 §3g/§3i) — that file and its trigger script
+    **still need deleting**.
+
+  - **RESULT — bake-off (16 fixtures × 4 variants, temp 0, N=1).** `c-expanded` won outright:
+    16/16, `falseDifferentPerRun` 0, `fabricatedCitationsPerRun` 0. The other three each scored 15/16,
+    all missing the same `conflict` case (two passages explicitly naming different members, answered
+    `same`), and `a-neutral`/`b-conflict-framed` each fabricated a citation. Full table and caveats in
+    `t21-results.md`. Two harness errors were found and corrected mid-experiment, both of which had
+    changed the answer: fixtures fed passages one at a time (production sends up to 3 together), and
+    `c-expanded` was initially disqualified for a false `different` that an explicit
+    "explicit attribution outranks a vague mention" rule removed — the earlier reading that forced
+    reasoning was itself unsafe was **wrong**; the prompt was underspecified.
+
+  - **RESULT — wiring (`76b78d6`, review fixes `dc9bf56`).** Fires from `processVerifyResults` for every
+    non-`contradicted` claim whose text names a sequence instance (`extractInstanceSelector`) — the
+    trigger is the **selector, not the verdict**, because g17's commission failure returned `supported`.
+    Runs **alongside** the consistency classifier, not instead of it: routing instance claims away from
+    it silently removed the retry safety net from the riskiest claims (4 existing tests caught that).
+    Feeds the `instance_attribution` gate, placed after `reason_ordinal` and before gate #1 so a forced
+    `contradicted` still clears the evidence check. `different` → `contradicted`; `conflict` →
+    `unverifiable` on affirmative verdicts only; `same`/`absent`/null → no-op. Abstains on negated
+    claims and on `unverifiable` (a CONFIDENCE downgrade), and a verdict-moving answer whose citation
+    is not a verbatim substring of the passages is dropped and logged.
+
+  - **The first live run failed, and the cause was the wiring, not the prompt.** "The first flight
+    lasted 59 seconds" came back `same` while its own `working` field ended *"Therefore, the attribution
+    is absent"* — 3 of 9 persisted answers contradicted their own reasoning. Gemini generates
+    structured-output fields in **schema order**, and the production Zod schema declared `attribution`
+    before `working` (the bake-off schema had `working` first), so the model committed to an answer and
+    then rationalised. Fixed by reordering the schema and making `working` **required** (an optional CoT
+    field is never generated, so order alone doesn't bind); `gemini-schema.test.ts` now locks both.
+    **This defect class is not unique to T21 — see the T22 note below.**
+
+  - **RESULT — live proof (2 full 28-case runs, 2026-08-27, post-fix).** Batch 1: 30/32 = 0.938.
+    Batch 2: **32/32 = 1.000, the first fully green golden-set run.** Zero false accusations in both
+    (64 scored claim-observations). The gate produced catches **`reason_ordinal` cannot reach**:
+    batch 1's g17 contradiction was `instance_attribution` alone (`reason_ordinal` did not fire at all
+    that run), and batch 2's g03 catch was `instance_attribution` on a `partially_supported` verdict.
+    It also answered `absent` on "the first computer mouse was wireless" — correctly, that is a property
+    claim, not a which-member question. **Caveat: g22 and g24 flipped between two runs of identical
+    code, so 0.938 → 1.000 is variance, not a trend. SC-5 (N≥5) remains the real gate.**
   - **Known fixture gap:** case-2's `grounnel_claims.evidence` was nulled by a gate, so a full replay
     against *production* passages must reconstruct them from `grounnel_search_calls`/rerank rows, not
     from claim rows. The 12 fixtures include the real captured g17 passages carried over from
@@ -322,6 +362,29 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     building (D030 §3n).
   - **Do not "fix" this by loosening the gate** — the same pressure produced the D030 §3k freeze and
     T17's false accusation. Downgrade-only discipline stands.
+  - **UPDATE (2026-08-27): the investigation this task called for happened, and it shipped — T21.**
+    The gap was exactly as diagnosed here ("the gate is working; its **input** is unreliable"), and the
+    answer was a second detector with a *different input* — the passages — rather than tuning
+    `reason_ordinal`, which stays frozen. g17 was caught in both post-fix golden runs, once by
+    `instance_attribution` alone.
+  - **Still open: the ~33% figure is stale and must be re-measured.** n=82 is historical, predating both
+    the wiring and the schema fix. Two green runs are not a rate. Re-measure under SC-5 (N≥5) before
+    this task is closed or the number is quoted anywhere.
+
+- [ ] **T22 — VERIFY emits its verdict BEFORE its reason** ⚠ **same defect class as T21's, widest blast radius**
+  - **Finding (2026-08-27, from T21's code review):** `VerifyRawResultSchema` declares `verdict` ahead of
+    `reason`, and Gemini generates structured-output fields in schema order. So VERIFY commits to a
+    verdict and *then* writes the justification. Five gates — `reason_consistency`, `implicit_negation`,
+    `reason_year`, `reason_ordinal`, `claim_reason_overlap` — plus the `counterfact_ignored` classifier
+    all treat that `reason` as the reasoning **behind** the verdict. By construction it is post-hoc.
+  - This is the mechanism T21 proved on a small scale: reordering one schema turned a checker that
+    contradicted its own reasoning 3 times in 9 into one that produced novel catches. Whether the same
+    holds for VERIFY is **unmeasured**.
+  - Also: `reason` and `evidenceCitations` are both `.optional()`, so VERIFY may legally return a verdict
+    with no reason and no citations at all.
+  - **Do not just reorder it.** VERIFY is the core prompt; D030 §1 records a VERIFY prompt change that
+    failed live 2/2. Simulate first (D030 §3n), then a full golden-set run at N≥5 before and after.
+  - Depends on: SC-5 baseline, so there is something to compare against.
 
 - [x] ~~**T13 — FIX-5: prediction exclusion policy**~~ **CLOSED WON'T-DO (2026-08-27)**
   - **Decision: do not reverse D030 §3b.** T4 measured **n=1 across 2,724 eligibility checks**, and
