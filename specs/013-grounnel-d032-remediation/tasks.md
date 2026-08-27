@@ -178,6 +178,11 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - T3 came back 10/10 `contradicted`, 0/10 `supported` — the failure does not reproduce (D032 §3g).
     Per this task's own cancellation clause, no prompt change is made. SC-4 is satisfied as a side
     effect of the measurement itself, without touching `verify/system.json`.
+  - **SC-4 RE-CONFIRMED post-T21 (2026-08-27, N=10): `contradicted` 7, `unsupported` 3, `supported` 0.**
+    Re-run because T21 added a gate that can force `contradicted`; the absolute bar still holds. The new
+    checker answered `absent`/`same` only — never `different` — which is correct: "wireless" is a property
+    of the mouse, not a question of which member a fact belongs to. The catches came from
+    `retry_decision`/`counterfact_ignored`, i.e. the pre-existing path. T21 is silent here and does no harm.
 
 - [x] **T10 — MEASURE-3: do negative claims fail systematically?**
   - Acceptance: 3–5 negative-claim golden cases ("X did not do Y", positive form well documented),
@@ -581,8 +586,10 @@ live-verified on the 2026-08-27 core deploy. **T19 still needs a `biassemble` de
 live 502 on any run containing an excluded claim, reproduced A/B against production Core. Live verification: **SC-1**'s `excluded` half
 is confirmed live (2026-08-27), and its `subject_entity`-labelling half is now closed too — via a
 64-claim replay against real production data rather than a live run. **SC-1 fully closed.** **SC-5** (full 28-case regression, not just the targeted subset) remains open. Of the spec's
-7 success criteria, **SC-2, SC-3, SC-6, SC-7 are fully closed; SC-1 half-closed; SC-4 satisfied
-without code; SC-5 open.**
+7 success criteria, **SC-1, SC-2, SC-3, SC-4, SC-6, SC-7 are closed; SC-5 is the only one open.**
+SC-4 was re-confirmed at N=10 after T21 shipped (7 `contradicted` / 3 `unsupported` / 0 `supported`).
+**SC-5 is now the single remaining gate** — two post-T21 full runs scored 0.938 and 1.000 with zero
+false accusations, but at N=1 each, and `g22`/`g24` flipped between them, so N≥5 is still required.
 
 ## Notes
 
