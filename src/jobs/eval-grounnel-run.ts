@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NonRetriableError } from "inngest";
 import { inngest } from "./client.js";
 import { GeminiProvider } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
@@ -22,14 +23,17 @@ import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 
 const MODULE = "eval-grounnel-run";
-/** Gemini 429s and the pipeline's own degraded rate-limit text (pipeline-helpers.ts). */
+/** Thrown-error text only. Inngest serialises step errors, so `instanceof RateLimitError` is gone by then. */
 const RATE_LIMIT_RE = /too many requests|rate.?limit|quota|usage limit/i;
 /** Two could be a transient RPM blip; three in a row is the daily cap, which won't clear mid-run. */
 const RATE_LIMIT_ABORT_AFTER = 3;
+// Exact degraded strings the pipeline substitutes for a verdict (pipeline-helpers.ts, pipeline.service.ts).
+// Deliberately NOT the loose regex above: an article about fishing quotas would false-abort on "quota".
+const DEGRADED_MARKERS = ["hit today's AI usage limit", "being rate-limited right now", "search provider's rate limit was reached"];
 
 /** A run that "succeeded" but whose claims carry rate-limit text instead of verdicts — junk to score. */
 function runIsRateLimited(run: GrounnelRun): boolean {
-  return run.claims.length > 0 && run.claims.every((c) => RATE_LIMIT_RE.test(c.reason ?? ""));
+  return run.claims.length > 0 && run.claims.every((c) => DEGRADED_MARKERS.some((m) => (c.reason ?? "").includes(m)));
 }
 
 export const evalGrounnelRunJob = inngest.createFunction(
@@ -168,7 +172,9 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // An abort is an INFRASTRUCTURE failure, not a quality one — say so first, so a rate-limited
     // run is never mistaken for a regression. Partial scores are still reported, never silently passed.
     if (abortedAfter) {
-      throw new Error(
+      // NonRetriableError, not Error: this function has Inngest's default 4 retries, and a FAILED
+      // step is not memoized — a plain throw would re-run the rate-limited cases up to 4 more times.
+      throw new NonRetriableError(
         `Grounnel live eval ABORTED at ${abortedAfter} — ${RATE_LIMIT_ABORT_AFTER} consecutive rate-limited runs. ` +
           `Scored ${cases.length}/${selected.length} cases before stopping; these numbers are PARTIAL and not a regression signal. ` +
           `Re-run on fresh quota.\n${JSON.stringify(compact, null, 2)}`
