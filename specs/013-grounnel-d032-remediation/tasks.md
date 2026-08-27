@@ -137,7 +137,21 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     that could mislabel a genuinely-different retry outcome. Both fixed; see D032 §11 for the
     mechanism. New `composeUserFacingReason` (extracted, directly tested — 3 new tests reproduce the
     exact precondition that hid bug #1).
-  - **Live SC-1 smoke verification (2026-08-27): inconclusive, not failed.** Gate telemetry confirmed
+  - **SC-1 subject_entity half — CLOSED 2026-08-27 by D030 §3n replay against real production data**
+    (a live run was never needed): pulled all **64** real production `unverifiable` claims that had an
+    overridden `subject_entity` event, and replayed each one's real verdict + real raw reason + real
+    final-pass gate shape through `composeUserFacingReason`. **58/58 of the claims whose final pass was
+    actually caused by `subject_entity` produce the label**; the other 6 correctly do not, because a
+    later pass owned their verdict (exactly what `currentPassGateEvents` is supposed to enforce — the
+    stale-gate-events bug `/code-review` caught). Sample real output: *"Multiple sources state that a
+    flight covered 852 feet. Evidence was found but could not be confirmed as being about this claim's
+    specific subject — this is not a finding that no evidence exists."* SC-1 is now fully closed.
+  - **Why a live run couldn't close it, and what was changed so the next one can:** the user-facing
+    reason exists only in the run's Redis view (Postgres keeps VERIFY's raw text — T18/D023 §7), and
+    the eval harness's Redis is in-memory and discarded, so `/status/:id` 404s for eval runs. The
+    Inngest eval job now logs a bounded `userFacingReasons` field (reason-bearing verdicts only,
+    truncated, capped at 40) so this class of check no longer requires archaeology.
+  - **Earlier attempt (superseded by the replay above): inconclusive, not failed.** Gate telemetry confirmed
     `subject_entity` fired (`overridden=true`) on g22 in 2 eval-harness runs, and `composeUserFacingReason`
     correctly applies the suffix on that precondition. But the labelled text was never observed live:
     eval-harness runs bypass Redis entirely (Postgres-only stores, by the eval job's own design), so
@@ -444,9 +458,8 @@ all fixes ───────────────────────�
 2026-08-27, needs a scoping decision). **T16**/**T17**/**T18**/**T19** are closed; T17 is
 live-verified on the 2026-08-27 core deploy. **T19 still needs a `biassemble` deploy** — it is a
 live 502 on any run containing an excluded claim, reproduced A/B against production Core. Live verification: **SC-1**'s `excluded` half
-is confirmed live (2026-08-27); its `subject_entity`-labelling half is inconclusive (code and gate
-telemetry check out, but no live run has reproduced the trigger to show the labelled text end to
-end). **SC-5** (full 28-case regression, not just the targeted subset) remains open. Of the spec's
+is confirmed live (2026-08-27), and its `subject_entity`-labelling half is now closed too — via a
+64-claim replay against real production data rather than a live run. **SC-1 fully closed.** **SC-5** (full 28-case regression, not just the targeted subset) remains open. Of the spec's
 7 success criteria, **SC-2, SC-3, SC-6, SC-7 are fully closed; SC-1 half-closed; SC-4 satisfied
 without code; SC-5 open.**
 
