@@ -106,14 +106,18 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - **Result (2026-08-26): done** (D032 §11). Also updated `grounnel-live-gate.ts`'s `ACCEPTABLE`
     mapping and `grounnel-store.ts`'s score computation (excluded claims correctly drop out of
     `eligible` — documented as deliberate, not a gap). 84 files / 1219 tests pass, `tsc` clean.
-    Live SC-1 smoke verification still pending (needs deployment, same as T3/T10/T12).
+  - **Live SC-1 smoke verification (2026-08-27): PASS.** g18 (opinion claim) ran twice through the
+    live eval harness post-deploy: both came back `excluded` with the expected reason text. This
+    half of SC-1 is closed.
 
 - [x] **T6b — Label `subject_entity` downgrades distinctly**
   - Acceptance: a claim downgraded to `unverifiable` by the `subject_entity` gate is distinguishable
     — in `grounnel_claims` and/or the API — from one that genuinely could not be verified. Minimum
     viable form: a distinct `reason` string; fuller form: its own verdict/status value.
-  - Verify: query the three §3f causes and confirm each is separable without joining
-    `grounnel_gate_events`. Extends SC-1.
+  - Verify: confirm each of the three §3f causes is separable in the live API response
+    (`GET /status/:id`, Redis-backed) — **not** in `grounnel_claims` (Postgres deliberately keeps
+    VERIFY's raw, unlabelled reason for D030 §3n-style replay; see D023 §7's 2026-08-27 amendment,
+    T18). Extends SC-1.
   - Files: `src/orchestrators/grounnel/pipeline-gate-chain.ts` or `pipeline.service.ts`'s write path
   - Depends on: T5 (if it takes an enum value) — otherwise none.
   - Note: **does not change gate behaviour.** D030 §3m's decision to keep `subject_entity` as-is
@@ -129,6 +133,24 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     that could mislabel a genuinely-different retry outcome. Both fixed; see D032 §11 for the
     mechanism. New `composeUserFacingReason` (extracted, directly tested — 3 new tests reproduce the
     exact precondition that hid bug #1).
+  - **Live SC-1 smoke verification (2026-08-27): inconclusive, not failed.** Gate telemetry confirmed
+    `subject_entity` fired (`overridden=true`) on g22 in 2 eval-harness runs, and `composeUserFacingReason`
+    correctly applies the suffix on that precondition. But the labelled text was never observed live:
+    eval-harness runs bypass Redis entirely (Postgres-only stores, by the eval job's own design), so
+    `/status/:id` 404s for them; a real `POST /extract` call was then tried, but that run's retrieval
+    came back cleaner than the golden case engineers and `subject_entity` never fired (`supported`,
+    not `unverifiable`) — retrieval variance, not a fix problem. Re-verify by forcing the trigger
+    condition on a real run, or accept the unit/gate-telemetry evidence as sufficient.
+  - **New finding, independent of whether T6b works (2026-08-27):** `grounnel_claims` (Postgres)
+    deliberately stores VERIFY's raw `reason`, never `userFacingReason`, across all 3 write sites in
+    `pipeline.service.ts` (each carries the same "historyStore keeps raw" comment, D031-era). Sound
+    for D030 §3n-style replay/archaeology, but it contradicts D023 §7's own wording calling the
+    Postgres row "a durable mirror" of what Redis holds — and it means this task's own verify step
+    ("confirm each is separable... in `grounnel_claims`... without joining `grounnel_gate_events`")
+    is not satisfiable as literally written; only the live Redis-backed API response ever carries the
+    label. **Needs a decision, not yet made:** (a) update D023 §7 + this verify step to match the
+    current raw-reason-in-Postgres design (recommended — it's what makes D030 §3n's replay work), or
+    (b) change the 3 write sites to persist `userFacingReason` instead. Tracked as **T18**.
 
 ---
 
@@ -247,13 +269,23 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 
 ## Phase 5 — Close-out
 
-- [ ] **T9 — Align the eval harness with the ratified contract**
+- [x] **T9 — Align the eval harness with the ratified contract**
   - Acceptance: scoring reflects T1's decision; the contract is stated in the golden set's own
     documentation so a future reviewer applies the same rubric.
   - Verify: re-score run `c94d2954` under the ratified contract; the number matches D032 §2's table
     for the chosen contract. Satisfies SC-6.
   - Files: `src/evaluation/`, `evaluations/golden/grounnel/`
   - Depends on: T1.
+  - **Result (2026-08-27): done, no scoring-code change needed** — D032 §2 already established
+    `GrounnelExtractService` implements Contract A; T9's remaining work was documentation debt.
+    Added an "Extraction contract" section to `evaluations/golden/grounnel/README.md` stating
+    Contract A verbatim, why B was rejected, and why the golden set's own cases never actually
+    exercise the distinction (each is a single current assertion). **Re-score check**: confirmed
+    directly against Postgres that run `c94d2954` has exactly 44 claims (matches D032 §2's stated
+    denominator). The 34-correct numerator is D032 §2's own hand-verified figure (each claim checked
+    against real-world facts) — not re-derived here, since doing so would mean re-verifying 44
+    external facts by hand, out of proportion to this close-out task; the denominator match is the
+    one fact objectively checkable from stored data alone, and it holds.
 
 - [ ] **T16 — Frontend: style the `excluded` verdict**
   - Acceptance: `VERDICT_HIGHLIGHT_CLASS`/`VERDICT_DOT_CLASS` in `verdictStyle.ts` handle `excluded`;
@@ -279,36 +311,61 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     D030 §3k's freeze was written to prevent recurrence of, but a genuinely new mechanism
     (tokenization, not phrasing) — likely needs its own unfreeze/scope decision before starting.
 
-- [ ] **T15 — Record every measurement outcome**
+- [x] **T18 — Resolve Postgres/Redis reason-mirroring contradiction (D023 §7 vs. current code)**
+  - Acceptance: either D023 §7 and T6b's verify step are amended to state that `grounnel_claims.reason`
+    is intentionally VERIFY's raw text (analytics/replay-friendly, not a mirror), or the 3 write sites
+    in `pipeline.service.ts` (`processVerifyResults`, `reconcileContradictedVerdicts`,
+    `guardEscalatedContradictionReversals`) are changed to persist `userFacingReason` to `historyStore`
+    to match D023 §7's original "durable mirror" wording.
+  - Verify: whichever direction is chosen, `grounnel_claims.reason` and D023 §7's own words agree with
+    each other.
+  - Files: `docs/decisions/023-*.md` §7, or `src/orchestrators/grounnel/pipeline.service.ts`.
+  - **Found 2026-08-27 during T6/T6b's live SC-1 verification** — not blocking, ask first (documentation
+    vs. behaviour change, user's call).
+  - **Result (2026-08-27): Option A chosen (document reality, no code change)** — preserves D030 §3n's
+    replay technique, the one that found T12's bug. D023 §7 amended: Postgres mirrors verdict/evidence/
+    confidence/everything else, `reason` is the one deliberate exception (kept as VERIFY's raw text).
+    T6b's verify step reworded to point at the live API response, not `grounnel_claims`, for checking
+    the subject_entity label.
+
+- [x] **T15 — Record every measurement outcome**
   - Acceptance: MEASURE-1..4 each have a written result with N stated. A measurement that changed no
     decision says so explicitly.
   - Verify: D032 (or a successor ADR) contains all four. Satisfies SC-7.
   - Files: `docs/decisions/`
   - Depends on: T3, T4, T10, T14.
+  - **Result (2026-08-27): already satisfied, no new writing needed.** All four measurements were
+    recorded with N stated as each was run: MEASURE-1/§3g (N=10, T8 cancelled), MEASURE-2/§3h (n=1,
+    T13 explicitly left gated — "not evidence for reversing D030 §3b, just evidence the decision is
+    low-stakes"), MEASURE-3/§3k (N=50, T11/T12 elevated in priority), MEASURE-4/§3j (7.5%/1.7%,
+    "doesn't kill or confirm R3" stated explicitly). SC-7 closed.
 
 ---
 
 ## Dependency graph
 
 ```
-T1 ✅ (contract=A) ─────────────────────────► T9 ──► SC-6
-T2 ✅ (frontend=no) ─► T5 ✅ ──► T6 ✅ ─────────────► SC-1 (code done, live smoke pending)
-                       ├──► T6b ✅ (subject_entity labelling) ──► SC-1
+T1 ✅ (contract=A) ─────────────────────────► T9 ✅ ──► SC-6 ✅
+T2 ✅ (frontend=no) ─► T5 ✅ ──► T6 ✅ ─────────────► SC-1 (excluded half ✅ live; subject_entity half inconclusive live)
+                       ├──► T6b ✅ (subject_entity labelling) ──► SC-1 ──► T18 (Postgres/ADR gap found)
                        └──► T16 (frontend styling, other repo)
 T7 ✅ (reason text, no gate) ──────────────────────► SC-2
 T3 ✅ (MEASURE-1: does not reproduce) ─► T8 ❌ CANCELLED ─► SC-4 (satisfied without T8)
 T4 ✅ (MEASURE-2: n=1, inconclusive) ──► T13 (stays gated)
 T10 ✅ (MEASURE-3) ─► T11 ✅ ──► T12 ✅ ────────────► SC-3 ✅ (50/50 live-verified)
 T14 ✅ (MEASURE-4) ─► [future R3 decision]
-T3,T4,T10,T14 ───► T15 ───────────────────────────► SC-7
+T3,T4,T10,T14 ───► T15 ✅ ───────────────────────────► SC-7 ✅
 all fixes ────────────────────────────────────────► SC-5 (targeted subset clean; full set open)
 ```
 
-**Phase 0 and Phase 3's core fixes are closed** (2026-08-26). Remaining: **T9** (needs T1, unblocked
-— eval harness re-scoring), **T15** (needs T3/T4/T10/T14, all done — just needs writing up),
-**T13** (stays gated, T4 inconclusive), **T16**/**T17** (other-repo/out-of-scope follow-ups,
-tracked not blocking). Live verification still open: **SC-1** (T6/T6b smoke test) and **SC-5**
-(full 28-case regression, not just the targeted subset) both need a deploy + live run.
+**Phase 0, Phase 3's core fixes, T9, and T15 are all closed** (2026-08-27). Remaining open:
+**T13** (stays gated, T4 inconclusive), **T16**/**T17**/**T18** (other-repo/out-of-scope/
+needs-a-decision follow-ups, tracked not blocking). Live verification: **SC-1**'s `excluded` half
+is confirmed live (2026-08-27); its `subject_entity`-labelling half is inconclusive (code and gate
+telemetry check out, but no live run has reproduced the trigger to show the labelled text end to
+end). **SC-5** (full 28-case regression, not just the targeted subset) remains open. Of the spec's
+7 success criteria, **SC-2, SC-3, SC-6, SC-7 are fully closed; SC-1 half-closed; SC-4 satisfied
+without code; SC-5 open.**
 
 ## Notes
 

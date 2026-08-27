@@ -106,6 +106,18 @@ If a Postgres write fails (fire-and-forget) after a Redis write already succeede
 
 No code on the `POST /extract` → `GET /status/:id` path may read from Postgres, ever — that would reintroduce exactly the latency/consistency risk D019 §4 was written to avoid. Postgres is written to, never read from, by anything user-facing; it exists for whatever reads history/analytics later (a future endpoint, a dashboard, a direct SQL query), out of this ADR's scope to build.
 
+**Amendment (2026-08-27, spec-013 T18) — "durable mirror" does not mean byte-identical.**
+Since D031, `pipeline.service.ts` rewrites VERIFY's raw `reason` into a plainer, honest sentence
+(`rewriteUngroundedAffirmativeReason`) and, since T6b, labels `subject_entity` downgrades
+(`composeUserFacingReason`) before writing the result Redis/the API actually serve. `grounnel_claims.reason`
+was found live to still hold VERIFY's **unrewritten, unlabelled** text at all three write sites —
+contradicting this section's original "durable mirror" phrasing taken literally. This is intentional,
+not a bug: keeping the raw reason in Postgres is what makes D030 §3n's replay-against-telemetry
+technique possible (it needs what VERIFY actually said, not the user-facing rewrite) — the exact
+technique that found T12's real bug this session. Restating §7's rule precisely: **Postgres mirrors
+the verdict, evidence, confidence, and every other field Redis serves — `reason` is the one
+deliberate exception, kept as VERIFY's original text for analytics/archaeology.** No code changed.
+
 ---
 
 ## Not decided here — named, not silently dropped
