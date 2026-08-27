@@ -37,7 +37,7 @@ const ResponseSchema = z.object({
 
 interface Fixture {
   id: string;
-  group: "positive" | "ambiguous" | "discourse" | "negation" | "same_value";
+  group: "positive" | "ambiguous" | "discourse" | "negation" | "same_value" | "realistic";
   claim: string;
   fact: string;
   passages: string[];
@@ -162,6 +162,48 @@ const FIXTURES: Fixture[] = [
     expected: "absent",
     rationale:
       "Denies the claim's member but names no other. Nothing to attribute TO — 'different' would be asserting an unnamed member.",
+  },
+
+  // ── REALISTIC multi-passage: what the checker actually receives in production ──
+  // Earlier fixtures fed one passage at a time, which is not how VERIFY is called — it gets up to
+  // MAX_VERIFY_PASSAGES together. An ambiguous passage next to an explicit one is the real g17 input.
+  {
+    id: "r1-g17-realistic-mixed",
+    group: "realistic",
+    claim: CLAIM,
+    fact: FACT,
+    passages: [CAPTURED_AMBIGUOUS, CAPTURED_EXPLICIT_FOURTH, CAPTURED_LONGEST_OF_FOUR],
+    expected: "different",
+    rationale:
+      "The real g17 passage set. One passage is explicit ('on its fourth and final flight'); the others are vague. An explicit attribution alongside vague ones must win — this is the case that decides whether g17 can ever reach contradicted.",
+  },
+  {
+    id: "r2-g17-realistic-vague-only",
+    group: "realistic",
+    claim: CLAIM,
+    fact: FACT,
+    passages: [CAPTURED_AMBIGUOUS, CAPTURED_LONGEST_OF_FOUR, "Multiple sources state that the distance covered was 852 feet."],
+    expected: "absent",
+    rationale:
+      "Same claim, but retrieval returned only vague passages. Must stay 'absent' — proves r1's 'different' comes from the explicit passage, not from the model guessing.",
+  },
+  {
+    id: "r3-explicit-plus-supporting",
+    group: "realistic",
+    claim: CLAIM,
+    fact: FACT,
+    passages: [CAPTURED_EXPLICIT_FIRST, CAPTURED_AMBIGUOUS],
+    expected: "different",
+    rationale: "Explicit passage assigns the first flight 120ft and 852ft to the fourth, alongside a vague one.",
+  },
+  {
+    id: "r4-explicit-same-plus-vague",
+    group: "realistic",
+    claim: CLAIM,
+    fact: FACT,
+    passages: ["The first flight of the day covered 852 feet in 59 seconds.", CAPTURED_AMBIGUOUS],
+    expected: "same",
+    rationale: "Control for r1: an explicit passage CONFIRMING the claim, next to a vague one, must yield 'same' — the explicit-wins rule must not be biased toward 'different'.",
   },
 
   // ── same value, different instance ──
