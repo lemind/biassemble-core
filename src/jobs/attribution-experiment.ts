@@ -6,10 +6,11 @@
  * Trigger: event "eval/attribution-experiment".
  */
 import { z } from "zod";
-import { readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import variantA from "../prompts/grounnel/instance-attribution/variants/a-neutral.json" with { type: "json" };
+import variantB from "../prompts/grounnel/instance-attribution/variants/b-conflict-framed.json" with { type: "json" };
+import variantC from "../prompts/grounnel/instance-attribution/variants/c-expanded.json" with { type: "json" };
+import variantD from "../prompts/grounnel/instance-attribution/variants/d-minimal.json" with { type: "json" };
 import { inngest } from "./client.js";
 import { GeminiProvider } from "../providers/gemini.js";
 import { callLlmForJson } from "../orchestrators/llm-json-call.js";
@@ -185,23 +186,9 @@ const FIXTURES: Fixture[] = [
   },
 ];
 
-function loadVariants(): Array<{ label: string; framing: string; content: string }> {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const local = join(here, "..", "prompts", "grounnel", "instance-attribution", "variants");
-  const bundled = join(here, "prompts", "grounnel", "instance-attribution", "variants");
-  const dir = (() => {
-    try {
-      readdirSync(local);
-      return local;
-    } catch {
-      return bundled;
-    }
-  })();
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .sort()
-    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf-8")));
-}
+// Statically imported, not read from disk: the bundled build has no src/prompts tree (real ENOENT
+// on the first live run). Same convention as prompts/registry.ts.
+const VARIANTS: Array<{ label: string; framing: string; content: string }> = [variantA, variantB, variantC, variantD];
 
 function renderChecks(fixtures: Fixture[]): string {
   return JSON.stringify(
@@ -237,7 +224,7 @@ export const attributionExperimentJob = inngest.createFunction(
   { event: "eval/attribution-experiment" },
   async ({ event, step }) => {
     const repeats = Math.max(1, Math.min(10, Number(event.data?.repeats ?? 3)));
-    const variants = loadVariants();
+    const variants = VARIANTS;
     const expectedById = new Map(FIXTURES.map((f) => [f.id, f]));
     const provider = new GeminiProvider();
     const checks = renderChecks(FIXTURES);
