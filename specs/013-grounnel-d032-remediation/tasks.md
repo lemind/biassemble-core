@@ -63,7 +63,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 
 ## Phase 1 — Zero-gate fix (start immediately, independent of Phase 0)
 
-- [ ] **T7 — FIX-2: enriched `reason` for no-evidence verdicts**
+- [x] **T7 — FIX-2: enriched `reason` for no-evidence verdicts**
   - Acceptance: `NO_EVIDENCE_REASON` (and the `rewriteUngroundedAffirmativeReason` path) states both
     that no supporting evidence was found *and* that this is not a finding of falsehood. No verdict
     logic changes.
@@ -73,6 +73,10 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Depends on: T2 only if the wording turns out to be frontend-owned (spec Open Question 4);
     otherwise none.
   - Note: this task *replaces* D032's R1. Do not let it grow into a refutation search.
+  - **Result (2026-08-26, commit `c57375b`): done.** This checkbox was just never flipped after the
+    commit landed — the dependency graph below already (correctly) showed T7 ✅. No further work
+    needed; fixed here as a bookkeeping correction, caught 2026-08-27 when the user pointed at this
+    exact block.
 
 ---
 
