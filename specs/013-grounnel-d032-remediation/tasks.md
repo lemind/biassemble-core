@@ -391,6 +391,23 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - **Do not just reorder it.** VERIFY is the core prompt; D030 §1 records a VERIFY prompt change that
     failed live 2/2. Simulate first (D030 §3n), then a full golden-set run at N≥5 before and after.
   - Depends on: SC-5 baseline, so there is something to compare against.
+  - **SIMULATION DONE (2026-08-27, zero API cost — persisted telemetry only).** Two numbers.
+    **(a) The mechanism is real, measured on T21's own checker.** Self-contradiction rate (the
+    `working` field's own stated conclusion vs the emitted `attribution`): **3/9 = 33% BEFORE** the
+    field-order fix, **0/47 AFTER** (Fisher one-sided **p = 0.0030**). A further 54 post-fix answers
+    stopped restating a conclusion at all, which is what genuine derivation-then-answer looks like
+    rather than a post-hoc summary. Reordering one schema removed the effect entirely.
+    **(b) VERIFY's visible symptom: 686/9374 = 7.32%** of claims reaching `counterfact_ignored` had
+    the consistency classifier rule that VERIFY's own reason did NOT support its verdict. The
+    deterministic gates each catch only a narrow slice of the same phenomenon (`reason_ordinal` 0.94%,
+    `reason_consistency` 0.43%, `reason_year` 0.40%, `implicit_negation` 0.10%,
+    `claim_reason_overlap` 0.02%), so 7.32% is the better estimate of the total.
+  - **What this does NOT establish.** 7.32% is measured only under the current verdict-first order —
+    there is no counterfactual for VERIFY, so the share of it *caused* by field order is unknown. (a)
+    raises the prior; it does not transfer the rate. The A/B below is still required.
+  - **Pre-registered hypothesis for the experiment:** reordering VERIFY to emit `reason` before
+    `verdict` reduces the `counterfact_ignored` flag rate below 7.32% without lowering detection.
+    Baseline to beat comes from SC-5.
 
 - [x] ~~**T13 — FIX-5: prediction exclusion policy**~~ **CLOSED WON'T-DO (2026-08-27)**
   - **Decision: do not reverse D030 §3b.** T4 measured **n=1 across 2,724 eligibility checks**, and
