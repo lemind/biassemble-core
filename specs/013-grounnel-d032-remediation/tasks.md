@@ -239,6 +239,28 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     should now reach `supported` ≥8/10) and full golden-set regression (SC-5) — not yet run, needs
     deployment same as T3/T10 did.
 
+- [ ] **T20 — g17 catches its false claim only ~33% of the time** ⚠ **measured, not a regression**
+  - **Finding (2026-08-27, n=82 historical runs of g17's own claim text):** `supported` 42,
+    `contradicted` 24, `unverifiable` 6, `unsupported` 1 — a **~33% catch rate**, and the dominant
+    failure (42/82) is `supported`, i.e. actively affirming a claim the golden set labels `false`.
+    The golden set sets `minCorrectRate: 1.0` for this case, so it has been failing its own bar for
+    its entire recorded history.
+  - **Not caused by anything on this branch.** Triggered by a 2026-08-27 miss that looked like a T17
+    regression; ruled out by replaying all 25 historical `reason_ordinal` catches through post-T17
+    code (25/25 still fire) and by confirming old/new `SELECTOR_RE_G` behave identically on g17's
+    text. `reason_ordinal` also caught g17 twice on 08-26, i.e. after T12 shipped.
+  - **Mechanism:** `applyReasonOrdinalGate` compares the claim's ordinal against an ordinal *in
+    VERIFY's reason*. When VERIFY writes "the distance covered was 852 feet" without naming which
+    flight, there is no ordinal to compare and the gate abstains (`reasonMatches.length === 0`, a
+    pre-existing path). The gate is working; its **input** is unreliable. D030 built this gate for
+    g17 and it does catch g17 — but only when VERIFY happens to name the competing ordinal.
+  - Candidate directions (none chosen — needs a scoping decision, and D030 §3k's freeze history
+    argues for measuring before building): make VERIFY consistently state which instance it matched;
+    or detect the instance mismatch without depending on VERIFY's prose (evidence-side, not
+    reason-side); or accept ~33% and correct `minCorrectRate` to reflect measured reality.
+  - **Do not "fix" this by loosening the gate** — the same pressure produced the D030 §3k freeze and
+    T17's false accusation. Downgrade-only discipline stands.
+
 - [ ] **T13 — FIX-5: prediction exclusion policy**
   - Acceptance: `isEligibilityExcluded` excludes `prediction` regardless of `certainty` — **only if
     T4 cleared it**. D030 §3b updated to record the reversal and its evidence.
@@ -361,6 +383,13 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     plus a control confirming a genuine competing ordinal still fires when a compound is also
     present). `/code-review medium` — 1 convention finding (an over-length test comment), fixed. 84
     files / 1224 tests pass, `tsc` clean.
+  - **Live-verified 2026-08-27 (deployed): PASS.** g23 re-run at N=5 post-deploy: **6/6 `supported`,
+    0 `contradicted`**, and `reason_ordinal` abstained on 9/9 firings — i.e. the gate no longer reads
+    "second" out of "12-second". Pre-fix this case produced a real `contradicted` false accusation on
+    a true claim (a Cardinal Rule violation). Closed.
+  - **Regression check on the same deploy (D030 §3n):** replayed all **25** historical g17 catches
+    (every case where `reason_ordinal` legitimately fired) through the post-T17 code — **25/25 still
+    fire, 0 regressions.** The lookbehind only removes matches that were never valid selectors.
 
 - [x] **T18 — Resolve Postgres/Redis reason-mirroring contradiction (D023 §7 vs. current code)**
   - Acceptance: either D023 §7 and T6b's verify step are amended to state that `grounnel_claims.reason`
@@ -411,8 +440,10 @@ all fixes ───────────────────────�
 ```
 
 **Phase 0, Phase 3's core fixes, T9, and T15 are all closed** (2026-08-27). Remaining open:
-**T13** (stays gated, T4 inconclusive). **T16**/**T17**/**T18**/**T19** are all now closed —
-**T19 needs a production deploy**, it is a live 502 on any run containing an excluded claim. Live verification: **SC-1**'s `excluded` half
+**T13** (stays gated, T4 inconclusive) and **T20** (new — g17's ~33% catch rate, measured
+2026-08-27, needs a scoping decision). **T16**/**T17**/**T18**/**T19** are closed; T17 is
+live-verified on the 2026-08-27 core deploy. **T19 still needs a `biassemble` deploy** — it is a
+live 502 on any run containing an excluded claim, reproduced A/B against production Core. Live verification: **SC-1**'s `excluded` half
 is confirmed live (2026-08-27); its `subject_entity`-labelling half is inconclusive (code and gate
 telemetry check out, but no live run has reproduced the trigger to show the labelled text end to
 end). **SC-5** (full 28-case regression, not just the targeted subset) remains open. Of the spec's
