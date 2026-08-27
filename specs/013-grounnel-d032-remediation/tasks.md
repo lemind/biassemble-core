@@ -288,8 +288,9 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     `scripts/trigger-attribution-experiment.ts`. Commit `4bf0bd2`.
   - **Original bar — "NOT WIRED until the decision gate passes"** (D030 §3n; D030 §1 records a prompt
     fix for this same class that failed live 2/2 and was reverted). The gate passed, then it shipped.
-    Replaces the dead `verify-experiment.ts` (D030 §3g/§3i) — that file and its trigger script
-    **still need deleting**.
+    Replaces the dead `verify-experiment.ts` (D030 §3g/§3i) — that file and its trigger script were
+    **deleted 2026-08-27**; nothing imported them and the job was never registered in
+    `buildInngestFunctions`, so its Inngest event was unroutable.
 
   - **RESULT — bake-off (16 fixtures × 4 variants, temp 0, N=1).** `c-expanded` won outright:
     16/16, `falseDifferentPerRun` 0, `fabricatedCitationsPerRun` 0. The other three each scored 15/16,
