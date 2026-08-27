@@ -95,11 +95,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
         verdicts: Object.fromEntries(c.claims.filter((cl) => cl.kind === "false").map((cl) => [cl.match, cl.verdicts])),
       }));
 
-    // D023 §7 (2026-08-27 amendment)/T18 — Postgres stores VERIFY's RAW reason by design, so the
-    // USER-FACING text (D031's rewrite, T6b's subject_entity label) lives only in the run's own
-    // Redis view and dies with the run. That gap is what made T6b unverifiable from telemetry.
-    // Bounded on purpose: only the verdicts whose reason carries the load, truncated and capped,
-    // because a full per-repetition dump is too large for a step output at N>1 (see below).
+    // Postgres keeps VERIFY's RAW reason (D023 §7/T18), so user-facing text survives nowhere else. Bounded — see ADR.
     const REASON_BEARING_VERDICTS = new Set(["unverifiable", "unsupported", "excluded"]);
     const userFacingReasons = summary.cases
       .flatMap((c) =>
@@ -134,9 +130,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // At N>1 the full per-repetition claim dump is far too large for an Inngest step output / error
     // message, so it is replaced by the run ids — the claims themselves are already in Postgres
     // (`grounnel.grounnel_claims` by `run_id`, source "eval"), which is where Stage 2 reads them.
-    // Caveat (T18): Postgres's `reason` is VERIFY's RAW text, NOT what the user sees. For the
-    // user-facing wording, read `userFacingReasons` in the log line above — it is not recoverable
-    // from `grounnel_claims` afterwards.
+    // Caveat (T18): that `reason` is RAW, not user-facing — read `userFacingReasons` logged above.
     const compact = summary.cases.map(({ runDetails, run: _run, ...rest }) => ({
       ...rest,
       runIds: runDetails.map((r) => r.id).filter(Boolean),
