@@ -291,13 +291,47 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     external facts by hand, out of proportion to this close-out task; the denominator match is the
     one fact objectively checkable from stored data alone, and it holds.
 
-- [ ] **T16 — Frontend: style the `excluded` verdict**
+- [x] **T16 — Frontend: style the `excluded` verdict**
   - Acceptance: `VERDICT_HIGHLIGHT_CLASS`/`VERDICT_DOT_CLASS` in `verdictStyle.ts` handle `excluded`;
     a UI decision made for what it looks like to a user (distinct from `unverifiable`'s `bg-info`).
   - Verify: manual check — an excluded claim renders distinctly, not unstyled/undefined.
   - Files: `biassemble/frontend/src/lib/verdictStyle.ts`, `biassemble/frontend/src/types/grounnel.ts`
   - Depends on: T5 (the enum value must exist first). **Different repo — out of this spec's own
     scope, tracked here only so it isn't lost** (D032 §7 Q3).
+  - **Result (2026-08-27, `biassemble` repo): done.** Chose a hollow/outlined treatment rather than a
+    new colour token — the repo's own 2026-08-16 note records that an outlined variant "reads as no
+    info", which is wrong for "not located" but exactly right for "never checked". Highlight sets an
+    explicit `bg-base-100` because `<mark>`'s UA default is yellow (a trap `FAILED_STYLE` already
+    documents). Icon `—`, label "Not checked". Also added `VERDICT_LABEL` to `verdictStyle.ts`:
+    `GrounnelProgress` had been falling back to the raw enum string, so the same claim would have
+    read "Not checked" in the article but "excluded" on the progress dot — the latter reading as if
+    the user's text had been rejected. Verified: `tsc` + eslint clean, production build succeeds, and
+    the built CSS was grepped to confirm all six new Tailwind utilities actually emitted (this file's
+    own comment warns that a missing class fails silently).
+  - **`/code-review medium` (3 finder angles + verification) found 3 issues, all fixed**: the raw-enum
+    progress label above; the `isFallback` "the claim actually checked here was…" copy contradicting
+    the new "wasn't checked" note in the same tooltip *and* in the `sr-only` text (now gated behind
+    `!notChecked`); and dev-mock only ever emitting `verdict: "supported"`, which made the entire new
+    rendering path unreachable without spending live API quota (mock now emits an `excluded` claim
+    too, with a test asserting the mock still satisfies the real Zod contract). A fourth candidate —
+    the "Searched, found nothing" copy co-firing with "wasn't checked" — was **refuted**:
+    `writeExcludedClaim` is the sole writer of `excluded` and hardcodes `sources: []`/`citations: []`,
+    so its `sources.length > 0` precondition is structurally unreachable.
+
+- [x] **T19 — Backend contract: `excluded` 502s the entire status poll** ⚠ **found live, not specced**
+  - `biassemble/backend`'s `grounnelClaimSchema.verdict` is a **runtime Zod enum** that lacked
+    `excluded`. `GET /api/grounnel/status/[id]` → `getCore` → `parseJsonFromAi` → `safeParse` →
+    **throws** `aiParseError` (502); it does not degrade. So a single `excluded` claim failed the
+    whole poll — every claim in the run, not just that one — and Core has been shipping `excluded` to
+    production since 2026-08-26. Trigger is any opinion/personal sentence, which is common in real
+    user text (g18 is literally the user report that motivated the feature).
+  - **Fixed 2026-08-27** by adding `excluded` to the enum, plus `backend/tests/unit/grounnel-contracts.test.ts`
+    guarding verdict parity with Core (accepts all 6, still rejects an unknown value) — the failure
+    mode is whole-response, so it warrants a test even under a lean test policy.
+  - **Caveat:** the code path was verified end to end in source; *which build is actually deployed*
+    to the backend's production was not. **Needs a deploy — highest-priority one outstanding.**
+  - Found while tracing `ClaimVerdict` consumers for T16 — i.e. by the cross-file angle of the review,
+    not by the task itself.
 
 - [x] **T17 — Fix `SELECTOR_RE_G` matching a sequence word inside a hyphenated compound**
   - Acceptance: `\b(first|second|...|tenth)\b` no longer matches "second" in "12-second",
@@ -365,7 +399,8 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 T1 ✅ (contract=A) ─────────────────────────► T9 ✅ ──► SC-6 ✅
 T2 ✅ (frontend=no) ─► T5 ✅ ──► T6 ✅ ─────────────► SC-1 (excluded half ✅ live; subject_entity half inconclusive live)
                        ├──► T6b ✅ (subject_entity labelling) ──► SC-1 ──► T18 (Postgres/ADR gap found)
-                       └──► T16 (frontend styling, other repo)
+                       ├──► T16 ✅ (frontend styling, other repo)
+                       └──► T19 ✅ (backend Zod enum — 502 on excluded; found by T16's review)
 T7 ✅ (reason text, no gate) ──────────────────────► SC-2
 T3 ✅ (MEASURE-1: does not reproduce) ─► T8 ❌ CANCELLED ─► SC-4 (satisfied without T8)
 T4 ✅ (MEASURE-2: n=1, inconclusive) ──► T13 (stays gated)
@@ -376,8 +411,8 @@ all fixes ───────────────────────�
 ```
 
 **Phase 0, Phase 3's core fixes, T9, and T15 are all closed** (2026-08-27). Remaining open:
-**T13** (stays gated, T4 inconclusive), **T16**/**T17**/**T18** (other-repo/out-of-scope/
-needs-a-decision follow-ups, tracked not blocking). Live verification: **SC-1**'s `excluded` half
+**T13** (stays gated, T4 inconclusive). **T16**/**T17**/**T18**/**T19** are all now closed —
+**T19 needs a production deploy**, it is a live 502 on any run containing an excluded claim. Live verification: **SC-1**'s `excluded` half
 is confirmed live (2026-08-27); its `subject_entity`-labelling half is inconclusive (code and gate
 telemetry check out, but no live run has reproduced the trigger to show the labelled text end to
 end). **SC-5** (full 28-case regression, not just the targeted subset) remains open. Of the spec's
