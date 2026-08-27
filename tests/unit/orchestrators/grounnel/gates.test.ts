@@ -1476,6 +1476,29 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
       expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
     });
   });
+
+  // T17, D032 §10 — real g23 live false accusation, captured verbatim from the run that produced it.
+  // "second" inside "12-second" isn't a sequence selector; see D032 §10 for the full mechanism.
+  describe("hyphenated numeric compound guard (T17, D032 §10)", () => {
+    it("does not force contradicted on the real g23 case — 'second' inside '12-second' is not a competing ordinal", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The Wright brothers' first successful powered flight lasted 12 seconds.",
+        reason:
+          "The passage states that the Wright brothers' 12-second flight changed the world and that the flight lasted 12 seconds. Multiple sources confirm the duration of the flight as 12 seconds.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("still fires on a genuine competing ordinal even when a numeric duration compound is also present", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The first flight covered 852 ft.",
+        reason: "The passage states the 12-second fourth flight covered 852 ft, not the first.",
+      });
+      expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+    });
+  });
 });
 
 // T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different

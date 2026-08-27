@@ -295,7 +295,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Depends on: T5 (the enum value must exist first). **Different repo — out of this spec's own
     scope, tracked here only so it isn't lost** (D032 §7 Q3).
 
-- [ ] **T17 — Fix `SELECTOR_RE_G` matching a sequence word inside a hyphenated compound**
+- [x] **T17 — Fix `SELECTOR_RE_G` matching a sequence word inside a hyphenated compound**
   - Acceptance: `\b(first|second|...|tenth)\b` no longer matches "second" in "12-second",
     "third" in "one-third", etc. — a word boundary next to a hyphen currently reads either side as
     a standalone word. Candidate scope: exclude a match immediately preceded by `\d+-`.
@@ -310,6 +310,19 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     Not part of this spec's original scope; not blocking T12's completion. Same class of bug as
     D030 §3k's freeze was written to prevent recurrence of, but a genuinely new mechanism
     (tokenization, not phrasing) — likely needs its own unfreeze/scope decision before starting.
+  - **Result (2026-08-27): done.** Added a negative lookbehind (`(?:\d+|one|...|ten)-`) to
+    `SELECTOR_RE_G` — rejects a sequence word immediately preceded by a numeral/spelled-number +
+    hyphen (covers both examples in this task's acceptance text: "12-second", "one-third").
+    **Simulated first (D030 §3n):** found the exact "12-second"/"12-flight-duration" phrasing in 3
+    historical claims' reasons; confirmed one (the real g23 claim) had `reason_ordinal` fire and
+    force `contradicted` — matches D032 §10 exactly. The other two didn't fire (context-dependent,
+    not investigated further — not needed to confirm the fix is safe, since the fix only removes
+    matches that were never legitimate selectors). New tests: `instance-selector.test.ts` (4 cases —
+    digit compound, spelled-number compound, a real ordinal still resolving alongside a compound, and
+    the compound not creating a competing selector) and `gates.test.ts` (the exact g23 reproduction,
+    plus a control confirming a genuine competing ordinal still fires when a compound is also
+    present). `/code-review medium` — 1 convention finding (an over-length test comment), fixed. 84
+    files / 1224 tests pass, `tsc` clean.
 
 - [x] **T18 — Resolve Postgres/Redis reason-mirroring contradiction (D023 §7 vs. current code)**
   - Acceptance: either D023 §7 and T6b's verify step are amended to state that `grounnel_claims.reason`

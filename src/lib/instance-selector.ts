@@ -8,7 +8,10 @@
 // "first".."tenth" only — no "last"/"final"/superlatives, see D030 §3e for why.
 export const SEQUENCE_SELECTOR_WORDS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
 // (?!-to-) rejects "second-to-last" compounds without also rejecting genuine ones like "first-place" (D030 §3a).
-export const SELECTOR_RE_G = new RegExp(`\\b(${SEQUENCE_SELECTOR_WORDS.join("|")})\\b(?!-to-)`, "gi");
+// (?<!...-) rejects a duration/measurement compound ("12-second", "one-third") — a hyphen reads as a
+// word boundary too, so \b alone matched "second" inside "12-second" (T17, D032 §10; live false accusation).
+const HYPHEN_COMPOUND_PREFIX = "(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)-";
+export const SELECTOR_RE_G = new RegExp(`(?<!${HYPHEN_COMPOUND_PREFIX})\\b(${SEQUENCE_SELECTOR_WORDS.join("|")})\\b(?!-to-)`, "gi");
 
 // Decimal-safe sentence terminator ("$3.5 million" isn't a clause end) — D030 §3a.
 export function isSentenceTerminator(text: string, index: number): boolean {
