@@ -97,7 +97,7 @@ describe("POST /extract (T014)", () => {
     expect(statusBody.claims[0].text).toBe("This is the best coffee in Rome.");
     // Opinion claim — gate #3 already resolved it to "done" synchronously, before the 202 was sent.
     expect(statusBody.claims[0].status).toBe("done");
-    expect(statusBody.claims[0].verdict).toBe("unverifiable");
+    expect(statusBody.claims[0].verdict).toBe("excluded");
   });
 
   it("returns 503 with a clear retry message when Gemini itself is rate-limited during EXTRACT (no audit exists yet to write a per-claim reason into)", async () => {

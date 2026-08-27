@@ -297,3 +297,30 @@ export function rewriteUngroundedAffirmativeReason(verdict: Verdict, citationsCo
   if (UNGROUNDED_REASON_NEGATION_WORD_RE.test(match[0])) return reason;
   return UNGROUNDED_REASON_REPLACEMENT;
 }
+
+// D032 §3f/T6b — labels subject_entity's downgrade distinctly; gate behaviour unchanged (D030 §3l/§3m stand).
+const SUBJECT_ENTITY_DOWNGRADE_SUFFIX =
+  " Evidence was found but could not be confirmed as being about this claim's specific subject — this is not a finding that no evidence exists.";
+
+/** D032 §3f/T6b — appends a distinguishing note when `unverifiable` came from subject_entity, not from a genuine absence of evidence. */
+export function labelSubjectEntityDowngrade(verdict: Verdict, gateEvents: readonly { gate: string; overridden: boolean }[], reason: string | null): string | null {
+  if (verdict !== "unverifiable" || !reason) return reason;
+  if (!gateEvents.some((e) => e.gate === "subject_entity" && e.overridden)) return reason;
+  return reason + SUBJECT_ENTITY_DOWNGRADE_SUFFIX;
+}
+
+/** D032 §3f/T6b (review finding) — subject_entity takes precedence over the D031 rewrite below: it
+ * also nulls evidence/citations, so both rules' preconditions can hold at once, and running both
+ * produced a self-contradictory reason ("no evidence found" + "evidence was found"). Composed here,
+ * not left as caller-side ordering, so the precedence can't silently drift out of sync again. */
+export function composeUserFacingReason(
+  verdict: Verdict,
+  gateEvents: readonly { gate: string; overridden: boolean }[],
+  citationsCount: number,
+  reason: string | null
+): string | null {
+  const subjectEntityCausedThis = gateEvents.some((e) => e.gate === "subject_entity" && e.overridden);
+  return subjectEntityCausedThis
+    ? labelSubjectEntityDowngrade(verdict, gateEvents, reason)
+    : rewriteUngroundedAffirmativeReason(verdict, citationsCount, reason);
+}

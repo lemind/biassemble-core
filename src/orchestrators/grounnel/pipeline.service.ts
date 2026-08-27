@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
-import { rewriteUngroundedAffirmativeReason } from "./gates.js";
+import { composeUserFacingReason, rewriteUngroundedAffirmativeReason } from "./gates.js";
 import { runGateChain, type Diagnostic } from "./pipeline-gate-chain.js";
 import {
   buildGeminiRateLimitMessage,
@@ -882,8 +882,9 @@ export class GrounnelPipelineService {
           return;
         }
 
-        // D031 — user-facing text only; historyStore below keeps VERIFY's raw reason for the audit trail.
-        const userFacingReason = rewriteUngroundedAffirmativeReason(verdict, citations.length, reason);
+        // D031/D032 §3f/T6b — user-facing text only; historyStore below keeps VERIFY's raw reason.
+        // currentPassGateEvents, not gateEvents (retry-concatenated and stale — see ADR).
+        const userFacingReason = composeUserFacingReason(verdict, currentPassGateEvents, citations.length, reason);
         const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason: userFacingReason, sources, citations };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
         // D027 §4 — deliberately no `citations` here: historyStore's Postgres row doesn't carry it (out of scope for this change).

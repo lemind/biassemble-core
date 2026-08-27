@@ -31,7 +31,7 @@ export interface GrounnelHistoryStore {
     runId: string;
     claimText: string;
     sourceExcerpt: string | null;
-    verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+    verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
     evidence: string | null;
     confidence: number | null;
     reason: string | null;

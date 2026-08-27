@@ -216,6 +216,10 @@ export class RedisGrounnelStore implements GrounnelStore {
           ? "extracting"
           : "verifying";
 
+    // D032 §4 #8/#9/T5-T6 — `excluded` deliberately has no bucket and is not part of `eligible`:
+    // a claim the eligibility filter never searched was never eligible for verification at all.
+    // Before T6 these were miscounted as `unverifiable`/unclear_n, inflating this denominator with
+    // claims that were never checked — this is a fix, not a gap; see D032 §3f for the finding.
     const grounded_n = claims.filter((c) => c.verdict === "supported").length;
     const unclear_n = claims.filter((c) => c.verdict === "partially_supported" || c.verdict === "unverifiable").length;
     const no_evidence_n = claims.filter((c) => c.verdict === "unsupported").length;

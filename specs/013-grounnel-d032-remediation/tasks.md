@@ -78,7 +78,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 
 ## Phase 2 — Contract fix (needs T2)
 
-- [ ] **T5 — FIX-1a: add `excluded` to the verdict contract**
+- [x] **T5 — FIX-1a: add `excluded` to the verdict contract**
   - Acceptance: `excluded` exists in `GrounnelVerdictEnum` (Zod), `db/schema.ts`, `db/queries.ts`,
     and the persistence types — all declaration sites updated together, matching the
     `retry_decision` precedent. Migration generated and hand-verified.
@@ -89,8 +89,12 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Depends on: T2. **Ask before applying the migration** (spec Boundaries).
   - Note: resolve spec Open Question 3 first — enum value vs. separate status field. A never-checked
     claim arguably has no verdict at all.
+  - **Result (2026-08-26): enum value chosen** (D032 §11) — matches spec's own `retry_decision`
+    precedent, smaller frontend lift given T2's finding. **No migration** — `pnpm db:generate`
+    confirmed "No schema changes, nothing to migrate" (`verdict` has no SQL CHECK constraint, TS-only
+    enum). Audit-pipeline's unrelated verdict enum deliberately untouched.
 
-- [ ] **T6 — FIX-1b: write `excluded` from the eligibility path**
+- [x] **T6 — FIX-1b: write `excluded` from the eligibility path**
   - Acceptance: `writeExcludedClaim` persists `excluded`, not `unverifiable`. The distinct per-
     category `reason` strings are retained.
   - Verify: live smoke with one opinion claim + one genuinely-unverifiable claim; confirm the two
@@ -99,8 +103,12 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - Depends on: T5.
   - Scope note (D032 §3f): this covers **41.9%** of historical `unverifiable` claims. It does not
     address the 24.9% produced by `subject_entity` downgrades — see T6b.
+  - **Result (2026-08-26): done** (D032 §11). Also updated `grounnel-live-gate.ts`'s `ACCEPTABLE`
+    mapping and `grounnel-store.ts`'s score computation (excluded claims correctly drop out of
+    `eligible` — documented as deliberate, not a gap). 84 files / 1219 tests pass, `tsc` clean.
+    Live SC-1 smoke verification still pending (needs deployment, same as T3/T10/T12).
 
-- [ ] **T6b — Label `subject_entity` downgrades distinctly**
+- [x] **T6b — Label `subject_entity` downgrades distinctly**
   - Acceptance: a claim downgraded to `unverifiable` by the `subject_entity` gate is distinguishable
     — in `grounnel_claims` and/or the API — from one that genuinely could not be verified. Minimum
     viable form: a distinct `reason` string; fuller form: its own verdict/status value.
@@ -112,6 +120,15 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     stands; this only stops its downgrades from masquerading as genuine verification failures. That
     24.9% slice is the same population D030 §3m measured as ~25–30 wrongly-suppressed true claims
     per 1,000 — labelling it makes that cost visible in production instead of only in archaeology.
+  - **Result (2026-08-26): minimum viable form — distinct `reason` suffix** (D032 §11). Chose this
+    over a new verdict value to keep the enum small (only `excluded`'s ambiguity was severe enough
+    to warrant one — subject_entity's is a labelling gap, not a category-collapse). **`/code-review
+    medium` caught 2 real bugs before shipping**: a composition-order bug that could produce a
+    self-contradictory reason ("no evidence found" + "evidence was found" in the same sentence) on
+    any subject_entity downgrade with an originally-affirmative reason, and a stale-gate-events read
+    that could mislabel a genuinely-different retry outcome. Both fixed; see D032 §11 for the
+    mechanism. New `composeUserFacingReason` (extracted, directly tested — 3 new tests reproduce the
+    exact precondition that hid bug #1).
 
 ---
 
@@ -275,21 +292,23 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
 
 ```
 T1 ✅ (contract=A) ─────────────────────────► T9 ──► SC-6
-T2 ✅ (frontend=no) ─► T5 ──► T6 ──────────────────► SC-1
-                       ├──► T6b (subject_entity labelling) ──► SC-1
+T2 ✅ (frontend=no) ─► T5 ✅ ──► T6 ✅ ─────────────► SC-1 (code done, live smoke pending)
+                       ├──► T6b ✅ (subject_entity labelling) ──► SC-1
                        └──► T16 (frontend styling, other repo)
-T7 (reason text, no gate) ────────────────────────► SC-2
+T7 ✅ (reason text, no gate) ──────────────────────► SC-2
 T3 ✅ (MEASURE-1: does not reproduce) ─► T8 ❌ CANCELLED ─► SC-4 (satisfied without T8)
 T4 ✅ (MEASURE-2: n=1, inconclusive) ──► T13 (stays gated)
-T10 (MEASURE-3) ─► T11 ──► T12 ───────────────────► SC-3
-T14 (MEASURE-4) ─► [future R3 decision]
+T10 ✅ (MEASURE-3) ─► T11 ✅ ──► T12 ✅ ────────────► SC-3 ✅ (50/50 live-verified)
+T14 ✅ (MEASURE-4) ─► [future R3 decision]
 T3,T4,T10,T14 ───► T15 ───────────────────────────► SC-7
-all fixes ────────────────────────────────────────► SC-5 (regression, N≥5)
+all fixes ────────────────────────────────────────► SC-5 (targeted subset clean; full set open)
 ```
 
-**Phase 0 is closed** (2026-08-26): T1, T2, T3, T4 all answered/measured. T8 cancelled as a direct
-result. **Now unblocked and parallelisable:** T5 (→ T6, T6b), T7, T9, T10 (→ T11 → T12), T14.
-**Start with T7** if any code is to be written today: it is the only fix with no gate.
+**Phase 0 and Phase 3's core fixes are closed** (2026-08-26). Remaining: **T9** (needs T1, unblocked
+— eval harness re-scoring), **T15** (needs T3/T4/T10/T14, all done — just needs writing up),
+**T13** (stays gated, T4 inconclusive), **T16**/**T17** (other-repo/out-of-scope follow-ups,
+tracked not blocking). Live verification still open: **SC-1** (T6/T6b smoke test) and **SC-5**
+(full 28-case regression, not just the targeted subset) both need a deploy + live run.
 
 ## Notes
 

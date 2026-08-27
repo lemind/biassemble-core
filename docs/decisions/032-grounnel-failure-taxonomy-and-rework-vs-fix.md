@@ -649,3 +649,57 @@ recorded so it isn't lost and isn't mistaken for a T12 defect if it recurs. Cand
 implemented): exclude a selector-word match immediately preceded by a hyphen and a digit (the
 "N-second"/"N-third" shape specifically), the same narrow, evidence-driven scoping this file's other
 positional exceptions use — not a general prose-parsing fix.
+
+## §11. T5/T6/T6b implemented (2026-08-26) — Phase 2, `excluded` verdict
+
+**T5 — `excluded` added to `GrounnelVerdictEnum`.** Resolves spec Open Question 3 in favour of an
+enum value, not a separate `status` field: matches the spec's own cited `retry_decision` precedent,
+and the frontend (D032 §7 Q3/T2) already only switches on `verdict`, so a new field would be a
+bigger frontend lift than one new enum case. Declaration sites: `contracts/grounnel.schemas.ts`,
+`db/schema.ts` (`grounnelClaims.verdict`), `db/queries.ts` (`insertGrounnelClaim`),
+`persistence/grounnel-history-store.ts`. Deliberately **not** touched: the unrelated audit-pipeline
+verdict enum (`claims.verdict`, `verify.service.ts`, `audit-store.ts` — a different feature,
+`specs/008-b2b`), and `grounnel_gate_events.verdictBefore/verdictAfter` stays untouched in *runtime
+behaviour* (widened only for type-parity, since no gate event can ever fire for an excluded claim —
+`writeExcludedClaim` bypasses the gate chain entirely). **No DB migration** — confirmed via
+`pnpm db:generate` → "No schema changes, nothing to migrate": `verdict` is a plain Drizzle
+`text(..., {enum:[...]})` column, a TypeScript-level convenience with no SQL CHECK constraint.
+
+**T6 — `writeExcludedClaim` persists `excluded`, not `unverifiable`.** Also updated the eval
+harness's `ACCEPTABLE` mapping (`grounnel-live-gate.ts`): `kind: "excluded"` now expects verdict
+`excluded`, closing the exact ambiguity D030 §3b's FR-008 named. And `grounnel-store.ts`'s score
+computation: `excluded` claims deliberately have no bucket and are excluded from `eligible` — a
+claim never searched was never eligible for verification. This is a genuine (small) behaviour
+change from before T6, when excluded claims were miscounted into `unclear_n`/`eligible`, diluting
+`grounded_pct` with claims that were never checked at all.
+
+**T6b — `subject_entity` downgrades get a distinguishing `reason` suffix**, not their own verdict
+(minimum viable form, per the task's own acceptance). New `labelSubjectEntityDowngrade` appends a
+note when `unverifiable` came from `subject_entity`, distinct from a genuine no-evidence
+`unverifiable` (D032 §3f's 24.9% slice).
+
+### Two real bugs, both caught by `/code-review medium` before shipping, both fixed
+
+1. **Composition order produced self-contradictory text.** The first implementation ran the D031
+   ungrounded-affirmative rewrite (which replaces an affirmative-sounding reason with "no evidence
+   found" when `citationsCount === 0`) unconditionally, then appended T6b's "evidence was found"
+   suffix after it — on the *same claim*. The bug: `subject_entity` also nulls `evidence` (hence
+   `citations`), so `citationsCount === 0` holds for subject_entity downgrades too — the D031
+   rewrite's own precondition does not exempt this case, contrary to what the first draft's comment
+   claimed. Any subject_entity downgrade whose original VERIFY reason was affirmative (the normal
+   case — it justified the pre-downgrade `supported` verdict) produced a reason claiming both "no
+   evidence was found" and "evidence was found" in the same sentence. **Fixed** by extracting the
+   combination into `composeUserFacingReason` (`gates-reason-grounded.ts`): subject_entity now takes
+   precedence outright — if it fired, the D031 rewrite never runs at all.
+2. **Read the wrong gate-events array — stale across a retry.** The write site used `gateEvents`
+   (the pass-concatenated trail, `firstPass` + `retryPass` events together), when it needed
+   `currentPassGateEvents` (reset per retry) — the same distinction `originatingContradictionGate`
+   already exists to enforce, for the identical reason. A claim whose first pass triggered
+   subject_entity *and* a retry, whose retry then landed on `unverifiable` for a genuinely different
+   (no-evidence) reason, would have wrongly inherited the stale subject_entity label — exactly the
+   ambiguity T6b exists to eliminate, reintroduced by pass-staleness. **Fixed**: reads
+   `currentPassGateEvents`.
+
+Both were caught by the diff-review pass before any deploy — not found live. 3 new unit tests added
+(`composeUserFacingReason`'s own describe block) reproduce the exact precondition that hid bug #1
+(`citationsCount: 0` alongside an affirmative reason and a `subject_entity` event).

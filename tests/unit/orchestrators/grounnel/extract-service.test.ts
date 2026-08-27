@@ -45,7 +45,7 @@ describe("GrounnelExtractService (T009)", () => {
     expect(status!.claims.every((c) => c.status === "pending" || c.status === "done")).toBe(true);
   });
 
-  it("resolves an opinion-shaped claim to unverifiable immediately, with zero SearchProvider calls (gate #3)", async () => {
+  it("resolves an opinion-shaped claim to excluded immediately, with zero SearchProvider calls (gate #3)", async () => {
     provider.setDefault({
       claims: [{ claim: "This is the best coffee in Rome.", source_excerpt: "This is the best coffee in Rome." }, { claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }],
       truncated: false,
@@ -59,7 +59,7 @@ describe("GrounnelExtractService (T009)", () => {
 
     const opinionClaim = status!.claims.find((c) => c.text.includes("best coffee"))!;
     expect(opinionClaim.status).toBe("done");
-    expect(opinionClaim.verdict).toBe("unverifiable");
+    expect(opinionClaim.verdict).toBe("excluded");
     expect(opinionClaim.sources).toEqual([]);
 
     const factualClaim = status!.claims.find((c) => c.text.includes("Eiffel"))!;
@@ -313,7 +313,7 @@ describe("GrounnelExtractService (T009)", () => {
     await service.run("Some pasted article text.");
 
     expect(historyStore.createClaimCalls).toHaveLength(1);
-    expect(historyStore.createClaimCalls[0]).toMatchObject({ verdict: "unverifiable", status: "done" });
+    expect(historyStore.createClaimCalls[0]).toMatchObject({ verdict: "excluded", status: "done" });
   });
 
   it("reviewed finding: marks the run 'failed' in history when EXTRACT itself fails after exhausting retries", async () => {
@@ -349,7 +349,7 @@ describe("GrounnelExtractService (T009)", () => {
       const status = await store.getStatus(id);
       const excluded = status!.claims.find((c) => c.text.includes("Whiskers"))!;
       expect(excluded.status).toBe("done");
-      expect(excluded.verdict).toBe("unverifiable");
+      expect(excluded.verdict).toBe("excluded");
     });
 
     it("records a grounnel_llm_calls completion with stage extract / callType eligibility_check", async () => {

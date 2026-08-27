@@ -10,6 +10,8 @@ import {
   applyReasonYearGate,
   applySubjectEntityGate,
   applyYearGate,
+  composeUserFacingReason,
+  labelSubjectEntityDowngrade,
   rewriteUngroundedAffirmativeReason,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
@@ -1627,6 +1629,81 @@ describe("subject-entity gate — deterministic backstop for g17 (unrelated real
       evidence: "An unrelated page about the Stone of Destiny's 34 numbered fragments.",
     });
     expect(result.overridden).toBe(false);
+  });
+});
+
+describe("labelSubjectEntityDowngrade — D032 §3f/T6b, distinguishes a subject_entity downgrade from a genuine no-evidence unverifiable", () => {
+  const SUBJECT_ENTITY_EVENT = { gate: "subject_entity", overridden: true };
+  const OTHER_EVENT = { gate: "reason_year", overridden: true };
+  const NOOP_SUBJECT_ENTITY_EVENT = { gate: "subject_entity", overridden: false };
+
+  it("appends a distinguishing note when subject_entity overrode this claim to unverifiable", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [SUBJECT_ENTITY_EVENT], "The passage discusses a different Wright brother.");
+    expect(result).toBe(
+      "The passage discusses a different Wright brother. Evidence was found but could not be confirmed as being about this claim's specific subject — this is not a finding that no evidence exists."
+    );
+  });
+
+  it("leaves reason unchanged when subject_entity did not fire (a genuine no-evidence unverifiable)", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [OTHER_EVENT, NOOP_SUBJECT_ENTITY_EVENT], "No relevant source found for this claim.");
+    expect(result).toBe("No relevant source found for this claim.");
+  });
+
+  it("leaves reason unchanged for any verdict other than unverifiable, even if subject_entity is in the event list", () => {
+    // subject_entity only ever overrides TO unverifiable, but this guards the precondition directly
+    // rather than relying on that invariant holding forever.
+    const result = labelSubjectEntityDowngrade("supported", [SUBJECT_ENTITY_EVENT], "The passage confirms the claim.");
+    expect(result).toBe("The passage confirms the claim.");
+  });
+
+  it("passes through null reason unchanged, even when subject_entity fired", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [SUBJECT_ENTITY_EVENT], null);
+    expect(result).toBeNull();
+  });
+
+  it("does not fire on an empty gate-events list", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [], "No relevant source found for this claim.");
+    expect(result).toBe("No relevant source found for this claim.");
+  });
+});
+
+describe("composeUserFacingReason — D032 §3f/T6b (review finding), precedence between subject_entity labelling and the D031 ungrounded-affirmative rewrite", () => {
+  const SUBJECT_ENTITY_EVENT = { gate: "subject_entity", overridden: true };
+
+  // The actual bug: subject_entity ALSO nulls evidence (pipeline-gate-chain.ts), so citations.length
+  // is 0 here too — rewriteUngroundedAffirmativeReason's own "citationsCount > 0" early-return does
+  // NOT skip this case. Composing both unconditionally produced a self-contradictory reason
+  // ("no evidence found" + "evidence was found") on any subject_entity downgrade whose original
+  // VERIFY reason was affirmative — which it typically is, since it justified the pre-downgrade
+  // supported/partially_supported verdict.
+  it("subject_entity takes precedence: does NOT let the D031 rewrite replace an affirmative reason with 'no evidence found'", () => {
+    const result = composeUserFacingReason(
+      "unverifiable",
+      [SUBJECT_ENTITY_EVENT],
+      0, // citations.length after subject_entity nulled evidence — the exact condition that hid the bug
+      "The passage confirms the second layer contained 34 fragments."
+    );
+    expect(result).not.toContain("did not provide a specific passage");
+    expect(result).toBe(
+      "The passage confirms the second layer contained 34 fragments. Evidence was found but could not be confirmed as being about this claim's specific subject — this is not a finding that no evidence exists."
+    );
+  });
+
+  it("falls through to the D031 rewrite unchanged when subject_entity did not fire (no regression)", () => {
+    const result = composeUserFacingReason(
+      "unverifiable",
+      [{ gate: "reason_year", overridden: true }],
+      0,
+      "Multiple sources state the first flight lasted 12 seconds."
+    );
+    expect(result).toBe(
+      "The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed."
+    );
+  });
+
+  it("falls through to the D031 rewrite unchanged when there are no gate events at all", () => {
+    const result = composeUserFacingReason("unsupported", [], 0, "No relevant source found for this claim.");
+    expect(result).toBe("No relevant source found for this claim.");
   });
 });
 

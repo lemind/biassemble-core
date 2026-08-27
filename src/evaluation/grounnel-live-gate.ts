@@ -71,10 +71,9 @@ const ACCEPTABLE: Record<ClaimKind, string[]> = {
   false: ["contradicted"],
   // Absent from the web is honestly reported either way; only `contradicted` is a false accusation.
   silence: ["unsupported", "unverifiable"],
-  // D030 §3b (tasks.md T015/T016/T017) — `silence`'s ["unsupported", "unverifiable"] pair can't tell
-  // "correctly excluded pre-search" apart from "searched, found nothing" (the exact ambiguity FR-008
-  // exists to eliminate), so a true-exclusion/hard-negative fixture needs its own stricter kinds.
-  excluded: ["unverifiable"],
+  // D032 §4 #8/#9/T6 — `excluded` is now its own verdict, not folded into `unverifiable`; this is
+  // the ambiguity D030 §3b's FR-008 flagged, resolved by giving exclusion its own value (D032 §3f).
+  excluded: ["excluded"],
   not_excluded: ["supported", "partially_supported", "unsupported", "contradicted"],
 };
 

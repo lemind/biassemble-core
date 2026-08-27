@@ -12,6 +12,9 @@ export const GrounnelVerdictEnum = z.enum([
   "unsupported",
   "contradicted",
   "unverifiable",
+  // D032 §4 #8/#9/T5 — a claim the eligibility filter never searched (opinion/personal/prediction),
+  // distinct from `unverifiable` (searched, could not resolve). See D032 §3f for why this matters.
+  "excluded",
 ]);
 // Unreachable sources count toward Eligible, not dropped (initial-context.md §4.4). rate_limited is distinct — its own "try again later" message, not the generic "no evidence found" one.
 export const SourceStatusEnum = z.enum(["ok", "paywalled", "unreachable", "blocked", "rate_limited"]);

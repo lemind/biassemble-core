@@ -652,7 +652,7 @@ export async function insertGrounnelClaim(data: {
   runId: string;
   claimText: string;
   sourceExcerpt: string | null;
-  verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+  verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
   evidence: string | null;
   confidence: number | null;
   reason: string | null;
@@ -734,8 +734,8 @@ export async function insertGrounnelGateEvents(
     runId: string;
     claimId: string;
     gate: "reason_consistency" | "implicit_negation" | "reason_year" | "reason_ordinal" | "subject_entity" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "year" | "retry_reconciliation" | "escalation_replacement" | "retry_decision";
-    verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
-    verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+    verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
+    verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
     overridden: boolean;
     reason: GateReason | null;
   }>
