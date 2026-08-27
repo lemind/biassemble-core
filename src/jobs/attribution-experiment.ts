@@ -9,9 +9,13 @@ import { z } from "zod";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { inngest } from "./client.js";
 import { GeminiProvider } from "../providers/gemini.js";
 import { callLlmForJson } from "../orchestrators/llm-json-call.js";
+import { DrizzleGrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
+import { DrizzleGrounnelLlmCallStore } from "../persistence/grounnel-llm-call-store.js";
+import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 
 const MODULE = "attribution-experiment";
@@ -238,6 +242,23 @@ export const attributionExperimentJob = inngest.createFunction(
     const provider = new GeminiProvider();
     const checks = renderChecks(FIXTURES);
 
+    // Persist to grounnel_llm_calls so results are queryable afterwards; without this the run's
+    // output lives only in Inngest history, which needs a dashboard key to read (learned the hard way).
+    const historyStore = new DrizzleGrounnelHistoryStore();
+    const llmCallStore = new DrizzleGrounnelLlmCallStore();
+    const experimentRunId = randomUUID();
+    await step.run("create-experiment-run", async () => {
+      await historyStore.createRun({
+        runId: experimentRunId,
+        sessionId: null,
+        text: `[attribution-experiment] ${variants.length} variants x ${FIXTURES.length} fixtures x ${repeats}`,
+        source: "eval",
+        maxClaims: FIXTURES.length,
+        truncated: false,
+      });
+      return experimentRunId;
+    });
+
     logger.info(
       { module: MODULE, variants: variants.map((v) => v.label), fixtures: FIXTURES.length, repeats },
       "Starting attribution prompt-variant experiment"
@@ -259,6 +280,15 @@ export const attributionExperimentJob = inngest.createFunction(
             module: MODULE,
             operation: `attribution-${variant.label}`,
             isValid: (x) => Array.isArray(x.results),
+            onComplete: llmCallStore.recordCall({
+              runId: experimentRunId,
+              stage: "verify",
+              callType: "attribution_experiment",
+              provider: provider.mode,
+              model: env.GEMINI_MODEL,
+              // Variant label doubles as the prompt version — that is the whole independent variable.
+              promptVersion: variant.label,
+            }),
           });
           return score(expectedById, parsed.results);
         });
@@ -280,7 +310,7 @@ export const attributionExperimentJob = inngest.createFunction(
     const ranked = [...perVariant].sort(
       (a, b) => a.falseDifferentPerRun - b.falseDifferentPerRun || b.accuracy - a.accuracy
     );
-    logger.info({ module: MODULE, repeats, ranked }, "Attribution prompt-variant experiment finished");
-    return { repeats, fixtures: FIXTURES.length, ranked };
+    logger.info({ module: MODULE, repeats, experimentRunId, ranked }, "Attribution prompt-variant experiment finished");
+    return { repeats, experimentRunId, fixtures: FIXTURES.length, ranked };
   }
 );

@@ -677,7 +677,7 @@ export async function insertGrounnelLlmCall(data: {
   runId: string;
   claimId?: string | null;
   stage: "extract" | "verify";
-  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "attribution_experiment";
   provider: string;
   model: string;
   promptVersion: string;
