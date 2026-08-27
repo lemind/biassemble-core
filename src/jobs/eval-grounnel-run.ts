@@ -22,6 +22,15 @@ import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 
 const MODULE = "eval-grounnel-run";
+/** Gemini 429s and the pipeline's own degraded rate-limit text (pipeline-helpers.ts). */
+const RATE_LIMIT_RE = /too many requests|rate.?limit|quota|usage limit/i;
+/** Two could be a transient RPM blip; three in a row is the daily cap, which won't clear mid-run. */
+const RATE_LIMIT_ABORT_AFTER = 3;
+
+/** A run that "succeeded" but whose claims carry rate-limit text instead of verdicts — junk to score. */
+function runIsRateLimited(run: GrounnelRun): boolean {
+  return run.claims.length > 0 && run.claims.every((c) => RATE_LIMIT_RE.test(c.reason ?? ""));
+}
 
 export const evalGrounnelRunJob = inngest.createFunction(
   { id: "eval-grounnel-run", name: "Eval — Grounnel Live Gate" },
@@ -63,23 +72,43 @@ export const evalGrounnelRunJob = inngest.createFunction(
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider, new DrizzleGrounnelSearchCallStore());
 
     const cases = [];
+    // A rate-limited quota doesn't recover inside one run, so grinding through the remaining
+    // repetitions just burns wall-clock producing failures — abort and report what completed.
+    let consecutiveRateLimited = 0;
+    let abortedAfter: string | null = null;
     for (const goldenCase of selected) {
+      if (abortedAfter) break;
       const runs: GrounnelRun[] = [];
       const errors: string[] = [];
       for (let i = 0; i < repeats; i++) {
         try {
-          runs.push(
-            await step.run(`case-${goldenCase.id}-run-${i + 1}`, () =>
-              runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase)
-            )
+          const run = await step.run(`case-${goldenCase.id}-run-${i + 1}`, () =>
+            runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase)
           );
+          runs.push(run);
+          // A degraded run "succeeds" with rate-limit text in place of verdicts — scoring that as a
+          // real result is worse than failing, so it counts toward the abort too (D026 §17).
+          consecutiveRateLimited = runIsRateLimited(run) ? consecutiveRateLimited + 1 : 0;
         } catch (err) {
           // One repetition failing must not abandon the case — the remaining repetitions still
           // carry signal, and a partial case is reported as partial rather than silently passing.
-          errors.push(err instanceof Error ? err.message : String(err));
+          const message = err instanceof Error ? err.message : String(err);
+          errors.push(message);
+          // Inngest serialises step errors, so the RateLimitError class is gone by here — match text.
+          consecutiveRateLimited = RATE_LIMIT_RE.test(message) ? consecutiveRateLimited + 1 : 0;
+        }
+        if (consecutiveRateLimited >= RATE_LIMIT_ABORT_AFTER) {
+          abortedAfter = `${goldenCase.id} run ${i + 1}`;
+          break;
         }
       }
       cases.push(scoreGrounnelEvalCase(goldenCase, runs, errors, minCorrectRateOverride, repeats));
+    }
+    if (abortedAfter) {
+      logger.warn(
+        { module: MODULE, abortedAfter, casesAttempted: cases.length, casesPlanned: selected.length },
+        "Grounnel live eval aborted — Gemini rate limit hit repeatedly; remaining cases skipped"
+      );
     }
 
     const summary = summarizeGrounnelEvalCases(cases);
@@ -135,6 +164,16 @@ export const evalGrounnelRunJob = inngest.createFunction(
       ...rest,
       runIds: runDetails.map((r) => r.id).filter(Boolean),
     }));
+
+    // An abort is an INFRASTRUCTURE failure, not a quality one — say so first, so a rate-limited
+    // run is never mistaken for a regression. Partial scores are still reported, never silently passed.
+    if (abortedAfter) {
+      throw new Error(
+        `Grounnel live eval ABORTED at ${abortedAfter} — ${RATE_LIMIT_ABORT_AFTER} consecutive rate-limited runs. ` +
+          `Scored ${cases.length}/${selected.length} cases before stopping; these numbers are PARTIAL and not a regression signal. ` +
+          `Re-run on fresh quota.\n${JSON.stringify(compact, null, 2)}`
+      );
+    }
 
     if (!summary.passed) {
       const failed = compact.filter((c) => !c.ok);
