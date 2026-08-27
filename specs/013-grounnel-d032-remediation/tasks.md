@@ -405,9 +405,50 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - **What this does NOT establish.** 7.32% is measured only under the current verdict-first order —
     there is no counterfactual for VERIFY, so the share of it *caused* by field order is unknown. (a)
     raises the prior; it does not transfer the rate. The A/B below is still required.
-  - **Pre-registered hypothesis for the experiment:** reordering VERIFY to emit `reason` before
-    `verdict` reduces the `counterfact_ignored` flag rate below 7.32% without lowering detection.
-    Baseline to beat comes from SC-5.
+  - **STEP 0 DONE (2026-08-27, free — n=5686 VERIFY results over 10 days). No schema-contract bug;
+    do NOT make the fields required.** `reason` missing: **0 of 5686**. `evidenceCitations` missing:
+    827 (14.5%) — but entirely benign once split by verdict: `unsupported` 819/819 (100%, correct by
+    design — nothing to cite when no evidence was found), `contradicted` 0/1347, `partially_supported`
+    0/188, `supported` 8/3332 (0.24%). Making `evidenceCitations` required would BREAK the
+    `unsupported` path. The original premise ("both optional, so making them required is a one-line
+    fix") was wrong and is retracted. Only residue: the 8 uncited `supported` results, 0.24% — noted,
+    not worth a change.
+  - **Verdict-mix baseline (same sample, for the A/B to compare against):** `supported` 58.60%,
+    `contradicted` 23.69%, `unsupported` 14.40%, `partially_supported` 3.31%. (`unverifiable` never
+    appears here — it is applied downstream by the confidence threshold, not by VERIFY itself.)
+  - **The full-pipeline A/B was the wrong design; corrected after review.** Two errors. (1) Comparing
+    a golden-set flag rate against the 7.32% figure is invalid — that number is 9374 live production
+    claims under verdict-first; the golden set is a different population, so the comparison can pass
+    or fail on population shift alone. Any KEEP rule must be **A vs B on the same harness**.
+    (2) A before/after golden-set run does not isolate field order at all: EXTRACT, the live search
+    corpus, rerank and batching all move between runs. T21's result was identifiable only because its
+    passages were fixtures.
+  - **Detection at N=5 is close to unidentified, and here is the arithmetic:** the golden set holds
+    **8** `kind:"false"` claims → **40** observations at N=5, so one observation is 2.5 percentage
+    points. A "5-point" tolerance is two observations, i.e. noise. (True claims: 20 → 100
+    observations; zero false accusations out of 100 is a real but not strong safety statement — N=5
+    can FAIL the safety rule, never prove it.)
+  - **PRIMARY EXPERIMENT — replay VERIFY only, not the pipeline** (D030 §3n, applied properly).
+    Reconstruct each call's inputs (claim + the passages that call actually saw) from
+    `grounnel_search_pages` / `grounnel_rerank_decisions` — the rendered prompt is NOT stored, so this
+    is a reconstruction and its fidelity is a stated caveat. Run both schema orders, same model,
+    temperature 0, N≥3, on a **stratified** sample: claims that tripped `counterfact_ignored`, claims
+    that did not, and slices of `contradicted` and `supported`. Readouts in order: (1) reason↔verdict
+    inconsistency rate via the same classifier `counterfact_ignored` uses; (2) verdict flip rate,
+    especially true claims → `contradicted`; (3) verdict mix vs the baseline above.
+  - **SC-5 is the product regression check, not the experiment** — run it on a candidate already
+    chosen by replay, never as the thing that chooses.
+  - **Pre-registered decision rule.** KEEP only if, on replay: inconsistency falls by a margin
+    committed before unblinding (size it against the replay denominator, not a guessed epsilon) AND
+    no labeled-true claim becomes `contradicted` more often AND the verdict mix does not drift toward
+    `unsupported`/`supported` in a way that trades a cleaner reason for a worse answer. **REVERT if any
+    true claim gains a `contradicted`, even when inconsistency falls — Cardinal Rule outranks the
+    proxy.** Do not KEEP on an inconsistency drop alone: a tidy reason attached to a wrong `supported`
+    is the g17 omission shape, not a win.
+  - **Not to be done:** no prompt-text change in the same deploy as a schema reorder; no thawing of
+    `reason_ordinal`; and T21's "working no longer restates the answer" is evidence about an auditor's
+    self-consistency, NOT evidence VERIFY will catch more lies — field order can fix the first and
+    leave external truth untouched. That is the default expectation until replay says otherwise.
 
 - [x] ~~**T13 — FIX-5: prediction exclusion policy**~~ **CLOSED WON'T-DO (2026-08-27)**
   - **Decision: do not reverse D030 §3b.** T4 measured **n=1 across 2,724 eligibility checks**, and
