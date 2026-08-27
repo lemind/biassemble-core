@@ -120,6 +120,34 @@ export function applyCounterfactIgnoredGate(input: CounterfactIgnoredInput): Cou
   return { flagged: false, reason: null };
 }
 
+export type InstanceAttribution = "same" | "different" | "absent" | "conflict";
+
+export interface InstanceAttributionInput {
+  verdict: Verdict;
+  /** Batched passage-grounded checker result; null when it did not run or failed (fail-open, D025 §2 convention). */
+  attribution: InstanceAttribution | null;
+}
+
+export interface InstanceAttributionResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "instance_attribution_mismatch" | "instance_attribution_conflict" | null;
+}
+
+/** Spec 013 T21 — the passages named a different member than the claim selects. `conflict` only downgrades: disagreeing sources are not a falsehood finding (Cardinal Rule). */
+export function applyInstanceAttributionGate(input: InstanceAttributionInput): InstanceAttributionResult {
+  const noop = { verdict: input.verdict, overridden: false, reason: null } as const;
+  // Skips `unverifiable` for the same reason applyReasonConsistencyGate/applyReasonOrdinalGate do: it is a CONFIDENCE downgrade, not a classification to correct (D026 §22).
+  if (input.attribution === null || input.verdict === "contradicted" || input.verdict === "unverifiable" || input.verdict === "excluded") return noop;
+  if (input.attribution === "different") {
+    return { verdict: "contradicted", overridden: true, reason: "instance_attribution_mismatch" };
+  }
+  if (input.attribution === "conflict" && (input.verdict === "supported" || input.verdict === "partially_supported")) {
+    return { verdict: "unverifiable", overridden: true, reason: "instance_attribution_conflict" };
+  }
+  return noop;
+}
+
 export interface ClaimReasonOverlapInput {
   verdict: Verdict;
   reason: string | null;

@@ -12,7 +12,7 @@ export interface GrounnelLlmCallStore {
     // consistency_check); only genuinely single-claim calls should ever pass this.
     claimId?: string;
     stage: "extract" | "verify";
-    callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "attribution_experiment";
+    callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "instance_attribution" | "attribution_experiment";
     provider: string;
     model: string;
     promptVersion: string;
@@ -29,7 +29,7 @@ export class DrizzleGrounnelLlmCallStore implements GrounnelLlmCallStore {
     runId: string;
     claimId?: string;
     stage: "extract" | "verify";
-    callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "attribution_experiment";
+    callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "instance_attribution" | "attribution_experiment";
     provider: string;
     model: string;
     promptVersion: string;

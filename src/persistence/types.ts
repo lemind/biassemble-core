@@ -108,6 +108,8 @@ export type GateReason =
   | "year_role_mismatch"
   | "reason_year_mismatch"
   | "reason_ordinal_mismatch"
+  | "instance_attribution_mismatch"
+  | "instance_attribution_conflict"
   | "counterfact_ignored"
   | "retry_contradiction_invalidated"
   | "retry_affirmation_invalidated"

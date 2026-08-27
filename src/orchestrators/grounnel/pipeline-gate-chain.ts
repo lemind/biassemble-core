@@ -5,6 +5,7 @@ import {
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
   applyImplicitNegationGate,
+  applyInstanceAttributionGate,
   applyNumericGate,
   applyReasonConsistencyGate,
   applyReasonOrdinalGate,
@@ -12,6 +13,7 @@ import {
   applySubjectEntityGate,
   applyYearGate,
 } from "./gates.js";
+import type { InstanceAttribution } from "./gates-text-grounding.js";
 import { originatingContradictionGate, type Verdict } from "./pipeline-helpers.js";
 import type { GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
@@ -32,6 +34,8 @@ export interface GateChainInput {
   subjectEntity: string;
   // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
   reasonSupportsVerdict: boolean | null;
+  // Same threading, spec 013 T21 — the passage-grounded checker's answer for this claim, or null.
+  instanceAttribution: InstanceAttribution | null;
 }
 
 export interface GateChainResult {
@@ -72,6 +76,11 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   const reasonOrdinal = applyReasonOrdinalGate({ verdict, reason: input.reason, claimText: input.claimText });
   gateEvents.push({ gate: "reason_ordinal", verdictBefore: verdict, verdictAfter: reasonOrdinal.verdict, overridden: reasonOrdinal.overridden, reason: reasonOrdinal.reason });
   verdict = reasonOrdinal.verdict;
+
+  // Instance-attribution gate (spec 013 T21) — reads the PASSAGES, the input reason_ordinal lacks; also before gate #1 so a flip still needs real evidence.
+  const instanceAttribution = applyInstanceAttributionGate({ verdict, attribution: input.instanceAttribution });
+  gateEvents.push({ gate: "instance_attribution", verdictBefore: verdict, verdictAfter: instanceAttribution.verdict, overridden: instanceAttribution.overridden, reason: instanceAttribution.reason });
+  verdict = instanceAttribution.verdict;
 
   // Gate #5 (D025 §2/§3) — chain position (between implicit_negation and gate #1) is load-bearing, see ADR.
   const counterfact = applyCounterfactIgnoredGate({ verdict, reasonSupportsVerdict: input.reasonSupportsVerdict });

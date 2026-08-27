@@ -31,6 +31,16 @@ export const VerifyRawResponseSchema = z.object({ results: z.array(VerifyRawResu
 export const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
 export const ConsistencyCheckResponseSchema = z.object({ results: z.array(ConsistencyCheckResultSchema) });
 
+// Spec 013 T21 — batched passage-grounded instance-attribution response. `working` is the prompt's
+// forced reasoning field: read for telemetry, never gated on. Prompt notes carry the bake-off evidence.
+export const InstanceAttributionResultSchema = z.object({
+  id: z.string(),
+  attribution: z.enum(["same", "different", "absent", "conflict"]),
+  citation: z.string().nullable().optional().transform((v) => v ?? null),
+  working: z.string().nullable().optional().transform((v) => v ?? null),
+});
+export const InstanceAttributionResponseSchema = z.object({ results: z.array(InstanceAttributionResultSchema) });
+
 // D026 §18 — batched passage-relevance reranker response; score only, no free-text field (nothing
 // downstream reads an explanation, so the prompt doesn't ask for one).
 export const PassageRerankResultSchema = z.object({ id: z.string(), score: z.number().min(0).max(100) });

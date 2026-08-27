@@ -386,7 +386,7 @@ export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id"),
   stage: text("stage", { enum: ["extract", "verify"] }).notNull(),
-  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank", "eligibility_check", "attribution_experiment"] }).notNull().default("primary"),
+  callType: text("call_type", { enum: ["primary", "fallback", "consistency_retry", "consistency_check", "fill_in", "passage_rerank", "eligibility_check", "instance_attribution", "attribution_experiment"] }).notNull().default("primary"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),
@@ -498,7 +498,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id").notNull().references(() => grounnelClaims.claimId, { onDelete: "cascade" }),
-  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "reason_ordinal", "subject_entity", "counterfact_ignored", "contradiction_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation", "escalation_replacement", "retry_decision"] }).notNull(),
+  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "reason_ordinal", "instance_attribution", "subject_entity", "counterfact_ignored", "contradiction_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation", "escalation_replacement", "retry_decision"] }).notNull(),
   // D032 §4 #8/#9/T5 — "excluded" listed for type parity only (GateEventInput uses the shared
   // Verdict type); never written here, excluded claims never reach the gate chain.
   verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable", "excluded"] }),
@@ -517,6 +517,8 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
       "year_role_mismatch",
       "reason_year_mismatch",
       "reason_ordinal_mismatch",
+      "instance_attribution_mismatch",
+      "instance_attribution_conflict",
       "subject_entity_mismatch",
       "counterfact_ignored",
       "retry_contradiction_invalidated",

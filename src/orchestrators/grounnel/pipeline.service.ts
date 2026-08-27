@@ -20,7 +20,9 @@ import {
   type ResolvedWithPassage,
   type Verdict,
 } from "./pipeline-helpers.js";
-import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
+import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, InstanceAttributionResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
+import type { InstanceAttribution } from "./gates-text-grounding.js";
+import { extractInstanceSelector } from "../../lib/instance-selector.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -234,7 +236,9 @@ export class GrounnelPipelineService {
     if (contradicted.length === 0) return;
 
     // D030 §3d — a reason_ordinal contradiction is grounded in VERIFY's own textual mismatch; excluded from the classifier call entirely, not just from acting on it.
-    const protectedClaims = contradicted.filter((c) => originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? [])?.gate === "reason_ordinal");
+    // Spec 013 T21 adds instance_attribution: same grounding argument, and its prompt requires a verbatim citation before it can answer "different".
+    const PROTECTED_GATES = new Set(["reason_ordinal", "instance_attribution"]);
+    const protectedClaims = contradicted.filter((c) => PROTECTED_GATES.has(originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? [])?.gate ?? ""));
     for (const c of protectedClaims) protectedContradictionClaimIds.add(c.id);
     const nowContradicted = contradicted.filter((c) => !protectedClaims.some((p) => p.id === c.id));
     if (nowContradicted.length === 0) return;
@@ -503,7 +507,7 @@ export class GrounnelPipelineService {
     user: string,
     schema: ZodSchema<T>,
     operation: string,
-    callType: "primary" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank",
+    callType: "primary" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "instance_attribution",
     promptVersion: string,
     // Excludes verbatim-quote fields from the injection-marker scan (a scraped page's own boilerplate false-positived it once).
     quotedFields: string[] = [],
@@ -661,6 +665,41 @@ export class GrounnelPipelineService {
     }
   }
 
+  /** Spec 013 T21 — the second call for claims that select an instance: asks which member the PASSAGES attribute the fact to. Same batched safety-net shape as the consistency classifier. */
+  private async checkInstanceAttribution(
+    auditId: string,
+    items: Array<{ id: string; claim: string; passages: string[] }>
+  ): Promise<Map<string, InstanceAttribution>> {
+    if (items.length === 0) return new Map();
+    // `fact` is the claim itself — production has no separate asserted-value field; see t21-results.md for the fixtures' shape.
+    const checks = items.map((i) => ({ id: i.id, claim: i.claim, fact: i.claim, passages: i.passages }));
+    const system = this.prompts.render("grounnel-instance-attribution", { instance_checks: JSON.stringify(checks) });
+    const claimId = items.length === 1 ? items[0]!.id : undefined;
+    try {
+      const parsed = await this.callGrounnelJson(
+        auditId,
+        system,
+        "Return the JSON now.",
+        InstanceAttributionResponseSchema,
+        "checkInstanceAttribution",
+        "instance_attribution",
+        this.prompts.getGrounnelInstanceAttributionVersion(),
+        // Both fields quote passage text verbatim; isSuspectedInjection hard-stops (never repairs) on a false positive.
+        ["citation", "working"],
+        claimId
+      );
+      // A "different"/"conflict" with no citation is uncitable by the prompt's own rule — drop it rather than let it force a verdict.
+      return new Map(
+        parsed.results
+          .filter((r) => r.citation !== null || (r.attribution !== "different" && r.attribution !== "conflict"))
+          .map((r) => [r.id, r.attribution])
+      );
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "checkInstanceAttribution", auditId, err }, "Instance-attribution check failed — skipping this batch's check, the gate chain still runs");
+      return new Map();
+    }
+  }
+
   /** D025 §5 addendum, extended D030 §3i Mode B — re-checks a retry landing on any RETRY_DOWNGRADE
    * key (was `contradicted`-only). Single-claim, no second retry, downgrade-only. See D030 §3i for
    * why `supported`/`partially_supported` never force `contradicted`, and why both branches null
@@ -750,11 +789,20 @@ export class GrounnelPipelineService {
 
     // D025 §2 — one batched classifier call up front, covering every claim not already
     // "contradicted", so runGateChain (still pure/sync) can just read the result per claim below.
-    const consistencyCandidates = knownResults.filter((k) => k.initialVerdict !== "contradicted");
-    const consistencyMap = await this.checkReasonVerdictConsistency(
-      auditId,
-      consistencyCandidates.map((k) => ({ id: k.result.id, claim: byId.get(k.result.id)!.claim.text, reason: k.result.reason, verdict: k.initialVerdict }))
-    );
+    const secondCallCandidates = knownResults.filter((k) => k.initialVerdict !== "contradicted");
+    // Spec 013 T21 — claims naming an instance ("the first flight") get a SECOND auditor that sees the
+    // passages, the input the consistency classifier lacks (it can't tell "longest" from "first").
+    const attributionCandidates = secondCallCandidates.filter((k) => extractInstanceSelector(byId.get(k.result.id)!.claim.text) !== null);
+    const [consistencyMap, attributionMap] = await Promise.all([
+      this.checkReasonVerdictConsistency(
+        auditId,
+        secondCallCandidates.map((k) => ({ id: k.result.id, claim: byId.get(k.result.id)!.claim.text, reason: k.result.reason, verdict: k.initialVerdict }))
+      ),
+      this.checkInstanceAttribution(
+        auditId,
+        attributionCandidates.map((k) => ({ id: k.result.id, claim: byId.get(k.result.id)!.claim.text, passages: byId.get(k.result.id)!.passages.map((p) => p.text!) }))
+      ),
+    ]);
 
     await Promise.all(
       knownResults.map(async ({ result, initialVerdict }) => {
@@ -777,6 +825,7 @@ export class GrounnelPipelineService {
           passageText,
           subjectEntity: item.claim.subjectEntity,
           reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
+          instanceAttribution: attributionMap.get(result.id) ?? null,
         });
         let chain = firstPass;
         // D030 §3d — originatingContradictionGate must see only the current pass, not the concatenated trail.
@@ -807,6 +856,8 @@ export class GrounnelPipelineService {
               passageText,
               subjectEntity: item.claim.subjectEntity,
               reasonSupportsVerdict: null,
+              // Reused, not re-called: this answer depends only on claim + passages, neither of which a retry changes.
+              instanceAttribution: attributionMap.get(result.id) ?? null,
             });
             // Reviewed finding: concatenate, don't replace — the original self-inconsistent pass
             // (the override that triggered this retry) stays in the audit trail, not just the retry's.

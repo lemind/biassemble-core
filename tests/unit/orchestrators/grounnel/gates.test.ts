@@ -3,6 +3,7 @@ import {
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
+  applyInstanceAttributionGate,
   applyImplicitNegationGate,
   applyNumericGate,
   applyReasonConsistencyGate,
@@ -861,6 +862,53 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
         "Einstein won the 1921 Nobel Prize in Physics for his services to theoretical physics, and especially for his discovery of the law of the photoelectric effect.",
     });
     expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+});
+
+describe("instance-attribution gate — passage-grounded, LLM-checker-driven (spec 013 T21, the g17 shape)", () => {
+  it("forces contradicted when the passages attribute the fact to a different member — the real g17 failure", () => {
+    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "different" });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "instance_attribution_mismatch" });
+  });
+
+  it("leaves the verdict alone on 'same'", () => {
+    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "same" });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("leaves the verdict alone on 'absent' — the checker's abstain, and its most common answer", () => {
+    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "absent" });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("downgrades rather than accuses on 'conflict' — disagreeing sources are not a falsehood finding (Cardinal Rule)", () => {
+    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "conflict" });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "instance_attribution_conflict" });
+  });
+
+  it("does not upgrade an unsupported verdict on 'conflict' — the downgrade branch is affirmative-only", () => {
+    const result = applyInstanceAttributionGate({ verdict: "unsupported", attribution: "conflict" });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
+  it("does nothing when the checker didn't run or failed (fail-open, D025 §2 convention)", () => {
+    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: null });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("never re-fires on a verdict already 'contradicted'", () => {
+    const result = applyInstanceAttributionGate({ verdict: "contradicted", attribution: "different" });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("never fires on 'unverifiable' — that's a CONFIDENCE downgrade, same exclusion the sibling reason gates use (D026 §22)", () => {
+    const result = applyInstanceAttributionGate({ verdict: "unverifiable", attribution: "different" });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("never overrides 'excluded' — exclusion is a scope decision, not a verdict to correct (D032 §3f)", () => {
+    const result = applyInstanceAttributionGate({ verdict: "excluded", attribution: "different" });
+    expect(result).toEqual({ verdict: "excluded", overridden: false, reason: null });
   });
 });
 
