@@ -69,6 +69,9 @@ export function passageIndexForLabel(label: string): number {
 
 // Reconciliation-disagreement telemetry (D030 T010 backlog — see tasks.md). Caller must pass only
 // the CURRENT pass's gate events (review finding: a concatenated trail can surface a stale flip).
+/** Gates whose `contradicted` is grounded enough to survive reconciliation and gate #2's force-supported (D030 §3d; spec 013 T21 added the second). */
+export const PROTECTED_CONTRADICTION_GATES: ReadonlySet<string> = new Set(["reason_ordinal", "instance_attribution"]);
+
 export function originatingContradictionGate(gateEvents: GateEventInput[]): { gate: string; reason: GateReason | null } | null {
   const event = gateEvents.findLast((e) => e.overridden && e.verdictAfter === "contradicted");
   return event ? { gate: event.gate, reason: event.reason } : null;

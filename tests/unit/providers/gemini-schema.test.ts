@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { SchemaType } from "@google/generative-ai";
+import { InstanceAttributionResponseSchema } from "../../../src/orchestrators/grounnel/pipeline-schemas.js";
 import { zodToGeminiSchema } from "../../../src/providers/gemini-schema.js";
 
 describe("zodToGeminiSchema", () => {
@@ -61,6 +62,14 @@ describe("zodToGeminiSchema", () => {
         },
       },
     });
+  });
+
+  it("emits the instance-attribution CoT field before its answer, and requires it (spec 013 T21)", () => {
+    // Shipped inverted once: `attribution` was declared first, so the model answered then rationalised.
+    const items = zodToGeminiSchema(InstanceAttributionResponseSchema).properties!.results!.items!;
+    const keys = Object.keys(items.properties!);
+    expect(keys.indexOf("working")).toBeLessThan(keys.indexOf("attribution"));
+    expect(items.required).toContain("working");
   });
 
   it("throws on an unsupported shape rather than silently producing a permissive schema", () => {

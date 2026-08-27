@@ -1,4 +1,4 @@
-// The 10-gate chain applied to one VERIFY result — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
+// The 11-gate chain applied to one VERIFY result — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
 
 import {
   applyClaimReasonOverlapGate,
@@ -12,9 +12,9 @@ import {
   applyReasonYearGate,
   applySubjectEntityGate,
   applyYearGate,
+  type InstanceAttribution,
 } from "./gates.js";
-import type { InstanceAttribution } from "./gates-text-grounding.js";
-import { originatingContradictionGate, type Verdict } from "./pipeline-helpers.js";
+import { originatingContradictionGate, PROTECTED_CONTRADICTION_GATES, type Verdict } from "./pipeline-helpers.js";
 import type { GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
 
@@ -78,7 +78,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   verdict = reasonOrdinal.verdict;
 
   // Instance-attribution gate (spec 013 T21) — reads the PASSAGES, the input reason_ordinal lacks; also before gate #1 so a flip still needs real evidence.
-  const instanceAttribution = applyInstanceAttributionGate({ verdict, attribution: input.instanceAttribution });
+  const instanceAttribution = applyInstanceAttributionGate({ verdict, claimText: input.claimText, attribution: input.instanceAttribution });
   gateEvents.push({ gate: "instance_attribution", verdictBefore: verdict, verdictAfter: instanceAttribution.verdict, overridden: instanceAttribution.overridden, reason: instanceAttribution.reason });
   verdict = instanceAttribution.verdict;
 
@@ -126,7 +126,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
     claimText: input.claimText,
     verdict,
     evidence,
-    contradictionProtectedFromForceSupported: verdict === "contradicted" && originatingContradictionGate(gateEvents)?.gate === "reason_ordinal",
+    contradictionProtectedFromForceSupported: verdict === "contradicted" && PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEvents)?.gate ?? ""),
   });
   gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
   verdict = gate2.verdict;

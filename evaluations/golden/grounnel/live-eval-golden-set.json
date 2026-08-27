@@ -32,7 +32,7 @@
       "minCorrectRate": 1.0,
       "claims": [
         {
-          "match": "Buzz Aldrin",
+          "match": "first man to walk on the Moon",
           "kind": "false"
         }
       ]

@@ -42,12 +42,79 @@ Two edits between the first (12-fixture) run and this one:
 - N=1, deterministic draw; answer key authored in-repo, so 16/16 partly measures agreement with it.
 - `fabCite` is not attributed to a fixture — the harness records the fixture id only when the
   *attribution* is also wrong, so a fabricated citation on a correct answer is invisible.
-- Not wired: no call site, no verdict mapping, no live golden-set run. Per D030 §3n the wiring
-  decision is separate from this measurement.
+- The bake-off gave each fixture **one claim**. Production batches several claims over one shared
+  passage set — see the live run below, where that is exactly what broke.
+
+## Implemented (commit 76b78d6, deploy eyvpbqew7)
+
+`c-expanded` shipped as `instance-attribution/system.json` v2.0.0 and wired as a second auditor:
+
+- Fires from `processVerifyResults` for every non-`contradicted` claim whose text names a sequence
+  instance (`extractInstanceSelector`) — trigger is the selector, not the verdict, because g17
+  failure #1 returned `supported`.
+- Runs **alongside** the consistency classifier, not instead of it. Routing ordinal claims away
+  from it removed the retry safety net from the riskiest claims; four tests caught that.
+- Feeds the `instance_attribution` gate, placed after `reason_ordinal` and before gate #1 so a
+  forced `contradicted` still has to clear the evidence check.
+- `different` → `contradicted`; `conflict` → `unverifiable` (affirmative verdicts only);
+  `same`/`absent`/null → no-op. Uncitable `different`/`conflict` is dropped at the call site.
+- Skips `unverifiable` (a confidence downgrade), and its contradictions are protected from
+  reconciliation the same way `reason_ordinal`'s are.
+
+## First live run (g17 + g22, 6 calls, 13 gate events)
+
+| Claim | Checker | Final |
+|---|---|---|
+| "The **first** flight covered 852 feet" (false) | `different` ✅ | `contradicted` ✅ |
+| "The **first** flight lasted 59 seconds" (false) | `same` ❌ | `unverifiable` |
+| "The **fourth and final** flight… 852 feet" (true) | `same` ✅ | `unverifiable` ❌ |
+| 4 other true claims | `same` ✅ | `supported` ✅ |
+
+Zero false accusations. Two things this run does **not** show:
+
+1. **It did not cause the g17 catch.** `reason_ordinal` flipped that claim to `contradicted`
+   earlier in the chain, so this gate no-oped. It agreed; it did not add catch.
+2. **g22 is untouched.** The checker answered correctly (`same`); `subject_entity` downgraded the
+   claim anyway, later in the chain.
+
+## Root cause of the miss: schema field order (fixed)
+
+The miss was not a checker weakness. The model reasoned correctly and then emitted a contradicting
+answer. Its own `working` on that claim ends:
+
+> "…the passages do not attribute the FACT to the CLAIM's member… **Therefore, the attribution is
+> absent.**"  → emitted `attribution`: **`same`**
+
+Across persisted production calls, **3 of 9** answers with a stated conclusion contradicted their
+own reasoning.
+
+Cause: Gemini generates structured-output fields in schema order.
+
+| | field order |
+|---|---|
+| Bake-off schema | `id, `**`working`**`, attribution, citation` |
+| Production schema as first shipped | `id, `**`attribution`**`, citation, working` |
+
+So production committed to the answer *before* writing the reasoning — inverting the forced-reasoning
+step that made `c-expanded` win the bake-off. The prompt was never the problem; the wiring was.
+
+Fixed by reordering the Zod schema, plus a converter test locking declaration order. `propertyOrdering`
+(the REST field that would make this explicit) was **not** shipped — it cannot be verified from this
+machine, which is geo-blocked from the Gemini API, and a wrong guess breaks every call.
+
+Not yet re-run live: the fix is unproven until g17 comes back with the 59-second claim no longer `same`.
 
 ## Open
 
-- `conflict` still fails 3 of 4 variants; only c-expanded handles it.
-- Trigger design: firing the second call only on a non-`supported` verdict would **miss** g17
-  failure #1, which returned `supported` off a fabricated reason. Trigger on "claim selects an
-  instance" instead of on the verdict.
+- **Re-run g17 + g22** to confirm the field-order fix. Pass condition: the 59-second claim stops
+  coming back `same`. Everything below is worth less until this lands.
+- **Multi-claim fixture.** Several claims sharing one passage set, mixing true and false instance
+  claims in the same batch — the unsafe direction is a true "fourth flight" claim getting
+  `different`. Run it AFTER the fix, or it measures the field-order bug instead.
+- **Deterministic citation-vs-claim check** (held): the checker's own citation names a member; the
+  claim names one too. Comparing them is free and would have caught this miss. Simulate on persisted
+  traces before writing it — if it produces false `different`s on historical `same`s, it dies.
+- **Does the gate add catch?** Unproven. Every live `different` so far was on a claim
+  `reason_ordinal` already caught. Needs a case where the reason carries no ordinal.
+- **g22 / `subject_entity`** downgrades a true claim its own reason confirms. Separate from T21.
+- `conflict` has never fired live; only c-expanded got it right in the bake-off.

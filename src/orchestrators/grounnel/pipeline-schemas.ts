@@ -31,13 +31,13 @@ export const VerifyRawResponseSchema = z.object({ results: z.array(VerifyRawResu
 export const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
 export const ConsistencyCheckResponseSchema = z.object({ results: z.array(ConsistencyCheckResultSchema) });
 
-// Spec 013 T21 — batched passage-grounded instance-attribution response. `working` is the prompt's
-// forced reasoning field: read for telemetry, never gated on. Prompt notes carry the bake-off evidence.
+// Spec 013 T21 — batched instance-attribution response. `working` is required AND declared first:
+// Gemini generates in schema order, so an optional or later CoT field is inert (see t21-results.md).
 export const InstanceAttributionResultSchema = z.object({
   id: z.string(),
+  working: z.string(),
   attribution: z.enum(["same", "different", "absent", "conflict"]),
   citation: z.string().nullable().optional().transform((v) => v ?? null),
-  working: z.string().nullable().optional().transform((v) => v ?? null),
 });
 export const InstanceAttributionResponseSchema = z.object({ results: z.array(InstanceAttributionResultSchema) });
 

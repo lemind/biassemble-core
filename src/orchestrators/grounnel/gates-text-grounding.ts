@@ -91,7 +91,7 @@ function normalizeForSubstringCheck(text: string): string {
 const EVIDENCE_ELLIPSIS_RE = /\.{3,}|…/g;
 
 /** Every fragment (split on an ellipsis) must independently be a real, contiguous substring — still rejects a fabricated fragment, just allows a non-contiguous multi-excerpt span (D019 §2). */
-function evidenceMatchesPassage(evidence: string, passageText: string): boolean {
+export function evidenceMatchesPassage(evidence: string, passageText: string): boolean {
   const normalizedPassage = normalizeForSubstringCheck(passageText);
   const fragments = evidence
     .split(EVIDENCE_ELLIPSIS_RE)
@@ -124,6 +124,7 @@ export type InstanceAttribution = "same" | "different" | "absent" | "conflict";
 
 export interface InstanceAttributionInput {
   verdict: Verdict;
+  claimText: string;
   /** Batched passage-grounded checker result; null when it did not run or failed (fail-open, D025 §2 convention). */
   attribution: InstanceAttribution | null;
 }
@@ -137,8 +138,11 @@ export interface InstanceAttributionResult {
 /** Spec 013 T21 — the passages named a different member than the claim selects. `conflict` only downgrades: disagreeing sources are not a falsehood finding (Cardinal Rule). */
 export function applyInstanceAttributionGate(input: InstanceAttributionInput): InstanceAttributionResult {
   const noop = { verdict: input.verdict, overridden: false, reason: null } as const;
-  // Skips `unverifiable` for the same reason applyReasonConsistencyGate/applyReasonOrdinalGate do: it is a CONFIDENCE downgrade, not a classification to correct (D026 §22).
+  // `unverifiable` excluded as a CONFIDENCE downgrade, same as the sibling reason gates (D026 §22).
   if (input.attribution === null || input.verdict === "contradicted" || input.verdict === "unverifiable" || input.verdict === "excluded") return noop;
+  // Abstain on a negated claim, same guard reason_consistency/reason_ordinal carry (D032 §9): the
+  // checker is asked about the fact, not its polarity, so "did NOT cover 852 feet" inverts the answer.
+  if (containsNegationCue(input.claimText)) return noop;
   if (input.attribution === "different") {
     return { verdict: "contradicted", overridden: true, reason: "instance_attribution_mismatch" };
   }

@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
-import { composeUserFacingReason, rewriteUngroundedAffirmativeReason } from "./gates.js";
+import { composeUserFacingReason, evidenceMatchesPassage, rewriteUngroundedAffirmativeReason, type InstanceAttribution } from "./gates.js";
 import { runGateChain, type Diagnostic } from "./pipeline-gate-chain.js";
 import {
   buildGeminiRateLimitMessage,
@@ -13,6 +13,7 @@ import {
   toClaimSources,
   passageLabelForIndex,
   originatingContradictionGate,
+  PROTECTED_CONTRADICTION_GATES,
   logReconciliationDowngrade,
   attachCitationUrls,
   type PipelineClaimInput,
@@ -21,7 +22,6 @@ import {
   type Verdict,
 } from "./pipeline-helpers.js";
 import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, InstanceAttributionResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
-import type { InstanceAttribution } from "./gates-text-grounding.js";
 import { extractInstanceSelector } from "../../lib/instance-selector.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
@@ -68,6 +68,8 @@ const RETRY_DOWNGRADE: Partial<Record<Verdict, { target: Verdict; reason: GateRe
 };
 // D026 §11 (T049) — Phase 1 multi-passage evidence, fixed cap; §13 (T053) built the escalation this deferred.
 const MAX_VERIFY_PASSAGES = 3;
+// Verdicts applyInstanceAttributionGate can actually move — no gate ahead of it lifts `unverifiable`, so checking those claims buys nothing (spec 013 T21).
+const ATTRIBUTION_ACTIONABLE_VERDICTS: ReadonlySet<Verdict> = new Set<Verdict>(["supported", "partially_supported", "unsupported"]);
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
 // gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
 const ESCALATION_TIERS = [5, 8];
@@ -236,9 +238,7 @@ export class GrounnelPipelineService {
     if (contradicted.length === 0) return;
 
     // D030 §3d — a reason_ordinal contradiction is grounded in VERIFY's own textual mismatch; excluded from the classifier call entirely, not just from acting on it.
-    // Spec 013 T21 adds instance_attribution: same grounding argument, and its prompt requires a verbatim citation before it can answer "different".
-    const PROTECTED_GATES = new Set(["reason_ordinal", "instance_attribution"]);
-    const protectedClaims = contradicted.filter((c) => PROTECTED_GATES.has(originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? [])?.gate ?? ""));
+    const protectedClaims = contradicted.filter((c) => PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? [])?.gate ?? ""));
     for (const c of protectedClaims) protectedContradictionClaimIds.add(c.id);
     const nowContradicted = contradicted.filter((c) => !protectedClaims.some((p) => p.id === c.id));
     if (nowContradicted.length === 0) return;
@@ -688,12 +688,23 @@ export class GrounnelPipelineService {
         ["citation", "working"],
         claimId
       );
-      // A "different"/"conflict" with no citation is uncitable by the prompt's own rule — drop it rather than let it force a verdict.
-      return new Map(
-        parsed.results
-          .filter((r) => r.citation !== null || (r.attribution !== "different" && r.attribution !== "conflict"))
-          .map((r) => [r.id, r.attribution])
-      );
+      if (parsed.results.length === 0) {
+        logger.warn({ module: MODULE, operation: "checkInstanceAttribution", auditId, requested: items.length }, "Instance-attribution check returned zero results for a non-empty candidate batch");
+      }
+      // Verdict-moving answers must be grounded by construction (D026 §7) — the prompt promises a
+      // verbatim citation, so verify it really is one instead of trusting the field's presence.
+      const passagesById = new Map(items.map((i) => [i.id, i.passages.join("\n\n")]));
+      const accepted = new Map<string, InstanceAttribution>();
+      for (const r of parsed.results) {
+        const movesVerdict = r.attribution === "different" || r.attribution === "conflict";
+        const grounded = !!r.citation?.trim() && evidenceMatchesPassage(r.citation, passagesById.get(r.id) ?? "");
+        if (movesVerdict && !grounded) {
+          logger.warn({ module: MODULE, operation: "checkInstanceAttribution", auditId, claimId: r.id, attribution: r.attribution, citation: r.citation }, "Dropped an ungrounded instance-attribution answer — citation absent from the passages");
+          continue;
+        }
+        accepted.set(r.id, r.attribution);
+      }
+      return accepted;
     } catch (err) {
       logger.warn({ module: MODULE, operation: "checkInstanceAttribution", auditId, err }, "Instance-attribution check failed — skipping this batch's check, the gate chain still runs");
       return new Map();
@@ -792,7 +803,9 @@ export class GrounnelPipelineService {
     const secondCallCandidates = knownResults.filter((k) => k.initialVerdict !== "contradicted");
     // Spec 013 T21 — claims naming an instance ("the first flight") get a SECOND auditor that sees the
     // passages, the input the consistency classifier lacks (it can't tell "longest" from "first").
-    const attributionCandidates = secondCallCandidates.filter((k) => extractInstanceSelector(byId.get(k.result.id)!.claim.text) !== null);
+    const attributionCandidates = secondCallCandidates.filter(
+      (k) => ATTRIBUTION_ACTIONABLE_VERDICTS.has(k.initialVerdict) && extractInstanceSelector(byId.get(k.result.id)!.claim.text) !== null
+    );
     const [consistencyMap, attributionMap] = await Promise.all([
       this.checkReasonVerdictConsistency(
         auditId,

@@ -867,47 +867,54 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
 
 describe("instance-attribution gate — passage-grounded, LLM-checker-driven (spec 013 T21, the g17 shape)", () => {
   it("forces contradicted when the passages attribute the fact to a different member — the real g17 failure", () => {
-    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "different" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "different" });
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "instance_attribution_mismatch" });
   });
 
   it("leaves the verdict alone on 'same'", () => {
-    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "same" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "same" });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("leaves the verdict alone on 'absent' — the checker's abstain, and its most common answer", () => {
-    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "absent" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "absent" });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("downgrades rather than accuses on 'conflict' — disagreeing sources are not a falsehood finding (Cardinal Rule)", () => {
-    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: "conflict" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "conflict" });
     expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "instance_attribution_conflict" });
   });
 
   it("does not upgrade an unsupported verdict on 'conflict' — the downgrade branch is affirmative-only", () => {
-    const result = applyInstanceAttributionGate({ verdict: "unsupported", attribution: "conflict" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "unsupported", attribution: "conflict" });
     expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("does nothing when the checker didn't run or failed (fail-open, D025 §2 convention)", () => {
-    const result = applyInstanceAttributionGate({ verdict: "supported", attribution: null });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: null });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("never re-fires on a verdict already 'contradicted'", () => {
-    const result = applyInstanceAttributionGate({ verdict: "contradicted", attribution: "different" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "contradicted", attribution: "different" });
     expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
   });
 
+  it("abstains on a negated claim — the checker answers about the fact, not its polarity (D032 §9)", () => {
+    // "did not cover 852 feet" is TRUE of the first flight; the passages still attribute 852 feet to
+    // the fourth, so `different` here would force `contradicted` on a true claim (Cardinal Rule).
+    const result = applyInstanceAttributionGate({ claimText: "The first flight did not cover 852 feet.", verdict: "supported", attribution: "different" });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
   it("never fires on 'unverifiable' — that's a CONFIDENCE downgrade, same exclusion the sibling reason gates use (D026 §22)", () => {
-    const result = applyInstanceAttributionGate({ verdict: "unverifiable", attribution: "different" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "unverifiable", attribution: "different" });
     expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
   });
 
   it("never overrides 'excluded' — exclusion is a scope decision, not a verdict to correct (D032 §3f)", () => {
-    const result = applyInstanceAttributionGate({ verdict: "excluded", attribution: "different" });
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "excluded", attribution: "different" });
     expect(result).toEqual({ verdict: "excluded", overridden: false, reason: null });
   });
 });
