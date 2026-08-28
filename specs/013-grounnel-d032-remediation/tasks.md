@@ -373,7 +373,21 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     answer was a second detector with a *different input* — the passages — rather than tuning
     `reason_ordinal`, which stays frozen. g17 was caught in both post-fix golden runs, once by
     `instance_attribution` alone.
-  - **Still open: the ~33% figure is stale and must be re-measured.** n=82 is historical, predating both
+  - **RE-MEASURED (2026-08-28, N=10 as two independent batches of 5, ~120 calls — post-T21,
+    post-field-order-fix).** Scored claim "The first flight covered 852 feet":
+    **`contradicted` 9/10 (90%), `unverifiable` 1, `supported` 0**, against the historical
+    24/82 = 29% catch and 42/82 = 51% `supported`. P(>=9 of 10 | p=0.29) ~= 1e-4;
+    P(0 `supported` in 10 | p=0.51) = 0.49^10 ~= 8e-4. The dominant historical failure — actively
+    affirming the false claim — did not occur once in 10 runs. True claims: **30/30 `supported`,
+    zero false accusations.**
+  - **Batches reported separately on purpose, because they disagree.** Batch 1: 4C/1U/0S on the scored
+    claim, and 1C/2U/**2S** on the case's other false claim ("The first flight lasted 59 seconds",
+    which the golden set does not score). Batch 2: 5C/0U/0S and 4C/1U/**0S**. Pooling alone would have
+    hidden the spread; batch 1 alone overstated the residual, batch 2 alone would have erased it.
+  - **Residual, correctly sized:** the sibling false claim is caught ~5/10 and still affirmed ~2/10.
+    Same article, same passages, same instance-attribution question — and it is the exact claim that
+    exposed the schema field-order bug. Real, but smaller than the first batch of 5 suggested.
+  - **Prior text, kept for the record: the ~33% figure was stale and needed re-measuring.** n=82 is historical, predating both
     the wiring and the schema fix. Two green runs are not a rate. Re-measure under SC-5 (N≥5) before
     this task is closed or the number is quoted anywhere.
 
