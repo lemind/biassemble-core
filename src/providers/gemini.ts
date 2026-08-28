@@ -106,14 +106,16 @@ export class GeminiProvider implements Provider {
       if (status === 429 || message.includes("429") || message.toLowerCase().includes("rate limit")) {
         const isDaily = message.toLowerCase().includes("quota") || message.toLowerCase().includes("daily");
         const resetsAt = extractResetTime(message);
+        // providerMessage is the only place Google states WHICH limit and when it resets; without it
+        // a 429 is unattributable and the reset window can only be guessed at (2026-08-28 incident).
+        const providerMessage = message.replace(/key=[^&\s"]+/gi, "key=[REDACTED]").slice(0, 500);
         logger.warn(
-          { module: MODULE, operation: "completeJson", status, limitType: isDaily ? "daily" : "per-minute", resetsAt },
+          { module: MODULE, operation: "completeJson", status, limitType: isDaily ? "daily" : "per-minute", resetsAt, providerMessage },
           "Gemini rate limit hit — not retrying"
         );
         throw new RateLimitError(
-          isDaily
-            ? "Daily API quota exhausted. Please try again tomorrow."
-            : "Too many requests. Please try again later.",
+          (isDaily ? "Daily API quota exhausted. Please try again tomorrow." : "Too many requests. Please try again later.") +
+            ` [provider: ${providerMessage}]`,
           isDaily ? "daily" : "per-minute",
           resetsAt
         );
