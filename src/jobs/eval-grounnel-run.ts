@@ -24,7 +24,9 @@ import { logger } from "../observability/logger.js";
 
 const MODULE = "eval-grounnel-run";
 /** Thrown-error text only. Inngest serialises step errors, so `instanceof RateLimitError` is gone by then. */
-const RATE_LIMIT_RE = /too many requests|rate.?limit|quota|usage limit/i;
+const RATE_LIMIT_RE = /too many requests|rate.?limit|quota|usage limit|credits are depleted/i;
+/** A depleted balance never clears on its own — say so instead of "re-run on fresh quota". */
+const BILLING_RE = /credits are depleted|check your plan/i;
 /** Two could be a transient RPM blip; three in a row is the daily cap, which won't clear mid-run. */
 const RATE_LIMIT_ABORT_AFTER = 3;
 // Exact degraded strings the pipeline substitutes for a verdict (pipeline-helpers.ts, pipeline.service.ts).
@@ -80,6 +82,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // repetitions just burns wall-clock producing failures — abort and report what completed.
     let consecutiveRateLimited = 0;
     let abortedAfter: string | null = null;
+    let abortWasBilling = false;
     for (const goldenCase of selected) {
       if (abortedAfter) break;
       const runs: GrounnelRun[] = [];
@@ -109,6 +112,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
           errors.push(message);
           // Inngest serialises step errors, so the RateLimitError class is gone by here — match text.
           consecutiveRateLimited = RATE_LIMIT_RE.test(message) ? consecutiveRateLimited + 1 : 0;
+          if (BILLING_RE.test(message)) abortWasBilling = true;
         }
         if (consecutiveRateLimited >= RATE_LIMIT_ABORT_AFTER) {
           abortedAfter = `${goldenCase.id} run ${i + 1}`;
@@ -186,7 +190,10 @@ export const evalGrounnelRunJob = inngest.createFunction(
       throw new NonRetriableError(
         `Grounnel live eval ABORTED at ${abortedAfter} — ${RATE_LIMIT_ABORT_AFTER} consecutive rate-limited runs. ` +
           `Scored ${cases.length}/${selected.length} cases before stopping; these numbers are PARTIAL and not a regression signal. ` +
-          `Re-run on fresh quota.\n${JSON.stringify(compact, null, 2)}`
+          (abortWasBilling
+            ? "CAUSE: AI provider credits are depleted — waiting will NOT fix this, top up the account balance."
+            : "Re-run on fresh quota.") +
+          `\n${JSON.stringify(compact, null, 2)}`
       );
     }
 
