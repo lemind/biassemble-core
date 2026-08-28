@@ -12,7 +12,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NonRetriableError } from "inngest";
 import { inngest } from "./client.js";
-import { GeminiProvider } from "../providers/gemini.js";
+import { GeminiProvider, RateLimitError } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
 import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../providers/search/tavily-provider.js";
@@ -86,9 +86,18 @@ export const evalGrounnelRunJob = inngest.createFunction(
       const errors: string[] = [];
       for (let i = 0; i < repeats; i++) {
         try {
-          const run = await step.run(`case-${goldenCase.id}-run-${i + 1}`, () =>
-            runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase)
-          );
+          const run = await step.run(`case-${goldenCase.id}-run-${i + 1}`, async () => {
+            try {
+              return await runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase);
+            } catch (err) {
+              // Inside the step the class survives (outside it, Inngest has serialised it to text —
+              // hence RATE_LIMIT_RE below). A 429 fails again immediately, so don't spend 4 retries
+              // and their backoff discovering that: 5 attempts per repetition is what made the
+              // abort take 15 runs instead of 3.
+              if (err instanceof RateLimitError) throw new NonRetriableError(err.message, { cause: err });
+              throw err;
+            }
+          });
           runs.push(run);
           // A degraded run "succeeds" with rate-limit text in place of verdicts — scoring that as a
           // real result is worse than failing, so it counts toward the abort too (D026 §17).
