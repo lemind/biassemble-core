@@ -335,7 +335,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     from claim rows. The 12 fixtures include the real captured g17 passages carried over from
     `verify-experiment.ts`, so the experiment is meaningful without that reconstruction.
 
-- [ ] **T20 — g17 catches its false claim only ~33% of the time** ⚠ **measured, not a regression**
+- [x] **T20 — g17 catch rate** — was ~33%, **re-measured at 90% (N=10); accepted 2026-08-28**
   - **Finding (2026-08-27, n=82 historical runs of g17's own claim text):** `supported` 42,
     `contradicted` 24, `unverifiable` 6, `unsupported` 1 — a **~33% catch rate**, and the dominant
     failure (42/82) is `supported`, i.e. actively affirming a claim the golden set labels `false`.
@@ -387,6 +387,21 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - **Residual, correctly sized:** the sibling false claim is caught ~5/10 and still affirmed ~2/10.
     Same article, same passages, same instance-attribution question — and it is the exact claim that
     exposed the schema field-order bug. Real, but smaller than the first batch of 5 suggested.
+  - **CLOSED 2026-08-28 — user accepted 90% ("for now 90% is fine").** The bar in the golden set stays
+    `minCorrectRate: 1.0`; that is deliberate (see the decision above — observed performance is a
+    measurement, not a requirement), so g17 will still show red on a bad draw. That is the honest
+    signal, not a failure to fix.
+  - **SC-5 confirms it at the suite level (2026-08-28, all 28 cases at N>=5, 177 scored observations):
+    detection 39/44 = 88.6% on false claims, and ZERO false accusations across 109 true-claim
+    observations.** SC-5's own bar is met. Note the harness prints `passed: false` — that is its
+    per-case `minCorrectRate: 1.0` rule, which is STRICTER than SC-5's criterion; five cases sit below
+    100% and none of them violates SC-5. Every one of those misses is an abstention
+    (`unverifiable`/`unsupported`), never a `contradicted` on a true claim.
+  - **Residual is a RETRIEVAL ceiling, not a checker fault.** On the g17 run that returned `supported`,
+    the attribution checker answered `absent` with no citation — correctly: the passage said "the
+    longest of four covering 852 feet", a superlative, and the prompt forbids equating that with a
+    position. Retrieval simply did not return a passage naming the fourth flight that run. Closing the
+    last ~10% means improving what search surfaces, not tuning the prompt or the gate.
   - **Prior text, kept for the record: the ~33% figure was stale and needed re-measuring.** n=82 is historical, predating both
     the wiring and the schema fix. Two green runs are not a rate. Re-measure under SC-5 (N≥5) before
     this task is closed or the number is quoted anywhere.
@@ -466,9 +481,12 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - **Better design, and it is cheaper: generate the fixtures live instead of reconstructing them.**
     Run EXTRACT + eligibility + search + rerank once over the golden set, snapshot the exact
     `{id, claim, subjectEntity, passages}` VERIFY would have received, then replay THAT against both
-    schema orders at N≥3. Exact inputs, zero reconstruction error, and the fixture is reusable — the
-    same property that made T21's bake-off identifiable. Estimated ~270 calls total (~100 to build the
-    fixtures, ~170 for 28 cases × 2 schemas × 3 reps of the VERIFY call alone, which is batched).
+    schema orders at **N=2** (user's call, 2026-08-28 — screens for a large effect only; a small one will
+    not be distinguishable and must not be read as absence). Exact inputs, zero reconstruction error, and the fixture is reusable — the
+    same property that made T21's bake-off identifiable. **~308 calls** (corrected — the earlier "~270" was
+    an unchecked guess): ~196 one-time to build the fixtures (EXTRACT 1 + eligibility 1/claim +
+    search/rerank ~1/claim, ≈7 per case × 28), plus 112 for the A/B itself (28 cases × 2 schemas ×
+    2 reps × 1 batched VERIFY call). Fixtures are paid ONCE — each extra repeat pair costs 56, not 308.
     Requires one small production change: evidence resolution is `private` on GrounnelPipelineService
     and must be reachable without also running VERIFY.
   - **SC-5 is the product regression check, not the experiment** — run it on a candidate already

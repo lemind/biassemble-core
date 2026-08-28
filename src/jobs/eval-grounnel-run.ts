@@ -26,7 +26,7 @@ const MODULE = "eval-grounnel-run";
 /** Thrown-error text only. Inngest serialises step errors, so `instanceof RateLimitError` is gone by then. */
 const RATE_LIMIT_RE = /too many requests|rate.?limit|quota|usage limit|credits are depleted|spend(ing)? cap/i;
 /** Neither an empty balance nor a hit spend cap clears on its own — say so, don't say "re-run later". */
-const BILLING_RE = /credits are depleted|spend(ing)? cap|check your plan/i;
+const BILLING_RE = /credits are depleted|spend(ing)? cap/i;
 /** Two could be a transient RPM blip; three in a row is the daily cap, which won't clear mid-run. */
 const RATE_LIMIT_ABORT_AFTER = 3;
 // Exact degraded strings the pipeline substitutes for a verdict (pipeline-helpers.ts, pipeline.service.ts).
