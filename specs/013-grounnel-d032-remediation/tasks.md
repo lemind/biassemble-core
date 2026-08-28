@@ -436,6 +436,27 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     that did not, and slices of `contradicted` and `supported`. Readouts in order: (1) reason↔verdict
     inconsistency rate via the same classifier `counterfact_ignored` uses; (2) verdict flip rate,
     especially true claims → `contradicted`; (3) verdict mix vs the baseline above.
+  - **REPLAY FEASIBILITY CHECKED (2026-08-28, free). Telemetry replay cannot be exact — redesign.**
+    Available: 3429 VERIFY `primary` calls (3420 with `input_tokens`, so the fidelity check is
+    possible), 21559 rerank rows / 17787 selected across 1341 runs, 19351 search pages all with text.
+    Batch membership is recoverable from `parsed_output.results[].id` (the response lists every claim
+    id in the batch), which is better than the `claim_id` column — that is null for batched calls.
+    **But `subjectEntity` is persisted NOWHERE.** VERIFY's input is
+    `{id, claim, subject_entity, passage_sentences}` (pipeline.service.ts callVerify); `subject_entity`
+    is produced by EXTRACT and lives only in memory. `grounnel_claims` has no such column. So a
+    historical call's input cannot be rebuilt exactly, only approximated.
+  - **This does not break the A/B — it bounds its generalisation.** Both arms receive the SAME
+    reconstructed input, so reconstruction error cannot masquerade as a field-order effect (internal
+    validity holds). What it costs is external validity: the result would read "this is what VERIFY
+    does on inputs like these", not "this is what VERIFY did on that call".
+  - **Better design, and it is cheaper: generate the fixtures live instead of reconstructing them.**
+    Run EXTRACT + eligibility + search + rerank once over the golden set, snapshot the exact
+    `{id, claim, subjectEntity, passages}` VERIFY would have received, then replay THAT against both
+    schema orders at N≥3. Exact inputs, zero reconstruction error, and the fixture is reusable — the
+    same property that made T21's bake-off identifiable. Estimated ~270 calls total (~100 to build the
+    fixtures, ~170 for 28 cases × 2 schemas × 3 reps of the VERIFY call alone, which is batched).
+    Requires one small production change: evidence resolution is `private` on GrounnelPipelineService
+    and must be reachable without also running VERIFY.
   - **SC-5 is the product regression check, not the experiment** — run it on a candidate already
     chosen by replay, never as the thing that chooses.
   - **Pre-registered decision rule.** KEEP only if, on replay: inconsistency falls by a margin
