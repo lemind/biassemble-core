@@ -49,7 +49,7 @@ export function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
 
 /** Client-facing message for a Gemini RateLimitError — also reused by the route handler for EXTRACT's own case (no audit exists yet there, so it becomes the /extract response directly). */
 export function buildGeminiRateLimitMessage(err: RateLimitError): string {
-  // Never "try again in a few minutes" for a depleted balance — that is permanently false and hides
+  // Never "try again in a few minutes" for an empty balance or a hit spend cap — permanently false, hides
   // an operator problem behind a user-looking transient error (2026-08-28 incident).
   if (err.limitType === "billing") {
     return "Fact-checking is temporarily unavailable. Our team has been notified — please try again later.";

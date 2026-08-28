@@ -107,7 +107,7 @@ export class GeminiProvider implements Provider {
         const lower = message.toLowerCase();
         // Google returns 429 for a depleted prepaid balance too. It is NOT a rate limit: waiting never
         // clears it, so it must not produce a "try again shortly" message (2026-08-28 incident).
-        const isBilling = lower.includes("credits are depleted") || lower.includes("billing") || lower.includes("check your plan");
+        const isBilling = /credits are depleted|spend(ing)? cap|billing|check your plan/.test(lower);
         const isDaily = !isBilling && (lower.includes("quota") || lower.includes("daily"));
         const resetsAt = extractResetTime(message);
         // providerMessage is the only place Google states WHICH limit and when it resets; without it
