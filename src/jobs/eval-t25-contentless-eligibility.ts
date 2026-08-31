@@ -1,12 +1,6 @@
 /**
- * Experiment job — spec 013 T25: does the eligibility classifier already recognize a "contentless"
- * claim (grammatically well-formed, no resolvable subject/referent), or does it wave every one
- * through as `checkable`? D032 §12 Finding C: "A person really did die in a particular year" landed
- * `supported` off a celebrity-deaths listicle — a genuine unsafe affirmation under the Cardinal Rule.
- *
- * Design (tasks.md T25 C1/C2): classifyClaimVerifiability, N=5, on the exact failing claim plus a
- * few sibling contentless forms. Small and fixed, same shape as attribution-experiment.ts, not a
- * golden-set replay — no fixtures needed, classifyClaimVerifiability takes claim text directly.
+ * Experiment job — spec 013 T25: does eligibility recognize a contentless claim, or wave it
+ * through as `checkable`? Design and findings: tasks.md T25, D032 §12 Finding C.
  *
  * Trigger: event "eval/t25-contentless-eligibility" (scripts/trigger-eval-t25.ts sends it)
  */
@@ -20,12 +14,8 @@ import { classifyClaimVerifiability, isEligibilityExcluded } from "../orchestrat
 import { logger } from "../observability/logger.js";
 
 const MODULE = "eval-t25-contentless-eligibility";
-// Review finding, fixed: classifyClaimVerifiability's own fail-open result (claim-eligibility.ts's
-// FAIL_OPEN_RESULT) is byte-identical in shape to a genuine {checkable, uncertain} classification —
-// a rate-limited run would silently report the same categoryMix as a clean one. The individual
-// provider-call failures ARE still recorded in grounnel_llm_calls, but not surfaced in this job's own
-// summary, which is what an operator actually looks at. Detected by exact match on the fixed reason
-// string that function returns on its catch path.
+// FAIL_OPEN_RESULT is shape-identical to a genuine {checkable, uncertain}, so a rate-limited run
+// would report a clean-looking mix; detected by exact match on its fixed reason string.
 const FAIL_OPEN_REASON = "Eligibility classification unavailable — failed open to search.";
 
 // C1 — the exact claim from D032 §12 Finding C. C2 — sibling contentless forms: grammatically

@@ -91,18 +91,15 @@ export async function classifyClaimVerifiability(
   }
 }
 
-/** D030 §3b policy (data-model.md §2); T27 adds the referent ground (D032 §13). Strict `=== false` so a null/absent field never excludes. */
+/** D030 §3b category ground first, then T27's referent ground for checkable claims only (D032 §13). Strict `=== false` so a null/absent field never excludes. */
 export function isEligibilityExcluded(result: ClaimVerifiabilityResult): boolean {
-  if (result.hasResolvableReferent === false) return true;
-  return result.category !== "checkable" && result.certainty === "clear";
+  if (result.category !== "checkable" && result.certainty === "clear") return true;
+  return result.category === "checkable" && result.hasResolvableReferent === false;
 }
 
-// Review finding — colocated with isEligibilityExcluded, not extract.service.ts: same D030 §3b policy.
-// Takes the whole result, not just category: T27's referent exclusion fires with category "checkable".
+// Precedence must match isEligibilityExcluded — category first, or an opinion gets told it
+// "doesn't say what it's about", which is false. D032 §13.
 export function eligibilityReason(result: ClaimVerifiabilityResult): string {
-  if (result.hasResolvableReferent === false) {
-    return "This doesn't say who or what it's about, so there's nothing specific to check.";
-  }
   switch (result.category) {
     case "personal":
       return "This describes a private, personal circumstance that no public record could confirm or deny.";
@@ -111,8 +108,6 @@ export function eligibilityReason(result: ClaimVerifiabilityResult): string {
     case "prediction":
       return "This is a prediction about the future, not something that can be checked yet.";
     case "checkable":
-      // Unreachable — a "checkable" result only reaches here via the referent branch above, which
-      // already returned. Kept for exhaustiveness, not a real runtime path.
-      return "Not a checkable claim.";
+      return "This doesn't say who or what it's about, so there's nothing specific to check.";
   }
 }

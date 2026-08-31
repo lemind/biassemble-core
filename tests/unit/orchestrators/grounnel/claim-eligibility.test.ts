@@ -110,10 +110,24 @@ describe("isEligibilityExcluded (D030 §3b policy)", () => {
     expect(isEligibilityExcluded({ category: "prediction", certainty: "uncertain", reason: "", hasResolvableReferent: true })).toBe(false);
   });
 
-  // Spec 013 T27 (D032 §13) — the referent axis is independent of the category/certainty axis above.
-  it("excludes on a missing referent even when the claim is checkable/uncertain — D032 §13 Finding C", () => {
+  // Spec 013 T27 (D032 §13) — referent ground applies to checkable claims only.
+  it("excludes on a missing referent when the claim is checkable — D032 §13 Finding C", () => {
     expect(isEligibilityExcluded({ category: "checkable", certainty: "uncertain", reason: "", hasResolvableReferent: false })).toBe(true);
     expect(isEligibilityExcluded({ category: "checkable", certainty: "clear", reason: "", hasResolvableReferent: false })).toBe(true);
+  });
+
+  // Observed live, not hypothetical: the model returns referent:false for opinions/predictions
+  // 10/10 (T27 screen). Category must still decide, so the referent flag can't widen exclusion.
+  it("does not let referent:false exclude an uncertain opinion/prediction the category rule keeps", () => {
+    expect(isEligibilityExcluded({ category: "opinion", certainty: "uncertain", reason: "", hasResolvableReferent: false })).toBe(false);
+    expect(isEligibilityExcluded({ category: "prediction", certainty: "uncertain", reason: "", hasResolvableReferent: false })).toBe(false);
+    expect(isEligibilityExcluded({ category: "personal", certainty: "uncertain", reason: "", hasResolvableReferent: false })).toBe(false);
+  });
+
+  // Asserts the WRONG current behaviour on purpose so it stays visible; flip when the
+  // falsifiability contract lands. D032 §13.
+  it("still wrongly excludes a true generic-class claim — v1.1.0 prompt defect, not a policy bug", () => {
+    expect(isEligibilityExcluded({ category: "checkable", certainty: "uncertain", reason: "", hasResolvableReferent: false })).toBe(true);
   });
 
   it("fails open when the referent field is absent or null — never a basis for exclusion", () => {
@@ -126,18 +140,16 @@ describe("isEligibilityExcluded (D030 §3b policy)", () => {
   });
 });
 
-// Spec 013 T27 — the referent exclusion fires with category "checkable", which the pre-T27
-// category-only signature rendered as the unreachable "Not a checkable claim." string.
-describe("eligibilityReason (T27 referent branch)", () => {
-  it("explains a missing referent rather than falling through to the category text", () => {
-    const reason = eligibilityReason({ category: "checkable", certainty: "uncertain", reason: "", hasResolvableReferent: false });
-    expect(reason).toContain("who or what");
-    expect(reason).not.toBe("Not a checkable claim.");
+describe("eligibilityReason (D032 §13 precedence)", () => {
+  it("explains a missing referent for a checkable claim", () => {
+    expect(eligibilityReason({ category: "checkable", certainty: "uncertain", reason: "", hasResolvableReferent: false })).toContain("who or what");
   });
 
-  it("still returns the category text when a referent exists", () => {
-    expect(eligibilityReason({ category: "opinion", certainty: "clear", reason: "", hasResolvableReferent: true })).toContain("subjective opinion");
-    expect(eligibilityReason({ category: "personal", certainty: "clear", reason: "", hasResolvableReferent: true })).toContain("private, personal");
-    expect(eligibilityReason({ category: "prediction", certainty: "clear", reason: "", hasResolvableReferent: true })).toContain("prediction about the future");
+  // The joint values production actually emits (referent:false 10/10 on opinion/prediction);
+  // asserting referent:true proved nothing and shipped the wrong sentence live. D032 §13.
+  it("keeps the category sentence when an opinion/prediction also reports referent:false", () => {
+    expect(eligibilityReason({ category: "opinion", certainty: "clear", reason: "", hasResolvableReferent: false })).toContain("subjective opinion");
+    expect(eligibilityReason({ category: "prediction", certainty: "clear", reason: "", hasResolvableReferent: false })).toContain("prediction about the future");
+    expect(eligibilityReason({ category: "personal", certainty: "clear", reason: "", hasResolvableReferent: false })).toContain("private, personal");
   });
 });
