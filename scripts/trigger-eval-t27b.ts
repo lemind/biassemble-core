@@ -18,7 +18,7 @@ async function main() {
   const eventName = "eval/t27b-prompt-variants";
 
   console.log(`Sending ${eventName} {"repeats":${repeats}}...`);
-  console.log(`  10 variants × 16 fixtures × ${repeats} repeat(s) ≈ ${10 * 16 * repeats} calls`);
+  console.log(`  5 variants × 24 fixtures × ${repeats} repeat(s) ≈ ${5 * 24 * repeats} calls`);
 
   const result = await inngest.send({ name: eventName, data: { repeats } });
   console.log(`✓ T27b screen triggered: ${result.ids.join(", ")}`);

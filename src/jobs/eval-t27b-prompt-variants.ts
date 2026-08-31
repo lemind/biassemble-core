@@ -1,6 +1,6 @@
 /**
- * Experiment job — spec 013 T27b: screen 10 candidate RESOLVABLE-REFERENT prompt blocks against
- * generic-class claims the v1.1.0 block wrongly excludes. Design and bar: tasks.md T27, D032 §13.
+ * Experiment job — spec 013 T27b: screen RESOLVABLE-REFERENT prompt blocks. Round 2 keeps round
+ * 1's survivors plus boundary fixtures that break the article/number cue. tasks.md T27, D032 §13.
  *
  * Trigger: event "eval/t27b-prompt-variants" (scripts/trigger-eval-t27b.ts sends it)
  */
@@ -21,7 +21,9 @@ const FAIL_OPEN_REASON = "Eligibility classification unavailable — failed open
 const BLOCK_START = "RESOLVABLE REFERENT";
 const BLOCK_END = "Output JSON only:";
 
-type Role = "contentless" | "generic-class" | "named-referent" | "drift-control";
+// boundary-* roles break the article/number cue: round 1's contentless set was all indefinite
+// singular and its generics all bare plural, so a variant could score 100% on surface form alone.
+type Role = "contentless" | "generic-class" | "named-referent" | "drift-control" | "boundary-keep" | "boundary-exclude";
 
 interface FixtureScore { id: string; role: Role; expect: "exclude" | "keep"; excludedCount: number; referentFalseCount: number; failOpenCount: number; jointMix: Record<string, number> }
 
@@ -55,6 +57,18 @@ const FIXTURES: Fixture[] = [
 
   { id: "d1-opinion", claimText: "SQL is more useful than NoSQL for most applications.", sourceExcerpt: null, role: "drift-control", expect: "exclude" },
   { id: "d2-prediction", claimText: "AI would eliminate most programming jobs within five years.", sourceExcerpt: null, role: "drift-control", expect: "exclude" },
+
+  // Indefinite singular, generic meaning — the article says "placeholder", the sense says "kind".
+  { id: "bk1-a-mouse", claimText: "An early computer mouse was connected by a cable.", sourceExcerpt: null, role: "boundary-keep", expect: "keep" },
+  { id: "bk2-a-mammal", claimText: "A mammal has a backbone.", sourceExcerpt: null, role: "boundary-keep", expect: "keep" },
+  { id: "bk3-a-japanese-city", claimText: "A Japanese city was destroyed by an atomic bomb in 1945.", sourceExcerpt: null, role: "boundary-keep", expect: "keep" },
+  { id: "bk4-some-scientists", claimText: "Some scientists identified penicillin's antibacterial effect.", sourceExcerpt: null, role: "boundary-keep", expect: "keep" },
+  { id: "bk5-a-us-president", claimText: "A US president resigned before completing his term.", sourceExcerpt: null, role: "boundary-keep", expect: "keep" },
+
+  // Bare plural, contentless meaning — the number says "kind", the sense says "placeholder".
+  { id: "bx1-companies-profits", claimText: "Companies reported profits at some point.", sourceExcerpt: null, role: "boundary-exclude", expect: "exclude" },
+  { id: "bx2-awards-won", claimText: "Awards were won by people.", sourceExcerpt: null, role: "boundary-exclude", expect: "exclude" },
+  { id: "bx3-things-happened", claimText: "Notable events took place in various cities over the years.", sourceExcerpt: null, role: "boundary-exclude", expect: "exclude" },
 ];
 
 // Each variant is a different STRATEGY for the same question, not a rewording. v1 is the live
@@ -72,18 +86,6 @@ const VARIANTS: Array<{ id: string; strategy: string; block: string }> = [
 - A referent the SOURCE_EXCERPT resolves is also resolvable: if the claim says "the company reported a profit" and the excerpt names the company, answer true. If the excerpt merely repeats the claim and adds no identifying context, it resolves nothing.
 - This is INDEPENDENT of category and certainty. "uncertain" does not mean the referent is missing, and a "checkable" category does not mean a referent exists. A claim can be perfectly checkable in form and still be about nobody in particular — that is exactly the case this field exists to catch.
 - When the subject is genuinely named but you simply do not know the entity, answer true. False means "the text does not say who/what", never "I do not recognise this name".`,
-  },
-  {
-    id: "v2-falsifiability",
-    strategy: "Falsifiability — what evidence would show this false?",
-    block: `RESOLVABLE REFERENT — a separate question from everything above. Answer it independently.
-
-"hasResolvableReferent" asks whether this claim could be REFUTED by evidence. Apply one test: can you describe a specific finding that would show the claim is false?
-
-- If yes, answer true. "Historical computer mice were corded" is refuted by finding they were wireless. "Apple's Q4 revenue was $6.2 billion" is refuted by a different figure.
-- If no evidence could ever refute it because ANY single instance makes it true, answer false. "A person died in a particular year" is true of every year and cannot be refuted. "Someone won an award" cannot be refuted.
-- This has nothing to do with whether a proper name appears. General statements about a kind of thing are refutable and answer true.
-- If you cannot name what would refute it, answer false.`,
   },
   {
     id: "v3-placeholder-vs-kind",
@@ -136,52 +138,6 @@ Answer false only if the subject is one of these shapes:
 - any subject introduced by "a"/"an"/"some" where the claim also declines to say which one
 
 In every other case answer true — including claims about categories of things, historical periods, technologies, or any general kind. If the SOURCE_EXCERPT names the subject, answer true.`,
-  },
-  {
-    id: "v7-determinate-set",
-    strategy: "Does the subject pick out a determinate set?",
-    block: `RESOLVABLE REFERENT — a separate question from everything above. Answer it independently.
-
-"hasResolvableReferent" asks whether the subject picks out a DETERMINATE set of things in the world.
-
-- "Steam locomotives" picks out a determinate set — all steam locomotives. Answer true.
-- "Historical computer mice" picks out a determinate set. Answer true.
-- "Apple" picks out one determinate thing. Answer true.
-- "A person" picks out no set — it stands for any one of billions, and the claim does not say which. Answer false.
-- "Someone", "a company", "a city" behave the same way. Answer false.
-- The size of the set is irrelevant. A set of millions is still determinate; an unspecified single member is not.`,
-  },
-  {
-    id: "v8-falsifiability-worked",
-    strategy: "Falsifiability plus the worked contrast pair",
-    block: `RESOLVABLE REFERENT — a separate question from everything above. Answer it independently.
-
-"hasResolvableReferent" asks whether evidence could REFUTE this claim. Work through the contrast:
-
-"Historical computer mice were connected by cables." To refute it you would show that historical mice were wireless. That is a real research finding. Answer TRUE.
-
-"A person really did die in a particular year." To refute it you would have to show that in no year did any person die. Nothing could show that; the claim is satisfied by any death in any year. Answer FALSE.
-
-Apply the same test to the claim below. If you can state what finding would refute it, answer true. If the claim is guaranteed true by the existence of any single instance, answer false. Whether the subject is a proper name or a general noun is irrelevant to this test.`,
-  },
-  {
-    id: "v9-informativeness",
-    strategy: "Does checking it teach the reader anything?",
-    block: `RESOLVABLE REFERENT — a separate question from everything above. Answer it independently.
-
-"hasResolvableReferent" asks whether checking this claim would tell a reader anything.
-
-- If confirming it would inform the reader, answer true. Confirming that early computer mice were corded, or that Apple's revenue was $6.2 billion, tells them something.
-- If the claim is so unspecific that confirming it tells the reader nothing they did not already know, answer false. Confirming "a person died in a particular year" or "someone won an award" conveys no information — it is trivially true.
-- Claims about categories of things are informative and answer true.
-- Use the SOURCE_EXCERPT to resolve a vague subject before judging.`,
-  },
-  {
-    id: "v10-minimal",
-    strategy: "Single sentence, no bullets",
-    block: `RESOLVABLE REFERENT — a separate question from everything above. Answer it independently.
-
-"hasResolvableReferent": answer false ONLY when the claim's subject is an unspecified stand-in ("a person", "someone", "a company", "a city") so that the claim is made true by any instance whatsoever and says nothing about any particular thing; answer true in every other case, including claims about whole categories or kinds of thing, and including any subject named in the CLAIM or resolved by the SOURCE_EXCERPT.`,
   },
 ];
 
@@ -260,18 +216,24 @@ export const evalT27bPromptVariantsJob = inngest.createFunction(
       const byRole = (role: Role) => perFixture.filter((f) => f.role === role);
       const sum = (rows: typeof perFixture, k: "excludedCount" | "failOpenCount") => rows.reduce((a, f) => a + f[k], 0);
 
-      // Hard gate: a true claim wrongly dropped. Generic-class is the shape v1.1.0 fails on.
-      const falseExclusions = sum(byRole("generic-class"), "excludedCount") + sum(byRole("named-referent"), "excludedCount");
+      // Hard gate: a true claim wrongly dropped, boundary-keep included — those are the ones a
+      // variant keying on article/number gets wrong while scoring 100% on the easy sets.
+      const falseExclusions = sum(byRole("generic-class"), "excludedCount") + sum(byRole("named-referent"), "excludedCount") + sum(byRole("boundary-keep"), "excludedCount");
       const contentlessExcluded = sum(byRole("contentless"), "excludedCount");
       const contentlessTotal = byRole("contentless").length * repeats;
+      const boundaryExcluded = sum(byRole("boundary-exclude"), "excludedCount");
+      const boundaryExcludeTotal = byRole("boundary-exclude").length * repeats;
+      const boundaryKeepMissed = sum(byRole("boundary-keep"), "excludedCount");
       const failOpen = sum(perFixture, "failOpenCount");
 
       const verdict =
         falseExclusions > 0
-          ? `FAIL — ${falseExclusions} false exclusion(s)`
-          : contentlessExcluded / contentlessTotal >= 0.9
-            ? "PASS"
-            : `INCONCLUSIVE — contentless ${contentlessExcluded}/${contentlessTotal}`;
+          ? `FAIL — ${falseExclusions} false exclusion(s) (${boundaryKeepMissed} on boundary)`
+          : contentlessExcluded / contentlessTotal < 0.9
+            ? `INCONCLUSIVE — contentless ${contentlessExcluded}/${contentlessTotal}`
+            : boundaryExcluded / boundaryExcludeTotal < 0.9
+              ? `WEAK — misses plural-form contentless ${boundaryExcluded}/${boundaryExcludeTotal}`
+              : "PASS";
 
       perVariant.push({
         id: variant.id,
@@ -279,6 +241,9 @@ export const evalT27bPromptVariantsJob = inngest.createFunction(
         falseExclusions,
         genericExcluded: sum(byRole("generic-class"), "excludedCount"),
         namedExcluded: sum(byRole("named-referent"), "excludedCount"),
+        boundaryKeepMissed,
+        boundaryExcluded,
+        boundaryExcludeTotal,
         contentlessExcluded,
         contentlessTotal,
         driftExcluded: sum(byRole("drift-control"), "excludedCount"),
@@ -286,10 +251,12 @@ export const evalT27bPromptVariantsJob = inngest.createFunction(
         verdict,
         perFixture,
       });
-      logger.info({ module: MODULE, variant: variant.id, verdict, falseExclusions, contentlessExcluded }, "T27b variant scored");
+      logger.info({ module: MODULE, variant: variant.id, verdict, falseExclusions, boundaryKeepMissed, boundaryExcluded }, "T27b variant scored");
     }
 
-    const ranked = [...perVariant].sort((a, b) => a.falseExclusions - b.falseExclusions || b.contentlessExcluded - a.contentlessExcluded);
+    // Rank on the boundary cases — the easy sets no longer separate anything.
+    const ranked = [...perVariant].sort((a, b) =>
+      a.falseExclusions - b.falseExclusions || b.boundaryExcluded - a.boundaryExcluded || b.contentlessExcluded - a.contentlessExcluded);
     logger.info({ module: MODULE, winner: ranked[0]?.id, ranked: ranked.map((v) => ({ id: v.id, verdict: v.verdict })) }, "T27b prompt-variant screen complete");
 
     return { repeats, ranked };
