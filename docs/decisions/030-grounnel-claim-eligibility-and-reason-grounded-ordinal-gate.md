@@ -1347,6 +1347,34 @@ should start there rather than from the original estimate.
 worth doing before any further work on this gate, since it is free to verify and changes the
 denominator of every measurement above.
 
+### Addendum 5 (2026-08-31) — T30: the extractor fix is the same treadmill; the real question is whether this gate should exist
+
+Two extractor candidates were simulated offline against 191 scorable firings
+(`scripts/t30-simulate-extractors.ts`, zero API cost). Both refuted; no code shipped.
+
+| Candidate | Abstains on | Why refuted |
+| --- | --- | --- |
+| A — sentence-initial capital counts only if it recurs mid-sentence | 114 (59.7%) | The gate's anchor is `subjectEntity`, a bare FRAGMENT ("Marwick"), not prose — every token is sentence-initial, so real names are dropped. Caught by two pre-existing g17 tests |
+| B — drop a capital that also appears lowercase in claim+evidence | 92 (48.2%) | Correctly drops `Strawberries`/`Services`, but also drops **`Apple`** and **`Wright`** because "apple" (the fruit) and "wright" occur lowercase in the passage. A spelling coincidence, not an identity test |
+
+**A safety note that generalises beyond T30.** `sameEntity` is consumed in **opposite senses** by its
+two callers: `applySubjectEntityGate` suppresses when it returns false, while `applyYearGate`
+*proceeds to force `contradicted`* when it returns true. Any change that yields fewer names therefore
+makes the first safer and the second **less** safe — a blanket edit to the shared helper weakens the
+year gate's cross-entity guard in the one Cardinal-Rule-unsafe direction. Future work here must be
+opt-in per call site. This was not obvious from either gate's own code and is easy to miss.
+
+**What the simulation actually shows.** Both candidates "succeed" only by making the gate abstain on
+50–60% of its own firings. Set against Addendum 4's finding of **zero confirmed genuine catches
+across 320 firings** and §3m Addendum 2's ~75% false-trigger rate, an extractor fix is not a fix — it
+is a partial, unprincipled disabling of a gate with no demonstrated benefit. **Candidate 7 refuted.**
+
+**Recommendation, escalated rather than actioned.** The justification for retaining `subject_entity`
+(§3m: rare but real M1 catches, kept on cost grounds) no longer has a single confirmed instance
+behind it. The honest options are to **disable the gate outright** — a one-line change whose effect
+is measurable and whose direction is safe — or to leave it exactly as-is and stop spending on it.
+Writing an eighth lexical heuristic is neither. This is a product decision and is left open.
+
 ## Consequences
 
 - New in `src/orchestrators/grounnel/gates.ts`: `applyReasonOrdinalGate` (own policy function, not

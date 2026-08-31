@@ -1005,13 +1005,29 @@ unattributable (the exact failure mode T22 already demonstrated).
        fragment is sentence-initial, so the rule drops real names. Caught by two pre-existing g17
        tests, not by reasoning. Reverted rather than patched with a second heuristic: that is exactly
        how the v1.1.0 referent block was produced.
-  - **Do this next, before writing code again (D030 §3n discipline, 6 refuted candidates and
-    counting): simulate candidate extractors offline against the 320 recorded firings** — the corpus
-    already used by `scripts/t28-passage-inventory.ts` — and score how many firings each removes and
-    whether any confirmed-true suppression survives. Candidate worth simulating first: drop a
-    sentence-initial capital only when the same token also appears **lowercase** somewhere in
-    claim+evidence ("Researchers"→"researchers" appears; "Germany" never does), which does not depend
-    on the anchor being prose.
+  - **SIMULATED (2026-08-31), `scripts/t30-simulate-extractors.ts`, 191 scorable firings, zero API
+    cost. Both candidates refuted — nothing shipped.**
+
+    | Candidate | Would abstain on | Verdict |
+    | --- | --- | --- |
+    | A — keep a sentence-initial capital only if it recurs mid-sentence | 114 (59.7%) | Refuted: breaks on the bare-fragment `subjectEntity` anchor (attempt 1 above) |
+    | B — drop a capital that also appears lowercase in claim+evidence | 92 (48.2%) | Refuted: see below |
+
+    Candidate B correctly drops `Strawberries` ("Strawberries are not classified as true berries")
+    and `Services` — real instances of the bug. But it also drops **`Apple`** (across 8 Apple-earnings
+    claims) and **`Wright`**, because the fruit "apple" and the word "wright" occur lowercase
+    elsewhere in the retrieved passage. The rule is a coincidence heuristic, not an identity test:
+    whether a common noun happens to share a spelling with a company says nothing about whether the
+    claim names an entity. It would behave unpredictably on unseen text.
+  - **The result reframes the task.** Both candidates "work" only by making the gate abstain on
+    ~50–60% of its own firings. Combined with T28 Step 1 — **zero confirmed genuine catches across
+    320 firings**, against T24's ~75% false-trigger rate — every extractor fix is just a partial,
+    unprincipled disabling of a gate with no demonstrated benefit. That is candidate 7 refuted for
+    this gate.
+  - **Open question for the user, not a patch: should `subject_entity` be disabled outright?** The
+    evidence for retaining it (D030 §3m, "rare but real M1 catches") no longer has a single confirmed
+    instance behind it. Disabling is a one-line change with a measurable, safe direction; another
+    extractor heuristic is not. Do not write more extractor code before that decision.
 
 - [x] **T29 — Housekeeping: delete spent investigation scripts and closed experiment jobs** **DONE (2026-08-31)**
   - `_tmp-poll-run.ts`, `_tmp-poll-run2.ts`, `_tmp-find-runs.ts`, `_tmp-dump-claims.ts`,
