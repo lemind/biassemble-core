@@ -834,7 +834,7 @@ unattributable (the exact failure mode T22 already demonstrated).
     widening figure and the 40/41 flagship refutation are rates over eval runs and must be labelled
     as such.
 
-- [ ] **T27 — Finding C: `has_resolvable_referent` on the eligibility contract** (D032 §13)
+- [x] **T27 — Finding C: `has_resolvable_referent` on the eligibility contract** (D032 §13) **DONE (2026-08-31), live-verified**
   - **Defect:** `"A person really did die in a particular year."` → `supported` against a real
     celebrity-deaths listicle, reproduced on both post-fix runs (`a2d4e3b2`, `55e13495`). Unsafe
     under the Cardinal Rule.
@@ -920,8 +920,17 @@ unattributable (the exact failure mode T22 already demonstrated).
       `exclude: [… "tests"]`, so `tsc --noEmit` never typechecks the test suite — stale
       `isEligibilityExcluded({...})` call sites missing the new required field compiled silently and
       only surfaced at runtime. Worth its own task if type safety in tests is wanted.
-  - **NEXT:** deploy, `PUT /api/inngest` to sync (a Vercel deploy does not auto-register new Inngest
-    functions), then `pnpm t27:trigger`. Read the verdict before touching Step 2.
+  - **STEP 2 RESULT — live, run `55d6e232` (44 claims), prompt v1.2.0.** All three checks pass:
+    *"A person really did die in a particular year"* → `excluded` ("This doesn't say who or what it's
+    about…"); *"Historical computer mice were connected to computers by cables"* → **`supported`**,
+    i.e. v1.1.0's false exclusion is gone; both opinions → `excluded` with the opinion sentence. The
+    excluded set is exactly 3 — 2 real opinions + the contentless claim — for the first time.
+  - **Honest scoring of this task:** the contentless defect is fixed, but v1.1.0 (my first attempt)
+    broke a true generic-class claim that had been correct in five prior runs, and v1.2.0 restored it.
+    Net against the pre-T27 baseline: **one defect fixed, nothing lost** — but two live runs were
+    spent on a regression I introduced. The lesson is recorded in D032 §13b: a fixture screen whose
+    positive and negative sets differ by a surface cue (article/number) measures the cue, not the
+    semantics.
 
 - [x] **T28 — Finding B: is VERIFY citation-completeness even available as a fix?** (D030 §3m Addendum 3) **CLOSED — Step 2 REJECTED (2026-08-31), user-accepted**
   - **STEP 1 RESULT (offline, zero API cost — `scripts/t28-passage-inventory.ts`).** 320 distinct
@@ -982,7 +991,7 @@ unattributable (the exact failure mode T22 already demonstrated).
   - **Do not draft the citation paragraph into `verify/system.json` until Step 1's inventory exists.**
   </details>
 
-- [ ] **T30 — `properNounWords` treats any capitalised word as a proper noun** (found by T28 Step 1)
+- [ ] **T30 — `properNounWords` treats any capitalised word as a proper noun** — **DOWNGRADED to low priority (2026-08-31)**
   - `PROPER_NOUN_RE` is `/\b[A-Z][a-zA-Z'-]+\b/g` and `SENTENCE_START_STOPWORDS` covers ~15 words plus
     month names, so sentence-initial common nouns are read as names: `Researchers`, `One`, `Terminators`
     all became a claim's "subject" in real firings.
@@ -1024,10 +1033,13 @@ unattributable (the exact failure mode T22 already demonstrated).
     320 firings**, against T24's ~75% false-trigger rate — every extractor fix is just a partial,
     unprincipled disabling of a gate with no demonstrated benefit. That is candidate 7 refuted for
     this gate.
-  - **Open question for the user, not a patch: should `subject_entity` be disabled outright?** The
-    evidence for retaining it (D030 §3m, "rare but real M1 catches") no longer has a single confirmed
-    instance behind it. Disabling is a one-line change with a measurable, safe direction; another
-    extractor heuristic is not. Do not write more extractor code before that decision.
+  - **RESOLVED by the T31 disable — the urgency is gone.** `subject_entity` (the consumer where a
+    bogus name caused a FALSE SUPPRESSION) is now disabled. The only remaining consumer is
+    `applyYearGate`, where the bug's effect is the **safe** direction: a bogus claim-side name makes
+    `sameEntity` return false, and the year gate then **abstains** rather than forcing `contradicted`.
+    So the defect now makes that gate slightly over-conservative, which costs recall, not safety.
+  - Keep open as a cleanup item. Do not write another extractor heuristic to chase it — two were
+    already refuted by simulation (above), and the payoff is now small.
 
 - [x] **T29 — Housekeeping: delete spent investigation scripts and closed experiment jobs** **DONE (2026-08-31)**
   - `_tmp-poll-run.ts`, `_tmp-poll-run2.ts`, `_tmp-find-runs.ts`, `_tmp-dump-claims.ts`,
@@ -1041,6 +1053,45 @@ unattributable (the exact failure mode T22 already demonstrated).
     screen for any future eligibility prompt change.
   - Note: these remain registered in Inngest Cloud until archived there; deleting the code only stops
     them being served.
+
+- [x] **T31 — Disable the `subject_entity` gate** (D030 §3m Addendum 6) **DONE (2026-08-31), live-verified**
+  - **Decision:** §3m's retention was premised on rare-but-real M1 catches. T28 Step 1 measured
+    **0 confirmed M1 across 320 firings**; the 3 apparent exceptions were `properNounWords` false
+    positives. Against a ~75% false-trigger rate and 7 refuted fix candidates, the premise is gone.
+  - **Change:** call site skipped in `pipeline-gate-chain.ts`. Nothing deleted — the gate function,
+    its unit tests, and the `"subject_entity"` value in all 4 persistence unions remain, so the
+    historical corpus stays queryable and `git revert` restores it.
+  - **Deliberately NOT changed: `sameEntity` / `properNounWords`.** The helper is consumed in opposite
+    senses — `subject_entity` suppresses on false, `applyYearGate` **forces `contradicted` on true**.
+    Editing the shared extractor to help a disabled gate would weaken the year gate in the one
+    Cardinal-Rule-unsafe direction.
+  - **Live verification, run `fe2d821e` (44 claims) — all pre-registered bars met:**
+
+    | Bar | Required | Actual |
+    | --- | --- | --- |
+    | `subject_entity` gate events | 0 | **0** |
+    | True claims gaining `contradicted` | 0 | **0** — all 6 contradicted are adversarial false claims |
+    | The 3 Wright true claims | `supported` | **all 3 `supported`** |
+    | `unverifiable` in the run | observed | **0**, down from 3 |
+
+    Mix 31 supported / 6 contradicted / 4 unsupported / 3 excluded / 0 unverifiable. T27's exclusions
+    unchanged, so the two changes did not interact.
+  - **Recorded side effect:** T6b's user-facing suffix ("Evidence was found but could not be confirmed
+    as being about this claim's specific subject") can no longer appear — `composeUserFacingReason`'s
+    `subject_entity` branch is unreachable. Correct, but a visible copy change.
+  - **Reversal condition:** a confirmed genuine M1 in production. `git revert` the commit.
+  - **Known non-protection, for the record:** this gate never guarded "same surname, different person"
+    (claim *Charles Bukowski* vs evidence about another Bukowski) — a shared token makes `sameEntity`
+    pass, a gap documented in `gates-shared.ts` itself. Wrong-entity affirmation is guarded by VERIFY,
+    `instance_attribution` (T21) and `claim_reason_overlap`, all untouched.
+
+- [ ] **T32 — `grounnel_runs.status` stuck at `extracting` after all claims finalize**
+  - Run `fe2d821e`: all 44 claims reached final verdicts, but the run row still read
+    `status: "extracting"` ~20 min later. Prior runs flipped to `"done"`. Claim data complete and
+    correct, so this is the run-completion write not landing, not a pipeline stall.
+  - Likely the same class as the T27 FK bug — a best-effort/`waitUntil` write that gets dropped. Any
+    consumer polling `status` (the frontend status endpoint) would wait forever on such a run.
+  - Not investigated. Filed so it is not lost.
 
 ---
 

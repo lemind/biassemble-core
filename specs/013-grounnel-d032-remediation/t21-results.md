@@ -1,7 +1,7 @@
 # T21 — instance-attribution prompt bake-off
 
 Job `attribution-experiment`, Gemini, temp 0, 16 fixtures × 4 variants, N=1 (2026-08-27).
-Fixtures in `src/jobs/attribution-experiment.ts`; passages `r1`–`r4` are the real g17 retrieval set.
+Fixtures were in `src/jobs/attribution-experiment.ts` (deleted in T29 once the fix was live; recoverable from git history); passages `r1`–`r4` are the real g17 retrieval set.
 
 ## Result
 
