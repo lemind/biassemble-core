@@ -992,13 +992,39 @@ unattributable (the exact failure mode T22 already demonstrated).
   - **Free to verify** — `gates.ts`-family pure functions, no LLM cost, the one area CLAUDE.md says to
     keep exhaustively tested. Fix shape: require either a non-sentence-initial position or a
     multi-token/known-entity signal before accepting a capitalised word as a name.
-  - Not started. Sized small; do before any further `subject_entity` work.
+  - **ATTEMPT 1 (2026-08-31) — written, REVERTED before commit. Two findings worth keeping.**
+    1. **The fix direction is not uniformly safe.** `sameEntity` is consumed in OPPOSITE senses:
+       `applySubjectEntityGate` suppresses when it returns false, `applyYearGate` **proceeds to force
+       `contradicted`** when it returns true. Dropping names makes `sameEntity` return true more
+       often — safe for the first, but it weakens the second's cross-entity guard and lets it force
+       `contradicted` more freely, the one Cardinal-Rule-unsafe direction. Any fix must be opt-in per
+       call site, never a blanket change to the shared helper.
+    2. **The corroboration rule tried ("a sentence-initial capital counts only if it recurs
+       mid-sentence") is wrong for this input shape.** The gate's anchor is `subjectEntity`, a bare
+       FRAGMENT ("Marwick", "the Wright brothers' fourth flight"), not prose — every token in a
+       fragment is sentence-initial, so the rule drops real names. Caught by two pre-existing g17
+       tests, not by reasoning. Reverted rather than patched with a second heuristic: that is exactly
+       how the v1.1.0 referent block was produced.
+  - **Do this next, before writing code again (D030 §3n discipline, 6 refuted candidates and
+    counting): simulate candidate extractors offline against the 320 recorded firings** — the corpus
+    already used by `scripts/t28-passage-inventory.ts` — and score how many firings each removes and
+    whether any confirmed-true suppression survives. Candidate worth simulating first: drop a
+    sentence-initial capital only when the same token also appears **lowercase** somewhere in
+    claim+evidence ("Researchers"→"researchers" appears; "Germany" never does), which does not depend
+    on the anchor being prose.
 
-- [ ] **T29 — Housekeeping: delete the eight `scripts/_tmp-*.ts` investigation scripts**
+- [x] **T29 — Housekeeping: delete spent investigation scripts and closed experiment jobs** **DONE (2026-08-31)**
   - `_tmp-poll-run.ts`, `_tmp-poll-run2.ts`, `_tmp-find-runs.ts`, `_tmp-dump-claims.ts`,
     `_tmp-evid.ts`, `_tmp-gate-events.ts`, `_tmp-firing-census.ts`, `_tmp-verify-adr.ts`. Written
     ad-hoc for the 2026-08-31 census; superseded by the numbers recorded in D030 §3m Addendum 3.
-  - Keep out of T27's and T28's change sets — they will otherwise be scooped into the next diff.
+  - 14 `scripts/_tmp-*.ts` deleted by the user. Also removed, with their trigger scripts,
+    `package.json` entries and `inngest-functions.ts` registrations: `eval-t22-verify-order.ts`
+    (T22 closed REVERT), `eval-t25-contentless-eligibility.ts` (T25 closed, superseded by T27's
+    screen), `eval-t27-referent-screen.ts` (round 1, superseded by T27b), `attribution-experiment.ts`
+    (T21 done, fix wired and live-proven). `eval-t27b-prompt-variants.ts` kept — still the live
+    screen for any future eligibility prompt change.
+  - Note: these remain registered in Inngest Cloud until archived there; deleting the code only stops
+    them being served.
 
 ---
 
