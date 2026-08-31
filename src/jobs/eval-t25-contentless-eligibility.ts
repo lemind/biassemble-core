@@ -48,26 +48,28 @@ export const evalT25ContentlessEligibilityJob = inngest.createFunction(
     const historyStore = new DrizzleGrounnelHistoryStore();
     const llmCallStore = new DrizzleGrounnelLlmCallStore();
 
-    // Real grounnel_runs row required — grounnel_llm_calls.runId has a real FK (see schema.ts);
-    // claimId does not, so a fresh uuid per fixture below is fine without its own row.
-    const experimentRunId = randomUUID();
-    await step.run("create-experiment-run", async () => {
+    // Id minted INSIDE the step — a randomUUID() above it churns per Inngest replay and dangles the
+    // grounnel_llm_calls FK. Cost a silent 0-row T27 run, 2026-08-31; see tasks.md T27.
+    const { experimentRunId, claimIds } = await step.run("create-experiment-run", async () => {
+      const runId = randomUUID();
       await historyStore.createRun({
-        runId: experimentRunId,
+        runId,
         sessionId: null,
         text: `[t25-contentless-eligibility] ${FIXTURES.length} fixtures x ${repeats}`,
         source: "eval",
         maxClaims: FIXTURES.length,
         truncated: false,
       });
-      return experimentRunId;
+      const ids: Record<string, string> = {};
+      for (const f of FIXTURES) ids[f.id] = randomUUID();
+      return { experimentRunId: runId, claimIds: ids };
     });
 
     logger.info({ module: MODULE, fixtures: FIXTURES.length, repeats }, "Starting T25 contentless-claim eligibility experiment");
 
     const perFixture = [];
     for (const fixture of FIXTURES) {
-      const claimId = randomUUID();
+      const claimId = claimIds[fixture.id]!;
       const results = [];
       for (let i = 0; i < repeats; i++) {
         const result = await step.run(`${fixture.id}-run-${i + 1}`, async () => {

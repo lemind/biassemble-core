@@ -23,9 +23,8 @@ export interface ClaimVerifiabilityResult {
   hasResolvableReferent: boolean;
 }
 
-// Field order is load-bearing: Gemini generates in schema order (D030 §3m/T21), so
-// hasResolvableReferent is declared LAST — it conditions on the `reason` it just wrote (T25 showed
-// that reason names the missing referent 25/25 times) and cannot perturb category/certainty.
+// Field order is load-bearing — hasResolvableReferent LAST so it reads `reason` and can't perturb
+// category/certainty (Gemini generates in schema order). See D032 §13.
 const ClaimVerifiabilityResultSchema = z.object({
   category: z.enum(["checkable", "personal", "opinion", "prediction"]),
   certainty: z.enum(["clear", "uncertain"]),
@@ -92,11 +91,7 @@ export async function classifyClaimVerifiability(
   }
 }
 
-/**
- * D030 §3b policy (data-model.md §2) — conservative: excludes only on a clear non-checkable call.
- * Spec 013 T27 (D032 §13) adds a second, independent ground: a claim with no resolvable referent is
- * unverifiable regardless of category. Strict `=== false` so a null/absent field never excludes.
- */
+/** D030 §3b policy (data-model.md §2); T27 adds the referent ground (D032 §13). Strict `=== false` so a null/absent field never excludes. */
 export function isEligibilityExcluded(result: ClaimVerifiabilityResult): boolean {
   if (result.hasResolvableReferent === false) return true;
   return result.category !== "checkable" && result.certainty === "clear";

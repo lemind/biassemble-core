@@ -1,12 +1,6 @@
 /**
- * Experiment job — spec 013 T27 Step 1: does `hasResolvableReferent` exclude the contentless claims
- * T25 measured (25/25 `checkable`/`uncertain`) WITHOUT excluding near-misses that must stay checkable?
- *
- * Acceptance is deliberately asymmetric (tasks.md T27): a false exclusion silently deletes a real
- * claim from the user's article, so **0 false exclusions on the near-miss set is a hard gate**, while
- * >=9/10 exclusion on the contentless set is only a screening bar. Also re-reports joint
- * category x certainty per fixture — adding a schema field can move the pre-existing axis, and D030
- * §3b's calibration is not something this task is allowed to change as a side effect.
+ * Experiment job — spec 013 T27 Step 1: does `hasResolvableReferent` exclude contentless claims
+ * without excluding near-misses? Asymmetric bar and fixture rationale: tasks.md T27, D032 §13.
  *
  * Trigger: event "eval/t27-referent-screen" (scripts/trigger-eval-t27.ts sends it)
  */
@@ -25,31 +19,33 @@ const MODULE = "eval-t27-referent-screen";
 const FAIL_OPEN_REASON = "Eligibility classification unavailable — failed open to search.";
 
 type Expectation = "exclude" | "keep";
+// `role` groups fixtures for scoring; `expect` is only the per-fixture exclusion outcome. A drift
+// control expects exclusion but must NOT count toward the contentless screening bar. tasks.md T27.
+type Role = "contentless" | "near-miss" | "drift-control";
 
 interface Fixture {
   id: string;
   claimText: string;
   sourceExcerpt: string | null;
+  role: Role;
   expect: Expectation;
   why: string;
 }
 
-// CONTENTLESS — must exclude. Identical texts to T25's fixtures so the two runs are comparable.
-// NEAR-MISS — must NOT exclude. Chosen to be resolvable from the inputs the classifier actually
-// receives (claim text + sourceExcerpt), per the review finding that a fixture depending on context
-// the classifier never sees would be measuring the wrong thing.
+// CONTENTLESS must exclude (T25's exact texts, so the runs compare); NEAR-MISS must not, and is
+// resolvable from what the classifier actually receives — claim + sourceExcerpt. tasks.md T27.
 const FIXTURES: Fixture[] = [
-  { id: "x1-person-died-in-a-year", claimText: "A person really did die in a particular year.", sourceExcerpt: "A person really did die in a particular year.", expect: "exclude", why: "D032 §12 Finding C — the exact live failure; excerpt repeats the claim and resolves nothing" },
-  { id: "x2-someone-won-an-award", claimText: "Someone won an award at some point.", sourceExcerpt: null, expect: "exclude", why: "common-noun subject, no referent" },
-  { id: "x3-city-had-a-disaster", claimText: "A city experienced a natural disaster once.", sourceExcerpt: null, expect: "exclude", why: "common-noun subject, no referent" },
-  { id: "x4-animal-was-discovered", claimText: "An animal was discovered by scientists.", sourceExcerpt: null, expect: "exclude", why: "common-noun subject, no referent" },
-  { id: "x5-company-reported-profit", claimText: "A company reported a profit at some point.", sourceExcerpt: null, expect: "exclude", why: "common-noun subject, no referent" },
+  { id: "x1-person-died-in-a-year", claimText: "A person really did die in a particular year.", sourceExcerpt: "A person really did die in a particular year.", role: "contentless", expect: "exclude", why: "D032 §12 Finding C — the exact live failure; excerpt repeats the claim and resolves nothing" },
+  { id: "x2-someone-won-an-award", claimText: "Someone won an award at some point.", sourceExcerpt: null, role: "contentless", expect: "exclude", why: "common-noun subject, no referent" },
+  { id: "x3-city-had-a-disaster", claimText: "A city experienced a natural disaster once.", sourceExcerpt: null, role: "contentless", expect: "exclude", why: "common-noun subject, no referent" },
+  { id: "x4-animal-was-discovered", claimText: "An animal was discovered by scientists.", sourceExcerpt: null, role: "contentless", expect: "exclude", why: "common-noun subject, no referent" },
+  { id: "x5-company-reported-profit", claimText: "A company reported a profit at some point.", sourceExcerpt: null, role: "contentless", expect: "exclude", why: "common-noun subject, no referent" },
 
-  { id: "n1-referent-in-claim", claimText: "Apple's iPad revenue was $6.2 billion in the fourth quarter.", sourceExcerpt: null, expect: "keep", why: "referent named in the claim itself" },
-  { id: "n2-named-class-superlative", claimText: "The Wright brothers' first flight covered approximately 120 feet.", sourceExcerpt: null, expect: "keep", why: "named-class superlative, referent in claim" },
-  { id: "n3-excerpt-resolves-subject", claimText: "The company reported a profit in Q4.", sourceExcerpt: "Shopify closed out a strong year. The company reported a profit in Q4, its third consecutive profitable quarter.", expect: "keep", why: "pronoun-ish subject the EXCERPT resolves — the case a naive rule would wrongly kill" },
-  { id: "n4-opinion", claimText: "SQL is more useful than NoSQL for most applications.", sourceExcerpt: null, expect: "keep", why: "control: must stay an OPINION exclusion via the old axis, not a referent exclusion" },
-  { id: "n5-prediction", claimText: "AI would eliminate most programming jobs within five years.", sourceExcerpt: null, expect: "keep", why: "control: category/certainty must not shift" },
+  { id: "n1-referent-in-claim", claimText: "Apple's iPad revenue was $6.2 billion in the fourth quarter.", sourceExcerpt: null, role: "near-miss", expect: "keep", why: "referent named in the claim itself" },
+  { id: "n2-named-class-superlative", claimText: "The Wright brothers' first flight covered approximately 120 feet.", sourceExcerpt: null, role: "near-miss", expect: "keep", why: "named-class superlative, referent in claim" },
+  { id: "n3-excerpt-resolves-subject", claimText: "The company reported a profit in Q4.", sourceExcerpt: "Shopify closed out a strong year. The company reported a profit in Q4, its third consecutive profitable quarter.", role: "near-miss", expect: "keep", why: "pronoun-ish subject the EXCERPT resolves — the case a naive rule would wrongly kill" },
+  { id: "n4-opinion", claimText: "SQL is more useful than NoSQL for most applications.", sourceExcerpt: null, role: "drift-control", expect: "exclude", why: "drift control — opinion/clear was ALREADY excluded pre-T27 by D030 §3b; check the joint mix, not the count" },
+  { id: "n5-prediction", claimText: "AI would eliminate most programming jobs within five years.", sourceExcerpt: null, role: "drift-control", expect: "exclude", why: "drift control — prediction/clear was ALREADY excluded pre-T27 by D030 §3b; check the joint mix, not the count" },
 ];
 
 export const evalT27ReferentScreenJob = inngest.createFunction(
@@ -62,25 +58,28 @@ export const evalT27ReferentScreenJob = inngest.createFunction(
     const historyStore = new DrizzleGrounnelHistoryStore();
     const llmCallStore = new DrizzleGrounnelLlmCallStore();
 
-    // grounnel_llm_calls.runId has a real FK (schema.ts); claimId does not.
-    const experimentRunId = randomUUID();
-    await step.run("create-experiment-run", async () => {
+    // Ids minted INSIDE the step — a randomUUID() above it churns per Inngest replay and dangles the
+    // grounnel_llm_calls FK. Cost a silent 0-row T27 run, 2026-08-31; see tasks.md T27.
+    const { experimentRunId, claimIds } = await step.run("create-experiment-run", async () => {
+      const runId = randomUUID();
       await historyStore.createRun({
-        runId: experimentRunId,
+        runId,
         sessionId: null,
         text: `[t27-referent-screen] ${FIXTURES.length} fixtures x ${repeats}`,
         source: "eval",
         maxClaims: FIXTURES.length,
         truncated: false,
       });
-      return experimentRunId;
+      const ids: Record<string, string> = {};
+      for (const f of FIXTURES) ids[f.id] = randomUUID();
+      return { experimentRunId: runId, claimIds: ids };
     });
 
     logger.info({ module: MODULE, fixtures: FIXTURES.length, repeats, promptVersion: prompts.getGrounnelEligibilityVersion() }, "Starting T27 referent screen");
 
     const perFixture = [];
     for (const fixture of FIXTURES) {
-      const claimId = randomUUID();
+      const claimId = claimIds[fixture.id]!;
       const results = [];
       for (let i = 0; i < repeats; i++) {
         const result = await step.run(`${fixture.id}-run-${i + 1}`, async () => {
@@ -118,6 +117,7 @@ export const evalT27ReferentScreenJob = inngest.createFunction(
 
       perFixture.push({
         id: fixture.id,
+        role: fixture.role,
         expect: fixture.expect,
         why: fixture.why,
         claimText: fixture.claimText,
@@ -130,11 +130,16 @@ export const evalT27ReferentScreenJob = inngest.createFunction(
       });
     }
 
-    const contentless = perFixture.filter((f) => f.expect === "exclude");
-    const nearMiss = perFixture.filter((f) => f.expect === "keep");
+    // Grouped by role, not expect — drift controls also expect exclusion but are not contentless
+    // claims, so counting them would inflate the screening-bar denominator. tasks.md T27.
+    const contentless = perFixture.filter((f) => f.role === "contentless");
+    const nearMiss = perFixture.filter((f) => f.role === "near-miss");
     const totalFalseExclusions = nearMiss.reduce((sum, f) => sum + f.falseExclusions, 0);
     const contentlessExcluded = contentless.reduce((sum, f) => sum + f.excludedCount, 0);
     const contentlessTotal = contentless.length * repeats;
+    // Drift controls must keep landing on the SAME joint cell they did pre-T27 (opinion/clear,
+    // prediction/clear) — a shifted cell means the new field perturbed the old axis.
+    const driftControlJoint = Object.fromEntries(perFixture.filter((f) => f.role === "drift-control").map((f) => [f.id, f.jointMix]));
 
     const verdict =
       totalFalseExclusions > 0
@@ -150,6 +155,7 @@ export const evalT27ReferentScreenJob = inngest.createFunction(
       contentlessExcluded,
       contentlessTotal,
       contentlessExcludedRate: contentlessExcluded / contentlessTotal,
+      driftControlJoint,
       verdict,
     };
     logger.info({ module: MODULE, summary, perFixture }, "T27 referent screen complete");
