@@ -1,4 +1,4 @@
-// The 11-gate chain applied to one VERIFY result — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
+// The 10-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 6) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
 
 import {
   applyClaimReasonOverlapGate,
@@ -10,7 +10,6 @@ import {
   applyReasonConsistencyGate,
   applyReasonOrdinalGate,
   applyReasonYearGate,
-  applySubjectEntityGate,
   applyYearGate,
   type InstanceAttribution,
 } from "./gates.js";
@@ -136,11 +135,8 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
   verdict = gate2b.verdict;
 
-  // g17 — lexical backstop (proper-noun overlap, not entity resolution), last in the chain: downgrades supported/partially_supported to unverifiable. Known ~11-18% recovery on false triggers, D030 §3l/§3m/§3n.
-  const gate3 = applySubjectEntityGate({ verdict, claimText: input.claimText, subjectEntity: input.subjectEntity, evidence });
-  gateEvents.push({ gate: "subject_entity", verdictBefore: verdict, verdictAfter: gate3.verdict, overridden: gate3.overridden, reason: gate3.reason });
-  verdict = gate3.verdict;
-  if (gate3.overridden) evidence = null; // stale — it was only meaningful attached to the discarded supported verdict.
+  // g17 subject_entity — DISABLED 2026-08-31 (D030 §3m Addendum 6): 0 confirmed genuine catches in
+  // 320 firings vs a ~75% false-trigger rate; 7 fix candidates refuted. Call site skipped, not deleted.
 
   // D025 §2 — retry fires on any ERROR-severity diagnostic; the field exists so a future WARNING/INFO gate doesn't force one.
   const needsRetry = diagnostics.some((d) => d.severity === "ERROR");

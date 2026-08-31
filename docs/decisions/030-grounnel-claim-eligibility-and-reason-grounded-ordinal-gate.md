@@ -1375,6 +1375,58 @@ behind it. The honest options are to **disable the gate outright** — a one-lin
 is measurable and whose direction is safe — or to leave it exactly as-is and stop spending on it.
 Writing an eighth lexical heuristic is neither. This is a product decision and is left open.
 
+### Addendum 6 (2026-08-31) — DECISION: `subject_entity` is disabled
+
+**§3m's retention decision is withdrawn.** It was made when M1 was believed rare-but-real; T28 Step 1
+measured **0 confirmed M1 across 320 firings**, and the three apparent exceptions were
+`properNounWords` false positives on sentence-initial common nouns. Paying ~25–30 suppressed true
+claims per 1000 for an unobserved class is a tax on a hypothesis, not a cost trade.
+
+| Evidence | Value |
+| --- | --- |
+| Confirmed genuine catches | **0 / 320 firings** |
+| False-trigger rate among firings | ~75% (T24) |
+| Mechanism | ~99% M2 (citation window), ~1% M1 — and that 1% is extractor noise |
+| Fix candidates refuted | **7** (4 coreference variants, widen+instance-selector, VERIFY citation-completeness, extractor A/B) |
+| Firings per claim | 2.1 — retry re-runs the gate and recovers about half |
+
+**What was changed:** the call site in
+[pipeline-gate-chain.ts](../../src/orchestrators/grounnel/pipeline-gate-chain.ts) is skipped. Nothing
+was deleted — `applySubjectEntityGate`, `sameEntity`, every unit test, and the `"subject_entity"`
+value in all four persistence gate-name unions remain, so the historical corpus stays queryable and
+re-enabling means restoring the five-line call site plus its import — `git revert` of this commit.
+
+**What was deliberately NOT changed: `sameEntity` and `properNounWords`.** The helper is consumed in
+**opposite senses** — `applySubjectEntityGate` suppresses when it returns false, while `applyYearGate`
+*proceeds to force `contradicted`* when it returns true. "Improving" the shared extractor to help the
+disabled gate would weaken the year gate's cross-entity guard in the one Cardinal-Rule-unsafe
+direction. T30 stays open and untouched; any future work there must be opt-in per call site.
+
+**Safety claim, stated precisely.** This gate only ever downgrades `supported`/`partially_supported`
+→ `unverifiable`, so removing it **cannot directly manufacture a false contradiction**. It can,
+however, change what reaches retry and escalation, and those paths *can* emit `contradicted`. Final
+verdict behaviour therefore still requires regression verification — which is why the pre-registered
+check below is about new accusations, not about the gate's own output.
+
+**Pre-registered verification** (one 44-claim article run, N=1):
+
+| Check | Bar |
+| --- | --- |
+| `subject_entity` gate events | **0** — deterministic, one run proves it |
+| Labelled-true claims gaining `contradicted` | **0** — any instance reverts immediately |
+| The three Wright claims | expected to return to `supported` |
+| Suppression-count delta | **observed only, not pass/fail** — citation jitter flips these run to run |
+
+**Side effect to watch, not recorded before now:** T6b'''s distinguishing suffix — *"Evidence was
+found but could not be confirmed as being about this claim'''s specific subject"* — can no longer
+appear, because `composeUserFacingReason`'''s `subject_entity` branch is now unreachable. That is
+correct (the condition it labels cannot occur), but it is a visible user-facing copy change: such
+claims now take the ungrounded-affirmative rewrite path instead.
+
+**Reversal condition:** a confirmed genuine M1 (evidence about a demonstrably different entity
+affirming a claim) appearing in production. `git revert` this commit; the gate function, its tests,
+and the persistence enum value are all still present.
+
 ## Consequences
 
 - New in `src/orchestrators/grounnel/gates.ts`: `applyReasonOrdinalGate` (own policy function, not
