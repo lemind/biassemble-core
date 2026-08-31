@@ -180,7 +180,7 @@ export class GrounnelExtractService {
     if (abandoned.value) return [];
     const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
     const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
-    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
+    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result))));
     return eligibleClaims;
   }
 

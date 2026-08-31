@@ -884,6 +884,44 @@ unattributable (the exact failure mode T22 already demonstrated).
     `src/prompts/grounnel/eligibility/system.json` (+ version bump), a new experiment job for Step 1
     following `eval-t25-contentless-eligibility.ts`'s shape.
   - **Cost:** ~100 classifier calls for Step 1, plus one 44-claim run for Step 2.
+  - **BUILT (2026-08-31), NOT YET RUN — needs a deploy (local Gemini calls are geo-blocked).**
+    - `claim-eligibility.ts`: `hasResolvableReferent: z.boolean()` added to the schema **last, after
+      `reason`** — deliberate, and the one design choice worth re-reading before changing anything.
+      Gemini generates in schema order (T21/T22), so a trailing field conditions on the `reason` the
+      model just wrote (T25: that reason names the missing referent 25/25 times) and **cannot perturb
+      `category`/`certainty`**, which protects both D030 §3b's calibration and the frozen-baseline
+      comparison the review asked for.
+    - Fail-open implemented on three independent levels, since this is the direction that turns one
+      bad affirmation into mass exclusion: `FAIL_OPEN_RESULT.hasResolvableReferent = true`;
+      `isValid` requires `typeof === "boolean"` so an absent/nulled field retries then fails open;
+      and `isEligibilityExcluded` tests `=== false` strictly so `undefined`/`null` never excludes.
+    - `eligibilityReason` now takes the whole result, not `category` — the referent exclusion fires
+      with `category: "checkable"`, which the old signature rendered as its own "unreachable"
+      `"Not a checkable claim."` string. Live user-facing text is now *"This doesn't say who or what
+      it's about, so there's nothing specific to check."* Caller in `extract.service.ts` updated.
+    - Prompt `eligibility/system.json` **1.0.0 → 1.1.0**: adds a RESOLVABLE REFERENT section stating
+      the axis split explicitly (certainty = confidence about *category*; the boolean = does the text
+      name who/what), that common nouns are not referents, that the excerpt can resolve a subject, and
+      that `false` means "the text doesn't say", never "I don't recognise this name". Without that
+      split the model answers `true` with the same "it'd be checkable if the person were known"
+      reasoning T25 recorded.
+    - Step 1 job `eval-t27-referent-screen.ts` (event `eval/t27-referent-screen`, `pnpm t27:trigger`),
+      registered in `inngest-functions.ts`. 10 fixtures × 10 = 100 calls: the 5 T25 contentless texts
+      (must exclude) + 5 near-misses (must NOT exclude) — referent-in-claim, named-class superlative,
+      **excerpt-resolvable subject** (the case a naive rule wrongly kills), plus an opinion and a
+      prediction as category-drift controls. Reports **joint** `category`×`certainty` per fixture, not
+      two marginals, since marginals can't reconstruct the joint the review asked to compare. Emits a
+      `logger.error` per false exclusion and a PASS/FAIL/INCONCLUSIVE verdict applying the asymmetric
+      bar mechanically (0 false exclusions = hard gate; ≥90% contentless = screening bar).
+    - Test fixtures updated across `claim-eligibility.test.ts` / `extract-service.test.ts`; new cases
+      cover the referent branch, the absent/null fail-open path, and `eligibilityReason`'s new branch.
+      `npx tsc --noEmit` clean, `npx vitest run` **1239/1239** passing.
+    - **Noted, not fixed (out of T27 scope):** `tsconfig.json` has `include: ["src"]` /
+      `exclude: [… "tests"]`, so `tsc --noEmit` never typechecks the test suite — stale
+      `isEligibilityExcluded({...})` call sites missing the new required field compiled silently and
+      only surfaced at runtime. Worth its own task if type safety in tests is wanted.
+  - **NEXT:** deploy, `PUT /api/inngest` to sync (a Vercel deploy does not auto-register new Inngest
+    functions), then `pnpm t27:trigger`. Read the verdict before touching Step 2.
 
 - [ ] **T28 — Finding B: is VERIFY citation-completeness even available as a fix?** (D030 §3m Addendum 3)
   - **Gate code is frozen.** No sixth lexical patch, no full-passage widen, no instance-selector at

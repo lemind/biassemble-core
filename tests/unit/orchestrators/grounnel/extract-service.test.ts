@@ -337,7 +337,7 @@ describe("GrounnelExtractService (T009)", () => {
         // Match the exact CLAIM: line, not a raw substring — the prompt's own instructions
         // (test-authoring bug found via this) already contain unrelated example claim text.
         const isPersonal = request.system.includes("CLAIM: My pet cat is named Whiskers.");
-        return isPersonal ? { category: "personal", certainty: "clear", reason: "private circumstance" } : { category: "checkable", certainty: "clear", reason: "public fact" };
+        return isPersonal ? { category: "personal", certainty: "clear", reason: "private circumstance", hasResolvableReferent: true } : { category: "checkable", certainty: "clear", reason: "public fact", hasResolvableReferent: true };
       });
       const { service, store } = makeService(provider);
 
@@ -354,7 +354,7 @@ describe("GrounnelExtractService (T009)", () => {
 
     it("records a grounnel_llm_calls completion with stage extract / callType eligibility_check", async () => {
       provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
-      provider.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a" });
+      provider.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a", hasResolvableReferent: true });
       const store = new RedisGrounnelStore(new FakeRedisHashClient());
       const prompts = new PromptRegistry();
       const llmCallStore = new FakeGrounnelLlmCallStore();
@@ -373,7 +373,7 @@ describe("GrounnelExtractService (T009)", () => {
     // status — an uncaught write failure here left the run stuck at its prior status forever.
     it("(review finding) marks the run 'failed' in history when writing an excluded claim throws", async () => {
       provider.setDefault({ claims: [{ claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
-      provider.setResponse("You are a claim-eligibility classifier", { category: "personal", certainty: "clear", reason: "private circumstance" });
+      provider.setResponse("You are a claim-eligibility classifier", { category: "personal", certainty: "clear", reason: "private circumstance", hasResolvableReferent: true });
       const store = new RedisGrounnelStore(new FakeRedisHashClient());
       const historyStore = new FakeGrounnelHistoryStore();
       const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
@@ -431,7 +431,7 @@ describe("GrounnelExtractService (T009)", () => {
               ? new Promise((resolve) =>
                   // Resolves well AFTER the 2-minute phase timeout — simulates a merely-slow (not
                   // truly hung) provider call outliving the race it already lost.
-                  setTimeout(() => resolve({ result: { category: "personal", certainty: "clear", reason: "private circumstance" } }), 3 * 60 * 1000)
+                  setTimeout(() => resolve({ result: { category: "personal", certainty: "clear", reason: "private circumstance", hasResolvableReferent: true } }), 3 * 60 * 1000)
                 )
               : inner.completeJson(request),
         };
