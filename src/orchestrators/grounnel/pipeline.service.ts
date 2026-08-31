@@ -111,6 +111,9 @@ export class GrounnelPipelineService {
         await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
 
         const needsVerify = resolved.filter(hasPassage);
+        // T32 — without this, Postgres status jumps extracting -> done, so a maxDuration kill (which
+        // skips the terminal write) is indistinguishable from a run that never started.
+        if (needsVerify.length > 0) waitUntil(this.historyStore.updateRun(auditId, { status: "verifying" }));
         // D030 §3d — run-scoped so reason_ordinal-protected claim ids survive across escalation tiers.
         const protectedContradictionClaimIds = new Set<string>();
         let rateLimitedMidRun = false;

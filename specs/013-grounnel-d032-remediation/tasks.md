@@ -1085,13 +1085,30 @@ unattributable (the exact failure mode T22 already demonstrated).
     pass, a gap documented in `gates-shared.ts` itself. Wrong-entity affirmation is guarded by VERIFY,
     `instance_attribution` (T21) and `claim_reason_overlap`, all untouched.
 
-- [ ] **T32 — `grounnel_runs.status` stuck at `extracting` after all claims finalize**
-  - Run `fe2d821e`: all 44 claims reached final verdicts, but the run row still read
-    `status: "extracting"` ~20 min later. Prior runs flipped to `"done"`. Claim data complete and
-    correct, so this is the run-completion write not landing, not a pipeline stall.
-  - Likely the same class as the T27 FK bug — a best-effort/`waitUntil` write that gets dropped. Any
-    consumer polling `status` (the frontend status endpoint) would wait forever on such a run.
-  - Not investigated. Filed so it is not lost.
+- [x] **T32 — `grounnel_runs.status` stuck at `extracting` after all claims finalize** **ROOT-CAUSED + PARTIAL FIX (2026-08-31)**
+  - **Cause: a `maxDuration` kill, not a dropped write.** `vercel.json` sets `maxDuration: 300`.
+    `pipelineService.run()` executes inside `waitUntil` after the 202 response
+    ([routes/grounnel.ts:92](../../src/routes/grounnel.ts#L92)), so a run exceeding 5 minutes has its
+    container killed. The terminal `updateRun({ status: "done" })` at the end of `run()` never
+    executes, and the `catch` that would set `"failed"` never fires either — a platform kill is not an
+    exception. The row keeps whatever status it had.
+  - **Severity correction (my earlier claim was wrong).** I said a frontend polling status would hang
+    forever. It would not: `/status/:id` reads **Redis** via `grounnelStore.getStatus`, which already
+    self-heals (D031) — it derives `done` from claim state and reports `failed` when stale and
+    incomplete. Nothing in production reads `grounnel_runs.status`; `getRunsBySession` targets the
+    separate `runs` table. **This is analytics/history correctness only, no user impact.**
+  - **Second defect found while investigating:** the Postgres enum has `"verifying"` but **nothing
+    ever wrote it** — status went `extracting` -> `done` in one step, so a killed run was
+    indistinguishable from one that never started.
+  - **Fix applied (partial, deliberately):** write `status: "verifying"` once the verify phase begins,
+    mirroring what Redis already reports. `updateRun` swallows its own errors (D023 §7), so this
+    cannot break a run. A stuck run is now diagnosable: **`"verifying"` + all claims final = a
+    maxDuration kill**, versus `"extracting"` = died before verification.
+  - **Not fixed, and cannot be from inside the process:** a hard container kill can never write a
+    terminal status. Making Postgres status fully reliable needs a read-side derivation (the same
+    shape as D031's Redis self-heal) or a sweeper. Not built — **nothing currently reads this column**,
+    so building read-side machinery for a consumer that does not exist would be speculative.
+    Revisit if/when a history or analytics surface starts querying run status.
 
 ---
 
