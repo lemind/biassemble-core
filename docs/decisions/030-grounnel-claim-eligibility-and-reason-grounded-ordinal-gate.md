@@ -1144,6 +1144,173 @@ materially raises detection loss, the gate shows up in a meaningful share of use
 verdicts, the failure shape spreads past 2 domains, or a bounded coreference mechanism is demonstrated
 sufficient. Keep per-firing recovery outcome + suppression-rate/1000 telemetry going forward.
 
+**Addendum (2026-08-30, spec 013 T24 B0–B2, zero API cost).** Re-measured the false-trigger rate
+directly, on a fresh 40-row sample (18 distinct claim/evidence templates) from the same 2 claim
+families this section already names (Apple financials, Wright-brothers flights) plus one new one
+(Grace Hopper/COBOL). **B0 finding first: `grounnel_claims.evidence` is nulled by design on every
+`subject_entity` firing** ([pipeline-gate-chain.ts:143](../../src/orchestrators/grounnel/pipeline-gate-chain.ts#L143),
+`if (gate3.overridden) evidence = null`), so the stored column cannot be hand-labeled directly —
+0/310 single-pass firings retain evidence in `grounnel_claims`. Reconstructed the actual VERIFY input
+instead from `grounnel_rerank_decisions` (`selected=true`) ⋈ `grounnel_search_pages.excerpt` — same
+zero-cost persisted-telemetry replay technique this ADR already uses elsewhere.
+
+Result: **75% false-trigger rate among firings (30/40 raw sample), 78% by distinct template
+(14/18)** — evidence genuinely confirmed the claim but was suppressed on naming form alone (e.g.
+"Wright brothers' fourth flight" vs. evidence's "Wilbur," "JWST" vs. "James Webb Space Telescope"
+spelled out). This is measured the same way as this section's own 51% aggregate-recovery figure
+(same concept: among firings, would a correct fix restore the true verdict) and is **notably higher**
+— but drawn from a smaller, single-article sample concentrated in the same 2–3 families already
+named above as the gate's known weak spot, not a contradiction of the 51%/159-firing measurement.
+17.5% (7/40) were correct suppressions of a genuinely false claim (evidence about a different specific
+instance — e.g. "the first flight covered 852 feet" when the true 852ft flight was the fourth); 7.5%
+(3/40) were ambiguous (evidence didn't address the claim's subject at all, e.g. a negative claim about
+Microsoft with no Microsoft mention in the retrieved passage).
+
+**Not a re-decision.** The four fix candidates already simulated and refuted (A/B/B-tight/C) are
+unaffected by this number — a higher false-trigger rate doesn't make a bad fix good. What it does
+argue: **R2's "keep unchanged, revisit only if triggered" reopening conditions may already be met** —
+"the gate shows up in a meaningful share of user-visible wrong verdicts" is now measured at ~75–78%
+of its own firings, materially above what this section's original cost estimate implied when R2 was
+decided. Whether that crosses the bar to justify revisiting R2's disposition is a product call, left
+open here — this addendum reports the number, it does not reopen the fix search.
+
+**Addendum 2 (2026-08-30, R2 reopened as an investigation, zero API cost throughout) — mechanism
+decomposition, and a 5th and 6th fix candidate simulated and refuted.**
+
+**Root cause found.** `applySubjectEntityGate`'s `evidence` argument
+([pipeline.service.ts:836](../../src/orchestrators/grounnel/pipeline.service.ts#L836), `evidence:
+result.evidence`) is not the full retrieved passage — it is VERIFY's own **narrowly cited
+sentence(s)**, resolved via `resolveEvidenceFromCitations`
+([passage-sentences.ts:129](../../src/orchestrators/grounnel/passage-sentences.ts#L129)). The gate
+was never comparing "is this evidence about the claim's subject" — it was comparing "does the one
+sentence VERIFY happened to cite repeat the same literal proper noun as the claim."
+
+**Simulation 1 — widen the comparison to the full passage.** Replayed `sameEntity` (verbatim) against
+the full selected-passage text (`grounnel_rerank_decisions.selected=true` ⋈
+`grounnel_search_pages.excerpt`) instead of the narrow cited sentence, across all **310** distinct
+firings (corrected denominator — an earlier per-template count in this investigation double-counted
+multi-pass claims via a join-multiplicity artifact, same class of bug as the one B0 already caught;
+`count(DISTINCT claim_id)` is the number to use). **306/310 (98.7%) would never have fired.** This
+confirms the dominant mechanism is the citation window, not entity identity — "Wright brothers" vs.
+"Wilbur" looked like a semantic-alias problem (M1) only because the word "Wright" *is* present
+elsewhere in the same passage (e.g. "Wright Flyer"), just not in VERIFY's cited sentence. True M1
+(zero overlap even against the full passage) is **~1%** of firings, not the dominant case originally
+assumed.
+
+**But naive widening is unsafe** — checked directly: `sameEntity("The first flight lasted 59
+seconds.", fullPassage)` returns `true`, because the same article that correctly reports the *fourth*
+flight's 59 seconds also names "Wright"/"NASA"/other tokens the claim shares — even though the claim
+itself is false (conflates first with fourth). Naive widening would recover the false triggers and
+erase the genuine wrong-instance catches together — the same failure shape as the already-refuted
+Option A (94% suppressed), arrived at via a different mechanism (window size instead of citation
+presence).
+
+**Simulation 2 — 5th candidate: widen + reuse `instance-selector.ts` (D030 §3f) for instance
+agreement.** Design: accept only if (a) the full passage shares a proper noun with the claim, AND
+(b) when the claim names a sequence-selector ("first flight"), the full passage does not name a
+*conflicting* selector+anchor ("fourth flight") via the existing `extractInstanceSelector`/
+`anchorWords` machinery. **Refuted.** Recovery dropped to 84/310 (27.1%) — worse than doing nothing —
+and it fails on the flagship true-positive case: "the fourth and final flight... covered 852 feet"
+(correctly attributed, true claim) was wrongly overridden **40/41 times**. Cause: `anchorWords`'
+±2-word window was designed for a **local, clause-scoped** comparison (VERIFY's own short reason
+text, or one sentence); scanned against a full multi-paragraph article, it finds "first" and "fourth"
+both sitting near the generic anchor "flight" throughout the SAME article narrating all four real
+flights in sequence — a co-occurrence that looks identical whether the specific fact cited is correct
+or not. A window calibrated for one scope silently breaks at a larger one — the same trap this file's
+earlier fixes kept hitting, via a new door.
+
+**Tally: 5 of 5 fix candidates for `subject_entity` (this ADR + this addendum) are refuted by
+simulation before reaching code.** A+B+B-tight+C (original 4) plus widen+instance-selector (5th).
+One untested direction remains, noted but not attempted: scoping the instance-agreement check to only
+the specific sentence(s) sharing the claim's own numbers/dates, rather than the whole article or a
+single arbitrary cited sentence. Left for whoever picks this up next — this ADR's own "simulate
+before implementing" discipline (§3n) has now caught five consecutive bad designs at zero cost,
+which is itself evidence the discipline is doing its job, not that a sixth attempt is owed.
+
+**Disposition: unchanged.** Keep `subject_entity` as-is. The investigation sharpened *why* no fix has
+worked (citation-window scope mismatch, not entity resolution difficulty) without producing one that
+survives simulation. Reopen per the original conditions above; this addendum is evidence gathered
+against those conditions, not a decision to act on them.
+
+### Addendum 3 (2026-08-31) — firing-set census, and what today's re-run does and does not show
+
+Prompted by two independent reviews of the §12/T24–T26 findings, both of which flagged that this
+file now carries **four different firing counts** (132, 159, 310, and a reviewer's restatement of
+310) with no stated query definition — a discrepancy too large to carry into the next decision.
+Settled by direct census before any further planning.
+
+**The counts are the same query at different times, plus one different scope.** For
+`gate = 'subject_entity' AND overridden = true`, as of 2026-08-31:
+
+| Definition | Count | Notes |
+| --- | --- | --- |
+| Total gate-event rows | **664** | Every firing including retry re-fires |
+| `count(DISTINCT claim_id)` | **314** | The denominator §3m Addendum 2 uses; was 310 the previous day |
+| `count(DISTINCT (run_id, claim_id))` | **314** | Identical — `claim_id` is already unique per run, so there is no cross-run dedup ambiguity |
+| …of which `source = 'eval'` | **253** | |
+| …of which `source = 'production'` | **61** | |
+
+So: **310 was `count(DISTINCT claim_id)` measured on 2026-08-30; 314 is the same query today.**
+**132 is that same query measured earlier in this ADR's history**, when less history had accumulated.
+**159 is a different scope** — §3m's "full population, not just `g22`". None of these contradict each
+other; the number simply grows with traffic. **Whoever cites a firing count must state the query and
+the date, because the bare number is not stable.**
+
+The +4 delta is *not* cleanly attributable to today's run, and the temptation to say so is worth
+recording as a caution. Runs that fired this gate since 2026-08-30: `a2d4e3b2` (4 claims, the §12
+re-eval), then three `eval` runs `fbda419f`/`8728f995`/`41012f9a` (1+2+1 = 4 claims) later the same
+afternoon, then `55e13495` (4 claims, today). Whether the 310 census predated or postdated those
+three eval runs is not recorded, so the composition of 310 → 314 is ambiguous. **Any future census
+must be logged with its timestamp**, or this same ambiguity recurs at the next re-measurement.
+
+**Two things this census changes:**
+
+1. **664 events over 314 distinct claims = 2.1 firings per claim.** The gate re-fires on retry
+   passes. Confirmed end-to-end in today's run: `subject_entity` fired on **4 distinct claims but
+   only 2 ended `unverifiable`** — retry recovered the other two by re-running VERIFY, which cited
+   different sentences the second time. **The gate's firing count overstates user-visible damage by
+   roughly 2×, and a fix that reduces firings should also cut retry volume** — a cost effect, not
+   only an accuracy one. Track firings and final suppressions as separate series when this section's
+   cost estimate is next re-priced.
+2. **The corpus is 81% `eval`, not production traffic** (253/314). The 98.7% widening result and the
+   40/41 flagship refutation both rest on a golden-set-dominated population. That does not invalidate
+   them — the mechanism is the same — but any *rate* quoted from this corpus is a rate over eval
+   runs, and should be labelled as such rather than presented as a production rate.
+
+**The gate is deterministic; its input moves.** Direct evidence, same article, two consecutive days:
+`"Germany surrendered in 1945."` fired 3× and ended `unverifiable` on 2026-08-30 (`a2d4e3b2`), and
+did not fire at all on 2026-08-31 (`55e13495`). Same gate code, same claim text, same article. The
+difference is entirely what VERIFY cited — today's stored evidence reads *"…On this Day 7 May 1945:
+Germany signs unconditional surrender"* (contains "Germany", `sameEntity` passes); the prior day's
+evidence was nulled by the gate itself
+([pipeline-gate-chain.ts:143](../../src/orchestrators/grounnel/pipeline-gate-chain.ts#L143)). The same
+pattern holds for the Wright pair in reverse (`"really did fly 852 feet"` survived on the 30th,
+suppressed on the 31st). **Run-to-run verdict flips on these claims are VERIFY citation-choice
+jitter, not gate nondeterminism.** This is the strongest available argument against a sixth
+gate-window patch: the variable that actually moves lives upstream, in which sentences VERIFY selects.
+
+**Correction to Addendum 2's framing.** Addendum 2 describes the gate's input as VERIFY's "narrowly
+cited sentence(s)". Inspection of stored evidence shows it is already a **multi-sentence
+concatenation** (joined by `...`) that can still omit the subject — e.g. today's
+`"The Wright brothers' first flight covered approximately 120 feet."` cited three sentences naming
+Orville, the Wright Flyer, and a Boeing 747. The defect is therefore **not** "the window is one
+sentence"; it is "VERIFY selects fact-bearing sentences without ensuring one of them names the
+subject." Any prompt aimed at this must instruct VERIFY to *add* a subject-naming sentence when it
+has cited a fact-only sentence — not merely to "cite more", which would lengthen the same
+subject-less bundle.
+
+**What remains hypothesis, explicitly.** That M2 dominates firings is measured (98.7%, §3m Addendum
+2). That citation scope causes it is well-evidenced. That **a prompt can reliably make VERIFY cite
+subject-bearing context is neither measured nor demonstrated** — and this ADR's own record (five
+refuted candidates, and T22's field-order change failing live 2/2 after looking correct offline) is
+the reason to state that separation rather than assume it. The falsifiable form is: *if VERIFY
+consistently cites sufficient subject-bearing context, the existing gate should stop producing M2
+false suppressions without weakening the gate.* Testing that requires two steps in order (T28), and
+the second must not begin before the first returns.
+
+**Disposition still unchanged.** No gate code change. No sixth lexical patch, no full-passage widen,
+no instance-selector at article scope, no threshold retune.
+
 ## Consequences
 
 - New in `src/orchestrators/grounnel/gates.ts`: `applyReasonOrdinalGate` (own policy function, not

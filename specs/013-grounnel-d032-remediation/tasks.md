@@ -406,7 +406,7 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     the wiring and the schema fix. Two green runs are not a rate. Re-measure under SC-5 (N≥5) before
     this task is closed or the number is quoted anywhere.
 
-- [ ] **T22 — VERIFY emits its verdict BEFORE its reason** ⚠ **same defect class as T21's, widest blast radius**
+- [x] **T22 — VERIFY emits its verdict BEFORE its reason** ⚠ **same defect class as T21's, widest blast radius** **CLOSED — REVERT, not adopted (2026-08-31)**
   - **Finding (2026-08-27, from T21's code review):** `VerifyRawResultSchema` declares `verdict` ahead of
     `reason`, and Gemini generates structured-output fields in schema order. So VERIFY commits to a
     verdict and *then* writes the justification. Five gates — `reason_consistency`, `implicit_negation`,
@@ -502,6 +502,268 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     `reason_ordinal`; and T21's "working no longer restates the answer" is evidence about an auditor's
     self-consistency, NOT evidence VERIFY will catch more lies — field order can fix the first and
     leave external truth untouched. That is the default expectation until replay says otherwise.
+  - **BUILT (2026-08-30), NOT YET RUN — blocked on deploy, not on design.** Local Gemini calls are
+    geo-blocked from this machine (`User location is not supported for the API use`), so the
+    experiment cannot execute here; it needs the `biassemble-core` deploy the user controls.
+    - `VerifyRawResultReasonFirstSchema` added ([pipeline-schemas.ts](../../src/orchestrators/grounnel/pipeline-schemas.ts)) —
+      `reason` required and moved before `verdict`, mirroring T21's fix exactly; `evidenceCitations`
+      deliberately left optional per STEP 0's own finding (required would break the `unsupported`
+      path, which legitimately has none).
+    - `resolveEvidenceForClaims` added to `GrounnelPipelineService` — the one small production
+      change the design called for, exposing `resolveAllEvidence` (search + rerank, no VERIFY call)
+      without touching `run()`'s existing behavior.
+    - `resolveEvidenceOnce` added to `run-grounnel-eval.ts` — real EXTRACT + eligibility + search/
+      rerank, stopping before VERIFY, for the fixture-generation phase.
+    - New Inngest job `eval-t22-verify-order.ts` (event `eval/t22-verify-order`), registered in
+      `inngest-functions.ts`: fixture phase (once) → A/B replay at both schema orders × N repeats →
+      reason/verdict consistency classification of BOTH arms' own output (same classifier
+      `counterfact_ignored` uses, for direct comparability to the 7.32% production baseline) →
+      pure analysis reusing `evaluateGrounnelRun` (same scorer every other eval in this spec uses).
+      Trigger script `scripts/trigger-eval-t22.ts` (`pnpm t22:trigger [--repeats N] [--cases ...]`).
+    - **Real cost is ~440 calls at N=2, not the ~308 originally estimated** — the extra ~132 is the
+      consistency-classifier pass (28 cases × 2 arms × 2 reps), which the design's own "readouts in
+      order" already specified but the earlier cost estimate didn't include. Flagging before
+      triggering, per the eval-budget principle of not silently escalating spend.
+    - **Caught before shipping:** `checkConsistencyArm`'s first draft returned a `Map` from inside
+      `step.run` — Inngest JSON-serializes step outputs for durability, and `JSON.stringify(new
+      Map())` silently produces `{}`, which would have thrown away every consistency result without
+      erroring. Fixed to return a plain array; `tsc` caught the type mismatch that led to finding it.
+    - `npx tsc --noEmit` clean, `npx vitest run` 1235/1235 passing (no regressions).
+    - **RUN ATTEMPT 1 (2026-08-30): failed live, real infra bug, zero results.** First deploy also
+      needed a manual `PUT /api/inngest` to sync the new function — Vercel deploys don't auto-register
+      with Inngest Cloud (worth remembering for any future new job). After that, the job ran 6 fixture
+      steps successfully, then got stuck retrying with **413 Payload Too Large** forever. **Cause**:
+      Inngest replays every prior step's return value on each new invocation to resume a function —
+      the fixture step's return value included full retrieved-passage text per claim, which
+      accumulated across ~6+ completed cases past Vercel's ~4.5MB request size limit. Not a finding
+      about VERIFY or schema order — an infrastructure bug in the job itself, caught before any
+      A/B data existed.
+    - **FIXED (2026-08-30):** fixture steps now return only `{id, claimText, subjectEntity}` — no
+      passage text crosses a step boundary at all. Passages are re-read from Postgres per claim
+      inside each VERIFY-replay step instead, via a new `readSelectedPassages(runId, claimId)`
+      ([grounnel-rerank-decision-store.ts](../../src/persistence/grounnel-rerank-decision-store.ts))
+      backed by a new `getSelectedPassagesForClaim` query
+      ([db/queries.ts](../../src/db/queries.ts)) — reads back exactly what `resolveEvidenceForClaims`
+      already persists as a side effect (`grounnel_search_pages`/`grounnel_rerank_decisions`), so
+      nothing new is written, only read differently. Short retry (5 × 400ms) covers the gap between
+      the fixture step's response and its fire-and-forget (`waitUntil`) background writes landing.
+      `npx tsc --noEmit` clean, `npx vitest run` 1235/1235 passing after the fix.
+    - **RUN ATTEMPT 2 (2026-08-31): completed without throwing, but with ZERO data — a second real
+      bug, worse than the first because it hid silently.** Every deploy needs a manual
+      `PUT /api/inngest` sync (learned again — Vercel doesn't auto-register new/changed Inngest
+      functions). The job ran end-to-end and returned `"totalClaims":0` for both arms.
+      **Cause:** `callVerifyRawArm`/`checkConsistencyArm` passed `expectedKeys` as the per-item
+      field names (`["id","verdict","reason","confidence"]`), not the actual top-level response key
+      (`["results"]`, matching `{"results":[...]}"` and production's own `callVerify` convention).
+      `injection-guard.ts`'s `hasUnrelatedKeySet` compares `expectedKeys` against the parsed
+      response's TOP-LEVEL keys — with the wrong keys, overlap was always zero, so **every single
+      VERIFY and consistency-check response was flagged as injection-suspected and hard-rejected,
+      unconditionally, regardless of content.** The job's own error handling then made this
+      invisible: a non-rate-limit error was caught, silently counted toward nothing, and the loop
+      just moved on — no log line, no thrown error, a "successful" summary with nothing in it.
+      All ~216 fixture calls' spend was real; the ~112+112 VERIFY/consistency calls mostly never
+      produced usable output (rejected before being counted).
+    - **FIXED (2026-08-31):** `expectedKeys: ["results"]` in both functions. Also fixed the
+      visibility gap itself, not just this one instance of it: every per-step catch block now
+      `logger.warn`s the actual error message before moving on, and a new sanity check throws
+      loudly if `armRuns.length === 0` after phase 2 — "the golden set always has claims, so zero
+      arm-runs is a systemic bug, not a legitimate empty result" — so this exact failure mode
+      (silent, all-zero "success") cannot recur undetected, from this or any future bug in the job.
+      `npx tsc --noEmit` clean, `npx vitest run` 1235/1235 passing after the fix.
+    - **Next step:** user re-deploys `biassemble-core` (fix isn't live yet), re-sync via
+      `PUT /api/inngest`, then `pnpm t22:trigger --repeats 2`.
+    - **RUN ATTEMPT 3 (2026-08-31): real data, decisive result. REVERT — schema stays as-is.**
+      144 claims scored per arm (28 cases × N=2, both bugs from attempts 1–2 fixed and verified before
+      this run). Applying the pre-registered decision rule from this task's own design above:
+
+      | Metric | Current (verdict-first, production) | T22 candidate (reason-first) |
+      | --- | --- | --- |
+      | Reason↔verdict inconsistency rate | 8.33% (12/144) | 5.56% (8/144) — improved |
+      | `safetyOk` | true — 0 false accusations | **false — 3 false accusations** |
+      | False-accusation cases | none | `g13-bukowski-claimed-wedlock`, `g27-aldrin-not-first`, `g28-wwii-not-1943` — **2/2 repeats each, not single-draw noise** |
+
+      The candidate schema lowered the inconsistency proxy but did so by producing new `contradicted`
+      verdicts on three true, negation-shaped claims ("claimed X," "was **not** first," "did **not**
+      end in 1943") that the current schema gets right. This is exactly D032 §9's documented
+      negation-scope weakness in the reason-family gates (`reason_year`/`reason_ordinal`/
+      `reason_consistency`) — forcing more verbose reasoning before the verdict appears to give those
+      gates more surface area to misfire on, not less. **Per this task's own pre-registered rule:
+      "REVERT if any true claim gains a `contradicted`, even when inconsistency falls — Cardinal Rule
+      outranks the proxy."** That condition is met outright; no ambiguity, no repeat run needed to
+      decide. `VerifyRawResultReasonFirstSchema` is NOT wired into production and stays that way.
+      `evaluateGrounnelRun`'s own SC-5-style scoring was reused for this readout (same scorer every
+      other eval in this spec uses), so the false-accusation determination isn't a new judgment call.
+    - **Disposition:** T22 closed. Production `VerifyRawResultSchema` (verdict-then-reason) is
+      unchanged. The experimental code (`eval-t22-verify-order.ts`, `VerifyRawResultReasonFirstSchema`,
+      `resolveEvidenceForClaims`, `readSelectedPassages`) is left in place as a reusable A/B harness —
+      it works now (attempt 3 proved it), and the same "generate fixtures once, replay both schema
+      orders" pattern is directly reusable if a *different* VERIFY schema change is ever proposed.
+    - **`/code-review medium` run post-hoc (2026-08-31), 2 findings, both fixed** — neither affects the
+      REVERT decision above (driven by 3 reproduced 2/2 false accusations, unrelated to either):
+      (1) `readSelectedPassages` returned `[]` silently after exhausting its retry window, indistinguishable
+      from genuine no-evidence — now logs a warning naming the ambiguity explicitly. (2) Phase 3's
+      consistency-check matched a claim's verdict back by TEXT equality (`GrounnelRun.claims` carries
+      no id), which would silently misattribute verdicts if a case ever had duplicate claim text —
+      fixed with a `verdictById` map built from VERIFY's own real per-claim ids. `npx tsc --noEmit`
+      clean, `npx vitest run` 1235/1235 passing after both fixes.
+
+- [x] **T23 — Fix citation-less `supported` rendering "not confirmed"** (D032 §12 Finding A) **DONE (2026-08-30)**
+  - **Finding (2026-08-30):** Frontend [HighlightedArticle.tsx:122](biassemble/frontend/src/components/grounnel/HighlightedArticle.tsx#L122)
+    renders a misleading "Searched, found nothing that confirms this" line on claims with `verdict: supported`
+    and `sources.length > 0` but `citations.length === 0`. This contradicts the `supported` label.
+  - **Root cause:** `sourcesAreUnconfirmed` gates only on evidence shape; sibling `noSourcesFound` (line 108)
+    correctly gates on both verdict and evidence. Asymmetry exposes valid `supported` verdicts with evidence
+    but no discrete citation.
+  - **Implemented:**
+    - `sourcesAreUnconfirmed` now requires `verdict ∈ {unsupported, unverifiable}` (matching `noSourcesFound`).
+    - New `sourcesUncited` covers the other side: `verdict ∈ {supported, partially_supported, contradicted}`
+      with real sources but no citation — renders "Supporting sources (no exact sentence matched)" (option b),
+      honest about both halves instead of silence (option a would reintroduce the 2026-08-12 confusion T7's
+      comment already documents).
+    - Added a third dev-mock claim (citation-less `supported`, Everest) — without it this path is unreachable
+      without spending live API quota. `score`/`progress` counters updated to match (3 claims, eligible: 2).
+    - `grounnel-contracts.test.ts`: new assertion the mock actually produces a claim exercising `sourcesUncited`.
+  - **Verify:** `npx tsc --noEmit` clean in both `frontend/` and `backend/`; `grounnel-contracts.test.ts` 8/8 passing.
+    No dedicated component test added — no prior test file existed for `HighlightedArticle.tsx`, matching
+    T16's own precedent (dev-mock fixture + contract test as the verification path) and the coverage-cap
+    convention (CLAUDE.md: don't add a test just to move the number).
+  - **Files:** `frontend/src/components/grounnel/HighlightedArticle.tsx`; `backend/src/lib/ai/dev-mock-client.ts`; `backend/tests/unit/grounnel-contracts.test.ts`.
+  - **Effort:** ~1 hour, as estimated. Frontend-only, no core deploy — not deployed, per standing instruction.
+
+- [x] **T24 — Measure and classify permanent `subject_entity` suppression cost** (D032 §12 Finding B) **DONE (2026-08-30)**
+  - **Background:** D032 §3f established that `unverifiable` conflates three states, one of which is
+    `subject_entity` downgrade (24.9% of all `unverifiable` claims). D030 §3m accepted this as a known
+    cost (~25–30 true claims per 1000 evaluations) but it was never quantified on real cases.
+  - **B0 result: `grounnel_claims.evidence` is nulled by design, every time.**
+    [pipeline-gate-chain.ts:143](../../src/orchestrators/grounnel/pipeline-gate-chain.ts#L143) —
+    `if (gate3.overridden) evidence = null`. Confirmed: 0/310 distinct single-pass firings retain
+    evidence in the persisted column. The 37% of rows that DO show non-null evidence are multi-pass
+    claims where a later retry/fill-in overwrote the null with an unrelated result — not the
+    evidence that caused the original firing. Hand-labeling the stored column directly was ruled out.
+  - **B1 (revised): reconstructed the actual VERIFY input from telemetry instead**, zero API cost —
+    `grounnel_rerank_decisions` (`selected=true`) ⋈ `grounnel_search_pages.excerpt`, same replay
+    technique already used elsewhere in this spec. 310 distinct claims found; 40-row deterministic
+    sample pulled (18 distinct claim/evidence templates — golden-set repeats).
+  - **B2 result: 75% false-trigger rate (30/40 raw, 14/18 by distinct template).** Evidence
+    genuinely confirmed the claim, suppressed on naming form alone — e.g. claim's subject
+    "Wright brothers' fourth flight" vs. evidence's "Wilbur"; "JWST" vs. the spelled-out telescope
+    name. 17.5% (7/40) were correct suppressions of a genuinely false claim (evidence about a
+    different specific instance, e.g. "first flight covered 852 feet" — true fact, wrong flight).
+    7.5% (3/40) uncertain (evidence never addressed the claim's subject at all).
+  - **B3 done — written into D030 §3m addendum**, with the comparison to D030's own 51%
+    aggregate-recovery figure (same concept, larger and more recent sample, same 2–3 claim families
+    D030 already named as the gate's weak spot — not a contradiction, a sharper measurement of it).
+  - **B4 — NOT decided, deliberately.** The measured rate is high enough that D030's own reopening
+    condition ("the gate shows up in a meaningful share of user-visible wrong verdicts") may be met,
+    but that is a product call, not a data call. Recorded in D030, not acted on here.
+  - **Files:** `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md` (§3m addendum). Scratch queries in `scratchpad/t24-b0.mjs`, `t24-b0b.mjs`, `t24-b0c.mjs`, `t24-b1.mjs` (untracked).
+  - **Cost:** Zero API calls — pure telemetry replay throughout.
+
+- [x] **T25 — Characterize contentless-claim eligibility response** (D032 §12 Finding C) **DONE (2026-08-31)**
+  - **Finding (2026-08-30):** *"A person really did die in a particular year"* (referent-unresolvable) returns
+    `supported` on the first celebrity-deaths listicle match. This is unsafe under the Cardinal Rule —
+    affirming a claim with no verifiable subject is a false accusation, even if the evidence is real.
+  - **Hypothesis:** The eligibility classifier sees "person dying in a year" as `checkable` per design
+    (conservative default), then VERIFY grounds it to the first result. The semantic gap is that the claim
+    lacks a resolvable **subject** (which person?), not that it lacks a domain.
+  - **Experiment:** Test whether the eligibility classifier recognizes contentless claims or just fails to block them.
+    - **C1:** Run `classifyClaimVerifiability` on the exact death-year claim, N=5.
+    - **C2:** Run the same on 3–4 sibling contentless forms (vague person, abstract event, etc.), N=5 each.
+    - Recorded category + certainty for each.
+  - **Decision tree:**
+    - If result is consistently `checkable/uncertain`: Eligibility **already sees the risk but policy blocks
+      exclusion**. Fix requires either a new category (`contentless_referent`) + prompt change + re-verification,
+      or reopening T13's policy debate.
+    - If result is consistently non-`checkable/clear`: Eligibility **sees and excludes it already**; issue is
+      upstream (EXTRACT or the article structure itself).
+    - If results are mixed or uncertain: Run a few more examples to establish the pattern.
+  - **Acceptance:** C1 and C2 results recorded; decision layer identified (eligibility prompt vs. policy vs.
+    EXTRACT); impact on T13 decision stated.
+  - **Verify:** Results file; decision path documented.
+  - **Files:** Read-only (test file is temporary).
+  - **Effort:** ~2 hours (experiments + analysis).
+  - **Gate:** After D and B, so you have telemetry context.
+  - **Cost:** ~10 API calls (5 on main claim + ~5 on siblings).
+  - **BUILT (2026-08-31), NOT YET RUN — same deploy blocker as T22 (local Gemini calls are
+    geo-blocked).** New Inngest job `eval-t25-contentless-eligibility.ts` (event
+    `eval/t25-contentless-eligibility`), registered in `inngest-functions.ts` — small, standalone,
+    same pattern as `attribution-experiment.ts` (fixed fixture list, no golden-set fixtures needed
+    since `classifyClaimVerifiability` takes claim text directly). C1's exact claim plus 4 sibling
+    contentless forms (vague person/award/disaster/discovery/profit), N=5 each = 25 calls, not the
+    originally estimated ~10 — C2 was scoped as "3–4 siblings," this uses 4. Results persist to
+    `grounnel_llm_calls` (`callType: eligibility_check`, already built into `classifyClaimVerifiability`
+    itself) so they're queryable afterward, not just visible in Inngest's own run history. Trigger
+    script `scripts/trigger-eval-t25.ts` (`pnpm t25:trigger [--repeats N]`). `npx tsc --noEmit` clean,
+    `npx vitest run` 1235/1235 passing.
+  - **RESULT (2026-08-31): decisive, first branch of the decision tree.** 25/25 (100%) across all 5
+    fixtures landed `checkable`/`uncertain`, zero exclusions, zero variance across N=5 per fixture.
+    The classifier's own `reason` text explicitly names the missing referent every time —
+    *"even though no specific person or award is mentioned,"* *"but the city is not specified,
+    making it difficult to pinpoint the exact event,"* *"even without a specific excerpt"* — and
+    concludes `checkable` regardless. This is the classifier working exactly as designed: D030 §3b's
+    conservative bias (`isEligibilityExcluded` requires `certainty === "clear"`,
+    [claim-eligibility.ts:87](../../src/orchestrators/grounnel/claim-eligibility.ts#L87); the
+    prompt explicitly instructs "when genuinely unsure, prefer uncertain") means the classifier
+    correctly *notices* the missing referent but has no category to *act* on that observation —
+    "referent is unspecified" is a note in a reason string nothing downstream reads, not a
+    classification.
+  - **Decision layer identified: eligibility prompt/category, not EXTRACT and not upstream.**
+    Confirms the first branch of the pre-registered decision tree: *"Eligibility already sees the
+    risk but policy blocks exclusion. Fix requires either a new category (`contentless_referent`) +
+    prompt change + re-verification, or reopening T13's policy debate."* Not decided here — this
+    task's job was characterization, not the fix. Whichever direction is chosen, it is a VERIFY/
+    eligibility **prompt change**, which per this spec's own standing rule (T22, D030 §1) needs live
+    re-verification before it counts as fixed, not just a code review.
+  - **Impact on T13:** none — T13 (closed won't-do, prediction-exclusion policy) is a different
+    category (`prediction`) and a different mechanism (certainty-gating on an existing category).
+    This finding argues for a *new* category, not for reopening T13's specific policy question.
+  - **Files:** `src/jobs/eval-t25-contentless-eligibility.ts`, `scripts/trigger-eval-t25.ts`,
+    `src/jobs/inngest-functions.ts`, `package.json`. Results in `grounnel_llm_calls`
+    (`call_type='eligibility_check'`, `run_id` from the experiment's own `grounnel_runs` row).
+  - **`/code-review medium` run (2026-08-31), 1 finding, fixed.** `classifyClaimVerifiability`'s own
+    fail-open result (provider error) is byte-identical in shape to a genuine `{checkable, uncertain}`
+    classification — a rate-limited run would silently report the same `categoryMix` as a clean one,
+    with no way to tell them apart from the job's own summary. Confirmed **not** a problem for the
+    result above — 0/25 raw reasons matched the fail-open string — but the job had no built-in check
+    for it. Fixed: exact-match on the fixed fail-open reason string, surfaced as `failOpenCount` per
+    fixture plus a warning log when non-zero. `npx tsc --noEmit` clean, `npx vitest run` 1235/1235
+    passing after the fix.
+
+- [x] **T26 — R2 reopened: `subject_entity` mechanism decomposition + 5th fix candidate simulated** **DONE (2026-08-30), STOPPED BY USER REQUEST**
+  - **Trigger:** T24's 75% false-trigger rate met D030 §3m's own reopening condition ("the gate shows
+    up in a meaningful share of user-visible wrong verdicts"). This is investigation, not
+    implementation — same "simulate before implementing" discipline D030 §3n established.
+  - **Root cause found:** `applySubjectEntityGate`'s `evidence` argument
+    ([pipeline.service.ts:836](../../src/orchestrators/grounnel/pipeline.service.ts#L836)) is
+    VERIFY's own narrowly cited sentence(s), not the full retrieved passage. The gate was comparing
+    "does VERIFY's one cited sentence repeat the claim's proper noun," not "is this evidence about
+    the claim's subject."
+  - **Simulation 1 (widen to full passage):** 306/310 (98.7%, corrected denominator — an earlier
+    per-template count double-counted multi-pass claims via join multiplicity, caught before being
+    reported) would never have fired under a full-passage comparison. True semantic-alias cases
+    (M1: "Wright brothers" ↔ "Wilbur" as genuinely different entities) are **~1%** of firings, not
+    the dominant mechanism originally assumed — "Wright" is present elsewhere in the same passage,
+    just not in the narrowly cited sentence.
+  - **But naive widening is unsafe:** confirmed directly — it also "recovers" genuinely false
+    wrong-instance claims (e.g. "the first flight lasted 59 seconds," true fact is about the fourth
+    flight) because the same article legitimately mentions both. Same failure shape as the
+    already-refuted Option A, different mechanism.
+  - **Simulation 2 — 5th candidate, refuted:** widen + reuse `instance-selector.ts` (D030 §3f) to
+    detect a conflicting sequence-selector ("fourth" vs. claim's "first") in the full passage.
+    Recovery dropped to 84/310 (27.1%) — worse than doing nothing — and wrongly overrode the
+    flagship TRUE claim 40/41 times. Cause: the anchor-window logic is calibrated for local,
+    clause-scoped comparison; at full-article scope it finds unrelated true ordinal mentions
+    ("first flight... fourth flight...") within the same historical narrative and treats them as a
+    conflict regardless of correctness.
+  - **Result: 5/5 fix candidates for `subject_entity` (4 from D030 + this one) refuted by simulation
+    before reaching code.** One untested direction noted, not attempted: scope the instance-check to
+    the specific sentence(s) sharing the claim's own numbers/dates, not the whole article. Stopped
+    here at user's explicit request — not attempted.
+  - **Disposition: unchanged, keep `subject_entity` as-is.** The investigation sharpened *why* no fix
+    has worked without producing one that survives simulation.
+  - **Files:** `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`
+    (§3m Addendum 2). Scratch scripts in `scratchpad/r2-*.mjs` (untracked).
+  - **Cost:** Zero API calls throughout — pure telemetry replay + offline simulation.
 
 - [x] ~~**T13 — FIX-5: prediction exclusion policy**~~ **CLOSED WON'T-DO (2026-08-27)**
   - **Decision: do not reverse D030 §3b.** T4 measured **n=1 across 2,724 eligibility checks**, and
@@ -541,6 +803,125 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     Bounded, non-trivial — doesn't kill or confirm R3, gives it a real number instead of one
     anecdote.** First-pass measurement (85%) was a bug — merged separate escalation-retry
     invocations together; caught and fixed before being recorded.
+
+---
+
+## Phase 6 — Post-close-out: the two defects re-confirmed live (2026-08-31)
+
+Opened after the third full re-run of the 44-claim adversarial article (`55e13495`) reproduced
+Findings B and C, and two independent external reviews of that result converged on the same
+sequencing. Context: D032 §13, D030 §3m Addendum 3. **T27 and T28 are strictly ordered — do not start
+T28 until T27 is live-verified or abandoned.** Separate change sets, separate deploys: both touch
+prompt surfaces subject to D030 §1 live re-verification, and bundling them makes any live movement
+unattributable (the exact failure mode T22 already demonstrated).
+
+- [x] **T27a — Settle the `subject_entity` firing-count discrepancy** **DONE (2026-08-31)**
+  - **Why first:** this ADR carried four different counts (132, 159, 310, and a review's restatement
+    of 310) with no stated query definition. Both reviews independently refused to size any further
+    work until this was nailed down. Blocking, cheap, zero API cost.
+  - **Result:** all are the same query at different times, plus one different scope. For
+    `gate='subject_entity' AND overridden=true`, as of 2026-08-31: **664** total gate-event rows,
+    **314** `count(DISTINCT claim_id)`, **314** `count(DISTINCT (run_id, claim_id))` (identical — so
+    no cross-run dedup ambiguity), split **253 eval / 61 production**. 310 was the same
+    `DISTINCT claim_id` query on 2026-08-30; 132 was that query earlier in D030's history; 159 was
+    §3m's "full population, not just `g22`" scope. Recorded in D030 §3m Addendum 3 with the standing
+    rule that **a firing count must always be quoted with its query and date** — the bare number
+    moves with traffic.
+  - **Two consequences worth carrying:** (1) 664/314 = 2.1 firings per claim, because retry re-fires
+    the gate — confirmed end-to-end in `55e13495`, where the gate fired on 4 distinct claims but only
+    2 ended `unverifiable`; firing counts overstate user-visible damage ~2×, and a working fix should
+    also cut retry volume (cost, not just accuracy). (2) The corpus is 81% `eval`, so the 98.7%
+    widening figure and the 40/41 flagship refutation are rates over eval runs and must be labelled
+    as such.
+
+- [ ] **T27 — Finding C: `has_resolvable_referent` on the eligibility contract** (D032 §13)
+  - **Defect:** `"A person really did die in a particular year."` → `supported` against a real
+    celebrity-deaths listicle, reproduced on both post-fix runs (`a2d4e3b2`, `55e13495`). Unsafe
+    under the Cardinal Rule.
+  - **Design (settled, do not relitigate):** add a **required boolean `has_resolvable_referent`** to
+    `ClaimVerifiabilityResultSchema` and the eligibility prompt. **Not** a new `category` value (it
+    would route through the same deliberately-permissive `certainty` axis and inherit the same bias),
+    and **not** T13 (prediction-exclusion policy is a different lever). Exclude only when
+    `has_resolvable_referent === false`. Leave `category`, `certainty`, and D030 §3b's
+    `certainty === "clear"` rule untouched.
+  - **Operational definition — this is the whole task, not a detail.** `false` means *the referent
+    cannot be resolved from the claim text plus the supplied `source_excerpt`*, not "I cannot
+    personally identify this person". Without that, `"The company reported a profit in Q4"` gets
+    excluded when the article named the company a sentence earlier. `source_excerpt` **is** available
+    to this classifier (`ClaimVerifiabilityInput.sourceExcerpt`, rendered into the prompt) — verified,
+    populated for 1687/7253 stored claims (23%), and populated for the contentless claim itself
+    (with the claim text verbatim, adding no context — so the definition correctly yields `false`).
+  - **The prompt currently fights the boolean.** Its closing line tells the model to prefer
+    `uncertain` when unsure. T25 showed the model already narrates the missing referent and still
+    answers `checkable`/`uncertain`. A bare field addition will therefore be answered
+    `has_resolvable_referent: true` with the same story ("it would be checkable if the person were
+    known"). The prompt must state the split explicitly: `certainty` is confidence about **category**;
+    `has_resolvable_referent` is whether the claim text names or uniquely identifies **who/what** the
+    predicate attaches to; common nouns (`a person`, `someone`, `a city`, `an animal`, `a company`)
+    are **not** referents; `uncertain` does not imply a referent exists.
+  - **Fail-open is mandatory and must be written into the task, not discovered in production.** A
+    missing field or a parse failure must **not** exclude — fall through to `checkable`/`uncertain` →
+    search, exactly as `FAIL_OPEN_RESULT` does today. Required-in-Zod is not a runtime guarantee;
+    inverting D030 §3b via a schema hiccup would turn one unsafe affirmation into mass exclusion.
+  - **Step 1 — classifier-only fixture screen (cheap, no SEARCH, no VERIFY).** N=10 over ~10 fixtures.
+    Must-exclude: the 5 T25 contentless cases. Must-**not**-exclude near-misses, chosen so they are
+    resolvable *from the inputs the classifier actually receives*: referent named in the claim itself
+    (`"Apple's iPad revenue was $6.2 billion in Q4"`), named-class superlative already in the claim
+    (`"The Wright brothers' first flight…"`), one excerpt-resolvable pronoun subject **with a real
+    populated `source_excerpt`** (valid because the classifier does receive it — drop this fixture if
+    the excerpt cannot be made representative of production), one opinion, one prediction.
+  - **Acceptance (asymmetric on purpose — false exclusion is the dangerous direction):**
+    **0 false exclusions on the near-miss set**, and ≥9/10 exclusion on the contentless set. The
+    ≥9/10 is a screening bar; the 0 is a hard gate. Also compare **joint `category` × `certainty`**
+    against a frozen pre-change baseline on the same five near-miss texts — adding a field can move
+    the existing axis, and that must be caught here rather than live.
+  - **Step 2 — live, and required. Fixtures alone do not close this task.** The product bug is "this
+    claim reached VERIFY and got `supported`". After Step 1 passes, wire `isEligibilityExcluded()` and
+    run the one claim (or the 44-claim article once) through the deployed pipeline. If it still
+    reaches SEARCH, the prompt failed D030 §1 the same way T22's field-order change did — stop and
+    record, do not iterate blindly.
+  - **Files:** `src/orchestrators/grounnel/claim-eligibility.ts` (schema + `isEligibilityExcluded`),
+    `src/prompts/grounnel/eligibility/system.json` (+ version bump), a new experiment job for Step 1
+    following `eval-t25-contentless-eligibility.ts`'s shape.
+  - **Cost:** ~100 classifier calls for Step 1, plus one 44-claim run for Step 2.
+
+- [ ] **T28 — Finding B: is VERIFY citation-completeness even available as a fix?** (D030 §3m Addendum 3)
+  - **Gate code is frozen.** No sixth lexical patch, no full-passage widen, no instance-selector at
+    article scope, no threshold retune. 5 of 5 candidates already refuted by simulation.
+  - **What is measured vs. what is hypothesis.** Measured: M2 dominates firings (98.7%); the gate is
+    deterministic and its input moves (Germany fired 3× on the 30th, 0× on the 31st, same claim, same
+    article, different VERIFY citation). **Hypothesis, explicitly not established:** that a prompt can
+    reliably make VERIFY cite subject-bearing context. Falsifiable form: *if VERIFY consistently cites
+    sufficient subject-bearing context, the existing gate should stop producing M2 false suppressions
+    without weakening the gate.*
+  - **Step 1 — passage inventory (offline, zero API cost). Do this before drafting any prompt text.**
+    Over the queried firing set (state the query and date per T27a), determine whether the selected
+    passage contains a span that establishes the claim's subject at all. If it frequently does not,
+    **stop** — a prompt cannot cite what was never retrieved, and the problem is a retrieval one.
+  - **Do not conclude from a lexical rate.** `passage.includes("Germany")` is the same unsound
+    identity test the gate itself uses. Use it as a coarse filter only, then hand-inspect the
+    Germany/Wright cases (`German Third Reich` vs `Germany`; `Wilbur` vs `Wright Brothers`) before
+    declaring M2 addressable.
+  - **Step 2 — only if Step 1 is high: VERIFY-only A/B replay over the *same stored passages*,**
+    current prompt vs. current + a citation-completeness block. Score two things: do citations gain a
+    subject-bearing sentence, and does labelled-true → `contradicted` stay at **0** (the Cardinal Rule
+    gate, same pre-registered REVERT rule shape T22 used).
+  - **Prompt wording constraint, if Step 2 is reached.** Stored evidence is already a multi-sentence
+    `...`-joined concatenation that can still omit the subject (today's `"first flight covered
+    approximately 120 feet"` cited three sentences naming Orville, the Wright Flyer, and a Boeing
+    747). The block must instruct VERIFY to **add a subject-naming sentence from the source when it
+    has cited a fact-only sentence** — not to "cite more", which merely lengthens the same
+    subject-less bundle. Nor should it demand the subject appear in the cited sentence itself:
+    a heading, prior sentence, table context, or source title can legitimately establish it. The
+    requirement is that the evidence handed to VERIFY carry enough local context to establish the
+    subject/instance of the asserted fact.
+  - **Do not draft the citation paragraph into `verify/system.json` until Step 1's inventory exists.**
+
+- [ ] **T29 — Housekeeping: delete the eight `scripts/_tmp-*.ts` investigation scripts**
+  - `_tmp-poll-run.ts`, `_tmp-poll-run2.ts`, `_tmp-find-runs.ts`, `_tmp-dump-claims.ts`,
+    `_tmp-evid.ts`, `_tmp-gate-events.ts`, `_tmp-firing-census.ts`, `_tmp-verify-adr.ts`. Written
+    ad-hoc for the 2026-08-31 census; superseded by the numbers recorded in D030 §3m Addendum 3.
+  - Keep out of T27's and T28's change sets — they will otherwise be scooped into the next diff.
 
 ---
 

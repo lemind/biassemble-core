@@ -703,3 +703,176 @@ note when `unverifiable` came from `subject_entity`, distinct from a genuine no-
 Both were caught by the diff-review pass before any deploy — not found live. 3 new unit tests added
 (`composeUserFacingReason`'s own describe block) reproduce the exact precondition that hid bug #1
 (`citationsCount: 0` alongside an affirmative reason and a `subject_entity` event).
+
+## §12. Live re-eval (2026-08-30): disposition of the original D032 cases + three new findings
+
+**Source**: the exact same adversarial article (44 claims) re-run through the live pipeline on
+2026-08-30. Measured against Contract A (current assertions only; retractions excluded).
+
+### Disposition of 10 original D032 cases
+
+**Seven of 10 original cases closed or intentionally dispositioned:**
+
+| # | Case | Verdict then | Verdict now | Status | Reason |
+| --- | --- | --- | --- | --- | --- |
+| 1 | First mouse wireless | `supported` | `contradicted` | ✅ Fixed | T21 field-order fix + T12 negation-scope |
+| 2 | Roman Empire/Greece | `unsupported` | `unsupported` | ✅ Design correct | Enriched reason now visible: "Searched, found nothing that confirms this" |
+| 3 | Vikings/Australia | `unsupported` | `unsupported` | ✅ Design correct | Same, expected safe miss |
+| 4 | Microsoft/iPhone | `unverifiable` | `supported` | ✅ Fixed | T12 negation-scope + restored evidence |
+| 5 | Wright 59s | `unverifiable` | unscored | ⚠️ Reframed | Article's own self-correction removes this as a verifiable claim |
+| 6 | Wright 852ft true claim | `unverifiable` | `supported` | ✅ Fixed | `subject_entity` suppression removed (T6) |
+| 7 | AI-eliminates-jobs | `unsupported` | `unsupported` | ⏸ Won't-do | T13 closed; prediction classifier is correct |
+| 8 | SQL vs NoSQL | `unverifiable` | `excluded` | ✅ Fixed | T5/T6 `excluded` verdict + frontend T16 |
+| 9 | GraphQL vs REST | `unverifiable` | `excluded` | ✅ Fixed | Same |
+| 10 | Contentless death claim | `unverifiable` | `supported` | ❌ Regressed | New defect: eligibility classifier allows referent-less claim through |
+
+**Summary**: 7 closed + 2 intentionally dispositioned. 1 genuine regression (#10). Revised
+extraction-contract score 77% (Contract A) vs. ~90% on verified checkable claims.
+
+### Three new findings (not in original D032)
+
+#### Finding A — Frontend display bug (D)
+
+**Symptom**: Citation-less `supported` claim renders the line *"Searched, found nothing that
+confirms this"* — contradicting the `supported` label.
+
+**Cause**: [HighlightedArticle.tsx:122](biassemble/frontend/src/components/grounnel/HighlightedArticle.tsx#L122) gates
+`sourcesAreUnconfirmed` on evidence shape only (`citations.length === 0 && sources.length > 0`),
+while sibling `noSourcesFound` correctly gates on both verdict **and** evidence shape
+(lines 108–112). Asymmetry exposes verdicts with evidence-but-no-citation (possible for
+`supported` if the LLM cited inline without a discrete source link, or per D028 with no extractable
+excerpt).
+
+**Layer**: frontend only.
+
+**Fix effort**: ~1 hour. Add `verdict ∈ {unsupported, unverifiable}` condition to `sourcesAreUnconfirmed`;
+decide display text (option b: "Supporting sources (no exact sentence matched)"); add dev fixture.
+
+**T23 filed** (§13 below).
+
+#### Finding B — Subject_entity downgrade cost unmeasured (B)
+
+**Background**: D032 §3f established that `unverifiable` conflates three distinct states, one of which
+is gate-driven downgrade (24.9% of cases: evidence retrieved, gate rejected it). D030 §3m retained
+`subject_entity` on cost grounds but accepted a permanent false-suppression cost of ~25–30 true
+claims per 1000 evaluations.
+
+**New observation**: The German-surrender case (true claim, evidence titled *"THE GERMAN SURRENDER IN
+MAY 1945,"* downgraded to `unverifiable` by `subject_entity`) is a concrete instance of that
+cost. This run's design showed it; past runs couldn't surface it (no `excluded` value in the enum,
+so both "never checked" and "checked-and-rejected" reported as `unverifiable`).
+
+**Consequence**: D030's qualitative "known cost" is now quantifiable.
+
+**Investigation**: T24 (§13 below) will measure the cost (§5 B0–B3). Decision about whether the cost
+justifies label-distinct telemetry (§5 B4) depends on B3's result; do not bundle.
+
+#### Finding C — Contentless claim eligibility regression (C)
+
+**Symptom**: *"A person really did die in a particular year"* (no resolvable subject, no factual
+referent) lands `supported` with a celebrity-deaths listicle as evidence.
+
+**Mechanism**: The eligibility classifier sees enough surface verifiability ("a person dying in a year
+is checkable if the person is identifiable") and errs conservative per design. The classified claim
+then becomes a VERIFY input, returns `supported` on the first listicle match, and persists.
+
+**Cause class**: Not a gate bug, not a contract issue. A semantic category mismatch: the classifier's
+`checkable/personal/opinion/prediction` set does not cover "grammatically well-formed but referent-
+unresolvable" claims.
+
+**Safety**: `supported` on a contentless claim is unsafe under the Cardinal Rule — affirming a claim
+with no verifiable subject is a false accusation, even if the evidence is real.
+
+**Investigation**: T25 (§13 below) characterizes whether the eligibility classifier already sees
+this (C1–C2). Results determine the fix layer: prompt change needing re-verification (new category),
+or existing category + policy debate (re-open T13).
+
+### How this changes the original D032 disposition
+
+The ADR's §5 framed cases #2/#3 as closed (reporting fix) and #4/#5/#6 as unfixable. Reality:
+
+- Case #4 and #6 were both fixable and fixed (T12, T5/T6).
+- Case #5 was reframed out of scope by article structure, not unfixable.
+- Two new defects surfaced (#10, and Finding A).
+- D030's accepted "known cost" is now measurable (Finding B).
+
+**The three next tasks (T23, T24, T25) address the currently-open issues.** None are reworks; all
+are either small targeted fixes (T23) or measurement (T24, C25) to answer whether a fix is needed.
+
+## §13. Third live re-run (2026-08-31, run `55e13495`) and the resulting fix design
+
+Same 44-claim adversarial article, third full run. Compared claim-by-claim against `c94d2954`
+(2026-08-26 baseline) and `a2d4e3b2` (2026-08-30, §12's re-eval).
+
+### What held, what did not
+
+**Held across both post-fix runs** (the session's actual wins): opinion claims → `excluded` (T5/T6,
+2/2 stable); `"Microsoft did not create the iPhone"` → `supported` (T12); `"The first computer mouse
+was wireless"` never returns to `supported` (the original §5 case-1 unsafe affirmation — verdict
+shape varies between `contradicted`/`unsupported` run to run, but never flips back to unsafe).
+
+**Did not hold**: Finding B and Finding C both reproduced, exactly as predicted before the run.
+
+- **Finding C reproduced identically** — `"A person really did die in a particular year."` →
+  `supported` on both post-fix runs. Unchanged and unsafe.
+- **Finding B is probabilistic, and today's data explains why** — see D030 §3m Addendum 3. The gate
+  is deterministic; VERIFY's citation choice is what moves between runs. `"Germany surrendered in
+  1945"` (this ADR's own named Finding B example) fired 3× on 2026-08-30 and **zero times** on
+  2026-08-31; the Wright pair flipped in the opposite direction over the same two days.
+
+**New, not previously recorded**: on this article, `subject_entity` fired on **4 distinct claims in
+each of the two post-fix runs — 7 of those 8 on true claims.** The exception is worth stating
+precisely rather than rounding away: on `55e13495` the gate also fired on *"The Wright brothers'
+fourth flight was 120 feet long"*, which is **false** (the fourth flight covered 852 feet), and it
+downgraded `partially_supported` → `unverifiable`. That firing was directionally right — it
+suppressed an affirmation of a false claim — so the honest local tally is **7 false triggers and 1
+defensible suppression across 8**, not "0 correct suppressions". Retry recovered exactly half the
+claims each run, so only 2 of 4 reach the user as `unverifiable`.
+
+This is a *local* rate on one adversarial article over two runs; it does **not** replace T24's 75%
+global estimate, which stands until recomputed. Record it as what it is: on this article both days,
+8 claim-level firings, 7 on true claims, 1 defensible, retry hid two per run.
+
+### Fix design (T27, T28 in spec 013)
+
+Both defects were re-examined against two independent external reviews. Points of agreement adopted
+here, with the reasoning that survived challenge:
+
+**Finding C → an orthogonal boolean, not a new category, not T13.** The eligibility classifier is not
+malfunctioning; it is obeying its prompt, whose closing instruction is *"When genuinely unsure,
+prefer 'uncertain' — a wrongly excluded checkable claim is a worse outcome than searching a claim
+that turns out unverifiable anyway"*
+([eligibility/system.json](../../src/prompts/grounnel/eligibility/system.json)). That permissive bias
+is deliberate (D030 §3b) and must not be recalibrated to fix this — doing so trades a rare unsafe
+affirmation for a broad class of wrongly-excluded real claims. A new `category` value routes through
+the same `certainty` axis and inherits the same bias. **A separate required field
+(`has_resolvable_referent`) is the minimum contract change that captures a signal the model already
+produces**: T25's classifier reasons name the missing referent 25/25 times while still returning
+`checkable`/`uncertain`. Same "model states it, contract discards it" shape as T21 and T22.
+
+Reopening T13 is explicitly rejected: T13 is prediction-exclusion policy, a different lever;
+merging them would either over-exclude vague-but-real claims or under-exclude this class.
+
+**Two constraints on that field, both load-bearing:**
+
+- **Operational definition, not a judgment call.** `false` must mean *the referent cannot be resolved
+  from the claim text plus the supplied `source_excerpt`* — not "I personally cannot identify this
+  person." Without that, `"The company reported a profit in Q4"` gets excluded when the article named
+  the company one sentence earlier. Verified relevant: `source_excerpt` **is** supplied to this
+  classifier (`ClaimVerifiabilityInput.sourceExcerpt`, rendered into the prompt) and is populated for
+  1687 of 7253 stored claims (23%). For the contentless claim specifically it *is* populated — with
+  the claim text verbatim (`"A person really did die in a particular year."`), i.e. EXTRACT quoted
+  the sentence back to itself and it adds no disambiguating context. So the operational definition
+  correctly yields `false` there while protecting the excerpt-resolvable cases.
+- **Fail-open must be preserved.** A missing field or a parse failure must **not** exclude — it falls
+  through to `checkable`/`uncertain` → search, exactly as `FAIL_OPEN_RESULT` does today. Required-in-
+  Zod is not a runtime guarantee, and inverting D030 §3b via a schema hiccup would turn one unsafe
+  affirmation into mass exclusion.
+
+**Finding B → no gate change; the target is VERIFY citation completeness, and it is a hypothesis.**
+Per D030 §3m Addendum 3: the measured facts are that M2 dominates (98.7%) and that citation scope
+causes it. That a prompt can reliably make VERIFY cite subject-bearing context is **not** measured.
+The plan therefore runs as two gated steps (T28) — a passage inventory that establishes whether the
+subject is even present to cite, and only then a VERIFY-only A/B replay over stored passages. If the
+inventory says the subject is frequently absent from the retrieved passage, the prompt direction is
+dead and the work stops there rather than shipping a sixth candidate on a plausible story.
