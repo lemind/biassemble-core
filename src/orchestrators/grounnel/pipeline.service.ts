@@ -93,6 +93,13 @@ export class GrounnelPipelineService {
     private readonly rerankDecisionStore: GrounnelRerankDecisionStore = new NoopGrounnelRerankDecisionStore()
   ) {}
 
+  /** Spec 013 T22 — exposes resolveAllEvidence (search + rerank, no VERIFY call) for the fixture-generation
+   * step of the verdict/reason field-order A/B: snapshots the exact {claim, subjectEntity, passages} VERIFY
+   * would receive, without running VERIFY itself, so the fixture is reusable across both schema orders. */
+  async resolveEvidenceForClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<ResolvedEvidence[]> {
+    return this.resolveAllEvidence(auditId, claims, searchEngine);
+  }
+
   async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<void> {
     try {
       // D026 §14/§15 — set before the verify loop to avoid a "done" poll race; stays inside this try so a Redis failure still hits the catch below.

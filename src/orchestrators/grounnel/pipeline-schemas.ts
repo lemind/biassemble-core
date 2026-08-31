@@ -27,6 +27,27 @@ export const VerifyRawResultSchema = VerifyResultSchema.omit({ evidence: true })
 });
 export const VerifyRawResponseSchema = z.object({ results: z.array(VerifyRawResultSchema) });
 
+// Spec 013 T22 — experiment-only variant, NOT wired into production. Same mechanism as T21's fix:
+// Gemini generates in schema order, so declaring `verdict` before `reason` (current production
+// order, see VerifyRawResultSchema above) lets VERIFY commit to a verdict before writing the
+// reasoning that's supposed to justify it. This reorders `reason` first and REQUIRED — mirroring
+// T21's `working` treatment — while leaving `evidenceCitations` optional/nullable unchanged: T22's
+// own STEP 0 measurement (tasks.md) found evidenceCitations legitimately null for 100% of real
+// `unsupported` results, so requiring it would break that path; `reason` was never missing in the
+// same 5686-call sample, so requiring it changes nothing about real traffic, only generation order.
+export const VerifyRawResultReasonFirstSchema = z.object({
+  id: z.string(),
+  reason: z.string(),
+  verdict: GrounnelVerdictEnum,
+  confidence: z.number().min(0).max(1),
+  evidenceCitations: z
+    .array(z.object({ source: z.string(), n: z.number().int() }))
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+});
+export const VerifyRawResponseReasonFirstSchema = z.object({ results: z.array(VerifyRawResultReasonFirstSchema) });
+
 // D025/T035 — batched "does reason support verdict?" classifier response.
 export const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
 export const ConsistencyCheckResponseSchema = z.object({ results: z.array(ConsistencyCheckResultSchema) });

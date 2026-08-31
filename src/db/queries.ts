@@ -727,6 +727,24 @@ export async function insertGrounnelRerankDecisions(
   return await db().insert(grounnelRerankDecisions).values(rows).returning();
 }
 
+// Spec 013 T22 — reconstructs the exact passages VERIFY would have received for one claim, by
+// joining the SELECTED rerank decisions back to their search-page excerpts. Read counterpart to
+// insertGrounnelSearchPage/insertGrounnelRerankDecisions above; lets the T22 A/B job re-fetch
+// passage text by (runId, claimId) instead of carrying it through Inngest step outputs, which is
+// what caused the 413 (Inngest replays every prior step's return value on each new invocation).
+export async function getSelectedPassagesForClaim(runId: string, claimId: string): Promise<Array<{ url: string; text: string }>> {
+  const rows = await db()
+    .select({ url: grounnelSearchPages.url, text: grounnelSearchPages.excerpt })
+    .from(grounnelRerankDecisions)
+    .innerJoin(
+      grounnelSearchPages,
+      and(eq(grounnelSearchPages.url, grounnelRerankDecisions.url), eq(grounnelSearchPages.claimId, grounnelRerankDecisions.claimId), eq(grounnelSearchPages.runId, grounnelRerankDecisions.runId))
+    )
+    .where(and(eq(grounnelRerankDecisions.runId, runId), eq(grounnelRerankDecisions.claimId, claimId), eq(grounnelRerankDecisions.selected, true)))
+    .orderBy(desc(grounnelRerankDecisions.combinedScore));
+  return rows;
+}
+
 // Batch, not one insert per gate — the 4 (or however many) gate decisions for one claim are
 // always written together, right after that claim's grounnel_claims row lands (T027, D023 §5).
 export async function insertGrounnelGateEvents(

@@ -5,13 +5,15 @@ import { DrizzleGrounnelGateEventStore } from "../persistence/grounnel-gate-even
 import { DrizzleGrounnelRerankDecisionStore } from "../persistence/grounnel-rerank-decision-store.js";
 import { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
+import { hasPassage } from "../orchestrators/grounnel/pipeline-helpers.js";
 import { evaluateGrounnelRun, type ClaimOutcome, type GrounnelRun, type LiveEvalSpec, type Violation } from "./grounnel-live-gate.js";
 import type { Provider } from "../providers/types.js";
 import type { PromptRegistry } from "../prompts/registry.js";
 import type { SearchProvider } from "../providers/search/search-provider.js";
 
-/** In-memory RedisHashClient for a single eval run — no Postgres/Redis (D019 §4); src/ never depends on tests/mocks. */
-class InMemoryRedisHashClient implements RedisHashClient {
+/** In-memory RedisHashClient for a single eval run — no Postgres/Redis (D019 §4); src/ never depends on tests/mocks.
+ * Exported (spec 013 T22) so the field-order A/B fixture step can build its own GrounnelStore without duplicating this. */
+export class InMemoryRedisHashClient implements RedisHashClient {
   private store = new Map<string, Map<string, string>>();
   async hset(key: string, fields: Record<string, string>): Promise<number> {
     let hash = this.store.get(key);
@@ -126,6 +128,43 @@ export async function runGrounnelEvalOnce(deps: GrounnelEvalDeps, goldenCase: Go
   }
   const status = await grounnelStore.getStatus(id);
   return { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };
+}
+
+export interface ResolvedFixtureClaim {
+  id: string;
+  claimText: string;
+  subjectEntity: string;
+  passages: Array<{ text: string }>;
+}
+
+/** Spec 013 T22 — real EXTRACT + eligibility + search/rerank, stopping before VERIFY. Snapshots the
+ * exact {id, claim, subjectEntity, passages} VERIFY would receive, reusable across both schema-order
+ * arms of the A/B without re-spending EXTRACT/search calls per arm. Same construction as
+ * runGrounnelEvalOnce, just calling pipelineService.resolveEvidenceForClaims instead of .run. */
+export async function resolveEvidenceOnce(deps: GrounnelEvalDeps, goldenCase: GoldenCase): Promise<{ runId: string; claims: ResolvedFixtureClaim[] }> {
+  const { provider, prompts, searchProvider } = deps;
+  const grounnelStore = new RedisGrounnelStore(new InMemoryRedisHashClient());
+  const historyStore = new DrizzleGrounnelHistoryStore();
+  const llmCallStore = new DrizzleGrounnelLlmCallStore();
+  const gateEventStore = new DrizzleGrounnelGateEventStore();
+  const rerankDecisionStore = new DrizzleGrounnelRerankDecisionStore();
+  const extractService = new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore);
+  const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore);
+
+  const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
+  const eligibleClaims = await extractService.classifyEligibility(id, pendingClaims);
+  if (eligibleClaims.length === 0) return { runId: id, claims: [] };
+  const resolved = await pipelineService.resolveEvidenceForClaims(id, eligibleClaims, goldenCase.searchEngine ?? "defaultFlow");
+  const withPassage = resolved.filter(hasPassage);
+  return {
+    runId: id,
+    claims: withPassage.map((r) => ({
+      id: r.claim.id,
+      claimText: r.claim.text,
+      subjectEntity: r.claim.subjectEntity ?? "",
+      passages: r.passages.map((p) => ({ text: p.text! })),
+    })),
+  };
 }
 
 /** Scores N already-executed repetitions of one case. Pure — no network — so the Inngest job can run
