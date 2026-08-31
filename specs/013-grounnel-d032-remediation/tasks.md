@@ -923,7 +923,33 @@ unattributable (the exact failure mode T22 already demonstrated).
   - **NEXT:** deploy, `PUT /api/inngest` to sync (a Vercel deploy does not auto-register new Inngest
     functions), then `pnpm t27:trigger`. Read the verdict before touching Step 2.
 
-- [ ] **T28 — Finding B: is VERIFY citation-completeness even available as a fix?** (D030 §3m Addendum 3)
+- [x] **T28 — Finding B: is VERIFY citation-completeness even available as a fix?** (D030 §3m Addendum 3) **CLOSED — Step 2 REJECTED (2026-08-31), user-accepted**
+  - **STEP 1 RESULT (offline, zero API cost — `scripts/t28-passage-inventory.ts`).** 320 distinct
+    firings, 191 scorable (129 skipped: no stored passage, or claim carries no proper noun).
+    **Subject present in the full selected passage: 188/191 = 98.4%** — an independent confirmation
+    of T26's 98.7%, arrived at by a separate query. On the coarse number alone, citation-completeness
+    is available and Step 2 would be permitted.
+  - **Step 2 rejected anyway, on the hand-inspection the reviews required.** Two findings the lexical
+    rate conceals:
+    1. **"Subject present" frequently means scraped boilerplate, not evidence.** For *"Microsoft did
+       not create the iPhone"* the only place "Microsoft" appears is a date-picker widget
+       (`JAN 09 JAN 09 Choose another date OK January 31 1 2 3 …  Microsoft Apps on iOS`); for the
+       Wright claims it is a nav header repeated twice. A prompt instructing VERIFY to add a
+       subject-naming sentence would make it cite chrome. **The 98.4% counts the token, not usable
+       text** — precisely the "lexical overlap is an unsound identity test" caution, now confirmed on
+       real data rather than argued.
+    2. **True M1 is 0, not ~1%.** All 3 "no overlap" cases are `properNounWords` false positives on
+       sentence-initial common nouns — `Researchers`, `One` (from *"One product line revenue…"*), and
+       `Terminators` (an astronomy term). **The gate has zero confirmed genuine entity-mismatch
+       catches across 320 firings**, against a ~75% false-trigger rate (T24).
+  - **Disposition:** Step 2 not run. No VERIFY prompt change, no gate change. The citation-completeness
+    direction is closed — its ceiling is "cite boilerplate", and the behaviour it would protect has no
+    demonstrated instance. This is the 6th refuted direction for `subject_entity`.
+  - **Spun out:** the `properNounWords` defect is filed as T30 — it is the cheaper finding and it
+    affects `applyYearGate` too.
+
+  <details><summary>Original T28 plan (superseded by the Step 1 result above)</summary>
+
   - **Gate code is frozen.** No sixth lexical patch, no full-passage widen, no instance-selector at
     article scope, no threshold retune. 5 of 5 candidates already refuted by simulation.
   - **What is measured vs. what is hypothesis.** Measured: M2 dominates firings (98.7%); the gate is
@@ -954,6 +980,19 @@ unattributable (the exact failure mode T22 already demonstrated).
     requirement is that the evidence handed to VERIFY carry enough local context to establish the
     subject/instance of the asserted fact.
   - **Do not draft the citation paragraph into `verify/system.json` until Step 1's inventory exists.**
+  </details>
+
+- [ ] **T30 — `properNounWords` treats any capitalised word as a proper noun** (found by T28 Step 1)
+  - `PROPER_NOUN_RE` is `/\b[A-Z][a-zA-Z'-]+\b/g` and `SENTENCE_START_STOPWORDS` covers ~15 words plus
+    month names, so sentence-initial common nouns are read as names: `Researchers`, `One`, `Terminators`
+    all became a claim's "subject" in real firings.
+  - **Blast radius: two gates.** `sameEntity` is shared by `applySubjectEntityGate` and
+    `applyYearGate` (gates-shared.ts) — a bogus name on either side both causes false firings and, when
+    the bogus name happens to appear in the evidence, masks real ones.
+  - **Free to verify** — `gates.ts`-family pure functions, no LLM cost, the one area CLAUDE.md says to
+    keep exhaustively tested. Fix shape: require either a non-sentence-initial position or a
+    multi-token/known-entity signal before accepting a capitalised word as a name.
+  - Not started. Sized small; do before any further `subject_entity` work.
 
 - [ ] **T29 — Housekeeping: delete the eight `scripts/_tmp-*.ts` investigation scripts**
   - `_tmp-poll-run.ts`, `_tmp-poll-run2.ts`, `_tmp-find-runs.ts`, `_tmp-dump-claims.ts`,

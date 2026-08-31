@@ -869,6 +869,39 @@ merging them would either over-exclude vague-but-real claims or under-exclude th
   Zod is not a runtime guarantee, and inverting D030 §3b via a schema hiccup would turn one unsafe
   affirmation into mass exclusion.
 
+### §13b. T27b (2026-08-31) — v1.1.0 replaced after two screens; what the first screen got wrong
+
+**v1.1.0 failed live** (§13 above): *"Historical computer mice were connected to computers by
+cables"* — true, checkable — was `excluded`. Root cause was the block's own first bullet, which
+generalised from indefinite placeholders ("a person") to *any* common-noun subject.
+
+**Round 1** screened 10 strategies × 16 fixtures × N=2. v1.1.0 failed 12/12 on generic-class claims;
+six alternatives scored 0 false exclusions and 10/10 contentless. **That six-way tie was an artifact
+of the fixture set, not six good designs** — every contentless fixture was indefinite singular
+("A person…", "Someone…") and every generic fixture bare plural ("computer mice…", "telephones…"),
+so the two sets were separable by article-and-number with no semantics involved. Recording this
+because it is the reusable lesson: *a screen whose positive and negative sets differ by a surface
+cue measures the cue.* Also refuted here: the falsifiability framing recommended in §13 — v2/v8
+protected generics but caught only 4/10 and 6/10 contentless claims.
+
+**Round 2** added 8 boundary fixtures where article and meaning disagree — indefinite-singular
+generics ("An early computer mouse was connected by a cable", "A mammal has a backbone") that must
+be kept, and bare-plural contentless claims ("Companies reported profits at some point") that must
+be excluded — then re-ran the survivors at N=3. This separated them immediately: **v6, round 1's
+apparent winner, caught only 3/9 plural-form contentless claims**, because its word list keyed on
+`a`/`an`/`some`. v1.1.0 scored 24 false exclusions including 6/15 on boundary cases.
+
+**Adopted: v5 "search-query" as `eligibility/system.json` v1.2.0** — *"could you write a search query
+that would settle this claim?"* Scores: 0 false exclusions (0/18 generic, 0/9 named, 0/15 boundary),
+9/9 plural contentless, 15/15 contentless, 6/6 drift controls held. Chosen over v4, which matched it
+on every headline number, because on the opinion control v5 returns `referentFalse: 0` while v4
+returns 3/3 — v4 reproduces the axis contamination that made v1.1.0's two dimensions non-independent.
+
+**Known limit, recorded not solved:** every surviving variant still returns `referentFalse: true`…
+i.e. flags no referent, on the *prediction* control. It changes no outcome (predictions exclude on
+category) but the two axes are not fully orthogonal. **Caveat:** v4 and v5 differ by one fixture's
+worth of signal; v5's edge is consistent across both rounds but thin.
+
 **Finding B → no gate change; the target is VERIFY citation completeness, and it is a hypothesis.**
 Per D030 §3m Addendum 3: the measured facts are that M2 dominates (98.7%) and that citation scope
 causes it. That a prompt can reliably make VERIFY cite subject-bearing context is **not** measured.

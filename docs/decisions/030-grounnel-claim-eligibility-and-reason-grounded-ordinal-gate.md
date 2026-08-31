@@ -1311,6 +1311,42 @@ the second must not begin before the first returns.
 **Disposition still unchanged.** No gate code change. No sixth lexical patch, no full-passage widen,
 no instance-selector at article scope, no threshold retune.
 
+### Addendum 4 (2026-08-31) — T28 Step 1 ran; citation-completeness is refuted, and the gate has no proven catch
+
+The falsifiable hypothesis stated in Addendum 3 was tested offline at zero API cost
+(`scripts/t28-passage-inventory.ts`). **Subject present in the full selected passage: 188/191
+(98.4%)** across 320 distinct firings — an independent confirmation of Addendum 2's 98.7%, via a
+different query. On that number alone the prompt direction was available.
+
+**It is refuted by what the matching text actually is.** Addendum 3 warned that
+`passage.includes(name)` is the same unsound identity test the gate itself uses, and required
+hand-inspection before concluding. Doing so:
+
+- *"Microsoft did not create the iPhone"* — the sole occurrence of "Microsoft" in the selected
+  passage is a scraped **date-picker widget**: `JAN 09 JAN 09 Choose another date OK January 31 1 2 3
+  4 5 … Microsoft Apps on iOS`.
+- *"The Wright brothers made four flights on December 17, 1903"* — matches a **navigation header
+  repeated twice**, not prose.
+
+A prompt instructing VERIFY to add a subject-naming sentence would therefore instruct it to cite
+boilerplate. **The 98.4% counts the token, not usable text.** Step 2 was not run; this is the **6th
+refuted direction** for `subject_entity`.
+
+**Second, larger finding: true M1 is 0, not ~1%.** All three "no overlap even against the full
+passage" cases turn out to be `properNounWords` false positives on sentence-initial common nouns —
+`Researchers`, `One` (from *"One product line revenue was later restated…"*), and `Terminators` (an
+astronomy term). **Across 320 recorded firings this gate has zero confirmed genuine
+entity-mismatch catches**, against the ~75% false-trigger rate measured in §3m Addendum 2. The
+justification retained on cost grounds in §3m therefore now has no demonstrated instance behind it.
+That is a materially different position from "rare but real", and whoever next re-prices this gate
+should start there rather than from the original estimate.
+
+**Spun out, not fixed here:** `PROPER_NOUN_RE` (`/\b[A-Z][a-zA-Z'-]+\b/g`) plus a ~15-word
+`SENTENCE_START_STOPWORDS` list accepts any capitalised word as a name. `sameEntity` is shared by
+`applySubjectEntityGate` **and** `applyYearGate`, so this corrupts both — filed as spec 013 T30, and
+worth doing before any further work on this gate, since it is free to verify and changes the
+denominator of every measurement above.
+
 ## Consequences
 
 - New in `src/orchestrators/grounnel/gates.ts`: `applyReasonOrdinalGate` (own policy function, not
