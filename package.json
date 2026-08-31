@@ -16,6 +16,7 @@
     "t22:trigger": "tsx --env-file=.env scripts/trigger-eval-t22.ts",
     "t25:trigger": "tsx --env-file=.env scripts/trigger-eval-t25.ts",
     "t27:trigger": "tsx --env-file=.env scripts/trigger-eval-t27.ts",
+    "t27b:trigger": "tsx --env-file=.env scripts/trigger-eval-t27b.ts",
     "eval:sanitize": "tsx scripts/sanitize-evals.ts",
     "eval:trigger": "tsx --env-file=.env scripts/trigger-eval.ts",
     "eval:trigger:golden": "tsx --env-file=.env scripts/trigger-eval-golden.ts",

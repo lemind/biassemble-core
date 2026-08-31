@@ -1,0 +1,10 @@
+import { getDb } from "../src/db/config";
+import { grounnelClaims } from "../src/db/schema";
+import { eq } from "drizzle-orm";
+const runId = process.argv[2];
+async function main() {
+  const db = getDb();
+  const claims = await db.select().from(grounnelClaims).where(eq(grounnelClaims.runId, runId));
+  for (const c of claims) console.log(JSON.stringify({ text: c.claimText, verdict: c.verdict }));
+}
+main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

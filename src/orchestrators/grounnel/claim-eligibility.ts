@@ -52,12 +52,15 @@ export async function classifyClaimVerifiability(
   llmCallStore: GrounnelLlmCallStore,
   runId: string,
   claimId: string,
-  input: ClaimVerifiabilityInput
+  input: ClaimVerifiabilityInput,
+  // Experiment seam (T27b) — an already-rendered system prompt to use instead of the registry's.
+  // Production never passes this; only the prompt-variant screen does.
+  systemOverride?: { text: string; version: string }
 ): Promise<ClaimVerifiabilityResult> {
   // Review finding — try must cover rendering/version lookup too, not just the provider call, or fail-open doesn't hold.
   try {
-    const promptVersion = prompts.getGrounnelEligibilityVersion();
-    const system = prompts.render("grounnel-eligibility", {
+    const promptVersion = systemOverride?.version ?? prompts.getGrounnelEligibilityVersion();
+    const system = systemOverride?.text ?? prompts.render("grounnel-eligibility", {
       claim_text: input.claimText,
       source_excerpt: input.sourceExcerpt ?? "(none)",
     });
