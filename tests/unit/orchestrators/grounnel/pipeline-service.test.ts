@@ -114,6 +114,49 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(provider.getCallCount()).toBe(0);
   });
 
+  // spec 015 G1 — a retrieved page that reproduces the input document corroborates nothing.
+  it("refuses a source that reproduces the input document, before any VERIFY call (G1)", async () => {
+    const claimId = uuid(1);
+    const claimText = "Alishba Rana was the only one in a class of 25 who could not write.";
+    const article = [
+      "I did not know why, but I was the only one in a class of 25 people who did not know how to write.",
+      "My writing journey took its first progressive steps in grade five when I met my teacher.",
+      "She taught me the value of my stories and helped shift my perspective on what writing could be.",
+    ].join(" ");
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: article, maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    // The "corroborating" page is the article itself, republished on another host.
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ url: "https://mirror.example.com/essay", text: article })]]]));
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+
+    await service.run(auditId, [{ id: claimId, text: claimText }], "defaultFlow", article);
+
+    const claim = (await store.getStatus(auditId))!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported");
+    // The whole point: the duplicate never costs a VERIFY call, and never becomes evidence.
+    expect(provider.getCallCount()).toBe(0);
+  });
+
+  it("keeps a genuinely independent source when the input text is supplied (G1 does not over-fire)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The Eiffel Tower was completed in 1889.";
+    const article = "A personal essay about learning to write, containing nothing at all about Paris landmarks or their construction dates anywhere in it.";
+    const passage = "The Eiffel Tower was completed in 1889 for the World's Fair held in Paris that year. ".repeat(5);
+    const cited = "The Eiffel Tower was completed in 1889 for the World's Fair held in Paris that year.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: article, maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ url: "https://en.wikipedia.org/wiki/Eiffel_Tower", text: passage })]]]));
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: citationsFor(claimText, passage, cited), reason: "The passage states the completion year.", confidence: 0.95 })) };
+    });
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+
+    await service.run(auditId, [{ id: claimId, text: claimText }], "defaultFlow", article);
+
+    expect((await store.getStatus(auditId))!.claims.find((c) => c.id === claimId)!.verdict).toBe("supported");
+  });
+
   it("writes 'unsupported: no evidence found' when the only passage is dropped by gate #4's relevance filter, with zero VERIFY calls", async () => {
     const claimId = uuid(1);
     const store = new RedisGrounnelStore(new FakeRedisHashClient());

@@ -4,6 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
+import { isInputDuplicate } from "./input-duplicate.js";
 import { composeUserFacingReason, evidenceMatchesPassage, rewriteUngroundedAffirmativeReason, type InstanceAttribution } from "./gates.js";
 import { runGateChain, type Diagnostic } from "./pipeline-gate-chain.js";
 import {
@@ -100,12 +101,14 @@ export class GrounnelPipelineService {
     return this.resolveAllEvidence(auditId, claims, searchEngine);
   }
 
-  async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<void> {
+  /** inputText (spec 015 G1) — the document under test, so retrieval handing back a copy of it can
+   * be refused. Optional: omitted means the check is skipped, never that it fails closed. */
+  async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string): Promise<void> {
     try {
       // D026 §14/§15 — set before the verify loop to avoid a "done" poll race; stays inside this try so a Redis failure still hits the catch below.
       await this.grounnelStore.setEscalating(auditId, true);
       try {
-        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine);
+        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine, inputText);
 
         const noEvidence = resolved.filter((r) => !hasPassage(r));
         await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
@@ -137,7 +140,7 @@ export class GrounnelPipelineService {
         // D026 §13 — skip escalation entirely if the primary pass already hit a rate limit.
         if (!rateLimitedMidRun) {
           const escalationT0 = Date.now();
-          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds);
+          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText);
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
       } finally {
@@ -159,7 +162,9 @@ export class GrounnelPipelineService {
     auditId: string,
     claims: PipelineClaimInput[],
     searchEngine: "defaultFlow" | "tavily",
-    protectedContradictionClaimIds: Set<string>
+    protectedContradictionClaimIds: Set<string>,
+    // G1 threads into escalation too — the wider tier pool is exactly where a syndicated copy surfaces.
+    inputText?: string
   ): Promise<void> {
     const byId = new Map(claims.map((c) => [c.id, c]));
     let pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
@@ -178,7 +183,7 @@ export class GrounnelPipelineService {
       let tavilyRateLimitedThisTier = false;
       for (let i = 0; i < pending.length; i += SEARCH_CONCURRENCY) {
         const chunk = pending.slice(i, i + SEARCH_CONCURRENCY);
-        const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, tier)));
+        const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, tier, inputText)));
         reResolved.push(...chunkResolved);
         if (chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"))) {
           tavilyRateLimitedThisTier = true;
@@ -325,12 +330,13 @@ export class GrounnelPipelineService {
   private async resolveAllEvidence(
     auditId: string,
     claims: PipelineClaimInput[],
-    searchEngine: "defaultFlow" | "tavily"
+    searchEngine: "defaultFlow" | "tavily",
+    inputText?: string
   ): Promise<ResolvedEvidence[]> {
     const resolved: ResolvedEvidence[] = [];
     for (let i = 0; i < claims.length; i += SEARCH_CONCURRENCY) {
       const chunk = claims.slice(i, i + SEARCH_CONCURRENCY);
-      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine)));
+      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, undefined, inputText)));
       resolved.push(...chunkResolved);
 
       const tavilyRateLimited = chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"));
@@ -355,7 +361,8 @@ export class GrounnelPipelineService {
     claim: PipelineClaimInput,
     searchEngine: "defaultFlow" | "tavily",
     // D026 §13 — escalation-only; omitted on the normal pass (HybridSearchProvider defaults it).
-    maxCandidates?: number
+    maxCandidates?: number,
+    inputText?: string
   ): Promise<ResolvedEvidence> {
     // context (D023 §6) attributes grounnel_search_calls rows to this run/claim; D026 §8 — full claim sentence, not a keyword rewrite (that's Tavily-only, buildSearchQuery/T046).
     const sources = await this.searchProvider.search(claim.text, {
@@ -374,7 +381,22 @@ export class GrounnelPipelineService {
       }
     }
 
-    const okSources = sources.filter((s) => s.status === "ok" && s.text);
+    let okSources = sources.filter((s) => s.status === "ok" && s.text);
+
+    // G1 (spec 015 T002) — drop a retrieved page that is substantially a copy of the document under
+    // test: a syndicated wire republication or an essay-mill mirror corroborates nothing, it IS the
+    // claim. Runs before rerank so the duplicate costs neither a rerank nor a VERIFY slot.
+    if (inputText?.trim()) {
+      const kept = okSources.filter((s) => !isInputDuplicate(s.text!, inputText));
+      if (kept.length !== okSources.length) {
+        logger.info(
+          { module: MODULE, operation: "resolveEvidence", claimId: claim.id, dropped: okSources.filter((s) => !kept.includes(s)).map((s) => s.url) },
+          "Refused source(s) that reproduce the input document (G1 input-duplicate)"
+        );
+        okSources = kept;
+      }
+    }
+
     if (okSources.length === 0) {
       logger.info({ module: MODULE, operation: "resolveEvidence", claimId: claim.id }, "No source resolved to usable text — no evidence found");
       return { claim, passages: [], sources };

@@ -94,7 +94,7 @@ export function registerGrounnelRoutes(
         (async () => {
           const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims);
           if (eligible.length > 0) {
-            await services.pipelineService.run(extracted.id, eligible, body.searchEngine);
+            await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text);
           }
         })().catch((err) => {
           logger.error(
