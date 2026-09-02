@@ -227,6 +227,60 @@ separate change sets and never report US1 as fixing the class.
 
 ---
 
+## T015 — the negation class, screened with CONSTRUCTED bundles (2026-09-02)
+
+18 calls, deployed. Control prompt only (4.6.0, nothing spliced). Sentences verbatim from
+`incident-9a784003.json`. **No clone attempted** — 68da8ff4's live input is unrecoverable.
+
+Scored two-tier, because T011 measured `partially_supported` at 9/228 cells (4%): an exact-label
+bar fails by construction. **The kill criterion is the illegal set** (a false accusation).
+
+| Fixture | Bundle | Verdict | |
+|---|---|---|---|
+| `N1-weak-investigating` | C alone ("under investigation") | `unsupported` 3/3 | safe |
+| `N2-weak-under-review` | A alone ("remains under review") | **`supported` 3/3** | safe, and *correct* |
+| `N3-live-shaped` | A + B + C together | **`contradicted` 3/3** | ❌ **ILLEGAL — false accusation** |
+| `N3-noisy` | A + B + C + distractors | **`contradicted` 3/3** | ❌ **ILLEGAL** |
+| `N4-real-conflict` | "officially concluded" | `contradicted` 3/3 | ✅ correct |
+| `A0-harness-control` | Case A live bundle | `contradicted` 3/3 | harness sane |
+
+**THE CLASS REPRODUCES, AND IT IS NOT A POLARITY DEFECT.** Every sentence is handled correctly on
+its own. The false accusation appears **only when the sources are combined**, and survives added
+noise. The model's own reasons show the inversion:
+
+- `N2` (A alone): *"…'under review by senior military officials', **which implies no official
+  finding has been issued**"* → `supported`. Textbook-correct.
+- `N3` (A+B+C): *"The passage states the Pentagon said 'The incident is under investigation,'
+  **which contradicts the claim** that no official finding has been issued."* → `contradicted`.
+
+**The same sentence C reads as neutral in isolation (`unsupported`, N1) and as a contradiction when
+A and B sit beside it.** Adding *supporting* evidence flipped the verdict against the claim.
+
+**This refutes Block A's premise and, with it, the framing of this entire spec.** Block A teaches
+*"evidence describing a weaker or compatible state supports the negated claim."* VERIFY **already
+does that**, unprompted and with correct reasoning, whenever it sees the sentence alone. The block
+was written to fix a STEP 2 polarity error that does not exist. Ninth prompt hypothesis refuted —
+and this one was refuted by evidence rather than by cost.
+
+**The real defect is multi-source aggregation in STEP 1** — the same family as Case A
+(`ed8b3a37`), where the object-fact was selected over the meta-fact from a mixed bundle. Both
+failures are selection under competing passages, not labelling of a selected passage. That is one
+defect with two presentations, and it is the thing to fix.
+
+**Consequences:**
+
+1. **Do not ship Block A or Block B.** Both target a mislabelling step that is not where the error
+   occurs. T012 stays cancelled.
+2. **The screening question changes** from *"does a wording fix the label?"* to *"why does adding a
+   source invert the reading of another source?"* `N1`/`N2`/`N3` are now a permanent 3-row
+   regression triple for that question, and they cost 9 calls to run.
+3. **plan.md's option 2 (a schema field before `verdict`) is now the leading candidate**, because
+   the failure is VERIFY committing to a label before settling which fact it is answering. Option 1
+   (STEP 1 isolation) is equally live. Both are structural, neither is a wording change.
+4. **`partially_supported` was never the right target.** `N2` returned `supported` with sound
+   reasoning; the T008 pre-registration assumed a hedge the model does not need. Recorded, not
+   edited.
+
 ## Phase 4: User Story 2 — VERIFY labels negated claims correctly (Priority: P2) — **POST-MVP**
 
 **Goal**: the wrong label is not produced in the first place.
