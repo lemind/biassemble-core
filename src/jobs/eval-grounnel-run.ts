@@ -10,8 +10,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NonRetriableError } from "inngest";
 import { inngest } from "./client.js";
-import { GeminiProvider } from "../providers/gemini.js";
+import { GeminiProvider, RateLimitError } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
 import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../providers/search/tavily-provider.js";
@@ -22,6 +23,20 @@ import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 
 const MODULE = "eval-grounnel-run";
+/** Thrown-error text only. Inngest serialises step errors, so `instanceof RateLimitError` is gone by then. */
+const RATE_LIMIT_RE = /too many requests|rate.?limit|quota|usage limit|credits are depleted|spend(ing)? cap/i;
+/** Neither an empty balance nor a hit spend cap clears on its own — say so, don't say "re-run later". */
+const BILLING_RE = /credits are depleted|spend(ing)? cap/i;
+/** Two could be a transient RPM blip; three in a row is the daily cap, which won't clear mid-run. */
+const RATE_LIMIT_ABORT_AFTER = 3;
+// Exact degraded strings the pipeline substitutes for a verdict (pipeline-helpers.ts, pipeline.service.ts).
+// Deliberately NOT the loose regex above: an article about fishing quotas would false-abort on "quota".
+const DEGRADED_MARKERS = ["hit today's AI usage limit", "being rate-limited right now", "search provider's rate limit was reached"];
+
+/** A run that "succeeded" but whose claims carry rate-limit text instead of verdicts — junk to score. */
+function runIsRateLimited(run: GrounnelRun): boolean {
+  return run.claims.length > 0 && run.claims.every((c) => DEGRADED_MARKERS.some((m) => (c.reason ?? "").includes(m)));
+}
 
 export const evalGrounnelRunJob = inngest.createFunction(
   { id: "eval-grounnel-run", name: "Eval — Grounnel Live Gate" },
@@ -63,23 +78,54 @@ export const evalGrounnelRunJob = inngest.createFunction(
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider, new DrizzleGrounnelSearchCallStore());
 
     const cases = [];
+    // A rate-limited quota doesn't recover inside one run, so grinding through the remaining
+    // repetitions just burns wall-clock producing failures — abort and report what completed.
+    let consecutiveRateLimited = 0;
+    let abortedAfter: string | null = null;
+    let abortWasBilling = false;
     for (const goldenCase of selected) {
+      if (abortedAfter) break;
       const runs: GrounnelRun[] = [];
       const errors: string[] = [];
       for (let i = 0; i < repeats; i++) {
         try {
-          runs.push(
-            await step.run(`case-${goldenCase.id}-run-${i + 1}`, () =>
-              runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase)
-            )
-          );
+          const run = await step.run(`case-${goldenCase.id}-run-${i + 1}`, async () => {
+            try {
+              return await runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase);
+            } catch (err) {
+              // Inside the step the class survives (outside it, Inngest has serialised it to text —
+              // hence RATE_LIMIT_RE below). A 429 fails again immediately, so don't spend 4 retries
+              // and their backoff discovering that: 5 attempts per repetition is what made the
+              // abort take 15 runs instead of 3.
+              if (err instanceof RateLimitError) throw new NonRetriableError(err.message, { cause: err });
+              throw err;
+            }
+          });
+          runs.push(run);
+          // A degraded run "succeeds" with rate-limit text in place of verdicts — scoring that as a
+          // real result is worse than failing, so it counts toward the abort too (D026 §17).
+          consecutiveRateLimited = runIsRateLimited(run) ? consecutiveRateLimited + 1 : 0;
         } catch (err) {
           // One repetition failing must not abandon the case — the remaining repetitions still
           // carry signal, and a partial case is reported as partial rather than silently passing.
-          errors.push(err instanceof Error ? err.message : String(err));
+          const message = err instanceof Error ? err.message : String(err);
+          errors.push(message);
+          // Inngest serialises step errors, so the RateLimitError class is gone by here — match text.
+          consecutiveRateLimited = RATE_LIMIT_RE.test(message) ? consecutiveRateLimited + 1 : 0;
+          if (BILLING_RE.test(message)) abortWasBilling = true;
+        }
+        if (consecutiveRateLimited >= RATE_LIMIT_ABORT_AFTER) {
+          abortedAfter = `${goldenCase.id} run ${i + 1}`;
+          break;
         }
       }
       cases.push(scoreGrounnelEvalCase(goldenCase, runs, errors, minCorrectRateOverride, repeats));
+    }
+    if (abortedAfter) {
+      logger.warn(
+        { module: MODULE, abortedAfter, casesAttempted: cases.length, casesPlanned: selected.length },
+        "Grounnel live eval aborted — Gemini rate limit hit repeatedly; remaining cases skipped"
+      );
     }
 
     const summary = summarizeGrounnelEvalCases(cases);
@@ -95,6 +141,18 @@ export const evalGrounnelRunJob = inngest.createFunction(
         verdicts: Object.fromEntries(c.claims.filter((cl) => cl.kind === "false").map((cl) => [cl.match, cl.verdicts])),
       }));
 
+    // Postgres keeps VERIFY's RAW reason (D023 §7/T18), so user-facing text survives nowhere else. Bounded — see ADR.
+    const REASON_BEARING_VERDICTS = new Set(["unverifiable", "unsupported", "excluded"]);
+    const userFacingReasons = summary.cases
+      .flatMap((c) =>
+        c.runDetails.flatMap((r) =>
+          r.claims
+            .filter((cl) => cl.verdict && REASON_BEARING_VERDICTS.has(cl.verdict) && cl.reason)
+            .map((cl) => ({ caseId: c.id, runId: r.id, verdict: cl.verdict, reason: cl.reason!.slice(0, 300) }))
+        )
+      )
+      .slice(0, 40);
+
     logger.info(
       {
         module: MODULE,
@@ -105,6 +163,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
         falseAccusations: summary.totalFalseAccusations,
         safetyOk: summary.cases.every((c) => c.safetyOk),
         detection,
+        userFacingReasons,
       },
       summary.passed ? "Grounnel live eval passed" : "Grounnel live eval failed"
     );
@@ -117,10 +176,26 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // At N>1 the full per-repetition claim dump is far too large for an Inngest step output / error
     // message, so it is replaced by the run ids — the claims themselves are already in Postgres
     // (`grounnel.grounnel_claims` by `run_id`, source "eval"), which is where Stage 2 reads them.
+    // Caveat (T18): that `reason` is RAW, not user-facing — read `userFacingReasons` logged above.
     const compact = summary.cases.map(({ runDetails, run: _run, ...rest }) => ({
       ...rest,
       runIds: runDetails.map((r) => r.id).filter(Boolean),
     }));
+
+    // An abort is an INFRASTRUCTURE failure, not a quality one — say so first, so a rate-limited
+    // run is never mistaken for a regression. Partial scores are still reported, never silently passed.
+    if (abortedAfter) {
+      // NonRetriableError, not Error: this function has Inngest's default 4 retries, and a FAILED
+      // step is not memoized — a plain throw would re-run the rate-limited cases up to 4 more times.
+      throw new NonRetriableError(
+        `Grounnel live eval ABORTED at ${abortedAfter} — ${RATE_LIMIT_ABORT_AFTER} consecutive rate-limited runs. ` +
+          `Scored ${cases.length}/${selected.length} cases before stopping; these numbers are PARTIAL and not a regression signal. ` +
+          (abortWasBilling
+            ? "CAUSE: AI provider credits are depleted — waiting will NOT fix this, top up the account balance."
+            : "Re-run on fresh quota.") +
+          `\n${JSON.stringify(compact, null, 2)}`
+      );
+    }
 
     if (!summary.passed) {
       const failed = compact.filter((c) => !c.ok);

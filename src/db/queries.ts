@@ -652,7 +652,7 @@ export async function insertGrounnelClaim(data: {
   runId: string;
   claimText: string;
   sourceExcerpt: string | null;
-  verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+  verdict: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
   evidence: string | null;
   confidence: number | null;
   reason: string | null;
@@ -677,7 +677,7 @@ export async function insertGrounnelLlmCall(data: {
   runId: string;
   claimId?: string | null;
   stage: "extract" | "verify";
-  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "instance_attribution" | "attribution_experiment";
   provider: string;
   model: string;
   promptVersion: string;
@@ -727,15 +727,33 @@ export async function insertGrounnelRerankDecisions(
   return await db().insert(grounnelRerankDecisions).values(rows).returning();
 }
 
+// Spec 013 T22 — reconstructs the exact passages VERIFY would have received for one claim, by
+// joining the SELECTED rerank decisions back to their search-page excerpts. Read counterpart to
+// insertGrounnelSearchPage/insertGrounnelRerankDecisions above; lets the T22 A/B job re-fetch
+// passage text by (runId, claimId) instead of carrying it through Inngest step outputs, which is
+// what caused the 413 (Inngest replays every prior step's return value on each new invocation).
+export async function getSelectedPassagesForClaim(runId: string, claimId: string): Promise<Array<{ url: string; text: string }>> {
+  const rows = await db()
+    .select({ url: grounnelSearchPages.url, text: grounnelSearchPages.excerpt })
+    .from(grounnelRerankDecisions)
+    .innerJoin(
+      grounnelSearchPages,
+      and(eq(grounnelSearchPages.url, grounnelRerankDecisions.url), eq(grounnelSearchPages.claimId, grounnelRerankDecisions.claimId), eq(grounnelSearchPages.runId, grounnelRerankDecisions.runId))
+    )
+    .where(and(eq(grounnelRerankDecisions.runId, runId), eq(grounnelRerankDecisions.claimId, claimId), eq(grounnelRerankDecisions.selected, true)))
+    .orderBy(desc(grounnelRerankDecisions.combinedScore));
+  return rows;
+}
+
 // Batch, not one insert per gate — the 4 (or however many) gate decisions for one claim are
 // always written together, right after that claim's grounnel_claims row lands (T027, D023 §5).
 export async function insertGrounnelGateEvents(
   rows: Array<{
     runId: string;
     claimId: string;
-    gate: "reason_consistency" | "implicit_negation" | "reason_year" | "reason_ordinal" | "subject_entity" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "year" | "retry_reconciliation" | "escalation_replacement" | "retry_decision";
-    verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
-    verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | null;
+    gate: "reason_consistency" | "implicit_negation" | "reason_year" | "reason_ordinal" | "instance_attribution" | "subject_entity" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "year" | "retry_reconciliation" | "escalation_replacement" | "retry_decision";
+    verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
+    verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
     overridden: boolean;
     reason: GateReason | null;
   }>

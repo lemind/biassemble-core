@@ -3,6 +3,7 @@ import {
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
+  applyInstanceAttributionGate,
   applyImplicitNegationGate,
   applyNumericGate,
   applyReasonConsistencyGate,
@@ -10,6 +11,8 @@ import {
   applyReasonYearGate,
   applySubjectEntityGate,
   applyYearGate,
+  composeUserFacingReason,
+  labelSubjectEntityDowngrade,
   rewriteUngroundedAffirmativeReason,
 } from "../../../../src/orchestrators/grounnel/gates.js";
 
@@ -609,6 +612,7 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
   it("forces contradicted when the reason explicitly says 'directly contradicting the claim' (g04)", () => {
     const result = applyReasonConsistencyGate({
       verdict: "unsupported",
+      claimText: "World War II ended in 1943.",
       reason: "The passage states that World War II began in 1939 and ended in 1945, directly contradicting the claim that it ended in 1943.",
     });
     expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "contradiction_language_in_model_reason" });
@@ -621,24 +625,26 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
     // (clearer VERDICT/REASON language) or a claim-aware heuristic, not a blind regex widening.
     const result = applyReasonConsistencyGate({
       verdict: "unsupported",
+      claimText: "The Statue of Liberty was a gift from France.",
       reason: "The passage states the statue was a gift from France, not Canada.",
     });
     expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
   });
 
   it("leaves a verdict already at contradicted unchanged", () => {
-    const result = applyReasonConsistencyGate({ verdict: "contradicted", reason: "This contradicts the claim." });
+    const result = applyReasonConsistencyGate({ verdict: "contradicted", claimText: "The bridge opened in 1937.", reason: "This contradicts the claim." });
     expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
   });
 
   it("does nothing when there's no reason", () => {
-    const result = applyReasonConsistencyGate({ verdict: "supported", reason: null });
+    const result = applyReasonConsistencyGate({ verdict: "supported", claimText: "The bridge opened in 1937.", reason: null });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
   });
 
   it("does not fire on a negated contradiction ('does not contradict')", () => {
     const result = applyReasonConsistencyGate({
       verdict: "supported",
+      claimText: "The report is accurate.",
       reason: "This does not contradict the earlier report.",
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
@@ -647,6 +653,7 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
   it("does nothing when the reason has no contradiction language at all", () => {
     const result = applyReasonConsistencyGate({
       verdict: "supported",
+      claimText: "The passage's figures are accurate.",
       reason: "The passage directly confirms the claim's figures.",
     });
     expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
@@ -658,9 +665,61 @@ describe("reason-consistency gate (real live-eval findings, 2026-08-06)", () => 
     // judgment, so it must not be treated as a verdict this gate should override.
     const result = applyReasonConsistencyGate({
       verdict: "unverifiable",
+      claimText: "The bridge opened in 1937.",
       reason: "The passage states the bridge opened in 1931, which conflicts with the claim's 1937 date, but the match is only approximate so confidence is low.",
     });
     expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  describe("negation-scope guard (D032 §9/§3k) — claim's own negation must not be read as the negated fact asserted positively", () => {
+    // Real captured reason (D032 §3k) — "World War II did not end in 1943" is TRUE; the reason's
+    // own verdict was `supported`, but its prose says "contradicts", which is what this gate keyed
+    // on pre-fix. 7/10 real repetitions took exactly this path to a false accusation.
+    it("abstains on the real WWII case even though the reason literally says 'contradicts'", () => {
+      const result = applyReasonConsistencyGate({
+        verdict: "supported",
+        claimText: "World War II did not end in 1943.",
+        reason:
+          "The passage states that World War II ended on September 2, 1945, and that it lasted from 1939 to 1945, which contradicts the claim that it did not end in 1943.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("abstains on a negated claim with the strongest 'directly contradicting' phrasing too", () => {
+      const result = applyReasonConsistencyGate({
+        verdict: "supported",
+        claimText: "Microsoft did not create the iPhone.",
+        reason: "Apple created the iPhone, directly contradicting any claim that Microsoft did.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("still fires on a non-negated claim with the same contradiction language (no regression)", () => {
+      const result = applyReasonConsistencyGate({
+        verdict: "unsupported",
+        claimText: "World War II ended in 1943.",
+        reason: "The passage states that World War II ended in 1945, directly contradicting the claim that it ended in 1943.",
+      });
+      expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "contradiction_language_in_model_reason" });
+    });
+
+    // (review finding) Known, accepted gap — presence-only scoping (containsNegationCue's own doc
+    // comment, D032 §9c): this gate has no single extracted claim token to scope a check around, so
+    // an unrelated negation ANYWHERE in a compound claim also suppresses a genuine contradiction
+    // catch elsewhere in the same claim. Safe-side (lost detection, not a manufactured accusation —
+    // same asymmetry the Cardinal Rule treats as acceptable), and EXTRACT's own atomicity rule means
+    // a real compound claim like this shouldn't reach VERIFY as one claim in the first place — but
+    // that rule isn't code-enforced, so this stays a real, documented gap, not a hypothetical one.
+    it("(known gap) an unrelated negation elsewhere in a compound claim suppresses a genuine, unrelated contradiction catch", () => {
+      const result = applyReasonConsistencyGate({
+        verdict: "supported",
+        claimText: "The unarmed suspect, who did not resist arrest, was taken into custody in 1990.",
+        reason: "Sources contradict the claim; records show custody was taken in 1975.",
+      });
+      // Documents current behavior (abstains) rather than asserting it's correct — this is exactly
+      // the accepted tradeoff, not a case this gate is claimed to handle.
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
   });
 });
 
@@ -806,6 +865,60 @@ describe("Case A gate — implicit negation, bare 'X, not Y' (D022 §4, real liv
   });
 });
 
+describe("instance-attribution gate — passage-grounded, LLM-checker-driven (spec 013 T21, the g17 shape)", () => {
+  it("forces contradicted when the passages attribute the fact to a different member — the real g17 failure", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "different" });
+    expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "instance_attribution_mismatch" });
+  });
+
+  it("leaves the verdict alone on 'same'", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "same" });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("leaves the verdict alone on 'absent' — the checker's abstain, and its most common answer", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "absent" });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("downgrades rather than accuses on 'conflict' — disagreeing sources are not a falsehood finding (Cardinal Rule)", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: "conflict" });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: true, reason: "instance_attribution_conflict" });
+  });
+
+  it("does not upgrade an unsupported verdict on 'conflict' — the downgrade branch is affirmative-only", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "unsupported", attribution: "conflict" });
+    expect(result).toEqual({ verdict: "unsupported", overridden: false, reason: null });
+  });
+
+  it("does nothing when the checker didn't run or failed (fail-open, D025 §2 convention)", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "supported", attribution: null });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("never re-fires on a verdict already 'contradicted'", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "contradicted", attribution: "different" });
+    expect(result).toEqual({ verdict: "contradicted", overridden: false, reason: null });
+  });
+
+  it("abstains on a negated claim — the checker answers about the fact, not its polarity (D032 §9)", () => {
+    // "did not cover 852 feet" is TRUE of the first flight; the passages still attribute 852 feet to
+    // the fourth, so `different` here would force `contradicted` on a true claim (Cardinal Rule).
+    const result = applyInstanceAttributionGate({ claimText: "The first flight did not cover 852 feet.", verdict: "supported", attribution: "different" });
+    expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+  });
+
+  it("never fires on 'unverifiable' — that's a CONFIDENCE downgrade, same exclusion the sibling reason gates use (D026 §22)", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "unverifiable", attribution: "different" });
+    expect(result).toEqual({ verdict: "unverifiable", overridden: false, reason: null });
+  });
+
+  it("never overrides 'excluded' — exclusion is a scope decision, not a verdict to correct (D032 §3f)", () => {
+    const result = applyInstanceAttributionGate({ claimText: "The first flight covered 852 feet.", verdict: "excluded", attribution: "different" });
+    expect(result).toEqual({ verdict: "excluded", overridden: false, reason: null });
+  });
+});
+
 describe("gate #5 — counterfact-ignored, LLM-classifier-driven (D025, real live-eval finding: g04 recurrence)", () => {
   it("flags when the classifier says the reason doesn't support the verdict", () => {
     const result = applyCounterfactIgnoredGate({ verdict: "unsupported", reasonSupportsVerdict: false });
@@ -945,6 +1058,52 @@ describe("reason/verdict consistency gate — year mismatch (candidate; NOT wire
       const reason = "The IAU never confirmed a $3.5 million reclassification in 2005. " + altYearSentence;
       const result = applyReasonYearGate({ verdict: "supported", claimText: claim, reason });
       expect(result.verdict).toBe("contradicted");
+    });
+  });
+
+  describe("negation-scope guard (D032 §9/§3k) — claim's own negated year must not be read as a positive assertion", () => {
+    // Real captured case, 4/10 repetitions (D032 §3k): "did not end in 1943" is TRUE; the reason
+    // names 1945, which CONFIRMS the negation. Pre-fix, this gate read "different year in reason" as
+    // a mismatch regardless of the claim's own polarity and forced `contradicted`.
+    it("abstains on the real WWII case — a different year in reason confirms, not contradicts, the negation", () => {
+      const result = applyReasonYearGate({
+        verdict: "supported",
+        claimText: "World War II did not end in 1943.",
+        reason: "The passage states that World War II lasted from 1939 to 1945 and formally ended on September 2, 1945, which is not 1943.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("abstains even when reason positively restates the claim's own (negated) year", () => {
+      const result = applyReasonYearGate({
+        verdict: "supported",
+        claimText: "World War II did not end in 1943.",
+        reason: "The passage confirms World War II did not end in 1943 — it ended in 1945.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    // Review finding: a backward-only negation check misses this real, natural phrasing entirely —
+    // the exact same bug in a different word order. isClaimTokenNegated checks both directions.
+    it("abstains on POSTPOSED negation too — '1943 is not the year it ended', not just 'did not end in 1943'", () => {
+      const result = applyReasonYearGate({
+        verdict: "supported",
+        claimText: "1943 is not the year World War II ended.",
+        reason: "The passage states that World War II ended in 1945.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("position-scoped, not presence-only: a negation in an earlier, unrelated sentence must not block this gate from firing on the claim's own unnegated year", () => {
+      // "never" negates an unrelated fact in the first sentence, well outside both the sentence
+      // boundary AND the 60-char window before "2005" — the year token itself carries no negation,
+      // so the gate must fire exactly as it does without the prefix (the block's own proven case).
+      const result = applyReasonYearGate({
+        verdict: "supported",
+        claimText: "The IAU never held international press conferences. " + claim,
+        reason: altYearSentence,
+      });
+      expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_year_mismatch" });
     });
   });
 });
@@ -1328,6 +1487,73 @@ describe("reason/verdict consistency gate — ordinal mismatch (D030, tasks.md T
       expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
     });
   });
+
+  describe("negation-scope guard (D032 §9/§3k) — claim's own negated ordinal must not be read as a positive assertion; the failure mode this gate was UNFROZEN for (D030 §3k amendment)", () => {
+    // Real captured reason (D032 §3k), 3/10 repetitions: "not the first" is TRUE; the reason
+    // correctly identifies Aldrin as second, which CONFIRMS the negation. Pre-fix, this gate read
+    // "reason names a different ordinal" as a mismatch regardless of the claim's own polarity.
+    it("abstains on the real Aldrin case — reason naming 'second' confirms, not contradicts, the negation", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "Buzz Aldrin was not the first man to walk on the Moon.",
+        reason:
+          "Source A states Buzz Aldrin was the second human to set foot on the Moon, and Source B states Buzz Aldrin followed Armstrong to the surface a short time later, implying Armstrong was first.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("abstains even when reason positively restates the claim's own (negated) ordinal", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "Buzz Aldrin was not the first man to walk on the Moon.",
+        reason: "The passage confirms Buzz Aldrin was not the first — Armstrong was first, Aldrin second.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    // Review finding: a backward-only negation check misses this real, natural phrasing entirely.
+    // isClaimTokenNegated checks both directions, same fix as the year gate's own postposed test.
+    it("abstains on POSTPOSED negation too — 'first flight ... was not 852 feet', not just 'was not the first'", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The first flight's distance was not 852 feet.",
+        reason: "The passage states the first flight covered 900 feet.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("position-scoped, not presence-only: a negation in an unrelated earlier sentence must not block this gate from firing on the claim's own unnegated ordinal", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "Ground control never lost radio contact. The first flight covered 852 ft.",
+        reason: "The passage states the fourth flight covered 852 ft, not the first.",
+      });
+      expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+    });
+  });
+
+  // T17, D032 §10 — real g23 live false accusation, captured verbatim from the run that produced it.
+  // "second" inside "12-second" isn't a sequence selector; see D032 §10 for the full mechanism.
+  describe("hyphenated numeric compound guard (T17, D032 §10)", () => {
+    it("does not force contradicted on the real g23 case — 'second' inside '12-second' is not a competing ordinal", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The Wright brothers' first successful powered flight lasted 12 seconds.",
+        reason:
+          "The passage states that the Wright brothers' 12-second flight changed the world and that the flight lasted 12 seconds. Multiple sources confirm the duration of the flight as 12 seconds.",
+      });
+      expect(result).toEqual({ verdict: "supported", overridden: false, reason: null });
+    });
+
+    it("still fires on a genuine competing ordinal even when a numeric duration compound is also present", () => {
+      const result = applyReasonOrdinalGate({
+        verdict: "supported",
+        claimText: "The first flight covered 852 ft.",
+        reason: "The passage states the 12-second fourth flight covered 852 ft, not the first.",
+      });
+      expect(result).toEqual({ verdict: "contradicted", overridden: true, reason: "reason_ordinal_mismatch" });
+    });
+  });
 });
 
 // T009 (D030, spec.md SC-002) — held-out generalization measurement, deliberately different
@@ -1484,8 +1710,84 @@ describe("subject-entity gate — deterministic backstop for g17 (unrelated real
   });
 });
 
+describe("labelSubjectEntityDowngrade — D032 §3f/T6b, distinguishes a subject_entity downgrade from a genuine no-evidence unverifiable", () => {
+  const SUBJECT_ENTITY_EVENT = { gate: "subject_entity", overridden: true };
+  const OTHER_EVENT = { gate: "reason_year", overridden: true };
+  const NOOP_SUBJECT_ENTITY_EVENT = { gate: "subject_entity", overridden: false };
+
+  it("appends a distinguishing note when subject_entity overrode this claim to unverifiable", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [SUBJECT_ENTITY_EVENT], "The passage discusses a different Wright brother.");
+    expect(result).toBe(
+      "The passage discusses a different Wright brother. Evidence was found but could not be confirmed as being about this claim's specific subject — this is not a finding that no evidence exists."
+    );
+  });
+
+  it("leaves reason unchanged when subject_entity did not fire (a genuine no-evidence unverifiable)", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [OTHER_EVENT, NOOP_SUBJECT_ENTITY_EVENT], "No relevant source found for this claim.");
+    expect(result).toBe("No relevant source found for this claim.");
+  });
+
+  it("leaves reason unchanged for any verdict other than unverifiable, even if subject_entity is in the event list", () => {
+    // subject_entity only ever overrides TO unverifiable, but this guards the precondition directly
+    // rather than relying on that invariant holding forever.
+    const result = labelSubjectEntityDowngrade("supported", [SUBJECT_ENTITY_EVENT], "The passage confirms the claim.");
+    expect(result).toBe("The passage confirms the claim.");
+  });
+
+  it("passes through null reason unchanged, even when subject_entity fired", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [SUBJECT_ENTITY_EVENT], null);
+    expect(result).toBeNull();
+  });
+
+  it("does not fire on an empty gate-events list", () => {
+    const result = labelSubjectEntityDowngrade("unverifiable", [], "No relevant source found for this claim.");
+    expect(result).toBe("No relevant source found for this claim.");
+  });
+});
+
+describe("composeUserFacingReason — D032 §3f/T6b (review finding), precedence between subject_entity labelling and the D031 ungrounded-affirmative rewrite", () => {
+  const SUBJECT_ENTITY_EVENT = { gate: "subject_entity", overridden: true };
+
+  // The actual bug: subject_entity ALSO nulls evidence (pipeline-gate-chain.ts), so citations.length
+  // is 0 here too — rewriteUngroundedAffirmativeReason's own "citationsCount > 0" early-return does
+  // NOT skip this case. Composing both unconditionally produced a self-contradictory reason
+  // ("no evidence found" + "evidence was found") on any subject_entity downgrade whose original
+  // VERIFY reason was affirmative — which it typically is, since it justified the pre-downgrade
+  // supported/partially_supported verdict.
+  it("subject_entity takes precedence: does NOT let the D031 rewrite replace an affirmative reason with 'no evidence found'", () => {
+    const result = composeUserFacingReason(
+      "unverifiable",
+      [SUBJECT_ENTITY_EVENT],
+      0, // citations.length after subject_entity nulled evidence — the exact condition that hid the bug
+      "The passage confirms the second layer contained 34 fragments."
+    );
+    expect(result).not.toContain("did not provide a specific passage");
+    expect(result).toBe(
+      "The passage confirms the second layer contained 34 fragments. Evidence was found but could not be confirmed as being about this claim's specific subject — this is not a finding that no evidence exists."
+    );
+  });
+
+  it("falls through to the D031 rewrite unchanged when subject_entity did not fire (no regression)", () => {
+    const result = composeUserFacingReason(
+      "unverifiable",
+      [{ gate: "reason_year", overridden: true }],
+      0,
+      "Multiple sources state the first flight lasted 12 seconds."
+    );
+    expect(result).toBe(
+      "The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed."
+    );
+  });
+
+  it("falls through to the D031 rewrite unchanged when there are no gate events at all", () => {
+    const result = composeUserFacingReason("unsupported", [], 0, "No relevant source found for this claim.");
+    expect(result).toBe("No relevant source found for this claim.");
+  });
+});
+
 describe("rewriteUngroundedAffirmativeReason — D031, real live-test finding: unverifiable/unsupported verdict shown beside a reason that affirmatively claims sources confirm the claim", () => {
-  const REPLACEMENT = "The available sources did not provide a specific passage that could be cited to verify this claim.";
+  const REPLACEMENT =
+    "The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.";
 
   it("rewrites when unverifiable + 0 citations + affirmative reason (real captured example)", () => {
     const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight lasted 12 seconds.");

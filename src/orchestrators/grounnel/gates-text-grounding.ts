@@ -2,11 +2,12 @@
 
 import { CONTRADICTION_LANGUAGE_RE, NEGATED_CONTRADICTION_RE } from "../audit/verify-reconcilers.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
-import type { Verdict } from "./gates-shared.js";
+import { containsNegationCue, type Verdict } from "./gates-shared.js";
 
 export interface ReasonConsistencyInput {
   verdict: Verdict;
   reason: string | null;
+  claimText: string;
 }
 
 export interface ReasonConsistencyResult {
@@ -19,6 +20,11 @@ export interface ReasonConsistencyResult {
 /** Forces `contradicted` when the model's own reason asserts a contradiction but the verdict doesn't. `unverifiable` excluded (D026 §22) — it's a CONFIDENCE downgrade. */
 export function applyReasonConsistencyGate(input: ReasonConsistencyInput): ReasonConsistencyResult {
   if (input.verdict === "contradicted" || input.verdict === "unverifiable" || !input.reason) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
+  // D032 §9/§3k — abstain on a negated claim; presence-only, a known coarser check than the
+  // position-scoped gates (accepted tradeoff, see ADR §9c and containsNegationCue's own comment).
+  if (containsNegationCue(input.claimText)) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
   if (!CONTRADICTION_LANGUAGE_RE.test(input.reason) || NEGATED_CONTRADICTION_RE.test(input.reason)) {
@@ -85,7 +91,7 @@ function normalizeForSubstringCheck(text: string): string {
 const EVIDENCE_ELLIPSIS_RE = /\.{3,}|…/g;
 
 /** Every fragment (split on an ellipsis) must independently be a real, contiguous substring — still rejects a fabricated fragment, just allows a non-contiguous multi-excerpt span (D019 §2). */
-function evidenceMatchesPassage(evidence: string, passageText: string): boolean {
+export function evidenceMatchesPassage(evidence: string, passageText: string): boolean {
   const normalizedPassage = normalizeForSubstringCheck(passageText);
   const fragments = evidence
     .split(EVIDENCE_ELLIPSIS_RE)
@@ -112,6 +118,38 @@ export function applyCounterfactIgnoredGate(input: CounterfactIgnoredInput): Cou
     return { flagged: true, reason: "counterfact_ignored" };
   }
   return { flagged: false, reason: null };
+}
+
+export type InstanceAttribution = "same" | "different" | "absent" | "conflict";
+
+export interface InstanceAttributionInput {
+  verdict: Verdict;
+  claimText: string;
+  /** Batched passage-grounded checker result; null when it did not run or failed (fail-open, D025 §2 convention). */
+  attribution: InstanceAttribution | null;
+}
+
+export interface InstanceAttributionResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "instance_attribution_mismatch" | "instance_attribution_conflict" | null;
+}
+
+/** Spec 013 T21 — the passages named a different member than the claim selects. `conflict` only downgrades: disagreeing sources are not a falsehood finding (Cardinal Rule). */
+export function applyInstanceAttributionGate(input: InstanceAttributionInput): InstanceAttributionResult {
+  const noop = { verdict: input.verdict, overridden: false, reason: null } as const;
+  // `unverifiable` excluded as a CONFIDENCE downgrade, same as the sibling reason gates (D026 §22).
+  if (input.attribution === null || input.verdict === "contradicted" || input.verdict === "unverifiable" || input.verdict === "excluded") return noop;
+  // Abstain on a negated claim, same guard reason_consistency/reason_ordinal carry (D032 §9): the
+  // checker is asked about the fact, not its polarity, so "did NOT cover 852 feet" inverts the answer.
+  if (containsNegationCue(input.claimText)) return noop;
+  if (input.attribution === "different") {
+    return { verdict: "contradicted", overridden: true, reason: "instance_attribution_mismatch" };
+  }
+  if (input.attribution === "conflict" && (input.verdict === "supported" || input.verdict === "partially_supported")) {
+    return { verdict: "unverifiable", overridden: true, reason: "instance_attribution_conflict" };
+  }
+  return noop;
 }
 
 export interface ClaimReasonOverlapInput {

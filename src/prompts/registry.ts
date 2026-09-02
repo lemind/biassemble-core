@@ -8,6 +8,7 @@ import grounnelVerifyData from "./grounnel/verify/system.json" with { type: "jso
 import grounnelConsistencyCheckData from "./grounnel/consistency-check/system.json" with { type: "json" };
 import grounnelPassageRerankData from "./grounnel/passage-rerank/system.json" with { type: "json" };
 import grounnelEligibilityData from "./grounnel/eligibility/system.json" with { type: "json" };
+import grounnelInstanceAttributionData from "./grounnel/instance-attribution/system.json" with { type: "json" };
 
 export type PromptTemplate =
   | "question-batch"
@@ -18,7 +19,8 @@ export type PromptTemplate =
   | "grounnel-verify"
   | "grounnel-consistency-check"
   | "grounnel-passage-rerank"
-  | "grounnel-eligibility";
+  | "grounnel-eligibility"
+  | "grounnel-instance-attribution";
 
 interface PromptFile {
   content: string;
@@ -76,6 +78,11 @@ export class PromptRegistry {
     return (grounnelEligibilityData as PromptFile).version;
   }
 
+  /** Spec 013 T21 — the passage-grounded instance-attribution checker, versioned independently of VERIFY. */
+  getGrounnelInstanceAttributionVersion(): string {
+    return (grounnelInstanceAttributionData as PromptFile).version;
+  }
+
   render(template: PromptTemplate, variables: Record<string, string>): string {
     let raw: string;
 
@@ -106,6 +113,9 @@ export class PromptRegistry {
         break;
       case "grounnel-eligibility":
         raw = grounnelEligibilityData.content;
+        break;
+      case "grounnel-instance-attribution":
+        raw = grounnelInstanceAttributionData.content;
         break;
       default:
         throw new Error(`Unknown template: ${template satisfies never}`);

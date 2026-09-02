@@ -67,6 +67,14 @@ function idsFromConsistencyRequest(request: CompletionRequest): string[] {
   return pairs.map((p) => p.id);
 }
 
+// Spec 013 T21 — same idea as idsFromConsistencyRequest, for the instance-attribution checker's marker.
+function idsFromAttributionRequest(request: CompletionRequest): string[] {
+  const match = request.system.match(/INSTANCE_CHECKS: (\[.*\])/s);
+  if (!match) return [];
+  const checks = JSON.parse(match[1]!) as Array<{ id: string }>;
+  return checks.map((c) => c.id);
+}
+
 describe("GrounnelPipelineService (T010)", () => {
   let provider: MockProvider;
 
@@ -78,6 +86,12 @@ describe("GrounnelPipelineService (T010)", () => {
     provider.setResponseFn("You are a consistency auditor", (request) => {
       const ids = idsFromConsistencyRequest(request);
       return { results: ids.map((id) => ({ id, consistent: true })) };
+    });
+    // Spec 013 T21 — same reason: "absent" is the checker's own no-op, so tests predating it keep
+    // their verdicts. Tests that exercise the instance_attribution gate override this.
+    provider.setResponseFn("You are an attribution checker", (request) => {
+      const ids = idsFromAttributionRequest(request);
+      return { results: ids.map((id) => ({ id, attribution: "absent", citation: null })) };
     });
   });
 
@@ -95,7 +109,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.status).toBe("done");
     expect(claim.verdict).toBe("unsupported");
-    expect(claim.reason).toBe("No relevant source found for this claim.");
+    expect(claim.reason).toBe("No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.");
     expect(claim.sources[0]).toMatchObject({ status: "unreachable" });
     expect(provider.getCallCount()).toBe(0);
   });
@@ -120,7 +134,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.status).toBe("done");
     expect(claim.verdict).toBe("unsupported");
-    expect(claim.reason).toBe("No relevant source found for this claim.");
+    expect(claim.reason).toBe("No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.");
     expect(provider.getCallCount()).toBe(0);
   });
 
@@ -201,7 +215,7 @@ describe("GrounnelPipelineService (T010)", () => {
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("supported");
-    expect(claim.reason).not.toBe("No relevant source found for this claim.");
+    expect(claim.reason).not.toBe("No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.");
     expect(claim.sources.map((s) => s.url)).toEqual(["https://irrelevant.example", "https://relevant.example"]);
   });
 
@@ -973,7 +987,7 @@ describe("GrounnelPipelineService (T010)", () => {
     // contradicting the claim", which would read as incoherent beside the now-downgraded
     // "unsupported" verdict; rewriteUngroundedAffirmativeReason replaces it (citations are always
     // emptied on this downgrade path, so the rewrite predicate's 0-citations condition always holds here).
-    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.");
 
     const events = gateEventStore.calls[0]!.events;
     const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
@@ -1032,7 +1046,7 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.evidence).toBeNull();
     // D031 — the retry's own reason affirmatively implies support ("both sources state..."), which
     // would read as incoherent beside "unverifiable"; rewriteUngroundedAffirmativeReason replaces it.
-    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim.");
+    expect(claim.reason).toBe("The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.");
 
     const events = gateEventStore.calls[0]!.events;
     const retryReconciliation = events.find((e) => e.gate === "retry_reconciliation")!;
@@ -1487,24 +1501,21 @@ describe("GrounnelPipelineService (T010)", () => {
     // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
     expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
-    // 10 gates x 2 passes (D025 added counterfact_ignored, D026 §12 added claim_reason_overlap, the
-    // year/date gate added a 7th, T069's reason_year added an 8th, D030's reason_ordinal added a
-    // 9th, g17's subject_entity added a 10th), plus D025 §5's retry-contradiction check (the retry
-    // landed on contradicted, so it ran), plus D030 §3k's telemetry-only retry_decision summary —
-    // the original inconsistent pass is not lost.
+    // 9 gates x 2 passes, plus D025 §5's retry-contradiction check and D030 §3k's telemetry-only
+    // retry_decision summary. Was 10 gates until subject_entity was disabled (D030 §3m Addendum 6).
     expect(events).toHaveLength(22);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
-    // Index 5, not 4: reason_ordinal (D030) now sits between reason_year and counterfact_ignored.
-    expect(events[5]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
+    // Index 6: spec 013 T21's instance_attribution now sits between reason_ordinal and counterfact_ignored.
+    expect(events[6]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    // Index 15, not 14: each pass is now 10 gates (contradiction_evidence is offset 5 within a pass).
-    expect(events[15]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 16: each pass is 10 gates since subject_entity was disabled (offset 6 within a pass).
+    expect(events[16]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
     expect(events[20]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
     // D030 §3k — telemetry-only summary of the whole retry decision: firstPass ended "unsupported"
-    // (the evidence_null downgrade at events[5]), the retry ultimately landed on "contradicted" —
+    // (the evidence_null downgrade at events[6]), the retry ultimately landed on "contradicted" —
     // a real change, so overridden:true — and the reason names the ERROR that triggered the retry
     // in the first place (evidence_null), not the retry's own outcome.
     expect(events[21]).toMatchObject({ gate: "retry_decision", verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true, reason: "evidence_null" });
@@ -1988,14 +1999,14 @@ describe("GrounnelPipelineService (T010)", () => {
       "implicit_negation",
       "reason_year",
       "reason_ordinal",
+      "instance_attribution",
       "counterfact_ignored",
       "contradiction_evidence",
       "claim_reason_overlap",
       "numeric",
       "year",
-      "subject_entity",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the ten gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the nine gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 

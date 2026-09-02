@@ -30,9 +30,12 @@ const baseClaim = {
 // GrounnelVerdictEnum is deliberately a separate enum from audit's VerdictEnum
 // (grounnel.schemas.ts header comment), not imported — this test is the drift
 // guard: if one gains/loses/renames a value without the other, this fails.
+// D032 §4 #8/#9/T5 — the two are no longer identical on purpose: "excluded" (pre-search eligibility
+// exclusion) is a Grounnel-only concept, so this guard now checks "audit's values, plus exactly
+// 'excluded'" rather than exact equality — still catches any OTHER accidental drift.
 describe("GrounnelVerdictEnum — drift guard against audit.schemas.ts's VerdictEnum", () => {
-  it("has the exact same values as audit's VerdictEnum", () => {
-    expect([...GrounnelVerdictEnum.options].sort()).toEqual([...VerdictEnum.options].sort());
+  it("has audit's VerdictEnum values plus exactly one Grounnel-only addition: 'excluded'", () => {
+    expect([...GrounnelVerdictEnum.options].sort()).toEqual([...VerdictEnum.options, "excluded"].sort());
   });
 });
 

@@ -16,12 +16,12 @@ const MODULE = "gemini-provider";
  * These should NOT be retried — they will fail again immediately.
  */
 export class RateLimitError extends Error {
-  /** "daily" (quota) or "per-minute" (RPM) */
-  readonly limitType: "daily" | "per-minute";
+  /** "billing" (credits depleted — never self-clears), "daily" (quota) or "per-minute" (RPM) */
+  readonly limitType: "billing" | "daily" | "per-minute";
   /** ISO timestamp when the limit resets, if available */
   readonly resetsAt?: string;
 
-  constructor(message: string, limitType: "daily" | "per-minute", resetsAt?: string) {
+  constructor(message: string, limitType: "billing" | "daily" | "per-minute", resetsAt?: string) {
     super(message);
     this.name = "RateLimitError";
     this.limitType = limitType;
@@ -104,17 +104,27 @@ export class GeminiProvider implements Provider {
       const message = (err?.message as string | undefined) ?? String(error);
 
       if (status === 429 || message.includes("429") || message.toLowerCase().includes("rate limit")) {
-        const isDaily = message.toLowerCase().includes("quota") || message.toLowerCase().includes("daily");
+        const lower = message.toLowerCase();
+        // Google returns 429 for a depleted prepaid balance too. It is NOT a rate limit: waiting never
+        // clears it, so it must not produce a "try again shortly" message (2026-08-28 incident).
+        const isBilling = /credits are depleted|spend(ing)? cap/.test(lower);
+        const isDaily = !isBilling && (lower.includes("quota") || lower.includes("daily"));
         const resetsAt = extractResetTime(message);
+        // providerMessage is the only place Google states WHICH limit and when it resets; without it
+        // a 429 is unattributable and the reset window can only be guessed at (2026-08-28 incident).
+        const providerMessage = message.replace(/key=[^&\s"]+/gi, "key=[REDACTED]").slice(0, 500);
         logger.warn(
-          { module: MODULE, operation: "completeJson", status, limitType: isDaily ? "daily" : "per-minute", resetsAt },
+          { module: MODULE, operation: "completeJson", status, limitType: isBilling ? "billing" : isDaily ? "daily" : "per-minute", resetsAt, providerMessage },
           "Gemini rate limit hit — not retrying"
         );
+        const limitType = isBilling ? "billing" : isDaily ? "daily" : "per-minute";
         throw new RateLimitError(
-          isDaily
-            ? "Daily API quota exhausted. Please try again tomorrow."
-            : "Too many requests. Please try again later.",
-          isDaily ? "daily" : "per-minute",
+          (isBilling
+            ? "AI provider credits are depleted — this needs an account top-up, not a retry."
+            : isDaily
+              ? "Daily API quota exhausted. Please try again tomorrow."
+              : "Too many requests. Please try again later.") + ` [provider: ${providerMessage}]`,
+          limitType,
           resetsAt
         );
       }

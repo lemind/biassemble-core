@@ -45,6 +45,25 @@ describe("extractInstanceSelector (D030 §3f) — which occurrence of a repeated
   it("does not fire on 'second-to-last' style compounds", () => {
     expect(extractInstanceSelector("She finished second-to-last in the race.")).toBeNull();
   });
+
+  // T17, D032 §10 — g23 live false accusation: "second" inside "12-second" isn't a sequence
+  // selector, but \b alone treated the hyphen as a word boundary and matched it anyway.
+  it("does not fire on 'second' inside a numeric duration compound like '12-second'", () => {
+    expect(extractInstanceSelector("The Wright brothers' 12-second flight changed the world.")).toBeNull();
+    // A real ordinal elsewhere in the same claim still resolves to just that one selector — the
+    // duration compound never counts as a second, competing selector that would force an abstain.
+    const sel = extractInstanceSelector("The 12-second flight was the first successful flight.");
+    expect(sel?.selector).toBe("first");
+  });
+
+  it("does not fire on a spelled-out numeral compound like 'one-third'", () => {
+    expect(extractInstanceSelector("The engine lost one-third of its power.")).toBeNull();
+  });
+
+  it("still fires on a genuine ordinal immediately after an unrelated numeric compound", () => {
+    const sel = extractInstanceSelector("After a 12-second delay, the first signal arrived.");
+    expect(sel?.selector).toBe("first");
+  });
 });
 
 describe("passageMatchesSelector — confirms a passage names the SAME instance as the claim", () => {

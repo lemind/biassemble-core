@@ -55,11 +55,13 @@ describe("Grounnel live eval gate — the gate itself must fail when it should",
     expect(result.matched).toBe(1);
   });
 
-  // D030 §3b (tasks.md T015/T016) — "excluded"/"not_excluded" distinguish pre-search exclusion from
-  // "silence"'s looser ["unsupported", "unverifiable"] pair, which can't tell them apart.
-  it("'excluded' only accepts unverifiable — unsupported (searched, found nothing) is the wrong outcome for a true exclusion", () => {
+  // D032 §4 #8/#9/T6 — "excluded" is now its own verdict (was folded into "unverifiable" pre-T6,
+  // the exact ambiguity D030 §3b's FR-008 flagged). "excluded"/"not_excluded" kinds distinguish
+  // pre-search exclusion from "silence"'s looser ["unsupported", "unverifiable"] pair.
+  it("'excluded' only accepts excluded — unsupported and unverifiable are both the wrong outcome for a true exclusion", () => {
     const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, claims: [{ match: "in need of a new laptop", kind: "excluded" }] };
-    expect(evaluateGrounnelRun([{ claims: [claim("I was in need of a new laptop.", "unverifiable")] }], s).ok).toBe(true);
+    expect(evaluateGrounnelRun([{ claims: [claim("I was in need of a new laptop.", "excluded")] }], s).ok).toBe(true);
+    expect(evaluateGrounnelRun([{ claims: [claim("I was in need of a new laptop.", "unverifiable")] }], s).ok).toBe(false);
     expect(evaluateGrounnelRun([{ claims: [claim("I was in need of a new laptop.", "unsupported")] }], s).ok).toBe(false);
   });
 

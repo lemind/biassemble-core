@@ -29,6 +29,18 @@ export function properNounWords(text: string): Set<string> {
   );
 }
 
+// D032 §9/§3k — a reason-family gate must not read a claim's own negation as confirming the negated
+// fact. Narrower than gates-reason-grounded.ts's UNGROUNDED_REASON_NEGATION_WORD_RE (D031, a
+// different check on reason text) by design, not oversight — see ADR for both mechanisms.
+export const NEGATION_CUE_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
+
+// Presence-only (no clause scoping) — accepted precision tradeoff, see D032 §9c: reason_consistency
+// has no single extracted token to scope a check around, unlike reason_year/reason_ordinal's
+// position-scoped isNegatedAtPosition/isClaimTokenNegated in gates-reason-grounded.ts.
+export function containsNegationCue(claimText: string): boolean {
+  return NEGATION_CUE_RE.test(claimText);
+}
+
 // NAME OVERCLAIMS: this is literal proper-noun overlap, NOT entity resolution — "Wilbur" vs "Wright
 // brothers" reads as different entities. Measured cost and four refuted fixes: D030 §3l/§3m/§3n.
 // Shared by applyYearGate and applySubjectEntityGate. Abstains only when BOTH sides name at least

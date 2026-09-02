@@ -1,18 +1,19 @@
-// The 10-gate chain applied to one VERIFY result — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
+// The 10-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 6) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
 
 import {
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
   applyImplicitNegationGate,
+  applyInstanceAttributionGate,
   applyNumericGate,
   applyReasonConsistencyGate,
   applyReasonOrdinalGate,
   applyReasonYearGate,
-  applySubjectEntityGate,
   applyYearGate,
+  type InstanceAttribution,
 } from "./gates.js";
-import { originatingContradictionGate, type Verdict } from "./pipeline-helpers.js";
+import { originatingContradictionGate, PROTECTED_CONTRADICTION_GATES, type Verdict } from "./pipeline-helpers.js";
 import type { GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
 
@@ -32,6 +33,8 @@ export interface GateChainInput {
   subjectEntity: string;
   // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
   reasonSupportsVerdict: boolean | null;
+  // Same threading, spec 013 T21 — the passage-grounded checker's answer for this claim, or null.
+  instanceAttribution: InstanceAttribution | null;
 }
 
 export interface GateChainResult {
@@ -48,7 +51,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   const diagnostics: Diagnostic[] = [];
 
   // Reason-consistency gate (g04/g05) — runs before gate #1 so a flip to contradicted still clears its evidence check.
-  const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: input.reason });
+  const reasonConsistency = applyReasonConsistencyGate({ verdict, reason: input.reason, claimText: input.claimText });
   gateEvents.push({ gate: "reason_consistency", verdictBefore: verdict, verdictAfter: reasonConsistency.verdict, overridden: reasonConsistency.overridden, reason: reasonConsistency.reason });
   verdict = reasonConsistency.verdict;
 
@@ -72,6 +75,11 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   const reasonOrdinal = applyReasonOrdinalGate({ verdict, reason: input.reason, claimText: input.claimText });
   gateEvents.push({ gate: "reason_ordinal", verdictBefore: verdict, verdictAfter: reasonOrdinal.verdict, overridden: reasonOrdinal.overridden, reason: reasonOrdinal.reason });
   verdict = reasonOrdinal.verdict;
+
+  // Instance-attribution gate (spec 013 T21) — reads the PASSAGES, the input reason_ordinal lacks; also before gate #1 so a flip still needs real evidence.
+  const instanceAttribution = applyInstanceAttributionGate({ verdict, claimText: input.claimText, attribution: input.instanceAttribution });
+  gateEvents.push({ gate: "instance_attribution", verdictBefore: verdict, verdictAfter: instanceAttribution.verdict, overridden: instanceAttribution.overridden, reason: instanceAttribution.reason });
+  verdict = instanceAttribution.verdict;
 
   // Gate #5 (D025 §2/§3) — chain position (between implicit_negation and gate #1) is load-bearing, see ADR.
   const counterfact = applyCounterfactIgnoredGate({ verdict, reasonSupportsVerdict: input.reasonSupportsVerdict });
@@ -117,7 +125,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
     claimText: input.claimText,
     verdict,
     evidence,
-    contradictionProtectedFromForceSupported: verdict === "contradicted" && originatingContradictionGate(gateEvents)?.gate === "reason_ordinal",
+    contradictionProtectedFromForceSupported: verdict === "contradicted" && PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEvents)?.gate ?? ""),
   });
   gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
   verdict = gate2.verdict;
@@ -127,11 +135,8 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
   verdict = gate2b.verdict;
 
-  // g17 — lexical backstop (proper-noun overlap, not entity resolution), last in the chain: downgrades supported/partially_supported to unverifiable. Known ~11-18% recovery on false triggers, D030 §3l/§3m/§3n.
-  const gate3 = applySubjectEntityGate({ verdict, claimText: input.claimText, subjectEntity: input.subjectEntity, evidence });
-  gateEvents.push({ gate: "subject_entity", verdictBefore: verdict, verdictAfter: gate3.verdict, overridden: gate3.overridden, reason: gate3.reason });
-  verdict = gate3.verdict;
-  if (gate3.overridden) evidence = null; // stale — it was only meaningful attached to the discarded supported verdict.
+  // g17 subject_entity — DISABLED 2026-08-31 (D030 §3m Addendum 6): 0 confirmed genuine catches in
+  // 320 firings vs a ~75% false-trigger rate; 7 fix candidates refuted. Call site skipped, not deleted.
 
   // D025 §2 — retry fires on any ERROR-severity diagnostic; the field exists so a future WARNING/INFO gate doesn't force one.
   const needsRetry = diagnostics.some((d) => d.severity === "ERROR");

@@ -49,6 +49,11 @@ export function toClaimSources(sources: SearchPassage[]): ClaimSource[] {
 
 /** Client-facing message for a Gemini RateLimitError — also reused by the route handler for EXTRACT's own case (no audit exists yet there, so it becomes the /extract response directly). */
 export function buildGeminiRateLimitMessage(err: RateLimitError): string {
+  // Never "try again in a few minutes" for an empty balance or a hit spend cap — permanently false, hides
+  // an operator problem behind a user-looking transient error (2026-08-28 incident).
+  if (err.limitType === "billing") {
+    return "Fact-checking is temporarily unavailable. Our team has been notified — please try again later.";
+  }
   if (err.limitType === "daily") {
     return err.resetsAt
       ? `We've hit today's AI usage limit. Please try again after ${err.resetsAt}.`
@@ -69,6 +74,9 @@ export function passageIndexForLabel(label: string): number {
 
 // Reconciliation-disagreement telemetry (D030 T010 backlog — see tasks.md). Caller must pass only
 // the CURRENT pass's gate events (review finding: a concatenated trail can surface a stale flip).
+/** Gates whose `contradicted` is grounded enough to survive reconciliation and gate #2's force-supported (D030 §3d; spec 013 T21 added the second). */
+export const PROTECTED_CONTRADICTION_GATES: ReadonlySet<string> = new Set(["reason_ordinal", "instance_attribution"]);
+
 export function originatingContradictionGate(gateEvents: GateEventInput[]): { gate: string; reason: GateReason | null } | null {
   const event = gateEvents.findLast((e) => e.overridden && e.verdictAfter === "contradicted");
   return event ? { gate: event.gate, reason: event.reason } : null;

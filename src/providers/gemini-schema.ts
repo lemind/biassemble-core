@@ -56,6 +56,7 @@ function convert(node: JsonSchemaNode): Schema {
     for (const [key, value] of Object.entries(node.properties ?? {})) {
       properties[key] = convert(value);
     }
+    // Key order here IS generation order — a CoT field declared after its answer is inert (spec 013 T21).
     return { type: SchemaType.OBJECT, properties, required: node.required ?? [] };
   }
 

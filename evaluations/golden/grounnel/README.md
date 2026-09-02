@@ -48,6 +48,19 @@ included as a control: the fix must not regress correct current-period matching.
 
 `g11-bloomberg-fallback` is the one other case deliberately targeting a different thing than a true/false/silence label: `HybridSearchProvider` only calls Tavily when *every* DIY candidate (Gemini `google_search` discovery + direct fetch) fails for a claim — none of g01–g10 are designed to force that, so the fallback path had zero deliberate coverage. `bloomberg.com` commonly blocks non-browser fetches (403/unreachable), and the fact itself (Apple's market cap) is widely corroborated elsewhere, so Tavily has a real shot at resolving it. **Not guaranteed** — this repo has no per-claim provider-attribution field, so whether it actually fell back to Tavily on a given run has to be confirmed from logs (`"DIY fetch failed for every candidate — falling back"`), not from the eval's JSON output alone.
 
+## Extraction contract (ratified 2026-08-26, D032 §2, T1/T9)
+
+EXTRACT identifies claims the submitted text presents as **current assertions**, excluding
+propositions explicitly retracted, corrected, quoted only as mistaken beliefs, or otherwise negated
+by the surrounding discourse (Contract A). A self-correcting article ("I thought X... actually Y")
+is scored only on the corrected claim it asserts, not on the retracted one it names in passing —
+scoring the retracted proposition too (Contract B) would flag a self-correcting article as
+containing misinformation, inverting the product's purpose. This is what `GrounnelExtractService`
+already implements; every case in this golden set is written as a single current assertion, so
+Contract A vs. B never actually diverges here — this note exists so a future reviewer scoring a
+multi-proposition or self-correcting article applies the same rubric D032 §2 used, instead of
+re-litigating it from scratch.
+
 ## Running it
 
 Two ways to trigger the same real-call logic (`src/evaluation/run-grounnel-eval.ts`, shared by both):

@@ -8,11 +8,10 @@ import {
   firstClauseBoundaryForward,
   SELECTOR_RE_G as ORDINAL_RE_G,
 } from "../../lib/instance-selector.js";
-import { sameEntity, type Verdict } from "./gates-shared.js";
+import { NEGATION_CUE_RE, sameEntity, type Verdict } from "./gates-shared.js";
 import { YEAR_TOKEN_RE_G } from "./gates-numeric-and-year.js";
 
 // Window sized off a real captured VERIFY reason with margin. "n't" has no leading \b (contractions), same fix NEGATED_CONTRADICTION_RE applies.
-const NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b/i;
 const NEGATION_WINDOW = 60;
 
 // D030 §3g follow-up (g17 continued) — number + its immediate unit word, e.g. "852 feet"/"852 ft".
@@ -41,16 +40,28 @@ function isReasonYearNegated(reason: string, yearIndex: number): boolean {
   const windowStart = Math.max(0, yearIndex - NEGATION_WINDOW);
   const window = reason.slice(windowStart, yearIndex);
   const clauseStart = lastClauseBoundary(window);
-  return NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
+  return NEGATION_CUE_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
 }
 
-// Generic clause-scoped negation check (reuses lastClauseBoundary) — not ordinal-specific despite
-// the original name; also used below for value-level negation ("900 ft not 852 ft").
-function isNegatedAtPosition(reason: string, matchIndex: number): boolean {
+// Generic clause-scoped BACKWARD negation check — not ordinal-specific despite the name; used for
+// value-level negation ("900 ft not 852 ft") and reason-side checks. See D032 §9 for the claim-side
+// negation-scope guard this also backs (via isClaimTokenNegated below, not used standalone there).
+function isNegatedAtPosition(text: string, matchIndex: number): boolean {
   const windowStart = Math.max(0, matchIndex - NEGATION_WINDOW);
-  const window = reason.slice(windowStart, matchIndex);
+  const window = text.slice(windowStart, matchIndex);
   const clauseStart = lastClauseBoundary(window);
-  return NEGATION_WORD_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
+  return NEGATION_CUE_RE.test(clauseStart === -1 ? window : window.slice(clauseStart + 1));
+}
+
+// D032 §9 — bidirectional, unlike isNegatedAtPosition: a claim's negation can precede OR follow its
+// token ("did not end in 1943" vs "1943 is not the year it ended"), both real phrasings of the same
+// assertion. Review finding: a backward-only check misses the second shape entirely (see ADR).
+function isClaimTokenNegated(claimText: string, matchIndex: number, matchLength: number): boolean {
+  if (isNegatedAtPosition(claimText, matchIndex)) return true;
+  const afterStart = matchIndex + matchLength;
+  const clauseEndAbs = firstClauseBoundaryForward(claimText, afterStart);
+  const windowEnd = Math.min(afterStart + NEGATION_WINDOW, clauseEndAbs === -1 ? claimText.length : clauseEndAbs);
+  return NEGATION_CUE_RE.test(claimText.slice(afterStart, windowEnd));
 }
 
 // D030 §3g/§3j follow-up — CLAUSE-scoped: every number+unit in the ordinal match's own clause, with
@@ -104,11 +115,16 @@ export function applyReasonYearGate(input: ReasonYearGateInput): ReasonYearGateR
     return { verdict: input.verdict, overridden: false, reason: null };
   }
 
-  const claimYears = [...input.claimText.matchAll(YEAR_TOKEN_RE_G)].map((m) => m[0]);
-  if (claimYears.length !== 1) {
+  const claimYearMatches = [...input.claimText.matchAll(YEAR_TOKEN_RE_G)];
+  if (claimYearMatches.length !== 1) {
     return { verdict: input.verdict, overridden: false, reason: null };
   }
-  const claimYear = claimYears[0]!;
+  const claimYearMatch = claimYearMatches[0]!;
+  const claimYear = claimYearMatch[0];
+  // D032 §9/§3k — abstain on a negated claim year; see ADR for the false-accusation mechanism.
+  if (isClaimTokenNegated(input.claimText, claimYearMatch.index!, claimYearMatch[0].length)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
 
   const reason = input.reason;
   const reasonYearMatches = [...reason.matchAll(YEAR_TOKEN_RE_G)];
@@ -179,6 +195,11 @@ export function applyReasonOrdinalGate(input: ReasonOrdinalGateInput): ReasonOrd
     return { verdict: input.verdict, overridden: false, reason: null };
   }
   const claimMatch = claimMatches[0]!;
+  // D032 §9/§3k — abstain on a negated claim ordinal; this is the case that required unfreezing
+  // this gate (D030 §3k's freeze amendment). See ADR for the false-accusation mechanism.
+  if (isClaimTokenNegated(input.claimText, claimMatch.index!, claimMatch[0].length)) {
+    return { verdict: input.verdict, overridden: false, reason: null };
+  }
   const claimOrdinal = claimMatch[1]!.toLowerCase();
   const claimAnchor = ordinalAnchorWords(input.claimText, claimMatch.index!, claimMatch.index! + claimMatch[0].length);
   if (claimAnchor.size === 0) {
@@ -262,7 +283,9 @@ export function applySubjectEntityGate(input: SubjectEntityGateInput): SubjectEn
 // D031 — reason/verdict incoherence backstop; regex over VERIFY's own closed vocabulary, see ADR for AGENTS.md rule 12 tradeoff.
 const AFFIRMATIVE_SOURCE_LANGUAGE_RE = /\b(?:sources?|passages?|evidence)\b[^.!?]{0,60}\b(?:states?|confirms?|indicates?|shows?|supports?|reports?)\b/i;
 const UNGROUNDED_REASON_NEGATION_WORD_RE = /\bnot\b|n't|\bno\b|\bnone\b|\bnever\b|\bcannot\b|\bcan't\b/i;
-const UNGROUNDED_REASON_REPLACEMENT = "The available sources did not provide a specific passage that could be cited to verify this claim.";
+// D032 §5/T7 — states both that evidence is missing AND that this isn't a falsehood finding (SC-2).
+const UNGROUNDED_REASON_REPLACEMENT =
+  "The available sources did not provide a specific passage that could be cited to verify this claim. This is not a finding that the claim is false — only that supporting evidence could not be confirmed.";
 
 /** D031 — rewrites `reason` only, never verdict/confidence/citations; negation checked inside the match span itself, not a preceding window. */
 export function rewriteUngroundedAffirmativeReason(verdict: Verdict, citationsCount: number, reason: string | null): string | null {
@@ -273,4 +296,31 @@ export function rewriteUngroundedAffirmativeReason(verdict: Verdict, citationsCo
   if (!match) return reason;
   if (UNGROUNDED_REASON_NEGATION_WORD_RE.test(match[0])) return reason;
   return UNGROUNDED_REASON_REPLACEMENT;
+}
+
+// D032 §3f/T6b — labels subject_entity's downgrade distinctly; gate behaviour unchanged (D030 §3l/§3m stand).
+const SUBJECT_ENTITY_DOWNGRADE_SUFFIX =
+  " Evidence was found but could not be confirmed as being about this claim's specific subject — this is not a finding that no evidence exists.";
+
+/** D032 §3f/T6b — appends a distinguishing note when `unverifiable` came from subject_entity, not from a genuine absence of evidence. */
+export function labelSubjectEntityDowngrade(verdict: Verdict, gateEvents: readonly { gate: string; overridden: boolean }[], reason: string | null): string | null {
+  if (verdict !== "unverifiable" || !reason) return reason;
+  if (!gateEvents.some((e) => e.gate === "subject_entity" && e.overridden)) return reason;
+  return reason + SUBJECT_ENTITY_DOWNGRADE_SUFFIX;
+}
+
+/** D032 §3f/T6b (review finding) — subject_entity takes precedence over the D031 rewrite below: it
+ * also nulls evidence/citations, so both rules' preconditions can hold at once, and running both
+ * produced a self-contradictory reason ("no evidence found" + "evidence was found"). Composed here,
+ * not left as caller-side ordering, so the precedence can't silently drift out of sync again. */
+export function composeUserFacingReason(
+  verdict: Verdict,
+  gateEvents: readonly { gate: string; overridden: boolean }[],
+  citationsCount: number,
+  reason: string | null
+): string | null {
+  const subjectEntityCausedThis = gateEvents.some((e) => e.gate === "subject_entity" && e.overridden);
+  return subjectEntityCausedThis
+    ? labelSubjectEntityDowngrade(verdict, gateEvents, reason)
+    : rewriteUngroundedAffirmativeReason(verdict, citationsCount, reason);
 }

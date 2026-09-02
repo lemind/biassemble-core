@@ -18,19 +18,27 @@ export interface ClaimVerifiabilityResult {
   category: "checkable" | "personal" | "opinion" | "prediction";
   certainty: "clear" | "uncertain";
   reason: string;
+  // Spec 013 T27 (D032 §13) — orthogonal to category/certainty: does the claim name WHO/WHAT the
+  // predicate attaches to, resolvable from claim + sourceExcerpt. Not "can I personally identify it".
+  hasResolvableReferent: boolean;
 }
 
+// Field order is load-bearing — hasResolvableReferent LAST so it reads `reason` and can't perturb
+// category/certainty (Gemini generates in schema order). See D032 §13.
 const ClaimVerifiabilityResultSchema = z.object({
   category: z.enum(["checkable", "personal", "opinion", "prediction"]),
   certainty: z.enum(["clear", "uncertain"]),
   reason: z.string(),
+  hasResolvableReferent: z.boolean(),
 });
 
 // D030 §3b, tasks.md T013 — any classifier failure fails open to "checkable"/"uncertain", never a basis for exclusion.
+// T27: hasResolvableReferent true here for the same reason — a failed call must never exclude.
 const FAIL_OPEN_RESULT: ClaimVerifiabilityResult = {
   category: "checkable",
   certainty: "uncertain",
   reason: "Eligibility classification unavailable — failed open to search.",
+  hasResolvableReferent: true,
 };
 
 /**
@@ -44,12 +52,15 @@ export async function classifyClaimVerifiability(
   llmCallStore: GrounnelLlmCallStore,
   runId: string,
   claimId: string,
-  input: ClaimVerifiabilityInput
+  input: ClaimVerifiabilityInput,
+  // Experiment seam (T27b) — an already-rendered system prompt to use instead of the registry's.
+  // Production never passes this; only the prompt-variant screen does.
+  systemOverride?: { text: string; version: string }
 ): Promise<ClaimVerifiabilityResult> {
   // Review finding — try must cover rendering/version lookup too, not just the provider call, or fail-open doesn't hold.
   try {
-    const promptVersion = prompts.getGrounnelEligibilityVersion();
-    const system = prompts.render("grounnel-eligibility", {
+    const promptVersion = systemOverride?.version ?? prompts.getGrounnelEligibilityVersion();
+    const system = systemOverride?.text ?? prompts.render("grounnel-eligibility", {
       claim_text: input.claimText,
       source_excerpt: input.sourceExcerpt ?? "(none)",
     });
@@ -59,12 +70,13 @@ export async function classifyClaimVerifiability(
       system,
       user: "Return the JSON now.",
       schema: ClaimVerifiabilityResultSchema,
-      expectedKeys: ["category", "certainty", "reason"],
+      expectedKeys: ["category", "certainty", "reason", "hasResolvableReferent"],
       attempts: ELIGIBILITY_ATTEMPTS,
       module: MODULE,
       operation: "classifyClaimVerifiability",
       // repair.ts nulls an individual invalid field instead of throwing — isValid forces the retry/fail-open path T013 requires.
-      isValid: (result) => result.category != null && result.certainty != null && result.reason != null,
+      isValid: (result) =>
+        result.category != null && result.certainty != null && result.reason != null && typeof result.hasResolvableReferent === "boolean",
       onComplete: llmCallStore.recordCall({
         runId,
         claimId,
@@ -82,14 +94,16 @@ export async function classifyClaimVerifiability(
   }
 }
 
-/** D030 §3b policy (data-model.md §2) — conservative: excludes only on a clear non-checkable call. */
+/** D030 §3b category ground first, then T27's referent ground for checkable claims only (D032 §13). Strict `=== false` so a null/absent field never excludes. */
 export function isEligibilityExcluded(result: ClaimVerifiabilityResult): boolean {
-  return result.category !== "checkable" && result.certainty === "clear";
+  if (result.category !== "checkable" && result.certainty === "clear") return true;
+  return result.category === "checkable" && result.hasResolvableReferent === false;
 }
 
-// Review finding — colocated with isEligibilityExcluded, not extract.service.ts: same D030 §3b policy.
-export function eligibilityReason(category: ClaimVerifiabilityResult["category"]): string {
-  switch (category) {
+// Precedence must match isEligibilityExcluded — category first, or an opinion gets told it
+// "doesn't say what it's about", which is false. D032 §13.
+export function eligibilityReason(result: ClaimVerifiabilityResult): string {
+  switch (result.category) {
     case "personal":
       return "This describes a private, personal circumstance that no public record could confirm or deny.";
     case "opinion":
@@ -97,8 +111,6 @@ export function eligibilityReason(category: ClaimVerifiabilityResult["category"]
     case "prediction":
       return "This is a prediction about the future, not something that can be checked yet.";
     case "checkable":
-      // Unreachable — callers only invoke this for isEligibilityExcluded results, which requires
-      // category !== "checkable". Kept for exhaustiveness, not a real runtime path.
-      return "Not a checkable claim.";
+      return "This doesn't say who or what it's about, so there's nothing specific to check.";
   }
 }

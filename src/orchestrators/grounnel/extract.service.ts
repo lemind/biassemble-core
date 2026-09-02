@@ -180,15 +180,17 @@ export class GrounnelExtractService {
     if (abandoned.value) return [];
     const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
     const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
-    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result.category))));
+    await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result))));
     return eligibleClaims;
   }
 
-  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — see D023 §3 for the dual Redis+Postgres write rationale. */
+  /** Shared by gate #3 (regex) and D030 §3b (eligibility classifier) — see D023 §3 for the dual Redis+Postgres write rationale.
+   * D032 §4 #8/#9/T6 — `excluded`, not `unverifiable`: this claim was never searched, which is a
+   * different fact than "searched and could not resolve" (D032 §3f). */
   private async writeExcludedClaim(auditId: string, claim: PipelineClaimInput, reason: string): Promise<void> {
     await this.grounnelStore.writeClaimResult(auditId, claim.id, {
       status: "done",
-      verdict: "unverifiable",
+      verdict: "excluded",
       evidence: null,
       confidence: null,
       reason,
@@ -200,7 +202,7 @@ export class GrounnelExtractService {
       runId: auditId,
       claimText: claim.text,
       sourceExcerpt: claim.sourceExcerpt,
-      verdict: "unverifiable",
+      verdict: "excluded",
       evidence: null,
       confidence: null,
       reason,
