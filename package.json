@@ -27,7 +27,8 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "negation:trigger": "tsx --env-file=.env scripts/trigger-eval-negation-polarity.ts"
   },
   "dependencies": {
     "@google/generative-ai": "0.21.0",

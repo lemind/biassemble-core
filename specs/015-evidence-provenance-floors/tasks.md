@@ -61,7 +61,7 @@ these rows as grounds to revert it.
 
 ## Phase 1: Setup
 
-- [ ] T001 Freeze the acceptance rows to `specs/015-evidence-provenance-floors/acceptance-rows.json` — the **must-fire** set (**19 rows across two genres**: the 11 circular rows from `fddb57fa` on `jps.library.utoronto.ca`, plus the 8 from `9ec37df1` on `ivypanda.com` / `studycorgi.com` / `gradesfixer.com`), each with its cited passage text, the run's input `grounnel_runs.text`, and the source URL; plus the **must-not-fire** set (see T002). Both simulations read this file, not the DB directly.
+- [x] T001 Freeze the acceptance rows to `specs/015-evidence-provenance-floors/acceptance-rows.json` — the **must-fire** set (**19 rows across two genres**: the 11 circular rows from `fddb57fa` on `jps.library.utoronto.ca`, plus the 8 from `9ec37df1` on `ivypanda.com` / `studycorgi.com` / `gradesfixer.com`), each with its cited passage text, the run's input `grounnel_runs.text`, and the source URL; plus the **must-not-fire** set (see T002). Both simulations read this file, not the DB directly.
 
 **Checkpoint**: T002 and T003 both read `acceptance-rows.json`.
 
@@ -72,8 +72,68 @@ these rows as grounds to revert it.
 **⚠️ T002 can veto G1 outright.** Tuning a predicate on its own motivating examples is exactly the
 mistake spec 013 made seven times with `subject_entity`. The must-not-fire set is what stops it.
 
-- [ ] T002 [P] [G1] Simulate the input-duplicate predicate in `scripts/s015-t002-simulate-g1.ts` — score every candidate threshold against **both** sets and report fire/no-fire counts per threshold
-- [ ] T003 [P] [G2] Census null-citation affirmations in `scripts/s015-t003-simulate-g2.ts` — count historical claims with `verdict IN ('supported','partially_supported')` and empty/null `evidence`, to size G2 and confirm it is not a one-run artifact
+- [x] T002 [P] [G1] Simulate the input-duplicate predicate in `scripts/s015-t002-simulate-g1.ts` — score every candidate threshold against **both** sets and report fire/no-fire counts per threshold
+- [x] T003 [P] [G2] Census null-citation affirmations in `scripts/s015-t003-simulate-g2.ts` — count historical claims with `verdict IN ('supported','partially_supported')` and empty/null `evidence`, to size G2 and confirm it is not a one-run artifact
+
+**RESULTS (2026-09-02).** `s015-t001-freeze-acceptance-rows.ts` + `s015-t002-simulate-g1.ts`, zero API.
+
+**T003 DONE (G2 shipped).** 330 of 5,979 affirmative verdicts historically carried no evidence —
+not a one-run artifact. G2 is live in the gate chain as gate #11.
+
+**T001 — the frozen sets differ from what this spec assumed.** Unit is a claim + its resolved
+`evidence` span, **not** a `grounnel_search_pages` row: that table stores **DIY fetches only**, and
+holds **zero rows for `jps.library.utoronto.ca`** (43 of 213 cited URLs in `fddb57fa` have any
+stored page). Sets: **must-fire 20** (A = 12 same-host, B = 8 syndicated), **must-not-fire 93**
+(76 news + 17 same-run third-party).
+
+**T002 — the pre-registered criterion FIRES. G1 as specified does not ship.**
+
+| Predicate | Must-fire | Must-not-fire leaks | Band? |
+|---|---|---|---|
+| span level (`evidence` ⊂ input) | 19/20 at ≥0.50 | **6 leak even at 1.00** | ❌ none |
+| page level, input-reproduced | 7/20 at ≥0.10, 0/20 at ≥0.30 | 16 at ≥0.10 | ❌ none |
+
+**Span level is unfixable in principle, and this is the finding to keep.** It cannot distinguish
+*"the source is a copy of the input"* from *"the input quotes the source"*. `245f4fa5` cites
+`rochester.edu` and `newsweek.com` — genuine third parties — and scores **1.00**, because the input
+is a Reuters fact-check that quotes the university's statement verbatim. That is the exact
+"shared quotation" hazard this spec warned about, and it is fatal to the span predicate.
+
+**Set A cannot be scored at all.** 12 of the 20 must-fire rows have no page text, so the
+20/20 half of the criterion is not merely unmet — it is unmeasurable from telemetry today.
+
+**A better metric exists and it found a bigger defect.** Scoring *the fraction of the retrieved
+page's text that appears in the input* (truncation-immune, unlike the reverse direction — page
+excerpts are capped well below input length, which understates every score):
+
+| Page | Reproduced from input | Run |
+|---|---|---|
+| `thestandard.com.hk`, `marinelink.com` | **1.000** | `9a784003` |
+| `whtc.com` | 0.940 | `5b8005cc` |
+| `wtvbam.com`, `wincountry.com`, `wkzo.com`, `wsau.com` | 0.82–0.89 | `5b8005cc` |
+| `straitstimes.com` | 0.808 | `9a784003` |
+| `ivypanda.com` (**the known circular host**) | 0.402 | `9ec37df1` |
+| `rochester.edu` (**genuine third party**) | 0.360 | `be72361c` |
+
+**Wire-syndication circularity is real, large, and was never in this spec.** On the news runs a
+substantial share of "corroborating sources" are radio-station and aggregator sites republishing
+the very Reuters copy the user pasted. `thestandard.com.hk` and `marinelink.com` are **100%** the
+input document. Nobody had identified this — G1 was framed as a student-writing problem.
+
+**Two consequences:**
+
+1. **G1 as written is refuted.** The band separating `ivypanda` (0.402) from `rochester.edu`
+   (0.360) is **4 points wide**. That is not a production threshold, it is a coincidence. Tenth
+   candidate refuted before shipping.
+2. **A narrower gate IS shippable, with a wide safe band.** At **≥0.50 page-reproduction, 10 pages
+   fire and every one is a verbatim republication**; the band runs 0.50→1.00 with no known
+   legitimate source anywhere inside it. It catches none of the 20 originally-named rows and all of
+   the syndication rows. This is a different gate for a different defect — spec it separately
+   rather than widening G1's definition to claim the win.
+
+**Blocking telemetry gap.** `grounnel_search_pages` is DIY-only, so a Tavily-retrieved passage is
+never persisted. Any future provenance simulation is blind to those rows, and that is why set A
+could not be scored. Fixing the persistence is a precondition for re-opening G1, not optional.
 
 ### T002's two sets, pre-registered
 
@@ -112,9 +172,9 @@ a passage that near-copies a *span* of the input, and a page that near-copies th
 **Independent test criteria**: the 2 rows from `fddb57fa` become `unsupported`; every unit test in
 T005 passes. Ships alone, independent of G1.
 
-- [ ] T004 [G2] Add `applyAffirmationEvidenceGate` to `src/orchestrators/grounnel/gates-text-grounding.ts`, mirroring `applyContradictionEvidenceGate` (line ~193): fires only on `supported` / `partially_supported`; empty-or-whitespace evidence, or evidence not grounded in the passage, downgrades to **`unsupported`** with `evidence: null` and reason `evidence_null` / `evidence_not_grounded`
-- [ ] T005 [G2] Add exhaustive unit tests in `tests/` — fires on `supported` + null; fires on `supported` + whitespace-only; fires on `partially_supported` + null; fires on ungrounded non-null evidence; does **not** fire on `supported` + grounded evidence; does **not** fire on `contradicted`, `unsupported`, `unverifiable`, `excluded`
-- [ ] T006 [G2] Wire the call site in `src/orchestrators/grounnel/pipeline-gate-chain.ts` beside gate #1, add `"affirmation_evidence"` to all four persistence unions (`schema.ts`, `persistence/types.ts`, `db/queries.ts`, the gate-event store), and record a D019 §2 addendum
+- [x] T004 [G2] Add `applyAffirmationEvidenceGate` to `src/orchestrators/grounnel/gates-text-grounding.ts`, mirroring `applyContradictionEvidenceGate` (line ~193): fires only on `supported` / `partially_supported`; empty-or-whitespace evidence, or evidence not grounded in the passage, downgrades to **`unsupported`** with `evidence: null` and reason `evidence_null` / `evidence_not_grounded`
+- [x] T005 [G2] Add exhaustive unit tests in `tests/` — fires on `supported` + null; fires on `supported` + whitespace-only; fires on `partially_supported` + null; fires on ungrounded non-null evidence; does **not** fire on `supported` + grounded evidence; does **not** fire on `contradicted`, `unsupported`, `unverifiable`, `excluded`
+- [x] T006 [G2] Wire the call site in `src/orchestrators/grounnel/pipeline-gate-chain.ts` beside gate #1, add `"affirmation_evidence"` to all four persistence unions (`schema.ts`, `persistence/types.ts`, `db/queries.ts`, the gate-event store), and record a D019 §2 addendum
 
 **`unsupported`, not `unverifiable` — decided.** `applyContradictionEvidenceGate` already downgrades
 to `unsupported` on the same two reasons, and STEP 3 maps ABSENT → `unsupported`. Mirroring means
@@ -127,17 +187,17 @@ must not be consulted. It **cannot** create `contradicted`; downgrade-only, like
 
 ---
 
-## Phase 4: G1 — input-duplicate evidence (Priority: P2, gated on T002)
+## Phase 4: G1 — input-duplicate evidence — CANCELLED (T002 kill criterion fired)
 
 **Goal**: retrieval handing back the document under test can no longer be cited as corroboration.
 
 **Independent test criteria**: replaying `fddb57fa` refuses all 11 circular passages; the
 must-not-fire set is untouched.
 
-- [ ] T007 [G1] Add the similarity predicate to `src/orchestrators/grounnel/gates-shared.ts` at the threshold band T002 returned — span-level (passage ≈ a span of the input) and page-level (page ≈ the whole input)
-- [ ] T008 [G1] Add exhaustive unit tests in `tests/` — verbatim span match fires; whole-page copy fires; a single shared quoted sentence inside otherwise-different text does **not** fire; short claims and empty input do not fire; unicode/whitespace normalisation is covered
-- [ ] T009 [G1] Refuse matching passages as evidence at the gate-chain call site, with its own gate name and reason, recorded like every other gate
-- [ ] T010 [G1] [P] **Optional, measure first**: apply the same predicate pre-rerank in `pipeline.service.ts` to drop input-duplicate hits before they reach VERIFY — saves the call rather than discarding its output. Ship only if T002's band holds at that earlier point too; simulate separately, do not assume
+- [x] ~~T007 [G1] Add the similarity predicate to `src/orchestrators/grounnel/gates-shared.ts` at the threshold band T002 returned — span-level (passage ≈ a span of the input) and page-level (page ≈ the whole input)
+- [x] ~~T008 [G1] Add exhaustive unit tests in `tests/` — verbatim span match fires; whole-page copy fires; a single shared quoted sentence inside otherwise-different text does **not** fire; short claims and empty input do not fire; unicode/whitespace normalisation is covered
+- [x] ~~T009 [G1] Refuse matching passages as evidence at the gate-chain call site, with its own gate name and reason, recorded like every other gate
+- [x] ~~T010 [G1] [P] **Optional, measure first**: apply the same predicate pre-rerank in `pipeline.service.ts` to drop input-duplicate hits before they reach VERIFY — saves the call rather than discarding its output. Ship only if T002's band holds at that earlier point too; simulate separately, do not assume
 
 **G1 is not entity resolution.** It does nothing about `alishabakitchen.com` or the Facebook rows.
 Do not let it grow into that — those need `sameEntity`, which is refuted work (spec 013 T30).

@@ -258,12 +258,89 @@ exists — which is exactly the post-hoc tuning T008 exists to prevent.
 > `system.json` before T008-T012.**
 
 - [x] T008 [US2] Pre-register every target label in `specs/014-verify-negated-claim-polarity/plan.md` under a dated "Fixture semantics" section — each of the **24 rows** gets a written **relationship** *and* its **step-3 verdict**, decided before any fixture code exists and before any call is made. **DONE 2026-09-02** — see plan.md § Fixture semantics (T008)
-- [ ] T009 [US2] Build the fixture pack in `src/jobs/eval-negation-polarity.ts` — all 24 rows tabulated below, copying the fixture/role/expect shape of `src/jobs/eval-t27b-prompt-variants.ts`, with every `expect` field filled from plan.md § Fixture semantics. **Five preconditions below must all hold before this file is written.**
-- [ ] T010 [US2] Register the screen job in `src/jobs/inngest-functions.ts` and add `scripts/trigger-eval-negation-polarity.ts` plus a `package.json` script entry, mirroring `trigger-eval-t27b.ts`
-- [ ] T011 [US2] Run the offline screen — ≥3 candidate wordings of the prompt block, spliced into the live prompt between two markers so every variant shares an identical preamble and footer; **state the exact call count before spending**
+- [x] T009 [US2] Build the fixture pack in `src/jobs/eval-negation-polarity.ts` — all 24 rows tabulated below, copying the fixture/role/expect shape of `src/jobs/eval-t27b-prompt-variants.ts`, with every `expect` field filled from plan.md § Fixture semantics. **Five preconditions below must all hold before this file is written.**
+- [x] T010 [US2] Register the screen job in `src/jobs/inngest-functions.ts` and add `scripts/trigger-eval-negation-polarity.ts` plus a `package.json` script entry, mirroring `trigger-eval-t27b.ts`
+- [~] T011 [US2] Run the offline screen — ≥3 candidate wordings of the prompt block, spliced into the live prompt between two markers so every variant shares an identical preamble and footer; **state the exact call count before spending**
 - [ ] T012 [US2] Ship VERIFY 4.7.0 in `src/prompts/grounnel/verify/system.json` — the winning block only, plus a `notes` entry naming the incident, run id and screen result, matching how 4.1.0–4.6.0 are recorded
 - [ ] T013 [US2] Add golden cases `g30`+ to `evaluations/golden/grounnel/live-eval-golden-set.json` for predicate-strength negation, including at least one `kind: "false"` counterpart
 
+
+**RESULTS (2026-09-02) — T009 and T010 DONE. T011 is BLOCKED on a decision only the user can make.**
+
+**T009** — `src/jobs/eval-negation-polarity.ts`. All 24 pre-registered rows present; every `expect`
+copied from plan.md § Fixture semantics, none authored here. **Precondition 5 is now satisfied**:
+015's simulations exist (G2 shipped, G1 refuted 2026-09-02).
+
+Two design decisions taken, both recorded here rather than left open:
+
+- **Anchor resolved (plan.md's OPEN item): insert immediately before `PARALLEL CLAIMS`**, i.e.
+  after INFERENCE TOLERANCE. Block B's second sentence defers to REPORTING CLAIMS, and a deference
+  clause must follow the section it defers to.
+- **The splice hazard is designed out, not worked around.** `buildVariantPrompt` here *inserts*
+  ahead of one anchor instead of replacing the span between two, so no section can be silently
+  deleted. t27b's `slice(0,start)+block+slice(end)` form is not reused.
+
+**C4 is declared but cannot run.** The five `g25`–`g29` rows carry `passages: null` — a golden case
+stores only article text, so there is nothing to feed a VERIFY-only fixture. They are listed so the
+24-row count stays honest and the gap is loud; the harness skips them and names them in its return
+value. **19 of 24 rows are runnable.** C4 needs the capture-and-freeze live run first.
+
+**T010** — job registered in `inngest-functions.ts`, `scripts/trigger-eval-negation-polarity.ts`
+added with a `--dry-run` flag, `negation:trigger` added to package.json. Dry run verified.
+
+**T011 — exact call count, stated before any spend as this task requires:**
+
+| | |
+|---|---|
+| Variants | **4** — control, Block A, Block B, A+B interference probe |
+| Runnable fixtures | **19** (5 C4 rows skipped) |
+| Repeats | 3 |
+| **Total Gemini calls** | **228** |
+
+**The blocker is not the money, it is the execution path.** Inngest events are served by the
+deployed Vercel app (`inngest:sync` targets `biassemble-core.vercel.app/api/inngest`), and this job
+exists only in the working tree. Running the screen therefore requires **either** a deploy — which
+is forbidden without an explicit instruction — **or** a local Inngest dev server against
+`pnpm dev`, which serves the same functions via the Fastify plugin in `server.ts`.
+
+**Recommended: the local dev-server path.** It needs no deploy, and 228 calls is well under the
+~1680-call golden run that is separately gated. Awaiting a go-ahead on the spend.
+
+**T011 ATTEMPTED 2026-09-02 — 228/228 calls failed. Gemini daily quota exhausted, zero results.**
+
+Ran via `scripts/s014-t011-run-negation-screen.ts`, which drives the fixtures directly and needs
+**no deploy and no Inngest** — it imports `FIXTURES`/`VARIANTS`/`buildVariantPrompt` from the job
+module so the pre-registered targets cannot drift between the two paths. That removes the
+deploy blocker permanently; the Inngest job from T010 stays as the registered entry point.
+
+Every one of the 228 cells returned HTTP 429:
+`Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests`.
+
+| | |
+|---|---|
+| Calls attempted | 228 |
+| Succeeded | **0** |
+| Cost incurred | **none** — all rejected before generation |
+| Cause | **free-tier daily quota**, not billing and not rate-per-minute |
+
+**CORRECTED 2026-09-02, later the same day — the free-tier reading was WRONG.** A direct probe from
+the dev machine returns `400 Bad Request — "User location is not supported for the API use."` The
+box is **geo-blocked** from the Gemini API, and the SOCKS proxy in the shell env
+(`127.0.0.1:10808`) is not running. Node's fetch ignores those proxy vars regardless. The earlier
+`429 ... generate_content_free_tier_requests` is **not** evidence about the account's tier — the
+account is not on the free tier.
+
+**Consequence: the standalone local runner cannot be the execution path.** It is correct code that
+this machine cannot run. **T011 must execute deployed, via Inngest on Vercel**, which is where all
+833 of today's production calls succeeded from. That requires a deploy of `evalNegationPolarityJob`
+— an explicit user decision, not something to infer.
+
+**The screen is built and ready.** Re-running is one command once quota resets:
+`npx tsx --env-file=.env scripts/s014-t011-run-negation-screen.ts --repeats 3`
+
+**T012 and T013 are blocked behind T011** and cannot be started: T012 ships 4.7.0 *only if* the
+screen clears, and T013's golden cases need a golden run that is explicitly not bookable without
+a yes.
 
 **T009's five preconditions — all must hold, or do not write the file:**
 

@@ -56,7 +56,7 @@ const SEARCH_CONCURRENCY = 20;
 /** VERIFY responses are intermittently unparseable, matches audit's own retry count (D018 §5.10). */
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
-const CONFIDENCE_THRESHOLD = 0.6;
+export const CONFIDENCE_THRESHOLD = 0.6;
 // D030 §3i Mode B — checkRetryContradiction's downgrade targets, keyed by the retry's own verdict.
 // One table, not parallel ternaries, so target/reason-code can't drift apart if a verdict is added.
 // `contradicted` reverts to "no evidence" (unsupported); `supported`/`partially_supported` revert to
