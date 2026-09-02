@@ -281,6 +281,52 @@ defect with two presentations, and it is the thing to fix.
    reasoning; the T008 pre-registration assumed a hedge the model does not need. Recorded, not
    edited.
 
+## T016 — STEP 1 isolation tested (plan.md option 1), 2026-09-02
+
+12 calls, deployed, control prompt. Each source verified ALONE, then combined by the merge rule
+pre-registered in `scripts/s014-t016-trigger-isolation.ts` **before any result was seen**:
+any `contradicted` wins, else any `supported`, else any `partially_supported`, else `unsupported`.
+
+| Class | A alone | B alone | C alone | Merge | Combined (actual) | Isolation fixes it? |
+|---|---|---|---|---|---|---|
+| **Negation** (`N3`) | `supported` | `partially_supported` | `unsupported` | **`supported`** | `contradicted` | ✅ **YES** |
+| **Reporting** (`A0`) | `contradicted` | `contradicted` | `supported` | **`contradicted`** | `contradicted` | ❌ **NO** |
+
+**The two defects are now separated by mechanism, not by symptom.**
+
+**Negation is an AGGREGATION defect.** No single source contradicts. The contradiction is
+manufactured only when the three are seen together, and per-source verification plus a
+conservative merge recovers the correct `supported`. Isolation is a real fix for this class.
+
+**Reporting is a PREDICATE-SELECTION defect and isolation does nothing for it.** Sources A and B
+each return `contradicted` *on their own*, reasoning *"administrators made no commitment regarding
+divestment"* — VERIFY answers the object-fact when asked the meta-fact even with one source in
+front of it. There is no aggregation to remove. `ISO-A0-C` returned `supported` correctly, so one
+of three sources is read right; the other two are wrong in isolation.
+
+**The merge rule stays exactly as registered.** Rule 1 ("any `contradicted` wins") is what leaves
+Case A broken, and inverting the precedence so `supported` wins would "fix" it by installing
+citation-less affirmation as an escape hatch — a false-affirmation hole traded for a
+false-accusation one, which is the same bad trade T004 already vetoed for US1. Not edited.
+
+**Where this leaves the two options:**
+
+| Option | Negation class | Reporting class |
+|---|---|---|
+| **1 — STEP 1 isolation** | ✅ fixes it | ❌ no effect |
+| **2 — schema field before `verdict`** | untested | the only remaining candidate |
+
+Option 1 is now an *evidenced* fix for one class rather than a hypothesis, but it is a real
+architecture change: one VERIFY call per source multiplies VERIFY spend by up to
+MAX_VERIFY_PASSAGES (3x), against a measured 3.45 Gemini calls/claim. **Cost it before proposing
+it** — and note it can be scoped to negated claims only, which are 1.0% of `contradicted` rows
+(T003), making the real cost negligible.
+
+Option 2 remains untested and is now the only live candidate for the reporting class.
+
+**Regression assets, cheap and permanent:** `N1`/`N2`/`N3` (9 calls) for aggregation, `ISO-A0-A/B/C`
+(9 calls) for predicate selection. Both reproduce their defect deterministically at 3/3.
+
 ## Phase 4: User Story 2 — VERIFY labels negated claims correctly (Priority: P2) — **POST-MVP**
 
 **Goal**: the wrong label is not produced in the first place.
