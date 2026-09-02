@@ -1,6 +1,15 @@
 <!-- SPECKIT START -->
-Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix) is implemented and
-live-verified. The ADR is the authoritative record — read it before changing this area:
+**Active plan**: feature 014 — VERIFY negated-claim polarity. A true claim was returned
+`contradicted` on live run `9a784003` (Cardinal Rule violation). Two increments: escalation may
+retract a contradiction (containment), then a VERIFY prompt fix (correctness).
+
+- specs/014-verify-negated-claim-polarity/plan.md — implementation plan
+- specs/014-verify-negated-claim-polarity/tasks.md — task breakdown
+
+Feature 013 (Grounnel D032 remediation — T27 contentless-claim eligibility, T31 `subject_entity`
+disable) is merged. Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix)
+is implemented and live-verified. The ADR is the authoritative record — read it before changing
+this area:
 
 - docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md
 - specs/012-grounnel-ordinal-eligibility-gates/spec.md — original feature specification
