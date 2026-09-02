@@ -1,0 +1,336 @@
+[
+  {
+    "key": "n1-pooled",
+    "note": "negation polarity — live verdict contradicted, isolated fixture gave unsupported",
+    "run": "9a784003",
+    "claim_id": "68da8ff4-8d3e-4172-950d-d8d805417451",
+    "claim": "The Pentagon has not issued an official finding on the Minab strike.",
+    "live_verdict": "contradicted",
+    "live_evidence": "But the Trump administration’s efforts to avoid responsibility for the attack continued on Wednesday, withthe Pentagon saying in a five-word statement to the Guardian: “The incident is under investigation.”",
+    "sources": [
+      {
+        "label": "A",
+        "url": "https://www.gillibrand.senate.gov/news/press/release/gillibrand-colleagues-demand-pentagon-release-long-awaited-report-on-u-s-bombing-of-iranian-elementary-school/",
+        "combined": 95,
+        "llm": 90,
+        "selected": true
+      },
+      {
+        "label": "B",
+        "url": "https://www.jpost.com/international/article-902707",
+        "combined": 95,
+        "llm": 90,
+        "selected": true
+      },
+      {
+        "label": "C",
+        "url": "https://www.reed.senate.gov/news/releases/reed-colleagues-demand-pentagon-release-investigation-of-deadly-iran-school-strike-without-further-delay",
+        "combined": 78.3333333333333,
+        "llm": 90,
+        "selected": true
+      }
+    ],
+    "passage_sentences": {
+      "A": [
+        {
+          "n": 1,
+          "text": "Gillibrand, Colleagues Demand Pentagon Release Long-Awaited Report On U.S."
+        },
+        {
+          "n": 2,
+          "text": "Gillibrand, Colleagues Demand Pentagon Release Long-Awaited Report On U.S."
+        },
+        {
+          "n": 3,
+          "text": "The strike on the Shajareh Tayyebeh Elementary School in Minab, which reportedly killed approximately 120 children and at least 175 people in total, represented the worst civilian casualty incident caused by the U.S. military in decades."
+        },
+        {
+          "n": 4,
+          "text": "Central Command (CENTCOM) Admiral Brad Cooper, the senators called for the swift completion and release of the Pentagon’s investigation into the school strike, which was reportedly submitted in April, but remains under review by senior military officials."
+        },
+        {
+          "n": 5,
+          "text": "They also requested that the Pentagon provide Congress with a comprehensive plan to ensure that this type of incident does not happen again."
+        },
+        {
+          "n": 6,
+          "text": "In early March, Reuters first reported that U.S. military investigators believed U.S. forces were likely responsible for the Minab strike.",
+          "selector": "first"
+        },
+        {
+          "n": 7,
+          "text": "Days later, Pentagon officials reportedly concluded through their preliminary investigation that a U.S."
+        },
+        {
+          "n": 8,
+          "text": "Senator Gillibrand has worked tirelessly to hold the Trump administration accountable for its failures during the war in Iran, including the Minab school strike."
+        }
+      ],
+      "B": [
+        {
+          "n": 1,
+          "text": "Pentagon delayed intelligence review into Iran school strike - CNN | The Jerusalem Post US military delayed intelligence review tied to Iran&#x27;s Minab school strike, CNN reports The Minab school damaged by a strike on February 28, in Minab, Iran, May 21, 2026."
+        },
+        {
+          "n": 2,
+          "text": "People attend the funeral of the victims following a reported strike on a school in Minab, Iran, March 3, 2026. (credit: Amirhossein Khorgooei/ISNA/WANA (West Asia News Agency) via REUTERS) The Pentagon wanted to avoid a repeat of what happened after the 12-day-war in June 2025, when a DIA assessment led to reports that undermined US President Donald Trump’s claims that US strikes had “obliterated” Iran’s nuclear capabilities, a source told CNN."
+        },
+        {
+          "n": 3,
+          "text": "Sources told CNN that the use of classification power has grown to unprecedented levels, with the Pentagon and CENTCOM restricting access to even basic information and planning details that had previously been shared widely among service branches to coordinate operations."
+        },
+        {
+          "n": 4,
+          "text": "Hurst III, about whether AI was used in the strike on Minab at a meeting of the US Senate Armed Services Committee on Tuesday."
+        },
+        {
+          "n": 5,
+          "text": "Pentagon |"
+        }
+      ],
+      "C": [
+        {
+          "n": 1,
+          "text": "[2026-07-13] Reed, Colleagues Demand Pentagon Release Investigation of..."
+        },
+        {
+          "n": 2,
+          "text": "Reed, Colleagues Demand Pentagon Release Investigation of Deadly Iran School Strike Without Further Delay WASHINGTON, DC – On February 28, 2026, within hours of the Trump Administration initiating ‘Operation Epic Fury,’ a U.S. missile is reported to have struck the Shajareh Tayyebeh Elementary School in Minab, Iran, killing over 175 people."
+        },
+        {
+          "n": 3,
+          "text": "Central Command (CENTCOM) Admiral Brad Cooper, the 25 Senators urged the swift release of the Pentagon’s investigation into the school strike, which was reportedly submitted in April, but remains under review by senior officials."
+        },
+        {
+          "n": 4,
+          "text": "They also requested that the Pentagon provide Congress with a comprehensive plan to ensure that this type of incident does not happen again."
+        },
+        {
+          "n": 5,
+          "text": "On March 5, Reuters first reported that U.S. military investigators believed U.S. forces were likely responsible for the Minab strike.",
+          "selector": "first"
+        },
+        {
+          "n": 6,
+          "text": "Days later, Pentagon officials reportedly concluded through their preliminary investigation that a U.S."
+        },
+        {
+          "n": 7,
+          "text": "We write regarding the Department of Defense’s investigation into the February 28, 2026 strike on Shajareh Tayyebeh Elementary School for girls in Minab, Iran, which reportedly killed approximately 120 children and at least 175 people in total."
+        }
+      ]
+    }
+  },
+  {
+    "key": "r1-pooled",
+    "note": "reporting claim under distractor pressure — live verdict contradicted",
+    "run": "be72361c",
+    "claim_id": "ed8b3a37-c5e8-429f-93fc-e623d90dcb4b",
+    "claim": "Social media posts claimed the University of Rochester announced it will cut academic ties with Israel.",
+    "live_verdict": "contradicted",
+    "live_evidence": "University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels. ... \"University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels. ... There has not and will not be any commitments about future academic divestment of University programs in Israel.\"",
+    "sources": [
+      {
+        "label": "A",
+        "url": "https://www.wxxinews.org/local-news/2024-04-23/university-of-rochester-students-set-up-pro-palestinian-encampment-on-campus",
+        "combined": 97.5,
+        "llm": 95,
+        "selected": true
+      },
+      {
+        "label": "B",
+        "url": "https://www.newsweek.com/pro-palestine-protesters-score-win-rochester-university-israel-1894179",
+        "combined": 78.3333333333333,
+        "llm": 90,
+        "selected": true
+      },
+      {
+        "label": "C",
+        "url": "https://fightbacknews.org/articles/new-york-university-of-rochester-sds-and-ur-sjp-statement-on-occupation-for",
+        "combined": 64.1666666666667,
+        "llm": 95,
+        "selected": true
+      }
+    ],
+    "passage_sentences": {
+      "A": [
+        {
+          "n": 1,
+          "text": "Students at the University of Rochester set up tents early Tuesday morning on the Wilson Quad in front of the Student Union."
+        },
+        {
+          "n": 2,
+          "text": "Students at the University of Rochester set up tents early Tuesday morning on the Wilson Quad in front of the Student Union."
+        },
+        {
+          "n": 3,
+          "text": "Students at the University of Rochester set up tents early Tuesday morning on the Wilson Quad in front of the Student Union."
+        },
+        {
+          "n": 4,
+          "text": "Students at the University of Rochester gather outside of Wilson Commons to protest the war in Gaza."
+        },
+        {
+          "n": 5,
+          "text": "Students at the University of Rochester set up tents early Tuesday morning on the Wilson Quad in front of the Student Union."
+        },
+        {
+          "n": 6,
+          "text": "Students at the University of Rochester set up tents early Tuesday morning on the Wilson Quad in front of the Student Union."
+        },
+        {
+          "n": 7,
+          "text": "Students at the University of Rochester set up tents early Tuesday morning on the Wilson Quad in front of the Student Union."
+        },
+        {
+          "n": 8,
+          "text": "UPDATE: The encampment at the University of Rochester has relocated to the Eastman Quadrangle out front of Rush Rhees Library."
+        },
+        {
+          "n": 9,
+          "text": "In recent social media and other online posts the student activists claim to have won concessions from UR to begin the process to academically divest from Israel ."
+        },
+        {
+          "n": 10,
+          "text": "“University of Rochester leaders need to provide clarification on the details of a meeting yesterday between student protesters and University administrators regarding protester demands."
+        },
+        {
+          "n": 11,
+          "text": "University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels."
+        },
+        {
+          "n": 12,
+          "text": "There has not and will not be any commitments about future academic divestment of University programs in Israel.” More than a dozen identical tents peppered the lawn outside Wilson Commons — the student union — at the University of Rochester’s River Campus Tuesday."
+        },
+        {
+          "n": 13,
+          "text": "Omar Darwesh, a senior at the University of Rochester whose family is from the West Bank uses his laptop to follow coursework in his public health class."
+        },
+        {
+          "n": 14,
+          "text": "The student group organizing the demonstration, Rochester Students for Justice in Palestine, is calling on the university to call for a ceasefire in the Israel-Hamas war."
+        },
+        {
+          "n": 15,
+          "text": "The student group also is calling on the university to cut ties with Israeli institutions for things like study abroad programs."
+        },
+        {
+          "n": 16,
+          "text": "\"Free Palestine\" is written in chalk outside Wilson Commons at the University of Rochester."
+        },
+        {
+          "n": 17,
+          "text": "University of Rochester’s communications department published a memo Tuesday afternoon regarding the encampment stating that participants must be university students, and that students must relocate any tent in an area designated for campus activities — like this weekend’s Springfest event."
+        },
+        {
+          "n": 18,
+          "text": "In November, University of Rochester president Sarah Mangelsdorf and provost David Figlio authored a letter to the school’s community in response to earlier protests."
+        },
+        {
+          "n": 19,
+          "text": "“We affirm students’ choices to criticize Israeli or Palestinian actions or US policies toward Israel, as well as students’ choices to criticize the University’s actions, policies, and practices,” they said."
+        }
+      ],
+      "B": [
+        {
+          "n": 1,
+          "text": "Pro-Palestinian Protesters Claim Win Over One College’s Ties To Israel - Newsweek Social Pro-Palestinian protesters claimed to have secured a win at a New York university, saying its governing body had agreed to investigate its academic ties to Israeli universities."
+        },
+        {
+          "n": 2,
+          "text": "\"Protesters have come to a compromise to have one portion of their demands met,\" Justin O&#x27;Connor, editor-in-chief of Rochester University&#x27;s Campus Times, wrote on X, formerly Twitter."
+        },
+        {
+          "n": 3,
+          "text": "\"The executive of University of Rochester&#x27;s Faculty Senate will be investigating UR&#x27;s academic ties to Israeli universities.\" Iman Abid-Thompson, the director of advocacy at the US Campaign for Palestinian Rights, added on X: \"The University of Rochester set up their tent encampment yesterday and in less than 48 hours was able to negotiate with the administration a report that will be released on the academic ties to Israeli universities, that will be coupled with a resolution that will be voted on.\" Protests have long been held at universities across the nation but have been particularly prevalent since the outbreak of the Israel-Gaza war on October 7 last year."
+        },
+        {
+          "n": 4,
+          "text": "More than 100 people were arrested last week at Columbia University in New York City after police were called in to dismantle a tent encampment, while others were suspended and removed from campus."
+        },
+        {
+          "n": 5,
+          "text": "Meanwhile, more than 150 people were arrested at New York University on Monday night, according to police."
+        },
+        {
+          "n": 6,
+          "text": "Since then, protests have spread to other universities, including Yale, Harvard, the University of Texas at Austin (UT) and the University of Southern California (USC)."
+        },
+        {
+          "n": 7,
+          "text": "\"The recommendation will then be discussed at a May 16 meeting of the University&#x27;s Board of Trustees, where the final call can be made."
+        },
+        {
+          "n": 8,
+          "text": "As a compromise, the protesters have agreed to move the encampment away from Wilson Quad, where D-Day will be held.\" O&#x27;Connor later added that the executive committee will not just be looking into the university&#x27;s academic ties to Israel but also all partners that \"do not align with the university&#x27;s ethics.\" This is in line with a recent resolution passed by the university&#x27;s student government calling for the university&#x27;s ethical investment advisory committee (EIAC) to advocate for an end to all investments in \"war, violence and occupation.\" However, a University of Rochester spokesperson told Newsweek later: \"University of Rochester leaders need to provide clarification on the details of a meeting yesterday between student protesters and University administrators regarding protester demands."
+        },
+        {
+          "n": 9,
+          "text": "\"University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels."
+        },
+        {
+          "n": 10,
+          "text": "There has not and will not be any commitments about future academic divestment of University programs in Israel.\" It comes as at least 127 people were arrested on Wednesday at the UT and USC after students attempted to set up tent protest encampments."
+        },
+        {
+          "n": 11,
+          "text": "Pro-Palestinian protesters claimed to have secured a win at a New York university, saying its governing body had agreed to investigate its academic ties to Israeli universities."
+        },
+        {
+          "n": 12,
+          "text": "\"Protesters have come to a compromise to have one portion of their demands met,\" Justin O'Connor, editor-in-chief of Rochester University's Campus Times, wrote on X, formerly Twitter ."
+        },
+        {
+          "n": 13,
+          "text": "\"The executive of University of Rochester's Faculty Senate will be investigating UR's academic ties to Israeli universities.\" Iman Abid-Thompson, the director of advocacy at the US Campaign for Palestinian Rights, added on X: \"The University of Rochester set up their tent encampment yesterday and in less than 48 hours was able to negotiate with the administration a report that will be released on the academic ties to Israeli universities, that will be coupled with a resolution that will be voted on.\" O'Connor later added that the executive committee will not just be looking into the university's academic ties to Israel but also all partners that \"do not align with the university's ethics.\" However, a University of Rochester spokesperson told Newsweek later: \"University of Rochester leaders need to provide clarification on the details of a meeting yesterday between student protesters and University administrators regarding protester demands."
+        },
+        {
+          "n": 14,
+          "text": "\"University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels."
+        },
+        {
+          "n": 15,
+          "text": "There has not and will not be any commitments about future academic divestment of University programs in Israel.\""
+        }
+      ],
+      "C": [
+        {
+          "n": 1,
+          "text": "New York: University of Rochester SDS and UR SJP statement on Occupation for Palestine &mdash; Fight Back!"
+        },
+        {
+          "n": 2,
+          "text": "New York: University of Rochester SDS and UR SJP statement on Occupation for Palestine Fight Back News Service is circulating the following statement from University of Rochester Students for a Democratic Society and Students for Justice in Palestine."
+        },
+        {
+          "n": 3,
+          "text": "As of April 24, the administration of University of Rochester has announced that UR will move forward with an academic boycott from all ties to Israel."
+        },
+        {
+          "n": 4,
+          "text": "Students for a Democratic Society and Students for Justice in Palestine moved into the Wilson Quad at the University of Rochester."
+        },
+        {
+          "n": 5,
+          "text": "Our organizations did this because the University of Rochester, being the largest employer in upstate New York, has a huge cultural and social impact when it makes decisions and statements."
+        },
+        {
+          "n": 6,
+          "text": "Therefore, we have decided to put pressure on the University to call for a ceasefire of the ongoing genocide of the Palestinian people, and for the University to cut all academic ties including study abroad programs and scholarships with universities in Israel."
+        },
+        {
+          "n": 7,
+          "text": "If the University cannot meet our simple demands, then we plan to disrupt the preparations of Dandelion Day by physically taking up the space where normally the fairgrounds include roller coasters, food trucks, and carnival games."
+        },
+        {
+          "n": 8,
+          "text": "Our demands as stated are simple: call for a ceasefire, and cut academic ties to Israel."
+        },
+        {
+          "n": 9,
+          "text": "We as students deserve to be confident in the fact that our university, our institutions, and our leaders are on the moral and just side of history. # RochesterNY # StudentMovement # AntiWarMovement # International # Palestine # SDS"
+        }
+      ]
+    }
+  }
+]

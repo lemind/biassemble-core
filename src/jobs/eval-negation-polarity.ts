@@ -167,11 +167,21 @@ export function buildVariantPrompt(rendered: string, blocks: string[]): string {
 
 export const dryRunCallCount = (repeats: number) => VARIANTS.length * RUNNABLE.length * repeats;
 
+/** Event-supplied fixtures/variants override the built-in ones, so a new screen needs no redeploy. */
+interface ScreenOverride {
+  fixtures?: Array<{ id: string; role: Role; claim: string; passages: Record<string, unknown> | null; expect: Verdict; relationship?: Fixture["relationship"] }>;
+  variants?: Array<{ id: string; strategy?: string; blocks: string[] }>;
+}
+
 export const evalNegationPolarityJob = inngest.createFunction(
   { id: "eval-negation-polarity", name: "Experiment — 014 Negation Polarity / Asserted Predicate" },
   { event: "eval/negation-polarity" },
   async ({ event, step }) => {
     const repeats = Math.max(1, Math.min(5, Number(event.data?.repeats ?? 3)));
+    const override = (event.data ?? {}) as ScreenOverride;
+    // passage_sentences is passed through verbatim — production's own render shape, not re-derived.
+    const fixtures = (override.fixtures?.length ? (override.fixtures as unknown as Fixture[]) : FIXTURES).filter((f) => f.passages !== null);
+    const variants = override.variants?.length ? override.variants.map((v) => ({ id: v.id, strategy: v.strategy ?? "(event-supplied)", blocks: v.blocks })) : VARIANTS;
     const provider = new GeminiProvider();
     const prompts = new PromptRegistry();
     const historyStore = new DrizzleGrounnelHistoryStore();
@@ -181,21 +191,21 @@ export const evalNegationPolarityJob = inngest.createFunction(
       const runId = randomUUID();
       await historyStore.createRun({
         runId, sessionId: null,
-        text: `[negation-polarity] ${VARIANTS.length} variants x ${RUNNABLE.length} fixtures x ${repeats}`,
-        source: "eval", maxClaims: RUNNABLE.length, truncated: false,
+        text: `[negation-polarity] ${variants.length} variants x ${fixtures.length} fixtures x ${repeats}`,
+        source: "eval", maxClaims: fixtures.length, truncated: false,
       });
       return runId;
     });
 
     logger.info(
-      { module: MODULE, variants: VARIANTS.length, fixtures: RUNNABLE.length, pending: C4_PENDING.length, repeats, calls: dryRunCallCount(repeats) },
+      { module: MODULE, variants: variants.length, fixtures: fixtures.length, repeats, calls: variants.length * fixtures.length * repeats, overridden: !!override.fixtures?.length },
       "Starting negation-polarity screen"
     );
 
     const perVariant = [];
-    for (const variant of VARIANTS) {
+    for (const variant of variants) {
       const perFixture: Array<{ id: string; role: Role; expect: Verdict; hits: number; mix: Record<string, number> }> = [];
-      for (const fixture of RUNNABLE) {
+      for (const fixture of fixtures) {
         const mix: Record<string, number> = {};
         let hits = 0;
         for (let i = 0; i < repeats; i++) {
@@ -240,6 +250,7 @@ export const evalNegationPolarityJob = inngest.createFunction(
       const missed = (rows: typeof perFixture) => rows.filter((f) => f.hits < repeats).map((f) => f.id);
 
       // C5 and n1 are the same fixture. Disagreement refutes the variant regardless of totals.
+      // Only meaningful when both rows are present; an event-supplied subset may omit them.
       const n1 = perFixture.find((f) => f.id === "n1-pentagon-investigating");
       const c5 = perFixture.find((f) => f.id === "c5-narrower-same-predicate");
       const c5Split = !!n1 && !!c5 && n1.hits !== c5.hits;
@@ -271,7 +282,7 @@ export const evalNegationPolarityJob = inngest.createFunction(
     const ranked = [...perVariant].sort(
       (a, b) => a.controlMissed.length - b.controlMissed.length || a.reportingMissed.length - b.reportingMissed.length || b.negationHits - a.negationHits
     );
-    logger.info({ module: MODULE, winner: ranked[0]?.id, c4Pending: C4_PENDING.map((f) => f.id) }, "negation-polarity screen complete");
-    return { repeats, calls: dryRunCallCount(repeats), c4Skipped: C4_PENDING.map((f) => f.id), ranked };
+    logger.info({ module: MODULE, winner: ranked[0]?.id }, "negation-polarity screen complete");
+    return { repeats, calls: variants.length * fixtures.length * repeats, ranked };
   }
 );
