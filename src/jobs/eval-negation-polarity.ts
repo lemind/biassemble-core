@@ -13,7 +13,11 @@ import { PromptRegistry } from "../prompts/registry.js";
 import { DrizzleGrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
 import { DrizzleGrounnelLlmCallStore } from "../persistence/grounnel-llm-call-store.js";
 import { callLlmForJson } from "../orchestrators/llm-json-call.js";
-import { VerifyRawResponseSchema } from "../orchestrators/grounnel/pipeline-schemas.js";
+import {
+  VerifyRawResponseSchema,
+  VerifyRawResponseReasonFirstSchema,
+  VerifyRawResponsePredicateFirstSchema,
+} from "../orchestrators/grounnel/pipeline-schemas.js";
 import { CONFIDENCE_THRESHOLD } from "../orchestrators/grounnel/pipeline.service.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
@@ -168,7 +172,17 @@ export function buildVariantPrompt(rendered: string, blocks: string[]): string {
 export const dryRunCallCount = (repeats: number) => VARIANTS.length * RUNNABLE.length * repeats;
 
 /** Event-supplied fixtures/variants override the built-in ones, so a new screen needs no redeploy. */
+/** Schema variants differ ONLY in field order — the lever T27 identified, since Gemini generates
+ * in schema order and a field after `verdict` cannot shape it. */
+const SCHEMAS = {
+  "verdict-first": VerifyRawResponseSchema,
+  "reason-first": VerifyRawResponseReasonFirstSchema,
+  "predicate-first": VerifyRawResponsePredicateFirstSchema,
+} as const;
+type SchemaVariant = keyof typeof SCHEMAS;
+
 interface ScreenOverride {
+  schemaVariant?: SchemaVariant;
   fixtures?: Array<{ id: string; role: Role; claim: string; passages: Record<string, unknown> | null; expect: Verdict; relationship?: Fixture["relationship"] }>;
   variants?: Array<{ id: string; strategy?: string; blocks: string[] }>;
 }
@@ -181,6 +195,8 @@ export const evalNegationPolarityJob = inngest.createFunction(
     const override = (event.data ?? {}) as ScreenOverride;
     // passage_sentences is passed through verbatim — production's own render shape, not re-derived.
     const fixtures = (override.fixtures?.length ? (override.fixtures as unknown as Fixture[]) : FIXTURES).filter((f) => f.passages !== null);
+    const schemaVariant: SchemaVariant = override.schemaVariant && override.schemaVariant in SCHEMAS ? override.schemaVariant : "verdict-first";
+    const responseSchema = SCHEMAS[schemaVariant];
     const variants = override.variants?.length ? override.variants.map((v) => ({ id: v.id, strategy: v.strategy ?? "(event-supplied)", blocks: v.blocks })) : VARIANTS;
     const provider = new GeminiProvider();
     const prompts = new PromptRegistry();
@@ -198,7 +214,7 @@ export const evalNegationPolarityJob = inngest.createFunction(
     });
 
     logger.info(
-      { module: MODULE, variants: variants.length, fixtures: fixtures.length, repeats, calls: variants.length * fixtures.length * repeats, overridden: !!override.fixtures?.length },
+      { module: MODULE, variants: variants.length, fixtures: fixtures.length, repeats, schemaVariant, calls: variants.length * fixtures.length * repeats, overridden: !!override.fixtures?.length },
       "Starting negation-polarity screen"
     );
 
@@ -222,7 +238,7 @@ export const evalNegationPolarityJob = inngest.createFunction(
               provider,
               system: buildVariantPrompt(rendered, variant.blocks),
               user: "Verify the claim/passage pair above. Return the JSON now.",
-              schema: VerifyRawResponseSchema,
+              schema: responseSchema,
               expectedKeys: ["results"],
               attempts: 2,
               module: MODULE,
@@ -283,6 +299,6 @@ export const evalNegationPolarityJob = inngest.createFunction(
       (a, b) => a.controlMissed.length - b.controlMissed.length || a.reportingMissed.length - b.reportingMissed.length || b.negationHits - a.negationHits
     );
     logger.info({ module: MODULE, winner: ranked[0]?.id }, "negation-polarity screen complete");
-    return { repeats, calls: variants.length * fixtures.length * repeats, ranked };
+    return { repeats, schemaVariant, calls: variants.length * fixtures.length * repeats, ranked };
   }
 );
