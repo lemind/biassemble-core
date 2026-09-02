@@ -1470,3 +1470,92 @@ distinguish a private assertion from an attributed quote) and an explicit `certa
 (replacing an uncalibrated raw confidence float); reordered it to run after, not ahead of, the
 existing regex filter (cost optimization, no correctness change); and clarified that `personal` is
 not synonymous with non-checkable.
+
+---
+
+## §4 Addendum — VERIFY's two known failure modes, and why neither is being fixed (2026-09-02)
+
+Spec 014's investigation closed with two reproducible defects, five refuted fix candidates, and a
+decision to stop. This records the holes so they are not rediscovered, and the fix that is designed
+but deliberately unshipped.
+
+### Hole 1 — multi-source aggregation manufactures a contradiction
+
+Claim: *"The Pentagon has not issued an official finding on the Minab strike."* (true)
+
+| Bundle | Verdict |
+|---|---|
+| source A alone ("remains under review") | `supported` |
+| source B alone (Senate release, same shape) | `partially_supported` |
+| source C alone ("the incident is under investigation") | `unsupported` |
+| **A + B + C** | **`contradicted` 3/3** |
+| A + B + C + off-topic distractors | `contradicted` 3/3 |
+
+**Every source is labelled correctly alone.** The contradiction exists only in the combination, and
+C's own reason inverts: neutral in isolation, *"which contradicts the claim"* alongside A and B.
+Adding *supporting* evidence flipped the verdict against the claim. Frozen as golden case
+`g30-pentagon-no-finding-aggregation`.
+
+### Hole 2 — a reporting claim is answered on the object-fact
+
+Claim: *"Social media posts **claimed** the University of Rochester announced it will cut academic
+ties with Israel."* (true — a claim about what posts said)
+
+Sources A and B each return `contradicted` **alone**, citing *"administrators in fact made no
+commitment…"*. Isolation therefore does not help. Under an experimental schema forcing the model to
+name the predicate before the verdict, `assertedPredicate` is **correct and identical** on all three
+sources — the divergence is entirely in which sentence gets selected. **VERIFY names the right
+predicate and then labels against a sentence that does not address it.** Frozen as
+`g31-reporting-claim-object-fact`.
+
+### Hole 3 — wrong entity sharing a proper-noun token
+
+`alishabakitchen.com` accepted as evidence about a person named Alishba. `sameEntity` compares
+proper-noun tokens and they share one. Refuted work (spec 013 T30); `subject_entity` stays disabled.
+
+### The designed, measured, UNSHIPPED fix for Hole 1
+
+Second-stage isolation, gated hard:
+
+1. Run VERIFY normally, batched.
+2. If the verdict is not `contradicted`, stop.
+3. If the claim carries no negation cue, stop.
+4. Otherwise verify each pooled source separately and apply the **unlock merge**: if **no** isolated
+   source is `contradicted`, release to the strongest non-accusation those sources already gave; if
+   **any** isolated source is `contradicted`, keep the bundle verdict unchanged.
+
+**The merge is downgrade-only by construction — it can release a false accusation but never create
+one.** That property is the whole safety argument, and it was arrived at by discarding an earlier
+"any `contradicted` wins" rule which two independent reviews correctly identified as unsafe: on
+Hole 2 both isolated sources return `contradicted`, so that rule would have *ratified* a false
+accusation instead of fixing one.
+
+Scored on collected data at zero API cost: Hole 1 goes `contradicted` → `supported` (fixed);
+Hole 2 is correctly skipped at step 3 and left unchanged.
+
+**Cost, measured against production history:** 10 of 1,032 `contradicted` claims carry a negation
+cue — **1.0% of contradicted, 0.122% of all claims**, or roughly **30 extra VERIFY calls across the
+project's entire history**.
+
+**Why it is not shipped.** The cost is negligible and the fix is correct, but it is still a second
+VERIFY stage — new architecture for a defect measured at ~10 rows in 8,106 claims, in a week that
+already shipped two deterministic gates (G1, G2). It is one commit away and fully specified above.
+**Reopening trigger:** the `contradicted` ∩ negation-cue rate rising materially above 1.0% of
+contradicted, or a user-reported false accusation of this shape.
+
+### Refuted this cycle — do not re-propose without new evidence
+
+| Candidate | Why it died |
+|---|---|
+| US1 — escalation may retract a contradiction | would release ~38 correct contradictions to free 1 false one |
+| E1 — collapse duplicate claims | 2 exact duplicates in 8,106; looser predicates ~93% false-positive |
+| E2 — caption/bio detector | 12 rows corpus-wide, 7 already excluded by eligibility; real population 2 |
+| G1 span-level | no threshold band; cannot separate "source copies input" from "input quotes source" |
+| VERIFY Blocks A and B | control failed the same screen; Block A targets a polarity error that does not exist |
+| `reason-first` schema | moved zero rows |
+| `predicate-first` schema | **raised false accusations 25%** (12→15 cells) while aggregate accuracy improved |
+
+**Method note worth keeping: judge on false-accusation count, not aggregate accuracy.**
+`predicate-first` passed a 4-row screen and looked like a strict improvement; on the full 19-fixture
+set it was a Cardinal Rule regression. A narrow screen is not evidence of safety.
+

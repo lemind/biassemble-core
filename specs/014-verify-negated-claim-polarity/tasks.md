@@ -421,6 +421,28 @@ promising lead — but it must be tested as a **deterministic gate on top of the
 not by changing the production schema. A gate can only downgrade; it cannot invent an accusation,
 which is precisely the failure mode that just disqualified `predicate-first`.
 
+## T021 — MVP close-out: persist VERIFY input, freeze the two failures, stop (2026-09-02)
+
+Two independent reviews converged on the same call: the isolation architecture is overengineering
+for a defect measured at ~10 rows in 8,106 claims, on a week that already shipped two deterministic
+gates. Scope cut to three items, all done, zero Gemini spend.
+
+1. **`grounnel_llm_calls.input_payload jsonb`** — VERIFY's rendered bundle is now persisted per
+   call (migration `0015_nifty_luminals.sql`, additive nullable, no backfill). This is the one
+   forward-looking change: today's investigation lost a live false accusation permanently because
+   nothing stored what VERIFY read. Two tests: the payload carries the `{source, n}` map, and
+   non-VERIFY calls attach nothing.
+   Also corrected `grounnel_search_pages.excerpt`'s schema comment, which claimed to be "exactly
+   what downstream logic received" — it is search-query-keyed and newline-collapsed, and is not.
+2. **Golden cases `g30` / `g31`** — the aggregation and reporting failures, at `minCorrectRate: 0.8`
+   rather than 1.0: both reproduce 3/3 on fixtures, but a 1.0 gate on a live path is exactly what
+   made `g27`/`g28` read as passing when they were flaky (T003 side finding).
+3. **D030 §4 addendum** — three holes documented, seven refutations tabulated, and the unlock-merge
+   fix written up in full as designed-but-unshipped with an explicit reopening trigger.
+
+**Explicitly not built:** per-source VERIFY, any merge rule in production, the predicate/sentence
+gate, further prompt or schema experiments, golden-set runs to decide a merge.
+
 ## Phase 4: User Story 2 — VERIFY labels negated claims correctly (Priority: P2) — **POST-MVP**
 
 **Goal**: the wrong label is not produced in the first place.

@@ -544,7 +544,9 @@ export class GrounnelPipelineService {
     // Excludes verbatim-quote fields from the injection-marker scan (a scraped page's own boilerplate false-positived it once).
     quotedFields: string[] = [],
     // D026 §19 — only set by a genuinely single-claim caller; batched calls pass undefined.
-    claimId?: string
+    claimId?: string,
+    // spec 014 T021 — VERIFY only: the rendered pairs, so this call can be replayed later.
+    inputPayload?: unknown
   ): Promise<T> {
     return callLlmForJson({
       provider: this.provider,
@@ -566,6 +568,7 @@ export class GrounnelPipelineService {
         provider: this.provider.mode,
         model: env.GEMINI_MODEL,
         promptVersion,
+        inputPayload,
       }),
     });
   }
@@ -606,7 +609,9 @@ export class GrounnelPipelineService {
     // No quotedFields needed — the raw response only ever contains citations, not scraped text.
     // D026 §19 — a single-claim call attributes claimId; a batch stays undefined.
     const claimId = pairs.length === 1 ? pairs[0]!.id : undefined;
-    const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion, [], claimId);
+    // renderedPairs, not the whole prompt: the prompt is reconstructible from promptVersion, the
+    // bundle is not (spec 014 T014 — grounnel_search_pages cannot rebuild the {source, n} numbering).
+    const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion, [], claimId, renderedPairs);
     return {
       results: raw.results.map((r) => {
         const resolved = resolveEvidenceFromCitations(r.evidenceCitations, sentencesByClaim.get(r.id) ?? {});

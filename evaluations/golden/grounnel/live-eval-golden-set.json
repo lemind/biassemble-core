@@ -324,6 +324,28 @@
           "kind": "true"
         }
       ]
+    },
+    {
+      "id": "g30-pentagon-no-finding-aggregation",
+      "text": "The Pentagon has not issued an official finding on the Minab strike. The investigation was submitted in April but remains under review by senior military officials, and the Pentagon has said only that the incident is under investigation.",
+      "minCorrectRate": 0.8,
+      "claims": [
+        {
+          "match": "not issued an official finding",
+          "kind": "true"
+        }
+      ]
+    },
+    {
+      "id": "g31-reporting-claim-object-fact",
+      "text": "Social media posts claimed the University of Rochester announced it will cut academic ties with Israel. University administrators in fact made no commitment to either demand, as is being inaccurately reported on some social media channels.",
+      "minCorrectRate": 0.8,
+      "claims": [
+        {
+          "match": "posts claimed",
+          "kind": "true"
+        }
+      ]
     }
   ]
 }

@@ -16,6 +16,8 @@ export interface GrounnelLlmCallStore {
     provider: string;
     model: string;
     promptVersion: string;
+    // spec 014 T021 — VERIFY only; the exact rendered batch input, so a failure is replayable.
+    inputPayload?: unknown;
   }): (info: LlmCallCompletionInfo) => void;
 }
 
@@ -33,6 +35,7 @@ export class DrizzleGrounnelLlmCallStore implements GrounnelLlmCallStore {
     provider: string;
     model: string;
     promptVersion: string;
+    inputPayload?: unknown;
   }): (info: LlmCallCompletionInfo) => void {
     return (info: LlmCallCompletionInfo) => {
       waitUntil(insertGrounnelLlmCall({

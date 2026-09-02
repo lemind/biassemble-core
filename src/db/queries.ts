@@ -683,6 +683,8 @@ export async function insertGrounnelLlmCall(data: {
   promptVersion: string;
   rawResponse: string | null;
   parsedOutput: unknown;
+  // spec 014 T021 — VERIFY's rendered input; null for every other stage.
+  inputPayload?: unknown;
   status: "success" | "timeout" | "error";
   failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
   inputTokens: number | null;
