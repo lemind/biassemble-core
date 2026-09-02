@@ -25,7 +25,7 @@ const fixtures = pooled.map((p) => ({
 }));
 
 const variants = [
-  { id: "pooled-v0-control", strategy: "live 4.6.0, no block", blocks: [] as string[] },
+  { id: `pooled-v0-control-${Date.now().toString().slice(-4)}`, strategy: "live 4.6.0, no block", blocks: [] as string[] },
 ];
 
 async function main() {

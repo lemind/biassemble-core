@@ -24,9 +24,9 @@
       },
       {
         "label": "C",
-        "url": "https://www.reed.senate.gov/news/releases/reed-colleagues-demand-pentagon-release-investigation-of-deadly-iran-school-strike-without-further-delay",
-        "combined": 78.3333333333333,
-        "llm": 90,
+        "url": "https://www.theguardian.com/world/2026/mar/11/iran-war-missile-strike-elementary-school",
+        "combined": 51.6666666666667,
+        "llm": 70,
         "selected": true
       }
     ],
@@ -91,32 +91,27 @@
       "C": [
         {
           "n": 1,
-          "text": "[2026-07-13] Reed, Colleagues Demand Pentagon Release Investigation of..."
+          "text": "A woman throws rose petals on the coffins during funeral of children killed in a strike on 28 February on a girls' elementary school in Minab, Iran."
         },
         {
           "n": 2,
-          "text": "Reed, Colleagues Demand Pentagon Release Investigation of Deadly Iran School Strike Without Further Delay WASHINGTON, DC – On February 28, 2026, within hours of the Trump Administration initiating ‘Operation Epic Fury,’ a U.S. missile is reported to have struck the Shajareh Tayyebeh Elementary School in Minab, Iran, killing over 175 people."
+          "text": "A woman throws rose petals on the coffins during funeral of children killed in a strike on 28 February on a girls' elementary school in Minab, Iran."
         },
         {
           "n": 3,
-          "text": "Central Command (CENTCOM) Admiral Brad Cooper, the 25 Senators urged the swift release of the Pentagon’s investigation into the school strike, which was reportedly submitted in April, but remains under review by senior officials."
+          "text": "Minab school bombing: a visual guide While independent analysis of the strike had pointed strongly to US culpability , the Trump administration has continued with a policy of evasion around the attack that hit the school in the town of Minab close to buildings used by Iran’s Islamic Revolutionary Guards Corps (IRGC) naval forces."
         },
         {
           "n": 4,
-          "text": "They also requested that the Pentagon provide Congress with a comprehensive plan to ensure that this type of incident does not happen again."
+          "text": "A Tomahawk missile hits naval base next to Minab primary school But the Trump administration’s efforts to avoid responsibility for the attack continued on Wednesday, withthe Pentagon saying in a five-word statement to the Guardian: “The incident is under investigation.” Minab school bombing: what evidence is there that the US was responsible?"
         },
         {
           "n": 5,
-          "text": "On March 5, Reuters first reported that U.S. military investigators believed U.S. forces were likely responsible for the Minab strike.",
-          "selector": "first"
+          "text": "On 8 March, Iranian state media Mehr News Agency released a video of a missile hitting a location in Minab."
         },
         {
           "n": 6,
-          "text": "Days later, Pentagon officials reportedly concluded through their preliminary investigation that a U.S."
-        },
-        {
-          "n": 7,
-          "text": "We write regarding the Department of Defense’s investigation into the February 28, 2026 strike on Shajareh Tayyebeh Elementary School for girls in Minab, Iran, which reportedly killed approximately 120 children and at least 175 people in total."
+          "text": "Bellingcat was able to match buildings, water towers, trees and roads from the video with satellite images of the Minab site, to locate what angle it was filmed from and where the missile landed."
         }
       ]
     }

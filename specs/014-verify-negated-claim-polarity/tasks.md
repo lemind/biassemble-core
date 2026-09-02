@@ -383,6 +383,48 @@ sources. The reporting rows may be failing partly because of that isolation, not
 STEP 1. Any re-run should pool distractor passages the way production does before concluding
 anything further about REPORTING CLAIMS.
 
+**T014 (pooled fixtures) RAN 2026-09-02 — the confound is confirmed, and the two classes split.**
+
+Rebuilt both incident rows as the real 3-source bundles VERIFY saw, via production's own
+`buildPassageSentencesMulti`. Two runs, 3 repeats each, control prompt only.
+
+| Fixture | Live verdict | Pooled control | Reproduced? |
+|---|---|---|---|
+| `r1-pooled` (`ed8b3a37`, reporting) | `contradicted` | **`contradicted` 6/6** | ✅ **yes** |
+| `n1-pooled` (`68da8ff4`, negation) | `contradicted` | `unsupported` 6/6 | ❌ no |
+
+**`r1` reproduces exactly, including the mechanism.** conf 0.9, citing A:11 + B:9/14/15, reason
+*"multiple sources explicitly state that University administrators…"* — VERIFY answering the
+object-fact when asked the meta-fact, which is precisely incident 2. **This is the project's first
+repeatable offline reproduction of a live Grounnel defect**, and it means the STEP 1 selection
+failure can now be screened without a live run.
+
+**`n1` does not reproduce, and the reason is a known defect elsewhere.** Two fixes were applied and
+neither was sufficient:
+
+1. `grounnel_rerank_decisions` holds one row per URL *per tier*, so a naive join returned the same
+   source as A, B and C. Deduped with `DISTINCT ON (url)`.
+2. Ranking alone dropped the decisive passage: the Guardian page carrying the cited sentence scored
+   **51.7** while the two sources VERIFY ignored scored **95**. A top-3-by-score slice therefore
+   reconstructs a bundle in which the failure cannot occur. The builder now forces the
+   evidence-carrying page into the pool.
+
+Even so the control returns `unsupported` with *"None of the provided sentences state whether the
+Pentagon has issued an official finding"* — VERIFY does not see the cited sentence at all.
+
+**Cause: the citation-index provenance defect, previously filed under "Deferred — not MVP" as
+forensics debt.** `grounnel_search_pages.excerpt` is built against the *search query* and
+newline-collapsed, so the stored text is **not** the passage VERIFY received. This spec's own T001
+recorded the symptom (`n_as_verify_numbered: 6` vs `n_if_replayed_from_stored_excerpt: 4`) without
+drawing the consequence. **The consequence is that a class of live failures cannot be reproduced
+offline at all.** That promotes it from forensics debt to a blocker on the whole screening method,
+and it should leave the deferred list.
+
+**Consequence for the plan.** The schema-field experiment (plan.md option 2) now has a fixture that
+actually reproduces its target failure — run it against `r1-pooled`. The negation class has no
+offline harness until passage provenance is fixed, so US2's negation half stays unscreenable and
+must not be "screened" against fixtures that do not reproduce it.
+
 **Kill criterion fired. The next move is NOT a fourth wording round** — plan.md pre-committed to
 that. Of its three named options, Finding 1 and Finding 3 both point at **option 2, a schema field
 emitted before `verdict`** (T27's ordering result), because the failure is that VERIFY commits to a

@@ -54,7 +54,20 @@ async function main() {
     `);
     const usable = ranked.filter((r) => (r.excerpt as string | null)?.trim());
     const selected = usable.filter((r) => r.selected === true);
-    const pool = (selected.length ? selected : usable).slice(0, 3);
+    const ordered = selected.length ? selected : usable;
+
+    // The page carrying the live cited evidence MUST be in the pool. Ranking alone drops it: for
+    // 68da8ff4 the Guardian scored 51.7 while the two sources VERIFY ignored scored 95 — that gap
+    // IS the defect, so a top-3-by-score slice reconstructs a bundle the failure cannot occur in.
+    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const evidenceKey = norm(String(c.evidence ?? "")).split(" ").slice(0, 12).join(" ");
+    const carrier = evidenceKey.length > 20 ? ordered.find((r) => norm(String(r.excerpt)).includes(evidenceKey)) : undefined;
+    const others = ordered.filter((r) => r !== carrier).slice(0, carrier ? 2 : 3);
+    // Rank order preserved, carrier placed where its score puts it.
+    const pool = [...others, ...(carrier ? [carrier] : [])].sort(
+      (a, b) => Number(b.combined_score) - Number(a.combined_score),
+    );
+    if (carrier) console.log(`  (evidence carrier included: ${String(carrier.url).slice(0, 60)} @${Number(carrier.combined_score).toFixed(1)})`);
 
     if (!pool.length) { console.log(`!! ${t.key}: no page text for any ranked source`); continue; }
 
