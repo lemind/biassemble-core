@@ -420,6 +420,36 @@ drawing the consequence. **The consequence is that a class of live failures cann
 offline at all.** That promotes it from forensics debt to a blocker on the whole screening method,
 and it should leave the deferred list.
 
+**SETTLED 2026-09-02 — the VERIFY input was never persisted. Case B is unrecoverable; stop
+reconstructing it.**
+
+Two independent reviews both said: before any schema change, check whether
+`grounnel_llm_calls` already stores the rendered prompt. It does not. The full column list is
+`id, run_id, stage, call_type, provider, model, prompt_version, raw_response, parsed_output,
+status, failure_type, *_tokens, started_at, ended_at, duration_ms, error_message, created_at,
+claim_id`. **There is no prompt or input column at all** — only the response. Nothing anywhere
+persists `passage_sentences`.
+
+**Therefore:**
+
+- The exact bundle behind `68da8ff4`'s `contradicted` + C:6 is **gone**. No archaeology recovers it.
+- **A second, independent reason a clone was never possible: batching.** That VERIFY call carried
+  **14,973 input tokens** across a batch of 8 claims. Even byte-perfect page text would not
+  reproduce it, because the other seven claims were in the same context window.
+- `grounnel_search_pages.excerpt` must **not** be repaired into a replay artifact. It is a
+  search-time, query-keyed, newline-collapsed input to sentence-building, two transformations
+  upstream of what VERIFY reads. Fixing it is hygiene, not reproducibility.
+
+**The method changes, not the goal.** Screening the *defect class* never required a live clone —
+that was an unforced constraint. The class needs a **constructed** bundle: the claim, the C-clause
+(*"The incident is under investigation."*), and the A/B *"remains under review"* sentences, all of
+which are already frozen in `incident-9a784003.json`. Success is the label on that class, not
+matching the live `contradicted`. Case A remains the proof that the harness works when the bundle
+is faithful; Case B is the proof that the warehouse is not a bundle.
+
+**T013 is superseded and the deferred citation-provenance item is closed as WONTFIX-as-stated** —
+the fix is forward-looking capture, not excerpt repair.
+
 **Consequence for the plan.** The schema-field experiment (plan.md option 2) now has a fixture that
 actually reproduces its target failure — run it against `r1-pooled`. The negation class has no
 offline harness until passage provenance is fixed, so US2's negation half stays unscreenable and
@@ -648,8 +678,10 @@ has simply learned "negated ⇒ supported".
 
 Recorded, unscheduled, **no task IDs**: these are low-severity and must not compete with Phase 0–3.
 
-- Citation-index provenance defect — `grounnel_search_pages.excerpt` is built against the *search
-  query* and newline-collapsed, so VERIFY's `{source, n}` numbering is not reproducible from the DB.
+- **Citation-index provenance — RECLASSIFIED 2026-09-02, no longer forensics debt.** Nothing
+  persists VERIFY's input, so a whole defect class cannot be replayed. The fix is a new
+  `input_payload jsonb` on `grounnel_llm_calls` captured by default for VERIFY, NOT repairing
+  `excerpt`. Own change set, own migration.
   Grounding is unaffected (resolved evidence *text* survives); this is forensics debt. The schema
   comment at `src/db/schema.ts:458` is inaccurate for both consumers and should be corrected whenever
   that file is next touched.
