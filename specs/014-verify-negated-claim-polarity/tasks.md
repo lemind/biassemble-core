@@ -89,8 +89,8 @@ given a bundle holding both the meta-fact and the object-fact, VERIFY reached fo
 **Purpose**: freeze the evidence before the session that produced it is gone. Everything downstream
 reads the frozen file, not the database and not this conversation.
 
-- [ ] T001 Freeze **both** incidents, one file each, to `specs/014-verify-negated-claim-polarity/incident-9a784003.json` and `incident-be72361c.json` — separate files because they are separate failure classes and T009 draws different fixture rows from each. For `9a784003` / `68da8ff4`: the claim id and text, the raw VERIFY result object (prompt 4.6.0, 06:32:22Z, batch of 8, 14,973 input tokens), C:6 verbatim, Sources A and B with their "remains under review by senior military officials" sentences and rerank scores, the `consistency_check` response, the escalation-tier VERIFY result (`unsupported`, conf 0.9, `evidenceCitations: null`), and the `escalation_replacement` gate event. Record both `n_as_verify_numbered: 6` and `n_if_replayed_from_stored_excerpt: 4`. For `be72361c` / `ed8b3a37`: the claim, the A:11/B:11/B:20 citations and their verbatim text, the three uncited confirmations (A:9, B:1, source C's post) with rerank scores (100/90, 67/90, 33/95), both `consistency_check` responses, the tier-2 verdict **`supported`**, and the `escalation_replacement` event. Also capture `181d6ebb`'s EXTRACT excerpt and claim text as evidence for the separate referent-widening spec — do not build fixtures from it here.
-- [ ] T002 [P] Delete thirteen spent scratch scripts from `scripts/` (housekeeping, unrelated to the semantic fix): `_q.ts`, `_tmp-check.ts`, `_tmp-check2.ts`, `_tmp-check3.ts`, `_tmp-check4.ts`, `_tmp-check5.ts`, `_tmp-v1.ts`, `_tmp-v2.ts`, `_tmp-v3.ts`, `_callcount.ts`, `_cmp2.ts`, `_re.ts`, `_t32check.ts`
+- [x] T001 Freeze **both** incidents, one file each, to `specs/014-verify-negated-claim-polarity/incident-9a784003.json` and `incident-be72361c.json` — separate files because they are separate failure classes and T009 draws different fixture rows from each. For `9a784003` / `68da8ff4`: the claim id and text, the raw VERIFY result object (prompt 4.6.0, 06:32:22Z, batch of 8, 14,973 input tokens), C:6 verbatim, Sources A and B with their "remains under review by senior military officials" sentences and rerank scores, the `consistency_check` response, the escalation-tier VERIFY result (`unsupported`, conf 0.9, `evidenceCitations: null`), and the `escalation_replacement` gate event. Record both `n_as_verify_numbered: 6` and `n_if_replayed_from_stored_excerpt: 4`. For `be72361c` / `ed8b3a37`: the claim, the A:11/B:11/B:20 citations and their verbatim text, the three uncited confirmations (A:9, B:1, source C's post) with rerank scores (100/90, 67/90, 33/95), both `consistency_check` responses, the tier-2 verdict **`supported`**, and the `escalation_replacement` event. Also capture `181d6ebb`'s EXTRACT excerpt and claim text as evidence for the separate referent-widening spec — do not build fixtures from it here.
+- [x] T002 [P] Delete thirteen spent scratch scripts from `scripts/` (housekeeping, unrelated to the semantic fix): `_q.ts`, `_tmp-check.ts`, `_tmp-check2.ts`, `_tmp-check3.ts`, `_tmp-check4.ts`, `_tmp-check5.ts`, `_tmp-v1.ts`, `_tmp-v2.ts`, `_tmp-v3.ts`, `_callcount.ts`, `_cmp2.ts`, `_re.ts`, `_t32check.ts`
 
 **Checkpoint**: T003, T004 and T009 all read the frozen incident files. Do not start them first.
 
@@ -103,8 +103,56 @@ API cost**. This is D030 §3n, the step that refuted 7/7 `subject_entity` fix ca
 
 **⚠️ T004 can veto US1 outright.** T003 cannot veto US2 — see its note.
 
-- [ ] T003 [P] Census the failure class in `scripts/t003-negated-contradiction-census.ts` — over all historical `grounnel_claims` with `verdict = 'contradicted'`, select rows whose `claim_text` matches `\b(not|never|no longer|has yet to|failed to|did not|does not|hasn't|haven't)\b`, hand-label each as genuine CONFLICT vs the weaker-affirmative mislabel, and report **false-CONFLICT rate on negated claims with N**
-- [ ] T004 [P] Simulate the escalation exception in `scripts/t004-simulate-escalation-exception.ts` — replay every historical run carrying both a `contradicted` claim and an `escalation_replacement` event, and classify each affected case into exactly one of three buckets
+- [x] T003 [P] Census the failure class in `scripts/t003-negated-contradiction-census.ts` — over all historical `grounnel_claims` with `verdict = 'contradicted'`, select rows whose `claim_text` matches `\b(not|never|no longer|has yet to|failed to|did not|does not|hasn't|haven't)\b`, hand-label each as genuine CONFLICT vs the weaker-affirmative mislabel, and report **false-CONFLICT rate on negated claims with N**
+- [x] T004 [P] Simulate the escalation exception in `scripts/t004-simulate-escalation-exception.ts` — replay every historical run carrying both a `contradicted` claim and an `escalation_replacement` event, and classify each affected case into exactly one of three buckets
+
+**RESULTS (2026-09-02).**
+
+- **T001 DONE** - both incident files generated directly from persisted telemetry (not transcribed),
+  including `181d6ebb` as out-of-scope reference material.
+- **T002 DONE** - all thirteen scratch scripts removed.
+- **T003 DONE - the class is rare, its error rate is high.** Across **8,106 claims / 1,024
+  `contradicted`**, only **10** contradicted claims carry a negation marker (**1.0%** of
+  contradicted; 0.12% of all claims). Hand-labelled: **8 of 10 are false accusations** - 3x "Buzz
+  Aldrin was not the first man to walk on the Moon", 4x "World War II did not end in 1943", plus
+  `68da8ff4`. One genuine catch ("Lightning never strikes the same place twice"); one
+  (`181d6ebb`) defensible under EXTRACT's widened referent. **False-CONFLICT rate on negated claims
+  = 8/10, N = 10.** Small N, so indicative only - but the direction is unambiguous.
+- **T003 SIDE FINDING - the golden negation cases are flaky at 4.6.0, not passing.** Per-case
+  history, ~37 runs each:
+
+  | Golden case | supported | contradicted | unsupported | false-accusation rate |
+  |---|---|---|---|---|
+  | `g27` Aldrin not first | 34 | **3** | 0 | **8.1%** |
+  | `g28` WWII not 1943 | 28 | **4** | 5 | **10.8%** |
+  | `g26` Eiffel not London | 37 | 0 | 0 | 0% |
+  | `g25` Microsoft not iPhone | 44 | 0 | 1 | 0% |
+  | `g29` Great Wall not Roman | 37 | 0 | 0 | 0% |
+
+  **This corrects a claim made earlier in this spec.** "`g25`-`g29` all passing" came from a single
+  28/28 run - one draw from a stochastic system, and `minCorrectRate: 1.0` means those runs did
+  genuinely fail. The failing pair are **ordinal** (`first`) and **year** (`1943`) substitutions;
+  the three clean ones are **entity** substitutions. The unreliable sub-shape is therefore
+  **negation over an ordinal or a year**, which also touches `applyReasonOrdinalGate` /
+  `applyYearGate` territory. Narrow T009's fixture axis accordingly if Phase 4 is ever run.
+- **T004 DONE - the escalation exception is REFUTED.** Of **49** historical
+  `escalation_replacement` rejections (**48** restoring a `contradicted`), the candidate rule would
+  **release 41**, keep 7. Hand-labelled, the released set is overwhelmingly **correct**
+  contradictions on golden `kind: false` claims:
+
+  | Bucket | Count | Content |
+  |---|---|---|
+  | **1 - correct contradiction destroyed (VETO)** | **~38** | Bukowski born-1958/died-1948, Wright "first flight lasted 59 seconds", Apollo-11-on-Mars, Amazon-electronics, CSS-before-Internet, first-mouse-wireless, Apple-founded-by-Gates, Eiffel-in-London |
+  | 2 - false accusation freed (desired) | **1** | `68da8ff4`, the Pentagon claim |
+  | 3 - ambiguous | 2 | an AI-jobs prediction; `181d6ebb` |
+
+  **Pre-registered criterion was "bucket 1 must be ~0". It is ~38.** The trade is *free one false
+  accusation, destroy thirty-eight correct ones* - a Cardinal Rule failure in the other direction,
+  exactly what the criterion existed to catch.
+
+  **Why:** when a `kind: false` claim escalates, tier 2 searches a wider, noisier pool and often
+  cannot re-find the disproving passage, returning `unsupported` with no citations - precisely the
+  case D030 section 3h's floor was built for. **The floor is doing its job.** T005 would have gutted it.
 
 **T003's gate, amended.** A small N means **no rate may be quoted** and wording must not be tuned
 off the census — it does **not** block US2. Spec 013 T4's "too rare to decide from" governed
@@ -137,7 +185,15 @@ is the expected, acceptable answer.
 
 ---
 
-## Phase 3: User Story 1 — Escalation may retract a contradiction (Priority: P1) 🎯 MVP
+## Phase 3: User Story 1 — Escalation may retract a contradiction — CANCELLED (T004 VETO)
+
+**T005-T007 are cancelled, not deferred.** T004's simulation showed the rule would destroy ~38
+correct contradictions to free 1 false accusation. The pre-registered kill criterion fired. The
+tasks below are retained only so the reasoning stays queryable; do not reopen without new evidence.
+This is the eighth fix candidate this project has refuted before shipping.
+
+**Consequence:** `68da8ff4`'s lock now has **no containment path**. US1 was the only proposed one.
+The class is addressable by US2 (post-MVP, unproven) or not at all.
 
 **Goal**: a wrong `contradicted` stops being permanently locked once an escalation tier disagrees.
 
@@ -149,9 +205,9 @@ Deliverable on its own, with no prompt change.
 to `unsupported`. The claim is **true** and belongs at `supported` — that is US2. Ship them as
 separate change sets and never report US1 as fixing the class.
 
-- [ ] T005 [US1] Widen the escalation-replacement floor in `src/orchestrators/grounnel/pipeline.service.ts` (line ~932) so an evidence-empty tier may retract a contradiction: when `prior.verdict === "contradicted"` and the replacement verdict is in `{"unsupported", "unverifiable"}`, accept the replacement; every other combination keeps today's `rejectReplacement` behaviour
-- [ ] T006 [US1] Add unit tests in `tests/` for the four branches — prior `contradicted` + empty `unsupported` → **accepted**; prior `contradicted` + empty `unverifiable` → **accepted**; prior `contradicted` + empty `supported` or `partially_supported` → still rejected; prior `supported` + empty replacement → still rejected (behaviour unchanged)
-- [ ] T007 [US1] Record the change as an addendum to D030 §3h in `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`, including T004's three bucket counts and the two limits below
+- [x] T005 [US1] Widen the escalation-replacement floor in `src/orchestrators/grounnel/pipeline.service.ts` (line ~932) so an evidence-empty tier may retract a contradiction: when `prior.verdict === "contradicted"` and the replacement verdict is in `{"unsupported", "unverifiable"}`, accept the replacement; every other combination keeps today's `rejectReplacement` behaviour
+- [x] T006 [US1] Add unit tests in `tests/` for the four branches — prior `contradicted` + empty `unsupported` → **accepted**; prior `contradicted` + empty `unverifiable` → **accepted**; prior `contradicted` + empty `supported` or `partially_supported` → still rejected; prior `supported` + empty replacement → still rejected (behaviour unchanged)
+- [x] T007 [US1] Record the change as an addendum to D030 §3h in `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`, including T004's three bucket counts and the two limits below
 
 **Three limits to state in T007, so US1 is not over-claimed:**
 

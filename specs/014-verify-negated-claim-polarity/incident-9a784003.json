@@ -1,0 +1,165 @@
+{
+  "incident": "negation polarity — VERIFY STEP 2",
+  "run_id": "9a784003-4cd7-4923-9a4c-a0b9ae18f74a",
+  "captured_at": "2026-09-02",
+  "cardinal_rule": "false_accusation",
+  "claim_kind": "true",
+  "run": {
+    "status": "done",
+    "prompt_version_extract": "1.6.0",
+    "prompt_version_verify": "4.6.0",
+    "created_at": "2026-09-02T06:30:38.666Z"
+  },
+  "claim": {
+    "claim_id": "68da8ff4-8d3e-4172-950d-d8d805417451",
+    "claim_text": "The Pentagon has not issued an official finding on the Minab strike.",
+    "source_excerpt": "The Pentagon has yet to issue an official finding on the Minab strike, but it may have been the result of U.S. use of outdated targeting data, two sources familiar with the matter told Reuters.",
+    "final_verdict": "contradicted",
+    "confidence": 1,
+    "evidence": "But the Trump administration’s efforts to avoid responsibility for the attack continued on Wednesday, withthe Pentagon saying in a five-word statement to the Guardian: “The incident is under investigation.”",
+    "reason": "Source C, sentence 6 states that the Pentagon said in a five-word statement to the Guardian: “The incident is under investigation.” This contradicts the claim that the Pentagon has not issued an official finding.",
+    "sources": [
+      {
+        "url": "https://www.gillibrand.senate.gov/news/press/release/gillibrand-colleagues-demand-pentagon-release-long-awaited-report-on-u-s-bombing-of-iranian-elementary-school/",
+        "kind": "web",
+        "title": "Gillibrand, Colleagues Demand Pentagon Release Long-Awaited Report On U.S. Bombing Of Iranian Elementary School - Kirsten Gillibrand | U.S. Senator for New York",
+        "domain": "www.gillibrand.senate.gov",
+        "status": "ok",
+        "retrievalMethod": "diy_fetch"
+      },
+      {
+        "url": "https://www.reed.senate.gov/news/releases/reed-colleagues-demand-pentagon-release-investigation-of-deadly-iran-school-strike-without-further-delay",
+        "kind": "web",
+        "title": "[2026-07-13] Reed, Colleagues Demand Pentagon Release Investigation of...",
+        "domain": "www.reed.senate.gov",
+        "status": "ok",
+        "retrievalMethod": "diy_fetch"
+      },
+      {
+        "url": "https://www.theguardian.com/world/2026/mar/11/iran-war-missile-strike-elementary-school",
+        "kind": "web",
+        "title": "US responsible for deadly missile strike on Iran school, preliminary inquiry says | US-Israel war on Iran | The Guardian",
+        "domain": "www.theguardian.com",
+        "status": "ok",
+        "retrievalMethod": "diy_fetch"
+      }
+    ],
+    "fired_gates": [
+      {
+        "gate": "escalation_replacement",
+        "reason": "escalation_no_valid_evidence",
+        "before": "contradicted",
+        "after": "contradicted",
+        "at": "2026-09-02T06:32:51.432Z"
+      }
+    ],
+    "gate_chain_passes": [
+      {
+        "at": "2026-09-02T06:32:29.909Z",
+        "verdict_before": "contradicted"
+      },
+      {
+        "at": "2026-09-02T06:32:51.432Z",
+        "verdict_before": "unsupported"
+      }
+    ]
+  },
+  "verify_calls": [
+    {
+      "call_type": "primary",
+      "prompt_version": "4.6.0",
+      "at": "2026-09-02T06:32:22.058Z",
+      "input_tokens": 14973,
+      "result": "{\"results\":[{\"id\":\"63b80d9f-7b89-4bb5-a1ba-17fcb235447a\",\"verdict\":\"supported\",\"confidence\":1,\"evidenceCitations\":[{\"source\":\"A\",\"n\":16},{\"source\":\"B\",\"n\":14}],\"reason\":\"Source A, sentence 16 and Source B, sentence 14 both state that Iran's foreign ministry spokesperson said, \\\"This cruelty cannot be separated from the chain of atrocities that preceded it,\\\" and pledged that Iran would respond to \\\"these savage crimes with firmness.\\\"\"},{\"id\":\"cd0581bc-de04-467f-9b6b-b3790a4853d3\",\"verdict\":\"sup"
+    },
+    {
+      "call_type": "consistency_check",
+      "prompt_version": "1.2.0",
+      "at": "2026-09-02T06:32:29.477Z",
+      "input_tokens": 753,
+      "result": "{\"id\":\"68da8ff4-8d3e-4172-950d-d8d805417451\",\"consistent\":true}]}"
+    },
+    {
+      "call_type": "primary",
+      "prompt_version": "4.6.0",
+      "at": "2026-09-02T06:32:37.532Z",
+      "input_tokens": 12471,
+      "result": "{\"id\":\"68da8ff4-8d3e-4172-950d-d8d805417451\",\"verdict\":\"unsupported\",\"confidence\":0.9,\"evidenceCitations\":null,\"reason\":\"None of the provided sentences state whether the Pentagon has issued an official finding on the Minab strike.\"}"
+    },
+    {
+      "call_type": "consistency_check",
+      "prompt_version": "1.2.0",
+      "at": "2026-09-02T06:32:40.099Z",
+      "input_tokens": 1144,
+      "result": "{\"id\":\"68da8ff4-8d3e-4172-950d-d8d805417451\",\"consistent\":true}"
+    }
+  ],
+  "cited_evidence": {
+    "source": "C",
+    "n_as_verify_numbered": 6,
+    "n_if_replayed_from_stored_excerpt": 4,
+    "note": "grounnel_search_pages.excerpt is query-keyed and newline-collapsed, so citation indices are not reproducible from the DB; the resolved evidence TEXT is."
+  },
+  "uncited_better_sources": [
+    {
+      "label": "A",
+      "domain": "gillibrand.senate.gov",
+      "key_sentence": "the Pentagon's investigation into the school strike, which was reportedly submitted in April, but remains under review by senior military officials"
+    },
+    {
+      "label": "B",
+      "domain": "reed.senate.gov",
+      "key_sentence": "the 25 Senators urged the swift release of the Pentagon's investigation into the school strike, which was reportedly submitted in April, but remains under review by senior officials"
+    }
+  ],
+  "rerank": [
+    {
+      "url": "https://www.gillibrand.senate.gov/news/press/release/gillibrand-colleagues-demand-pentagon-release-long-awaited-report-on-u-s-bombing-of-iranian-elementary-school/",
+      "lexical": 100,
+      "llm": 90,
+      "selected": true
+    },
+    {
+      "url": "https://www.reed.senate.gov/news/releases/reed-colleagues-demand-pentagon-release-investigation-of-deadly-iran-school-strike-without-further-delay",
+      "lexical": 66.6666666666667,
+      "llm": 90,
+      "selected": true
+    },
+    {
+      "url": "https://www.theguardian.com/world/2026/mar/11/iran-war-missile-strike-elementary-school",
+      "lexical": 33.3333333333333,
+      "llm": 70,
+      "selected": true
+    },
+    {
+      "url": "https://www.jpost.com/international/article-902707",
+      "lexical": 100,
+      "llm": 90,
+      "selected": true
+    },
+    {
+      "url": "https://www.gillibrand.senate.gov/news/press/release/gillibrand-colleagues-demand-pentagon-release-long-awaited-report-on-u-s-bombing-of-iranian-elementary-school/",
+      "lexical": 80,
+      "llm": 90,
+      "selected": true
+    },
+    {
+      "url": "https://www.militarytimes.com/news/pentagon-congress/2026/07/13/lawmakers-demand-pentagon-release-findings-from-probe-of-iran-school-strike/",
+      "lexical": 60,
+      "llm": 90,
+      "selected": true
+    },
+    {
+      "url": "https://www.reed.senate.gov/news/releases/reed-colleagues-demand-pentagon-release-investigation-of-deadly-iran-school-strike-without-further-delay",
+      "lexical": 40,
+      "llm": 90,
+      "selected": false
+    },
+    {
+      "url": "https://www.thestandard.com.hk/world/article/341610/US-and-Iran-exchange-attacks-as-lull-in-war-appears-over",
+      "lexical": 20,
+      "llm": 95,
+      "selected": false
+    }
+  ]
+}

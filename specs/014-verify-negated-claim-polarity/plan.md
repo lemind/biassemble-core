@@ -46,7 +46,20 @@ zero-cost measurement gate in front of both.
 **US1 and US2 are not substitutes.** US1 turns incident 1's outcome into `unsupported`; the claim is
 true and belongs at `supported`. Shipping US1 must not be reported as fixing the class.
 
-**US1 reaches two of the three known locks, by design.** `escalation_replacement` fired
+> **STATUS 2026-09-02 — US1 IS REFUTED.** T004's simulation of the escalation exception against all
+> 49 historical `escalation_replacement` rejections showed it would release 41, of which **~38 are
+> correct contradictions on golden `kind: false` claims** (Bukowski, Wright, Apollo-on-Mars,
+> Amazon-electronics, CSS-before-Internet, first-mouse-wireless, Apple-by-Gates, Eiffel-in-London)
+> against **1** genuine false accusation freed. The pre-registered criterion was "bucket 1 must be
+> ~0"; it is ~38. **D030 section 3h's floor is doing its job and must not be widened.** Phase 3 is
+> cancelled. `68da8ff4` has no containment path; only US2 (post-MVP, unproven) remains.
+>
+> T003 also **corrected this plan**: the golden negation cases are not "all passing". `g27` (Aldrin,
+> ordinal) and `g28` (WWII, year) false-accuse at **8.1%** and **10.8%** over ~37 runs each, while
+> the three entity-substitution cases are clean at 0%. The unreliable sub-shape is negation over an
+> **ordinal or a year**, not negation generally.
+
+**US1 reached two of the three known locks, by design — before it was refuted.** `escalation_replacement` fired
 `escalation_no_valid_evidence` on all three contradicted claims across both runs. Incident 2's
 tier 2 returned **`supported`** with no citations, and US1 rejects that deliberately — accepting it
 would install citation-less `supported` as an escape hatch, trading a false-accusation hole for a

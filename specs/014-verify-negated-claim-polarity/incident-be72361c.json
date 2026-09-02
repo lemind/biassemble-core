@@ -1,0 +1,235 @@
+{
+  "incident": "reporting claim + mixed passage set — VERIFY STEP 1 fact selection",
+  "run_id": "be72361c-0fd1-449c-a433-1c99d0c65e0e",
+  "captured_at": "2026-09-02",
+  "cardinal_rule": "false_accusation",
+  "claim_kind": "true",
+  "run": {
+    "status": "done",
+    "prompt_version_extract": "1.6.0",
+    "prompt_version_verify": "4.6.0",
+    "created_at": "2026-09-02T07:55:53.633Z"
+  },
+  "claim": {
+    "claim_id": "ed8b3a37-c5e8-429f-93fc-e623d90dcb4b",
+    "claim_text": "Social media posts claimed the University of Rochester announced it will cut academic ties with Israel.",
+    "source_excerpt": "One of the social media posts, opens new tab is captioned: “Univ of Rochester announces it will cut academic ties with Israel, a demand advanced by and won by the students #FreePalestine.”",
+    "final_verdict": "contradicted",
+    "confidence": 0.9,
+    "evidence": "University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels. ... \"University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels. ... There has not and will not be any commitments about future academic divestment of University programs in Israel.\"",
+    "reason": "The claim states that social media posts claimed the University of Rochester announced it will cut academic ties with Israel. Source A, sentence 11, and Source B, sentences 11 and 20, explicitly state that University administrators made no commitment regarding a University divestment from any academic programs or ties with Israel, and that this is being inaccurately reported on some social media channels. This directly contradicts the claim that such an announcement was made.",
+    "sources": [
+      {
+        "url": "https://www.wxxinews.org/local-news/2024-04-23/university-of-rochester-students-set-up-pro-palestinian-encampment-on-campus",
+        "kind": "web",
+        "title": "UR says it will not divest from academic programs in Israel, disputing claims by protesters | WXXI News",
+        "domain": "www.wxxinews.org",
+        "status": "ok",
+        "retrievalMethod": "diy_fetch"
+      },
+      {
+        "url": "https://www.newsweek.com/pro-palestine-protesters-score-win-rochester-university-israel-1894179",
+        "kind": "web",
+        "title": "Pro-Palestinian Protesters Claim Win Over One College’s Ties To Israel - Newsweek",
+        "domain": "www.newsweek.com",
+        "status": "ok",
+        "retrievalMethod": "diy_fetch"
+      },
+      {
+        "url": "https://fightbacknews.org/articles/new-york-university-of-rochester-sds-and-ur-sjp-statement-on-occupation-for",
+        "kind": "web",
+        "title": "New York: University of Rochester SDS and UR SJP statement on Occupation for Palestine &mdash; Fight Back! News",
+        "domain": "fightbacknews.org",
+        "status": "ok",
+        "retrievalMethod": "diy_fetch"
+      }
+    ],
+    "fired_gates": [
+      {
+        "gate": "escalation_replacement",
+        "reason": "escalation_no_valid_evidence",
+        "before": "contradicted",
+        "after": "contradicted",
+        "at": "2026-09-02T07:57:14.019Z"
+      }
+    ],
+    "gate_chain_passes": [
+      {
+        "at": "2026-09-02T07:56:44.349Z",
+        "verdict_before": "contradicted"
+      },
+      {
+        "at": "2026-09-02T07:57:14.019Z",
+        "verdict_before": "supported"
+      }
+    ]
+  },
+  "verify_calls": [
+    {
+      "call_type": "fill_in",
+      "prompt_version": "4.6.0",
+      "at": "2026-09-02T07:56:42.484Z",
+      "input_tokens": 5944,
+      "result": "{\"results\":[{\"id\":\"ed8b3a37-c5e8-429f-93fc-e623d90dcb4b\",\"verdict\":\"contradicted\",\"confidence\":0.9,\"evidenceCitations\":[{\"source\":\"A\",\"n\":11},{\"source\":\"B\",\"n\":11},{\"source\":\"B\",\"n\":20}],\"reason\":\"The claim states that social media posts claimed the University of Rochester announced it will cut academic ties with Israel. Source A, sentence 11, and Source B, sentences 11 and 20, explicitly state that University administrators made no commitment regarding a University divestment from any academic "
+    },
+    {
+      "call_type": "consistency_check",
+      "prompt_version": "1.2.0",
+      "at": "2026-09-02T07:56:44.310Z",
+      "input_tokens": 901,
+      "result": "{\"id\":\"ed8b3a37-c5e8-429f-93fc-e623d90dcb4b\",\"consistent\":true}"
+    },
+    {
+      "call_type": "primary",
+      "prompt_version": "4.6.0",
+      "at": "2026-09-02T07:57:05.125Z",
+      "input_tokens": 18249,
+      "result": "{\"results\":[{\"id\":\"245f4fa5-355d-46ec-9969-02d073d8ea51\",\"verdict\":\"supported\",\"confidence\":0.9,\"evidenceCitations\":[{\"source\":\"A\",\"n\":10}],\"reason\":\"Source A, sentence 10, states that university administrators made no commitment regarding a University divestment from any academic programs or ties with Israel, which directly supports the claim that the University of Rochester did not make any announcement about cutting academic ties with Israel.\"},{\"id\":\"c1814112-ae66-4201-8f24-58c24b14f06e\",\"ve"
+    },
+    {
+      "call_type": "consistency_check",
+      "prompt_version": "1.2.0",
+      "at": "2026-09-02T07:57:08.800Z",
+      "input_tokens": 1610,
+      "result": "{\"id\":\"ed8b3a37-c5e8-429f-93fc-e623d90dcb4b\",\"consistent\":true}"
+    }
+  ],
+  "cited_evidence": {
+    "citations": [
+      {
+        "source": "A",
+        "n": 11
+      },
+      {
+        "source": "B",
+        "n": 11
+      },
+      {
+        "source": "B",
+        "n": 20
+      }
+    ],
+    "note": "A:11/B:11 confirm the reporting in their own final clause ('as is being inaccurately reported on some social media channels') while rebutting the content. REPORTING CLAIMS (v4.2.0) mandates SAME; it did not fire."
+  },
+  "uncited_confirmations": [
+    {
+      "label": "A",
+      "domain": "wxxinews.org",
+      "sentence": "In recent social media and other online posts the student activists claim to have won concessions from UR to begin the process to academically divest from Israel."
+    },
+    {
+      "label": "B",
+      "domain": "newsweek.com",
+      "sentence": "Pro-Palestinian protesters claimed to have secured a win at a New York university, saying its governing body had agreed to investigate its academic ties to Israeli universities."
+    },
+    {
+      "label": "C",
+      "domain": "fightbacknews.org",
+      "sentence": "As of April 24, the administration of University of Rochester has announced that UR will move forward with an academic boycott from all ties to Israel.",
+      "note": "the social media claim itself, retrieved in the wild; highest llm rerank score in the set"
+    }
+  ],
+  "rerank": [
+    {
+      "url": "https://www.wxxinews.org/local-news/2024-04-23/university-of-rochester-students-set-up-pro-palestinian-encampment-on-campus",
+      "lexical": 100,
+      "llm": 90,
+      "selected": true
+    },
+    {
+      "url": "https://www.newsweek.com/pro-palestine-protesters-score-win-rochester-university-israel-1894179",
+      "lexical": 66.6666666666667,
+      "llm": 90,
+      "selected": true
+    },
+    {
+      "url": "https://fightbacknews.org/articles/new-york-university-of-rochester-sds-and-ur-sjp-statement-on-occupation-for",
+      "lexical": 33.3333333333333,
+      "llm": 95,
+      "selected": true
+    },
+    {
+      "url": "https://www.wxxinews.org/local-news/2024-04-23/university-of-rochester-students-set-up-pro-palestinian-encampment-on-campus",
+      "lexical": 100,
+      "llm": 95,
+      "selected": true
+    },
+    {
+      "url": "https://www.newsweek.com/pro-palestine-protesters-score-win-rochester-university-israel-1894179",
+      "lexical": 50,
+      "llm": 95,
+      "selected": true
+    }
+  ],
+  "out_of_scope_reference": {
+    "note": "EXTRACT referent widening — evidence for a separate spec, NOT a fixture source here.",
+    "claim": {
+      "claim_id": "181d6ebb-b4bd-4f81-9193-1ccdead6e706",
+      "claim_text": "An article on Fight Back! News' website does not mention an announcement from the University of Rochester on cutting ties with Israel.",
+      "source_excerpt": "One of the earliest posts sharing the claim was on the Facebook page of Fight Back! News, an online newspaper that describes itself as published by “ activists and organizers, opens new tab . ” The post, opens new tab links to an article, opens new tab on the group’s website that does not mention an announcement from the university on cutting ties with Israel.",
+      "final_verdict": "contradicted",
+      "confidence": 1,
+      "evidence": "As of April 24, the administration of University of Rochester has announced that UR will move forward with an academic boycott from all ties to Israel.",
+      "reason": "Source A explicitly states that the University of Rochester administration announced it would move forward with an academic boycott from all ties to Israel, which contradicts the claim that an article on Fight Back! News' website does not mention an announcement from the University of Rochester on cutting ties with Israel.",
+      "sources": [
+        {
+          "url": "https://fightbacknews.org/articles/new-york-university-of-rochester-sds-and-ur-sjp-statement-on-occupation-for",
+          "kind": "web",
+          "title": "New York: University of Rochester SDS and UR SJP statement on Occupation for Palestine &mdash; Fight Back! News",
+          "domain": "fightbacknews.org",
+          "status": "ok",
+          "retrievalMethod": "diy_fetch"
+        },
+        {
+          "url": "https://www.wxxinews.org/local-news/2024-04-23/university-of-rochester-students-set-up-pro-palestinian-encampment-on-campus",
+          "kind": "web",
+          "title": "UR says it will not divest from academic programs in Israel, disputing claims by protesters | WXXI News",
+          "domain": "www.wxxinews.org",
+          "status": "ok",
+          "retrievalMethod": "diy_fetch"
+        },
+        {
+          "url": "https://www.newsweek.com/pro-palestine-protesters-score-win-rochester-university-israel-1894179",
+          "kind": "web",
+          "title": "Pro-Palestinian Protesters Claim Win Over One College’s Ties To Israel - Newsweek",
+          "domain": "www.newsweek.com",
+          "status": "ok",
+          "retrievalMethod": "diy_fetch"
+        }
+      ],
+      "fired_gates": [
+        {
+          "gate": "retry_reconciliation",
+          "reason": "retry_contradiction_invalidated",
+          "before": "contradicted",
+          "after": "unsupported",
+          "at": "2026-09-02T07:57:15.728Z"
+        },
+        {
+          "gate": "retry_decision",
+          "reason": "counterfact_ignored",
+          "before": "unverifiable",
+          "after": "unsupported",
+          "at": "2026-09-02T07:57:15.728Z"
+        },
+        {
+          "gate": "escalation_replacement",
+          "reason": "escalation_no_valid_evidence",
+          "before": "contradicted",
+          "after": "contradicted",
+          "at": "2026-09-02T07:57:15.728Z"
+        }
+      ],
+      "gate_chain_passes": [
+        {
+          "at": "2026-09-02T07:56:50.942Z",
+          "verdict_before": "contradicted"
+        },
+        {
+          "at": "2026-09-02T07:57:15.728Z",
+          "verdict_before": "unverifiable"
+        }
+      ]
+    }
+  }
+}
