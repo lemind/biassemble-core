@@ -260,7 +260,7 @@ exists — which is exactly the post-hoc tuning T008 exists to prevent.
 - [x] T008 [US2] Pre-register every target label in `specs/014-verify-negated-claim-polarity/plan.md` under a dated "Fixture semantics" section — each of the **24 rows** gets a written **relationship** *and* its **step-3 verdict**, decided before any fixture code exists and before any call is made. **DONE 2026-09-02** — see plan.md § Fixture semantics (T008)
 - [x] T009 [US2] Build the fixture pack in `src/jobs/eval-negation-polarity.ts` — all 24 rows tabulated below, copying the fixture/role/expect shape of `src/jobs/eval-t27b-prompt-variants.ts`, with every `expect` field filled from plan.md § Fixture semantics. **Five preconditions below must all hold before this file is written.**
 - [x] T010 [US2] Register the screen job in `src/jobs/inngest-functions.ts` and add `scripts/trigger-eval-negation-polarity.ts` plus a `package.json` script entry, mirroring `trigger-eval-t27b.ts`
-- [~] T011 [US2] Run the offline screen — ≥3 candidate wordings of the prompt block, spliced into the live prompt between two markers so every variant shares an identical preamble and footer; **state the exact call count before spending**
+- [x] T011 [US2] Run the offline screen — ≥3 candidate wordings of the prompt block, spliced into the live prompt between two markers so every variant shares an identical preamble and footer; **state the exact call count before spending**
 - [ ] T012 [US2] Ship VERIFY 4.7.0 in `src/prompts/grounnel/verify/system.json` — the winning block only, plus a `notes` entry naming the incident, run id and screen result, matching how 4.1.0–4.6.0 are recorded
 - [ ] T013 [US2] Add golden cases `g30`+ to `evaluations/golden/grounnel/live-eval-golden-set.json` for predicate-strength negation, including at least one `kind: "false"` counterpart
 
@@ -338,9 +338,60 @@ this machine cannot run. **T011 must execute deployed, via Inngest on Vercel**, 
 **The screen is built and ready.** Re-running is one command once quota resets:
 `npx tsx --env-file=.env scripts/s014-t011-run-negation-screen.ts --repeats 3`
 
-**T012 and T013 are blocked behind T011** and cannot be started: T012 ships 4.7.0 *only if* the
-screen clears, and T013's golden cases need a golden run that is explicitly not bookable without
-a yes.
+**T011 RAN 2026-09-02 (deployed, via Inngest). 228/228 calls succeeded. NO VARIANT PASSES —
+do not ship 4.7.0.** Run `3c44f4aa`; scored by `scripts/s014-t011-score-screen.ts` from persisted
+telemetry, targets read from the fixture module so they cannot be edited to fit the result.
+
+| Variant | negation | reporting | block-b | control | Verdict |
+|---|---|---|---|---|---|
+| `v0-control` (live 4.6.0) | 12/24 | **0/12** | 6/6 | 9/15 | FAIL |
+| `vA-negation` (Block A) | 12/24 | 3/12 | 6/6 | 12/15 | FAIL |
+| `vB-predicate` (Block B) | 12/24 | **0/12** | 6/6 | 9/15 | FAIL |
+| `vAB-both` (interference probe) | 15/24 | **0/12** | 6/6 | 12/15 | FAIL |
+
+**Finding 1 — the pre-registered PARTIAL target is very nearly unreachable, and that is the
+headline.** Across all 228 cells the model emitted `partially_supported` **9 times (4%)**, while
+**72 cells** (6 fixtures × 3 repeats × 4 variants) were registered as wanting it. Rows 1, 2, 3, 7,
+C1 and C5 are therefore scored against a label VERIFY effectively does not produce under these
+conditions. **Per T008's own rule this is written up, not adjusted** — no target was changed.
+The open question T008 recorded ("SAME or PARTIAL? default PARTIAL") now has evidence: PARTIAL was
+the wrong axis to pre-register on, because the choice is not really available.
+
+**Finding 2 — the control fails as badly as the candidates, so this screen did not measure the
+blocks.** `v0` is live 4.6.0 with nothing spliced and it misses 10 of 19 fixtures. When the control
+fails, a candidate's failure is not evidence against the candidate. Everything below is about
+4.6.0, not about Block A or Block B.
+
+**Finding 3 — incident 2 reproduced offline for the first time.** R1-R4 score **0/12 on the live
+prompt**: `r1`/`r2` return `contradicted` where the reporting predicate is confirmed (exactly
+`ed8b3a37`'s live failure), `r3` returns `supported` where the passage denies the posts said it, and
+`r4` returns `contradicted` on the object-fact alone. REPORTING CLAIMS is present, correctly worded,
+and does not fire — now demonstrated in a repeatable harness rather than inferred from one run.
+
+**Finding 4 — Block B is unnecessary.** R5/R6 score **6/6 in every variant including the control**.
+The same-subject/different-predicate shape is already handled at 4.6.0. Block B earns nothing and
+costs prompt length; do not carry it forward.
+
+**Finding 5 — Block A is the only thing that moved anything**, and not enough: reporting 0/12 -> 3/12
+and control 9/15 -> 12/15 on its own; negation 12/24 -> 15/24 when combined. Directionally real,
+nowhere near the pass bar.
+
+**Finding 6 — a fixture-design confound, stated so it is not mistaken for a model property.**
+`contradicted` is **111 of 228 cells (49%)**. Single-passage, no-context pairs appear to bias VERIFY
+hard toward CONFLICT relative to production, where a claim sees up to MAX_VERIFY_PASSAGES pooled
+sources. The reporting rows may be failing partly because of that isolation, not only because of
+STEP 1. Any re-run should pool distractor passages the way production does before concluding
+anything further about REPORTING CLAIMS.
+
+**Kill criterion fired. The next move is NOT a fourth wording round** — plan.md pre-committed to
+that. Of its three named options, Finding 1 and Finding 3 both point at **option 2, a schema field
+emitted before `verdict`** (T27's ordering result), because the failure is that VERIFY commits to a
+label before selecting the fact. Option 1 (STEP 1 isolation) is also live given Finding 6. Record
+the choice in D030 before writing any more prompt text.
+
+**T012 is CANCELLED — the screen did not clear, so there is no 4.7.0 to ship.** T013's golden
+cases (`g30`+) remain open but are pointless until a candidate exists; they were only ever a
+post-ship guard.
 
 **T009's five preconditions — all must hold, or do not write the file:**
 
