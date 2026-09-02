@@ -28,6 +28,9 @@ export interface ResolvedEvidence {
   // callVerify's label assignment depends on being meaningful.
   passages: SearchPassage[];
   sources: SearchPassage[];
+  // spec 015 G1 — set when every usable source was refused as a copy of the input document, so the
+  // user-facing reason can say that instead of the generic "no source found" (which would be false).
+  allSourcesWereInputDuplicates?: boolean;
 }
 
 export interface ResolvedWithPassage extends ResolvedEvidence {

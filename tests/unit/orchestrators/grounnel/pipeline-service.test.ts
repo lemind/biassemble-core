@@ -179,6 +179,9 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.verdict).toBe("unsupported");
     // The whole point: the duplicate never costs a VERIFY call, and never becomes evidence.
     expect(provider.getCallCount()).toBe(0);
+    // Review finding: the generic "no relevant source found" would be false here — sources WERE
+    // found and refused. The user is told which of the two actually happened.
+    expect(claim.reason).toContain("copies of the text you submitted");
   });
 
   it("keeps a genuinely independent source when the input text is supplied (G1 does not over-fire)", async () => {

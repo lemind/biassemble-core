@@ -124,7 +124,8 @@ export async function runGrounnelEvalOnce(deps: GrounnelEvalDeps, goldenCase: Go
   const { id, pendingClaims } = await extractService.run(goldenCase.text, "eval");
   const eligibleClaims = await extractService.classifyEligibility(id, pendingClaims);
   if (eligibleClaims.length > 0) {
-    await pipelineService.run(id, eligibleClaims, goldenCase.searchEngine ?? "defaultFlow");
+    // goldenCase.text passed as inputText so evals exercise G1 on the same path production does.
+    await pipelineService.run(id, eligibleClaims, goldenCase.searchEngine ?? "defaultFlow", goldenCase.text);
   }
   const status = await grounnelStore.getStatus(id);
   return { id, claims: status!.claims.map((c) => ({ text: c.text, verdict: c.verdict, status: c.status, reason: c.reason })) };

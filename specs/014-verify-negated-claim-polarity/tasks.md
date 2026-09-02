@@ -205,9 +205,9 @@ Deliverable on its own, with no prompt change.
 to `unsupported`. The claim is **true** and belongs at `supported` — that is US2. Ship them as
 separate change sets and never report US1 as fixing the class.
 
-- [x] T005 [US1] Widen the escalation-replacement floor in `src/orchestrators/grounnel/pipeline.service.ts` (line ~932) so an evidence-empty tier may retract a contradiction: when `prior.verdict === "contradicted"` and the replacement verdict is in `{"unsupported", "unverifiable"}`, accept the replacement; every other combination keeps today's `rejectReplacement` behaviour
-- [x] T006 [US1] Add unit tests in `tests/` for the four branches — prior `contradicted` + empty `unsupported` → **accepted**; prior `contradicted` + empty `unverifiable` → **accepted**; prior `contradicted` + empty `supported` or `partially_supported` → still rejected; prior `supported` + empty replacement → still rejected (behaviour unchanged)
-- [x] T007 [US1] Record the change as an addendum to D030 §3h in `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`, including T004's three bucket counts and the two limits below
+- [x] ~~T005 [US1] Widen the escalation-replacement floor in `src/orchestrators/grounnel/pipeline.service.ts` (line ~932) so an evidence-empty tier may retract a contradiction: when `prior.verdict === "contradicted"` and the replacement verdict is in `{"unsupported", "unverifiable"}`, accept the replacement; every other combination keeps today's `rejectReplacement` behaviour
+- [x] ~~T006 [US1] Add unit tests in `tests/` for the four branches — prior `contradicted` + empty `unsupported` → **accepted**; prior `contradicted` + empty `unverifiable` → **accepted**; prior `contradicted` + empty `supported` or `partially_supported` → still rejected; prior `supported` + empty replacement → still rejected (behaviour unchanged)
+- [x] ~~T007 [US1] Record the change as an addendum to D030 §3h in `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`, including T004's three bucket counts and the two limits below
 
 **Three limits to state in T007, so US1 is not over-claimed:**
 
@@ -477,8 +477,8 @@ exists — which is exactly the post-hoc tuning T008 exists to prevent.
 - [x] T009 [US2] Build the fixture pack in `src/jobs/eval-negation-polarity.ts` — all 24 rows tabulated below, copying the fixture/role/expect shape of `src/jobs/eval-t27b-prompt-variants.ts`, with every `expect` field filled from plan.md § Fixture semantics. **Five preconditions below must all hold before this file is written.**
 - [x] T010 [US2] Register the screen job in `src/jobs/inngest-functions.ts` and add `scripts/trigger-eval-negation-polarity.ts` plus a `package.json` script entry, mirroring `trigger-eval-t27b.ts`
 - [x] T011 [US2] Run the offline screen — ≥3 candidate wordings of the prompt block, spliced into the live prompt between two markers so every variant shares an identical preamble and footer; **state the exact call count before spending**
-- [ ] T012 [US2] Ship VERIFY 4.7.0 in `src/prompts/grounnel/verify/system.json` — the winning block only, plus a `notes` entry naming the incident, run id and screen result, matching how 4.1.0–4.6.0 are recorded
-- [ ] T013 [US2] Add golden cases `g30`+ to `evaluations/golden/grounnel/live-eval-golden-set.json` for predicate-strength negation, including at least one `kind: "false"` counterpart
+- [x] ~~T012 [US2] Ship VERIFY 4.7.0 in `src/prompts/grounnel/verify/system.json` — the winning block only, plus a `notes` entry naming the incident, run id and screen result, matching how 4.1.0–4.6.0 are recorded
+- [x] T013 [US2] Add golden cases `g30`+ to `evaluations/golden/grounnel/live-eval-golden-set.json` for predicate-strength negation, including at least one `kind: "false"` counterpart
 
 
 **RESULTS (2026-09-02) — T009 and T010 DONE. T011 is BLOCKED on a decision only the user can make.**

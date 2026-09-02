@@ -78,6 +78,8 @@ const ESCALATION_TIERS = [5, 8];
 // D032 §5/T7 — states both that evidence is missing AND that this isn't a falsehood finding (SC-2).
 const NO_EVIDENCE_REASON =
   "No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.";
+const INPUT_DUPLICATE_ONLY_REASON =
+  "The only sources found for this claim were copies of the text you submitted, so they cannot corroborate it. This is not a finding that the claim is false.";
 const TAVILY_RATE_LIMITED_REASON = "This claim could not be checked right now — our search provider's rate limit was reached. Try again later.";
 
 /** Per-claim loop: search -> gate #4 -> VERIFY (batched) -> gates #1/#2 -> store (D019 §1, T010). No-evidence claims skip VERIFY (cost saving, §4.1). Gemini/Tavily rate limits get distinct messages. */
@@ -97,8 +99,8 @@ export class GrounnelPipelineService {
   /** Spec 013 T22 — exposes resolveAllEvidence (search + rerank, no VERIFY call) for the fixture-generation
    * step of the verdict/reason field-order A/B: snapshots the exact {claim, subjectEntity, passages} VERIFY
    * would receive, without running VERIFY itself, so the fixture is reusable across both schema orders. */
-  async resolveEvidenceForClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<ResolvedEvidence[]> {
-    return this.resolveAllEvidence(auditId, claims, searchEngine);
+  async resolveEvidenceForClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string): Promise<ResolvedEvidence[]> {
+    return this.resolveAllEvidence(auditId, claims, searchEngine, inputText);
   }
 
   /** inputText (spec 015 G1) — the document under test, so retrieval handing back a copy of it can
@@ -388,6 +390,7 @@ export class GrounnelPipelineService {
     // claim. Runs before rerank so the duplicate costs neither a rerank nor a VERIFY slot.
     if (inputText?.trim()) {
       const kept = okSources.filter((s) => !isInputDuplicate(s.text!, inputText));
+      const droppedAll = kept.length === 0 && okSources.length > 0;
       if (kept.length !== okSources.length) {
         logger.info(
           { module: MODULE, operation: "resolveEvidence", claimId: claim.id, dropped: okSources.filter((s) => !kept.includes(s)).map((s) => s.url) },
@@ -395,6 +398,7 @@ export class GrounnelPipelineService {
         );
         okSources = kept;
       }
+      if (droppedAll) return { claim, passages: [], sources, allSourcesWereInputDuplicates: true };
     }
 
     if (okSources.length === 0) {
@@ -478,7 +482,11 @@ export class GrounnelPipelineService {
 
   private async writeNoEvidence(auditId: string, r: ResolvedEvidence): Promise<void> {
     const rateLimited = r.sources.some((s) => s.status === "rate_limited");
-    const reason = rateLimited ? TAVILY_RATE_LIMITED_REASON : NO_EVIDENCE_REASON;
+    const reason = rateLimited
+      ? TAVILY_RATE_LIMITED_REASON
+      : r.allSourcesWereInputDuplicates
+        ? INPUT_DUPLICATE_ONLY_REASON
+        : NO_EVIDENCE_REASON;
     const sources = toClaimSources(r.sources);
     await this.grounnelStore.writeClaimResult(auditId, r.claim.id, {
       status: "done",
