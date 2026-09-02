@@ -498,7 +498,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id").notNull().references(() => grounnelClaims.claimId, { onDelete: "cascade" }),
-  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "reason_ordinal", "instance_attribution", "subject_entity", "counterfact_ignored", "contradiction_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation", "escalation_replacement", "retry_decision"] }).notNull(),
+  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "reason_ordinal", "instance_attribution", "subject_entity", "counterfact_ignored", "contradiction_evidence", "affirmation_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation", "escalation_replacement", "retry_decision"] }).notNull(),
   // D032 §4 #8/#9/T5 — "excluded" listed for type parity only (GateEventInput uses the shared
   // Verdict type); never written here, excluded claims never reach the gate chain.
   verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable", "excluded"] }),

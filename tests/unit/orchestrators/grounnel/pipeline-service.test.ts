@@ -1501,24 +1501,24 @@ describe("GrounnelPipelineService (T010)", () => {
     // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
     expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
-    // 9 gates x 2 passes, plus D025 §5's retry-contradiction check and D030 §3k's telemetry-only
-    // retry_decision summary. Was 10 gates until subject_entity was disabled (D030 §3m Addendum 6).
-    expect(events).toHaveLength(22);
+    // 11 gates x 2 passes, plus D025 §5's retry-contradiction check and D030 §3k's telemetry-only
+    // retry_decision summary. 10 until spec 015 G2 added affirmation_evidence.
+    expect(events).toHaveLength(24);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
     // Index 6: spec 013 T21's instance_attribution now sits between reason_ordinal and counterfact_ignored.
     expect(events[6]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    // Index 16: each pass is 10 gates since subject_entity was disabled (offset 6 within a pass).
-    expect(events[16]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 17: each pass is 11 gates (offset 6 within a pass), so pass 2 starts at 11.
+    expect(events[17]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
-    expect(events[20]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    expect(events[22]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
     // D030 §3k — telemetry-only summary of the whole retry decision: firstPass ended "unsupported"
     // (the evidence_null downgrade at events[6]), the retry ultimately landed on "contradicted" —
     // a real change, so overridden:true — and the reason names the ERROR that triggered the retry
     // in the first place (evidence_null), not the retry's own outcome.
-    expect(events[21]).toMatchObject({ gate: "retry_decision", verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true, reason: "evidence_null" });
+    expect(events[23]).toMatchObject({ gate: "retry_decision", verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true, reason: "evidence_null" });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -2005,8 +2005,9 @@ describe("GrounnelPipelineService (T010)", () => {
       "claim_reason_overlap",
       "numeric",
       "year",
+      "affirmation_evidence",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the nine gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the eleven gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 

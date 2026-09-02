@@ -320,7 +320,11 @@ export function composeUserFacingReason(
   reason: string | null
 ): string | null {
   const subjectEntityCausedThis = gateEvents.some((e) => e.gate === "subject_entity" && e.overridden);
-  return subjectEntityCausedThis
-    ? labelSubjectEntityDowngrade(verdict, gateEvents, reason)
-    : rewriteUngroundedAffirmativeReason(verdict, citationsCount, reason);
+  if (subjectEntityCausedThis) return labelSubjectEntityDowngrade(verdict, gateEvents, reason);
+  // spec 015 G2 — when the affirmation floor caused this, absence of evidence is known, not guessed:
+  // replace unconditionally rather than leaving it to AFFIRMATIVE_SOURCE_LANGUAGE_RE to detect.
+  if (reason && gateEvents.some((e) => e.gate === "affirmation_evidence" && e.overridden)) {
+    return UNGROUNDED_REASON_REPLACEMENT;
+  }
+  return rewriteUngroundedAffirmativeReason(verdict, citationsCount, reason);
 }

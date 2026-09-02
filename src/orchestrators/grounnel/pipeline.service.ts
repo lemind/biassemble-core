@@ -612,7 +612,7 @@ export class GrounnelPipelineService {
       "Diagnostics:",
       diagnosticsText,
       "",
-      "Treat the passage_sentences given below as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with those sentences. If contradicted, evidence_citations must cite real {source, n} pairs from the passage_sentences given for this pair; otherwise evidence_citations must be null.",
+      "Treat the passage_sentences given below as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with those sentences. supported, partially_supported and contradicted must all cite real {source, n} pairs from the passage_sentences given for this pair; only unsupported may set evidence_citations to null.",
       "",
       "Return the JSON now.",
     ].join("\n");

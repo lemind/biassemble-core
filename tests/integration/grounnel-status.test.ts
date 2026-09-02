@@ -87,9 +87,11 @@ describe("GET /status/:id (T015)", () => {
     provider.setResponseFn("You are a verification engine", (request) => {
       const match = request.system.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)!;
       const ids = (JSON.parse(match[1]) as Array<{ id: string }>).map((p) => p.id);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidence: "Eiffel Tower completed 1889", reason: "matches", confidence: 0.9 })) };
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: [{ source: "A", n: 1 }], reason: "matches", confidence: 0.9 })) };
     });
-    const search: SearchProvider = { search: async (query) => [webSource(query)] };
+    // Evidence must be verbatim in the passage — production resolves it from passage sentences,
+    // and the affirmation floor (spec 015 G2) now enforces that on the affirmative side too.
+    const search: SearchProvider = { search: async (query) => [webSource(query, { text: "Eiffel Tower completed 1889 ".repeat(20) })] };
     const { server } = buildServer(provider, search);
 
     const extractRes = await server.inject({

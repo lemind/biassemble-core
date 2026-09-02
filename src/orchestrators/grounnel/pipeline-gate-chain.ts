@@ -1,6 +1,7 @@
-// The 10-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 6) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
+// The 11-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 6) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
 
 import {
+  applyAffirmationEvidenceGate,
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
@@ -134,6 +135,13 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   const gate2b = applyYearGate({ claimText: input.claimText, verdict, evidence });
   gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
   verdict = gate2b.verdict;
+
+  // Affirmation evidence floor (spec 015 G2) — LAST so it is a real floor: applyNumericGate and
+  // applyYearGate can force `supported` after gate #1, and that promotion must also carry evidence.
+  const gate1c = applyAffirmationEvidenceGate({ verdict, evidence, passageText: input.passageText });
+  gateEvents.push({ gate: "affirmation_evidence", verdictBefore: verdict, verdictAfter: gate1c.verdict, overridden: gate1c.overridden, reason: gate1c.reason });
+  verdict = gate1c.verdict;
+  evidence = gate1c.evidence;
 
   // g17 subject_entity — DISABLED 2026-08-31 (D030 §3m Addendum 6): 0 confirmed genuine catches in
   // 320 firings vs a ~75% false-trigger rate; 7 fix candidates refuted. Call site skipped, not deleted.

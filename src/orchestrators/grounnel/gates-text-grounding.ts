@@ -209,3 +209,22 @@ export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResu
     reason: hasContent ? "evidence_not_grounded" : "evidence_null",
   };
 }
+
+/** Affirmation evidence floor (spec 015 G2) — mirror of the contradiction gate above. VERIFY's own
+ * EVIDENCE rule requires citations for affirmative verdicts; 330 of 5,979 shipped without any. */
+export function applyAffirmationEvidenceGate(input: GateOneInput): GateOneResult {
+  if (input.verdict !== "supported" && input.verdict !== "partially_supported") {
+    return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
+  }
+  const hasContent = !!input.evidence?.trim();
+  const evidenceOk = hasContent && evidenceMatchesPassage(input.evidence!, input.passageText);
+  if (evidenceOk) {
+    return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
+  }
+  return {
+    verdict: "unsupported",
+    evidence: null,
+    overridden: true,
+    reason: hasContent ? "evidence_not_grounded" : "evidence_null",
+  };
+}

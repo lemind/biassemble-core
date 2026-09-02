@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyAffirmationEvidenceGate,
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
@@ -1836,5 +1837,42 @@ describe("rewriteUngroundedAffirmativeReason — D031, real live-test finding: u
   it("real captured example: the second Wright-brothers claim from the same live run", () => {
     const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight covered 120 feet.");
     expect(result).toBe(REPLACEMENT);
+  });
+});
+
+describe("applyAffirmationEvidenceGate (spec 015 G2)", () => {
+  const PASSAGE = "The SCA is an international non-profit volunteer educational organization.";
+
+  it("downgrades supported with null evidence to unsupported", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: null, passageText: PASSAGE });
+    expect(r).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_null" });
+  });
+
+  it("downgrades supported with whitespace-only evidence", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: "   \n ", passageText: PASSAGE });
+    expect(r.verdict).toBe("unsupported");
+    expect(r.reason).toBe("evidence_null");
+  });
+
+  it("downgrades partially_supported with null evidence", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "partially_supported", evidence: null, passageText: PASSAGE });
+    expect(r.verdict).toBe("unsupported");
+    expect(r.overridden).toBe(true);
+  });
+
+  it("downgrades evidence that is not grounded in the passage", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: "Something never stated anywhere.", passageText: PASSAGE });
+    expect(r).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_not_grounded" });
+  });
+
+  it("leaves supported alone when the evidence is grounded", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: PASSAGE, passageText: PASSAGE });
+    expect(r).toEqual({ verdict: "supported", evidence: PASSAGE, overridden: false, reason: null });
+  });
+
+  // Downgrade-only, and never touches the contradiction side — that is gate #1's job.
+  it.each(["contradicted", "unsupported", "unverifiable", "excluded"] as const)("does not fire on %s", (verdict) => {
+    const r = applyAffirmationEvidenceGate({ verdict, evidence: null, passageText: PASSAGE });
+    expect(r).toEqual({ verdict, evidence: null, overridden: false, reason: null });
   });
 });
