@@ -327,6 +327,57 @@ Option 2 remains untested and is now the only live candidate for the reporting c
 **Regression assets, cheap and permanent:** `N1`/`N2`/`N3` (9 calls) for aggregation, `ISO-A0-A/B/C`
 (9 calls) for predicate selection. Both reproduce their defect deterministically at 3/3.
 
+## T018 — schema field order tested (plan.md option 2), 2026-09-02
+
+36 calls, deployed. Identical prompt and fixtures; only the Gemini `responseSchema` field ORDER
+differs. Pass bar pre-registered in the trigger before any result was seen.
+
+| Schema | `ISO-A0-A` | `ISO-A0-B` | `ISO-A0-C` | `N4` | |
+|---|---|---|---|---|---|
+| `verdict-first` (production) | `contradicted` | `contradicted` | `supported` | `contradicted` | baseline |
+| `reason-first` (spec 013 T22) | `contradicted` | `contradicted` | `supported` | `contradicted` | **no effect** |
+| **`predicate-first`** (new) | **`supported`** ✅ | `contradicted` ❌ | `supported` | `contradicted` | **partial** |
+
+**Verdict against the pre-registered bar: FAIL.** It required A *and* B to stop false-accusing.
+B did not move. Recorded as a fail, not rounded up — but it is the first structural change that
+moved anything, and no control regressed (C stayed `supported`, N4 stayed `contradicted`).
+
+**`reason-first` does nothing, which narrows the mechanism.** Forcing the model to write reasoning
+before the verdict changes no row. It is not "think before answering" that matters — it has to be
+naming the *asserted predicate* specifically. That kills a cheaper variant of option 2.
+
+**The emitted fields explain B exactly, and this is the real finding.** `assertedPredicate` is
+**identical and correct on all three A0 rows** — the model restates the claim as a reporting claim
+every time. The divergence is entirely in `selectedSentence`:
+
+| Row | selectedSentence | Verdict |
+|---|---|---|
+| A | *"…the student activists claim to have won concessions…"* — the reporting fact | `supported` ✅ |
+| B | *"University administrators in fact made no commitment…"* — the **object** fact | `contradicted` ❌ |
+| C | *"…UR will move forward with an academic boycott…"* — the post itself | `supported` ✅ |
+
+**VERIFY names the right predicate and then selects a sentence that does not address it, and
+labels against the sentence rather than the predicate it just named.** Source B (Newsweek) appears
+to carry no sentence about what the posts *said*, only the rebuttal — so the correct answer there is
+ABSENT → `unsupported`. That is exactly T011's `R4` row, which also failed on the control. Same
+defect, now with the model's own reasoning exposed.
+
+**Consequence — the fix stops being a prompt problem and becomes a gate.** Because
+`predicate-first` emits `assertedPredicate` **and** `selectedSentence` as separate machine-readable
+fields, a deterministic check becomes possible for the first time: *does the selected sentence
+actually address the named predicate?* If not, the answer is ABSENT, regardless of what the
+sentence says about anything else. That is a `gates.ts`-shaped rule with no threshold and no
+wording — the category this project has consistently succeeded with, unlike the 0-for-4 prompt
+sections.
+
+**Recommended next instrument (not run):** ship `predicate-first` as the VERIFY schema (it strictly
+dominates the current order — one row fixed, zero regressions) and add a predicate/sentence
+agreement gate that downgrades to `unsupported` on mismatch. Screen the gate against `ISO-A0-A/B/C`
+and `N4`, which cost 12 calls and reproduce deterministically.
+
+**Do not ship the schema and the gate together** — one instrument at a time, or neither result is
+readable. Schema first, since it is already measured.
+
 ## Phase 4: User Story 2 — VERIFY labels negated claims correctly (Priority: P2) — **POST-MVP**
 
 **Goal**: the wrong label is not produced in the first place.
