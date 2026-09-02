@@ -378,6 +378,49 @@ and `N4`, which cost 12 calls and reproduce deterministically.
 **Do not ship the schema and the gate together** — one instrument at a time, or neither result is
 readable. Schema first, since it is already measured.
 
+## T019 — `predicate-first` on the full fixture set: REFUTED. Do not ship. (2026-09-02)
+
+114 calls. Same prompt, same 19 fixtures, only the schema field order differs. T018 tested 4 rows
+and looked like a strict dominance. **It was not — 4 rows was too narrow.**
+
+| | `verdict-first` (prod) | `predicate-first` |
+|---|---|---|
+| negation | 12/24 | **15/24** |
+| reporting | 0/12 | 0/12 |
+| block-b | 6/6 | 6/6 |
+| control | 9/15 | 9/15 |
+| **false-accusation cells** | **12/36 (4 rows)** | **15/36 (5 rows)** ❌ |
+
+**`predicate-first` raises false accusations by 25%.** It fixes `n1-pentagon-investigating` and
+introduces a new false accusation on `n3-measure-considered`: *"The government has not approved the
+measure"* + *"The measure is being considered by the relevant ministry"* goes `unsupported` →
+**`contradicted`** 3/3. A true claim, newly accused, on evidence that supports it.
+
+**Under the CORE PRINCIPLE that decides every call in this system — false positives are worse than
+false negatives — a net +3 accusation cells for +3 correct-label cells is not a trade, it is a
+regression.** The aggregate "negation 12→15" hides it, which is why the aggregate is the wrong
+number to judge on. Count accusations, not accuracy.
+
+**This corrects a recommendation made earlier today.** T018 concluded `predicate-first` "strictly
+dominates the current order — one row fixed, zero regressions" and recommended shipping it. That
+was measured on `ISO-A0-A/B/C` + `N4` only, none of which is a negation row, so the class where it
+does damage was not in the sample. The claim was wrong; the fix is refuted.
+
+**`predicate-first` stays as a diagnostic, not a candidate.** Its value is unchanged and real: the
+`assertedPredicate` / `selectedSentence` fields are what revealed that VERIFY names the right
+predicate and then labels against a sentence that does not address it. Keep the schema in
+`pipeline-schemas.ts` as experiment-only, exactly like `VerifyRawResultReasonFirstSchema`.
+
+**Golden set: NOT run, deliberately.** ~1680 calls to confirm a refutation the fixture set already
+established at 114. The pre-registered rule is to measure the minimum; there is nothing a golden run
+would add except cost. Re-open only if a candidate passes the fixture screen first.
+
+**What survives from the schema work:** field order is a real lever (`reason-first` moved nothing,
+`predicate-first` moved several rows), and the agreement signal it exposes is still the most
+promising lead — but it must be tested as a **deterministic gate on top of the production schema**,
+not by changing the production schema. A gate can only downgrade; it cannot invent an accusation,
+which is precisely the failure mode that just disqualified `predicate-first`.
+
 ## Phase 4: User Story 2 — VERIFY labels negated claims correctly (Priority: P2) — **POST-MVP**
 
 **Goal**: the wrong label is not produced in the first place.
