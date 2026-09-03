@@ -227,8 +227,8 @@ export class GrounnelPipelineService {
     if (!status) return [];
     return status.claims
       .filter(
-        // `supported` is the ONLY verdict excluded here — that boundary is what makes a subject_entity
-        // downgrade trigger a second retrieval pass at all (D030 §3m Addendum 7). Narrow it with care.
+        // `supported` is the ONLY verdict excluded here — any downgrade moves a claim across this
+        // boundary and buys it a second retrieval pass (D030 §3m Addendum 8). Narrow it with care.
         (c) =>
           c.status === "done" &&
           (c.verdict === "unsupported" || c.verdict === "unverifiable" || c.verdict === "contradicted" || c.verdict === "partially_supported") &&

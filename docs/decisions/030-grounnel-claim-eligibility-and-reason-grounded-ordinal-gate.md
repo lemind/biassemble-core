@@ -1632,3 +1632,55 @@ permanently and delete this addendum's stopgap.
 **Method note.** Addendum 6 measured the gate in isolation and never asked what else consumed its
 output. A gate is not only its verdict; it is also every downstream trigger that reads the state it
 leaves behind. Measure the removal, not just the component.
+
+---
+
+### Addendum 8 (2026-09-03) — Addendum 7 refuted by live run; §3f's retrieval diagnosis is now false
+
+**Addendum 7's revert is reverted.** A full golden run at `repeats 2` (672 calls, 28/28 cases, 0
+vacuous) with `subject_entity` live: **g17 detection 0.00, unchanged.** The gate is back off.
+
+Every step of Addendum 7's mechanism fired exactly as predicted — and the outcome was still wrong:
+
+| Predicted step | Observed |
+| --- | --- |
+| gate downgrades `supported` | 11/13 overrides, `supported → unverifiable` |
+| downgrade triggers escalation | sources/run 2.33 → **6.75** |
+| escalation re-verifies | `consistency_check` 3, `consistency_retry` 3, `instance_attribution` 5 |
+| second pass yields `contradicted` | **never** — `escalation_replacement` went `unverifiable → unverifiable` ×5, `→ supported` ×1 |
+
+**The flaw is structural and should have been caught by reading the gate.** `applySubjectEntityGate`
+only ever writes `unverifiable`. Detection requires `contradicted`. The gate cannot raise detection
+by construction, whatever it does to retrieval volume. The disconfirming evidence was already in
+Addendum 7's own data: on 08-27/28, runs *with* an override reached `contradicted` 8/12 (0.67) vs
+10/13 (0.77) without — the gate co-occurred with **worse** detection, and that was explained away as
+confounding rather than treated as the refutation it was.
+
+**Cost of the experiment:** 1 true claim in 40 (g22), not the 3–7% feared. 0 false accusations.
+27/28 cases green. g24 passed at N=2 — noise, not a fix.
+
+**§3f is now factually wrong, and this is the finding worth keeping.** §3f (2026-08-22) concluded
+"root cause is retrieval, not the ordinal gate — even a perfect `longest ≠ first` detector would
+still need the refuting sentence to reach VERIFY first, which it currently cannot." `input_payload`
+(spec 014 T021) makes that testable for the first time, and it is false. In today's run the refuting
+sentence reached VERIFY in **every** payload for the claim, verbatim:
+
+> "At noon on December 17, 1903, Wilbur piloted the **fourth and longest** flight of the day,
+> covering 852 feet in 59 seconds."
+> "The **fourth and last** flight, by Wilbur, took 59 seconds to cover 852 feet (260 m)."
+
+VERIFY read those and returned `supported` for "The first flight covered 852 feet", in all 18 calls.
+**Retrieval is solved. The defect is VERIFY's reading of evidence it was given.**
+
+**What this changes about §3e.** §3e's rejection of superlatives stands and is not reopened — but it
+is now also *unnecessary* for g17. The evidence sentences say **"fourth"**, a plain ordinal already
+in `ORDINAL_WORDS`. No vocabulary widening is required. What is missing is that
+`applyReasonOrdinalGate` compares the claim's ordinal against VERIFY's **reason** — free prose the
+model authors, and which §3f already observed often omits any selector word. It never compares
+against the **cited evidence sentence**, which is retrieved text and contains the plain ordinal.
+
+**Proposed next step (NOT implemented, needs the adversarial validation `d6e9738` skipped):** an
+evidence-side ordinal check — claim ordinal vs. ordinal in the cited sentence, same anchor-overlap
+and negation machinery `applyReasonOrdinalGate` already uses, no new vocabulary. Note §3d makes this
+gate's contradictions immune to reconciliation, so a false positive here has no safety net; validate
+on the frozen corpus before wiring, and prefer withholding `supported` over asserting `contradicted`.
