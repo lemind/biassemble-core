@@ -1744,6 +1744,28 @@ against this rule) is deleted. A hand-synced copy previously reported 2026-08-31
 28 cases had produced no scoreable claim at all. `scripts/eval-grounnel.ts` now exits on
 `bindingPassed`, so the CLI and the Inngest job cannot disagree about what a failure is.
 
+**Detection floors for `g17` and `g24` set to 0.70 (2026-09-03).** With the significance rule in
+place the floor no longer has to sit far below the measured rate — the test absorbs the noise, so
+the floor can stay near capability and keep its power. Chosen against measured true rates (g17 0.636,
+g24 0.656) by the trade that actually matters:
+
+| floor | P(false red) n=10 | P(catching a real collapse to 0.30) n=10 |
+| --- | --- | --- |
+| 0.80 (was) | 28% | 95% |
+| **0.70 (now)** | **11%** | **85%** |
+| 0.65 | 3% | 65% |
+| 0.60 | 1% | 38% |
+| 0.40 | 0% | 15% |
+
+0.40 was the right answer under the old raw-threshold rule and is the wrong one now: it would buy a
+few points of quiet at the cost of two thirds of the gate's ability to see a genuine collapse.
+0.70 keeps 85% power for a 1-in-9 false red, against 28% before.
+
+**This does NOT make the suite green.** g17 today is 4/10 = 0.40, p=0.047 against the 0.70 floor —
+still red, and by a coin's width (alpha is 0.05). Two historical days move to green (08-27, 08-28);
+09-03 does not. `minCorrectRate` is unchanged at 1.0 for both cases; only `detectionFloor` moved.
+The product target remains 0.80 and is recorded here, not in the pass bar.
+
 **Reopening trigger:** if a genuine decay from 0.80 to ~0.70 is suspected, the alpha and floor are
 one-line constants — but check the tracked per-case rates first: they are reported with their N on
 every run precisely so a downward trend is visible before the gate fires.
