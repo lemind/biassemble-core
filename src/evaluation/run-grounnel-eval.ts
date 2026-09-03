@@ -71,6 +71,8 @@ export interface GrounnelEvalDeps {
 export interface GrounnelEvalCaseResult {
   id: string;
   ok: boolean;
+  /** Whether `ok` may be read as a verdict — false below MIN_VERDICT_REPETITIONS. */
+  verdictIsBinding: boolean;
   /** Repetitions actually scored (a repetition that threw is excluded and counted in `errors`). */
   runs: number;
   safetyOk: boolean;
@@ -95,7 +97,17 @@ export interface GrounnelEvalSummary {
   totalMatched: number;
   totalCorrect: number;
   totalFalseAccusations: number;
+  /** Legacy headline: every case ok. Kept so existing callers don't change meaning under them. */
   passed: boolean;
+  /** Coverage indicator for the log: every case had the observations to be read as a verdict. */
+  verdictIsBinding: boolean;
+  /** Cases that BOTH are binding AND failed. Aggregated per case, never suite-wide: one errored
+   * case must not suppress another case's real failure (D030 §3m Addendum 9). */
+  bindingFailures: number;
+  /** Repetitions requested but not completed — an invalid run, not a quality verdict. */
+  incompleteCases: number;
+  /** THE headline and the gate: no false accusation, no binding failure, no partial case. */
+  bindingPassed: boolean;
 }
 
 export const MAX_REPEATS = 20;
@@ -182,7 +194,8 @@ export function scoreGrounnelEvalCase(
     // and "not checked" must never aggregate into "safe" (review finding — the job's own
     // `cases.every(c => c.safetyOk)` would otherwise log safetyOk:true for a case that never ran).
     return {
-      id: goldenCase.id, ok: false, runs: 0, safetyOk: false, correctRate: 0, detectionRate: null, correct: 0, matched: 0,
+      // verdictIsBinding false for the same reason safetyOk is: zero observations is not evidence.
+      id: goldenCase.id, ok: false, verdictIsBinding: false, runs: 0, safetyOk: false, correctRate: 0, detectionRate: null, correct: 0, matched: 0,
       falseAccusations: 0, claims: [], violations: [], runDetails: [], run: null,
       errors, error: errors[0] ?? "no repetitions were executed",
     };
@@ -209,6 +222,7 @@ export function scoreGrounnelEvalCase(
   return {
     id: goldenCase.id,
     ok: violations.length === 0,
+    verdictIsBinding: result.verdictIsBinding,
     runs: result.runs,
     safetyOk: result.safetyOk,
     correctRate: result.correctRate,
@@ -254,7 +268,11 @@ function summarize(cases: GrounnelEvalCaseResult[]): GrounnelEvalSummary {
     totalFalseAccusations += c.falseAccusations;
   }
   const passed = cases.every((c) => c.ok) && totalFalseAccusations === 0;
-  return { cases, totalMatched, totalCorrect, totalFalseAccusations, passed };
+  const verdictIsBinding = cases.length > 0 && cases.every((c) => c.verdictIsBinding);
+  const bindingFailures = cases.filter((c) => c.verdictIsBinding && !c.ok).length;
+  const incompleteCases = cases.filter((c) => c.violations.some((v) => v.rule === "incomplete_repetitions") || c.runs === 0).length;
+  const bindingPassed = totalFalseAccusations === 0 && bindingFailures === 0 && incompleteCases === 0;
+  return { cases, totalMatched, totalCorrect, totalFalseAccusations, passed, verdictIsBinding, bindingFailures, incompleteCases, bindingPassed };
 }
 
 /** Shared by the CLI script and the Inngest job (both manual, real-call) — one implementation, not two. No Postgres (D019 §4); state lives only for this run. */

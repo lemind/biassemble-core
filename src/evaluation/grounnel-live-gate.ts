@@ -38,6 +38,29 @@ export interface Violation {
  * reachable rates are 0/.2/.4/.6/.8/1, so this means "at least 4 of 5". Revise after Stage 2. */
 export const DETECTION_RATE_INITIAL_FLOOR = 0.8;
 
+/** Repetitions required before a result may fail the suite. Below this, a run is indicative only. */
+export const MIN_VERDICT_REPETITIONS = 5;
+/** One-sided significance for "is detection below the floor" (D030 §3m Addendum 9). */
+export const DETECTION_ALPHA = 0.05;
+
+/**
+ * P(X <= k | n, p) — exact one-sided binomial lower tail. n is bounded by repetitions (<= 20), so a
+ * plain loop is exact and cheap; logs keep the terms stable rather than overflowing factorials.
+ */
+export function binomCdf(k: number, n: number, p: number): number {
+  if (k >= n) return 1;
+  if (k < 0) return 0;
+  if (p <= 0) return 1;
+  if (p >= 1) return 0;
+  let logC = 0;
+  let sum = 0;
+  for (let i = 0; i <= k; i++) {
+    if (i > 0) logC += Math.log(n - i + 1) - Math.log(i);
+    sum += Math.exp(logC + i * Math.log(p) + (n - i) * Math.log(1 - p));
+  }
+  return Math.min(1, sum);
+}
+
 /** Per-expected-claim outcome across N repetitions — the distribution, not a collapsed boolean. */
 export interface ClaimOutcome {
   match: string;
@@ -53,6 +76,9 @@ export interface ClaimOutcome {
 
 export interface LiveEvalResult {
   ok: boolean;
+  /** Whether `ok` may be read as a verdict: enough repetitions AND enough observations of whatever
+   * was actually tested. See D030 §3m Addendum 9. */
+  verdictIsBinding: boolean;
   /** How many repetitions of the same input were scored. */
   runs: number;
   /** Hard gate: zero `contradicted` observations on any non-`false` kind, across every repetition. */
@@ -162,15 +188,27 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
         detail: `${correct}/${matched} = ${correctRate.toFixed(2)} below floor ${spec.minCorrectRate}`,
       });
     }
-  } else if (detectionRate !== null) {
+  } else {
+    // Detection is gated PER false claim, not on the summed rate: summing hides one claim at 0/5
+    // behind two at 5/5, and separate claims do not share a rate. D030 §3m Addendum 9.
     const floor = spec.detectionFloor ?? DETECTION_RATE_INITIAL_FLOOR;
-    if (detectionRate < floor) {
-      violations.push({
-        rule: "below_detection_rate",
-        detail: `${detectionCorrect}/${detectionObservations} = ${detectionRate.toFixed(2)} below provisional floor ${floor}`,
-      });
+    for (const c of claims) {
+      if (c.kind !== "false" || c.observations < MIN_VERDICT_REPETITIONS) continue;
+      // A hypothesis test, NOT a threshold — never "simplify" back to `rate < floor` (see the ADR).
+      const p = binomCdf(c.correct, c.observations, floor);
+      if (p < DETECTION_ALPHA) {
+        violations.push({
+          rule: "below_detection_rate",
+          detail: `"${c.match.slice(0, 60)}": ${c.correct}/${c.observations} = ${(c.correct / c.observations).toFixed(2)}, p=${p.toFixed(3)} — significantly below floor ${floor}`,
+        });
+      }
     }
   }
 
-  return { ok: violations.length === 0, runs: runs.length, safetyOk, correctRate, detectionRate, correct, matched, claims, violations };
+  // Binding means the test that matters actually had the observations to run. A false claim EXTRACT
+  // produced in only 4 of 6 repetitions leaves detection untested, and untested is not a pass.
+  const underObservedFalseClaim = claims.some((c) => c.kind === "false" && c.observations < MIN_VERDICT_REPETITIONS);
+  const verdictIsBinding = runs.length >= MIN_VERDICT_REPETITIONS && !underObservedFalseClaim;
+
+  return { ok: violations.length === 0, verdictIsBinding, runs: runs.length, safetyOk, correctRate, detectionRate, correct, matched, claims, violations };
 }

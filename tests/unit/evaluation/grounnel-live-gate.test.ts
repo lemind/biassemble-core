@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { evaluateGrounnelRun, type GrounnelRun, type LiveEvalSpec } from "../../../src/evaluation/grounnel-live-gate.js";
-import { normalizeRepeats, scoreGrounnelEvalCase } from "../../../src/evaluation/run-grounnel-eval.js";
+import { binomCdf, evaluateGrounnelRun, type GrounnelRun, type LiveEvalSpec } from "../../../src/evaluation/grounnel-live-gate.js";
+import { normalizeRepeats, scoreGrounnelEvalCase, summarizeGrounnelEvalCases } from "../../../src/evaluation/run-grounnel-eval.js";
 
 describe("Grounnel live eval gate — the gate itself must fail when it should", () => {
   const spec: LiveEvalSpec = {
@@ -109,15 +109,106 @@ describe("repeated runs (D030 §3k): safety is hard, detection is a rate", () =>
     expect(result.detectionRate).toBeCloseTo(0.4);
   });
 
-  it("a false claim detected 2/5 fails the provisional detection floor; 4/5 passes", () => {
+  // D030 §3m Addendum 9 — detection now fails on SIGNIFICANCE, not on a raw threshold. The floor is
+  // still 0.80; what changed is that the observation must be statistically incompatible with being
+  // at it. At N=5, 2/5 gives p=0.058 — just short of alpha, so it is recorded, not failed.
+  it("a false claim detected 2/5 is too little evidence to fail; 0/5 is not", () => {
     const text = "The first man on the Moon was Buzz Aldrin.";
     const weak = evaluateGrounnelRun(runsOf(["contradicted", "supported", "contradicted", "supported", "supported"], text), falseSpec);
-    expect(weak.ok).toBe(false);
-    expect(weak.violations.map((v) => v.rule)).toContain("below_detection_rate");
+    expect(weak.detectionRate).toBeCloseTo(0.4);
+    expect(weak.violations.map((v) => v.rule)).not.toContain("below_detection_rate");
 
-    const ok = evaluateGrounnelRun(runsOf(["contradicted", "contradicted", "contradicted", "supported", "contradicted"], text), falseSpec);
-    expect(ok.detectionRate).toBeCloseTo(0.8);
-    expect(ok.ok).toBe(true);
+    const collapsed = evaluateGrounnelRun(runsOf(["supported", "supported", "supported", "supported", "supported"], text), falseSpec);
+    expect(collapsed.violations.map((v) => v.rule)).toContain("below_detection_rate");
+    expect(collapsed.ok).toBe(false);
+  });
+
+  it("the SAME rate fails once there are enough observations to say so — 4/10 red, 4/5 green", () => {
+    const text = "The first man on the Moon was Buzz Aldrin.";
+    const five = evaluateGrounnelRun(runsOf(["contradicted", "contradicted", "contradicted", "contradicted", "supported"], text), falseSpec);
+    expect(five.detectionRate).toBeCloseTo(0.8);
+    expect(five.ok).toBe(true);
+
+    // 0.40 over ten observations: p=0.006, now distinguishable from the 0.80 floor.
+    const ten = evaluateGrounnelRun(
+      runsOf(["contradicted", "contradicted", "contradicted", "contradicted", "supported", "supported", "supported", "supported", "supported", "supported"], text),
+      falseSpec,
+    );
+    expect(ten.detectionRate).toBeCloseTo(0.4);
+    expect(ten.violations.map((v) => v.rule)).toContain("below_detection_rate");
+  });
+
+  it("below MIN_VERDICT_REPETITIONS the detection test is skipped and the result is not binding", () => {
+    const text = "The first man on the Moon was Buzz Aldrin.";
+    const four = evaluateGrounnelRun(runsOf(["contradicted", "supported", "supported", "supported"], text), falseSpec);
+    expect(four.verdictIsBinding).toBe(false);
+    expect(four.violations.map((v) => v.rule)).not.toContain("below_detection_rate");
+
+    const five = evaluateGrounnelRun(runsOf(["supported", "supported", "supported", "supported", "supported"], text), falseSpec);
+    expect(five.verdictIsBinding).toBe(true);
+  });
+
+  // Both of these shipped past the first version of this change and were caught in review.
+  it("a false claim EXTRACT under-produced leaves detection untested — that is NOT a binding pass", () => {
+    const text = "The first man on the Moon was Buzz Aldrin.";
+    // 6 repetitions, but the false claim only appears in 3 of them, missed every time.
+    const runs: GrounnelRun[] = [
+      ...Array.from({ length: 3 }, () => ({ claims: [claim(text, "supported")] })),
+      ...Array.from({ length: 3 }, () => ({ claims: [] as Array<{ text: string; verdict: string }> })),
+    ];
+    const res = evaluateGrounnelRun(runs, falseSpec);
+    expect(res.runs).toBe(6);
+    expect(res.detectionRate).toBe(0);
+    // The test could not run on 3 observations, so the result must not read as a pass.
+    expect(res.verdictIsBinding).toBe(false);
+  });
+
+  it("detection is gated per false claim — one claim collapsing is not hidden by another passing", () => {
+    const twoFalse: LiveEvalSpec = {
+      id: "two-false", minCorrectRate: 1,
+      claims: [
+        { match: "first man on the Moon was Buzz Aldrin", kind: "false" },
+        { match: "Great Wall is Roman", kind: "false" },
+      ],
+    };
+    // Claim A perfect 5/5, claim B total collapse 0/5. Aggregate is 5/10 = 0.50.
+    const runs: GrounnelRun[] = Array.from({ length: 5 }, () => ({
+      claims: [
+        claim("The first man on the Moon was Buzz Aldrin.", "contradicted"),
+        claim("The Great Wall is Roman.", "supported"),
+      ],
+    }));
+    const res = evaluateGrounnelRun(runs, twoFalse);
+    expect(res.violations.map((v) => v.rule)).toContain("below_detection_rate");
+    expect(res.violations.find((v) => v.rule === "below_detection_rate")!.detail).toContain("Great Wall");
+    expect(res.ok).toBe(false);
+  });
+
+  it("one errored case does NOT disarm the gate for a case that genuinely failed", () => {
+    const okCase = { id: "g-ok", ok: true, verdictIsBinding: true, runs: 5, safetyOk: true, correctRate: 1, detectionRate: 1,
+      correct: 5, matched: 5, falseAccusations: 0, claims: [], violations: [], runDetails: [], run: null } as never;
+    const brokenCase = { id: "g-bad", ok: false, verdictIsBinding: true, runs: 5, safetyOk: true, correctRate: 0, detectionRate: 0,
+      correct: 0, matched: 5, falseAccusations: 0, claims: [],
+      violations: [{ rule: "below_detection_rate", detail: "0/5" }], runDetails: [], run: null } as never;
+    // Infrastructure casualty: every repetition threw, so it is non-binding through no fault of the pipeline.
+    const erroredCase = { id: "g-err", ok: false, verdictIsBinding: false, runs: 0, safetyOk: false, correctRate: 0, detectionRate: null,
+      correct: 0, matched: 0, falseAccusations: 0, claims: [], violations: [], runDetails: [], run: null, errors: ["boom"] } as never;
+
+    const summary = summarizeGrounnelEvalCases([okCase, brokenCase, erroredCase]);
+    expect(summary.bindingFailures).toBe(1);
+    expect(summary.bindingPassed).toBe(false); // the real regression still turns the suite red
+    expect(summary.verdictIsBinding).toBe(false); // coverage is incomplete, and that is reported separately
+  });
+
+  it("binomCdf: exact at the edges", () => {
+    expect(binomCdf(5, 5, 0.8)).toBe(1);
+    expect(binomCdf(-1, 5, 0.8)).toBe(0);
+    expect(binomCdf(4, 5, 0.8)).toBeCloseTo(0.67232, 5);
+    expect(binomCdf(4, 10, 0.8)).toBeCloseTo(0.006369, 5);
+    expect(binomCdf(2, 5, 0.8)).toBeCloseTo(0.05792, 5);
+    expect(binomCdf(0, 5, 0.8)).toBeCloseTo(0.00032, 5);
+    expect(binomCdf(0, 5, 0)).toBe(1);
+    expect(binomCdf(4, 5, 1)).toBe(0);
   });
 
   it("a true claim missed in 1 of 5 is recorded but is NOT a deploy blocker (only safety is hard)", () => {

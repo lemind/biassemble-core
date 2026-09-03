@@ -1684,3 +1684,66 @@ evidence-side ordinal check — claim ordinal vs. ordinal in the cited sentence,
 and negation machinery `applyReasonOrdinalGate` already uses, no new vocabulary. Note §3d makes this
 gate's contradictions immune to reconciliation, so a false positive here has no safety net; validate
 on the frozen corpus before wiring, and prefer withholding `supported` over asserting `contradicted`.
+
+---
+
+### Addendum 9 (2026-09-03) — the detection gate fails on significance, not on a raw threshold
+
+**The suite was reporting noise as regression.** `g17` measures 28/44 = 0.64 detection and `g24`
+21/32 = 0.66, against a 0.80 floor. A 0.64 process trips a raw 0.80 threshold ~60% of the time at
+N=5, and *more* often as N grows: P(pass) is 40% at N=5 and 10% at N=20. A gate that gets less
+likely to pass the more evidence you give it is not measuring the pipeline.
+
+**Proof there was no regression behind the red**, three independent ways:
+
+1. 2026-09-01, one binary (`57e9e78`), no deploy between: 16:27 GREEN (28 runs, repeats 1) →
+   17:23 GREEN (28 runs, repeats 1) → 19:12 RED (56 runs, repeats 2). Only N changed.
+2. Re-enabling `subject_entity` (672 calls, Addendum 8) moved g17 detection 0.00 → 0.00.
+3. Per-case before/after across the 09-02 batch: no case significantly worse (g17 z = −1.67,
+   g24 z = −0.81). Three cases crossed |z| > 1.96; none survive Bonferroni across 28 tests.
+
+**The rule.** The floor stays 0.80. Detection fails only when the observation is statistically
+incompatible with being *at* the floor: one-sided exact binomial, `P(X ≤ k | n, floor) < 0.05`, and
+only when `n ≥ MIN_VERDICT_REPETITIONS = 5`. Below that the test has no power, so it is skipped
+rather than run and ignored. Simulated over all eval history: **binding reds 23 → 5**, every one of
+the 18 removed is small-N noise, every real collapse (0/5, 4/14, 4/15) still red.
+
+Same rate, different N — the behaviour to preserve:
+
+| observation | p | verdict |
+| --- | --- | --- |
+| 08-26 g17 2/5 = 0.40 | 0.058 | green — cannot distinguish from 0.80 |
+| 09-03 g17 4/10 = 0.40 | 0.006 | RED — now it can |
+
+**Gated per false claim, not on the summed rate.** Summing hides one claim at 0/5 behind two at 5/5,
+and separate claims do not share a rate. No golden case has more than one `false` claim today, so
+this is currently a no-op — it closes the hole before a second one is added.
+
+**Binding-ness is a property of the test that ran, not of the run length.** `verdictIsBinding`
+requires `runs.length ≥ 5` **and** no `false` claim observed fewer than 5 times. Without the second
+condition a case with 6 repetitions whose claim EXTRACT produced only 3 times reported
+`detectionRate: 0` as a *binding pass* — the vacuous-green family §3k exists to stop, reintroduced.
+
+**Failures aggregate per case, never suite-wide.** `bindingPassed` = no false accusation, no case
+that both had the observations and failed, no incomplete case. An earlier draft used
+`cases.every(c => c.verdictIsBinding)` as a precondition for failing at all, so one infrastructure
+casualty disarmed the gate for all 27 other cases.
+
+**Unchanged, deliberately:** `no_false_accusation` is hard at any N; the N=1 `minCorrectRate` path
+(a binomial test on n=1 has no power at any alpha, so significance is not the available fix there);
+the `matched === 0` vacuous guard; every floor value in the golden set. **No golden-set edit — this
+does not make the suite green.** g17 remains red at 4/10, p=0.006, correctly.
+
+**No Bonferroni on the detection gate.** 28 cases at α=0.05 yields ~1 spurious below-floor per full
+suite. That is the right trade while the headline that matters is false accusations = 0; correcting
+it would make a genuine collapse harder to call, which is the wrong direction for this gate.
+
+**One scorer, not four.** `scripts/eval-last-green.ts` now calls `evaluateGrounnelRun` instead of
+reimplementing it, and `scripts/s014-t022-score-golden-run.ts` (a second hand-synced copy, stale
+against this rule) is deleted. A hand-synced copy previously reported 2026-08-31 as green when 27 of
+28 cases had produced no scoreable claim at all. `scripts/eval-grounnel.ts` now exits on
+`bindingPassed`, so the CLI and the Inngest job cannot disagree about what a failure is.
+
+**Reopening trigger:** if a genuine decay from 0.80 to ~0.70 is suspected, the alpha and floor are
+one-line constants — but check the tracked per-case rates first: they are reported with their N on
+every run precisely so a downward trend is visible before the gate fires.

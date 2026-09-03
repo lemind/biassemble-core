@@ -18,6 +18,7 @@ import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../providers/search/tavily-provider.js";
 import { DrizzleGrounnelSearchCallStore } from "../persistence/grounnel-search-call-store.js";
 import { normalizeRepeats, runGrounnelEvalOnce, scoreGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
+import { MIN_VERDICT_REPETITIONS } from "../evaluation/grounnel-live-gate.js";
 import type { GrounnelRun } from "../evaluation/grounnel-live-gate.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
@@ -156,6 +157,11 @@ export const evalGrounnelRunJob = inngest.createFunction(
     logger.info(
       {
         module: MODULE,
+        // `bindingPassed` is the headline and the gate; `passed` alone called coin flips a green suite.
+        bindingPassed: summary.bindingPassed,
+        verdictIsBinding: summary.verdictIsBinding,
+        bindingFailures: summary.bindingFailures,
+        incompleteCases: summary.incompleteCases,
         passed: summary.passed,
         repeats,
         correctRate: summary.totalMatched === 0 ? null : summary.totalCorrect / summary.totalMatched,
@@ -165,7 +171,11 @@ export const evalGrounnelRunJob = inngest.createFunction(
         detection,
         userFacingReasons,
       },
-      summary.passed ? "Grounnel live eval passed" : "Grounnel live eval failed"
+      summary.bindingPassed && !summary.verdictIsBinding
+        ? `Grounnel live eval INDICATIVE ONLY — no binding failure, but ${summary.cases.filter((c) => !c.verdictIsBinding).length} case(s) lacked the observations to be a verdict (repeats=${repeats}, need ${MIN_VERDICT_REPETITIONS})`
+        : summary.bindingPassed
+          ? "Grounnel live eval passed"
+          : "Grounnel live eval failed"
     );
 
     // Inngest's run status (green/red) reflects only whether this handler threw, not what it
@@ -197,7 +207,9 @@ export const evalGrounnelRunJob = inngest.createFunction(
       );
     }
 
-    if (!summary.passed) {
+    // `bindingPassed` already means: no false accusation (hard at any N), no case that both had the
+    // observations and failed, no partial case. Per case, never suite-wide — D030 §3m Addendum 9.
+    if (!summary.bindingPassed) {
       const failed = compact.filter((c) => !c.ok);
       throw new Error(
         `Grounnel live eval failed (${summary.totalCorrect}/${summary.totalMatched} correct, ` +
