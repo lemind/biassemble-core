@@ -1375,7 +1375,7 @@ behind it. The honest options are to **disable the gate outright** — a one-lin
 is measurable and whose direction is safe — or to leave it exactly as-is and stop spending on it.
 Writing an eighth lexical heuristic is neither. This is a product decision and is left open.
 
-### Addendum 6 (2026-08-31) — DECISION: `subject_entity` is disabled
+### Addendum 6 (2026-08-31) — DECISION: `subject_entity` is disabled — SUPERSEDED by Addendum 7 (2026-09-03)
 
 **§3m's retention decision is withdrawn.** It was made when M1 was believed rare-but-real; T28 Step 1
 measured **0 confirmed M1 across 320 firings**, and the three apparent exceptions were
@@ -1511,7 +1511,7 @@ predicate and then labels against a sentence that does not address it.** Frozen 
 ### Hole 3 — wrong entity sharing a proper-noun token
 
 `alishabakitchen.com` accepted as evidence about a person named Alishba. `sameEntity` compares
-proper-noun tokens and they share one. Refuted work (spec 013 T30); `subject_entity` stays disabled.
+proper-noun tokens and they share one. Refuted work (spec 013 T30); `subject_entity` stays disabled. **[Superseded by Addendum 7 — re-enabled 2026-09-03.]**
 
 ### The designed, measured, UNSHIPPED fix for Hole 1
 
@@ -1559,3 +1559,76 @@ contradicted, or a user-reported false accusation of this shape.
 `predicate-first` passed a 4-row screen and looked like a strict improvement; on the full 19-fixture
 set it was a Cardinal Rule regression. A narrow screen is not evidence of safety.
 
+
+---
+
+### Addendum 7 (2026-09-03) — Addendum 6 is REVERTED: the gate's value was its side effect
+
+**Addendum 6's measurements were correct and its conclusion was wrong.** It judged the gate on the
+verdict the gate itself writes. That verdict *is* worthless — `supported → unverifiable`, wrong ~75%
+of the time, 0 confirmed catches in 320 firings. But the downgrade also nulls `evidence` and leaves
+the claim unresolved, and *that* is what drove the escalation tiers into a second retrieval pass.
+The second pass is where the right answer came from. Disabling the gate removed the second pass.
+
+**How this was found.** g17 was the only golden case to regress after 08-31. `scripts/eval-drift.ts`
+diffs one case across two dates over everything the `grounnel_*` tables record; for g17's
+`"first flight covered 852 feet"` claim, 2026-08-28 → 2026-09-03:
+
+| Signal | 08-28 | 09-03 |
+| --- | --- | --- |
+| `subject_entity` overrides | 36/164 (22%) | gate absent |
+| `retry_decision` fired | 14/34 (41%) | 0 |
+| `retry_reconciliation` fired | 11/12 (92%) | 0 |
+| `consistency_check` / `consistency_retry` calls | 12 / 11 | 0 / 0 |
+| sources reaching VERIFY, per run | 5.88 | 2.33 |
+| verdict | contradicted 15, supported 1, unverifiable 2 | **supported 3/3** |
+
+Within 08-27/08-28 alone, runs where the gate overrode averaged **7.75** selected sources against
+**3.36** where it did not — the escalation is caused by the downgrade, not correlated with it.
+
+**The suite-wide control.** Across the 8 cases with scoreable `false` claims on both dates, g17 is
+the only one the gate fired on at any meaningful rate (22%; next highest 3%), the only one that lost
+evidence volume (16.2 → 11.3 per run), and the only one whose detection rate fell (0.83 → 0.00).
+Every other case held or improved. One-for-one, so this is not a general loss of the retry path.
+
+**What was changed:** the call site is restored at its original position — after `year`, *before*
+the spec-015 G2 affirmation floor. Placing it after G2 was tried first and is wrong: G2 demotes
+`supported`/`partially_supported` to `unsupported` and nulls evidence whenever the evidence is not
+verbatim in the passage, and `applySubjectEntityGate` only acts on `supported`/`partially_supported`
+with non-null evidence — so downstream of G2 it never sees hallucinated-evidence-about-another-entity,
+the class it exists to catch, and the surviving population is exactly the well-grounded one where its
+false-trigger rate is worst. Before G2 the ordering is safe in both directions: `subject_entity` only
+downgrades (to `unverifiable`), on which G2 is a no-op, so G2 remains genuinely last and a real floor.
+
+**What this does NOT claim.** The gate is still wrong ~75% of the time on its own verdict, and this
+revert re-imposes Addendum 6's measured cost: ~25–30 suppressed true claims per 1000. It buys back
+g17's detection with a mechanism nobody designed. **The correct fix is to trigger the retry on thin
+evidence directly** — if an affirmative verdict rests on fewer than N sources, escalate — and then
+disable `subject_entity` again on its own merits. This revert is a stopgap that should not outlive
+that work.
+
+**Precisely which second pass.** Not the D025 §2 retry — `applySubjectEntityGate` pushes no
+diagnostic, so `needsRetry` stays false. It is D026 §13 escalation: `findUnresolvedClaims`
+([pipeline.service.ts](../../src/orchestrators/grounnel/pipeline.service.ts)) admits
+`unsupported | unverifiable | contradicted | partially_supported` and excludes only `supported`, so
+the downgrade moves the claim across that one boundary and `escalateUnresolved` re-retrieves at
+`ESCALATION_TIERS = [5, 8]`. That filter is the actual load-bearing line and now carries a comment
+saying so.
+
+**Known costs this revert re-imposes, measured on the days the gate was live (08-27/08-28):**
+
+| Cost | Measured |
+| --- | --- |
+| `kind:"true"` golden claims scored incorrect | 7% (08-27), 5% (08-28), vs **0%** with the gate off |
+| `supported → unverifiable` overrides | 183 across the two days; ~93% recovered before scoring |
+| Escalation vetoes a better tier result | nulled evidence ⇒ `citations = []` ⇒ `rejectReplacement` keeps the weaker prior **and** `protectedContradictionClaimIds` excludes the claim from the next tier |
+| Public `grounded_pct` | falsely-downgraded claims move from `grounded_n` to `unclear_n`, lowering the headline score for identical input |
+| Escalation budget | non-productive tiers for pronoun-referent evidence: the gate is a pure function of `(claimText, subjectEntity, evidence)`, so a wider pool that yields the same best sentence re-fires it identically |
+
+**Reopening trigger:** once an explicit thin-evidence retry trigger ships, re-run
+`scripts/eval-drift.ts` on g17 with the gate off. If detection holds without it, disable the gate
+permanently and delete this addendum's stopgap.
+
+**Method note.** Addendum 6 measured the gate in isolation and never asked what else consumed its
+output. A gate is not only its verdict; it is also every downstream trigger that reads the state it
+leaves behind. Measure the removal, not just the component.

@@ -7,7 +7,8 @@ retract a contradiction (containment), then a VERIFY prompt fix (correctness).
 - specs/014-verify-negated-claim-polarity/tasks.md — task breakdown
 
 Feature 013 (Grounnel D032 remediation — T27 contentless-claim eligibility, T31 `subject_entity`
-disable) is merged. Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix)
+disable) is merged; the `subject_entity` disable was reverted 2026-09-03 (D030 §3m Addendum 7) and
+the gate is live again. Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix)
 is implemented and live-verified. The ADR is the authoritative record — read it before changing
 this area:
 
