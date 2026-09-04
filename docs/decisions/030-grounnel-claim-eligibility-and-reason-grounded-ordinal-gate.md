@@ -1841,3 +1841,46 @@ measured. `{ claim, fact: claim }` duplication left alone: noise, not cost, and 
 
 **Do not** reach for `ORDINAL_WORDS` widening or re-enabling `subject_entity` to replace any catch
 this loses — both are closed (Addenda 6–8).
+
+### Addendum 11 (2026-09-04) — the trim is EXONERATED: the payload was never the problem
+
+Addendum 10's trim was suspected of costing g17 its catches (the gate fired 0/39 against a 6–17%
+historical rate). The controlled experiment (`eval-attribution-trim`, retrieve once, five trims on
+the same passages, 3 repeats) **refutes that hypothesis**.
+
+| trim | avg input tokens | verdict-moving | answers |
+|---|---|---|---|
+| `full` (whole pages) | 14,142 | **0/3** | absent, absent, absent |
+| `s20-claim` (shipped) | 1,067 | 0/3 | absent, absent, absent |
+| `s20-anyselector` | 1,067 | 0/3 | absent, absent, absent |
+| `s40-claim` | 1,067 | 0/3 | absent, absent, absent |
+| `s60-claim` | 1,067 | 0/3 | absent, absent, absent |
+
+Three findings, each closing a door:
+
+**1. The refuting evidence is present in the trimmed payload — four times over.** Offline replay of
+`buildPassageSentences` on the retrieved Wright_Flyer page (783 sentences → 5 kept) shows all four
+`852`-carrying sentences survive the trim, every one attributing 852 feet to the *fourth* flight
+("The fourth and last flight, by Wilbur, took 59 seconds to cover 852 feet"). The model reads them
+and answers `absent`. **This is a prompt/model failure, not an evidence-availability failure.**
+
+**2. Raising the sentence cap is a no-op.** `s20`/`s40`/`s60` are byte-identical because the cap was
+never binding: `ranked` slices `matching` (sentences with `score > 0`), and only 5 sentences score
+at all. Anyone proposing "send more sentences" as a fix should be shown this row.
+
+**3. The `anySelectorTrim` hypothesis is dead.** It was built on the theory that the claim-selector
+rescue evicts the sentence naming a *different* member. It cannot: those sentences are already kept
+on their own key-term score, so the rescue never runs and the variant is identical to `s20-claim`.
+
+**Decision: KEEP the Addendum 10 trim (`2c28cf8`).** It is 13× cheaper than whole pages and loses
+nothing measurable — `full` and `s20-claim` produce the same answer on the same passages. The cost
+saving stands on its own; the quality objection that motivated this experiment does not survive it.
+
+**Caveat, stated because it bounds the claim:** today's `full` retrieved 14,142 tokens against the
+63,915 historical average, so this run does not reproduce the historical `24 different + 9 conflict`
+baseline. The experiment proves the *trim* is not the cause; it does not prove what is. The
+remaining suspect is the attribution prompt itself, which treats "a ranking is not a position" —
+making `absent` defensible for the "longest" phrasing.
+
+**Do not** re-litigate this with a bigger cap, a new rescue rule, or whole pages. All three are
+measured above.

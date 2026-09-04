@@ -88,9 +88,10 @@ export const evalAttributionTrimJob = inngest.createFunction(
     if (!env.TAVILY_API_KEY) throw new Error("TAVILY_API_KEY is not set — required for the trim experiment's retrieval.");
     const repeats = Math.max(1, Math.min(5, Number(event.data?.repeats ?? 3)));
     const fixture = { ...DEFAULT_FIXTURE, ...(event.data?.fixture ?? {}) };
-    const trims: TrimName[] = event.data?.trims?.length
-      ? (event.data.trims as TrimName[]).filter((t) => ALL_TRIMS.includes(t))
-      : ALL_TRIMS;
+    // Driven off ALL_TRIMS, not the event's order — otherwise a caller listing `full` first undoes
+    // the ordering below and puts the riskiest variant ahead of the cheap ones again.
+    const requested = (event.data?.trims ?? []) as TrimName[];
+    const trims: TrimName[] = requested.length ? ALL_TRIMS.filter((t) => requested.includes(t)) : ALL_TRIMS;
 
     const provider = new GeminiProvider();
     const prompts = new PromptRegistry();

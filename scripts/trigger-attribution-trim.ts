@@ -14,7 +14,7 @@ const arg = (k: string) => { const i = args.indexOf(`--${k}`); return i !== -1 ?
 const repeats = Number(arg("repeats") ?? 3);
 const trims = arg("trims")?.split(",").map((s) => s.trim()).filter(Boolean);
 
-const ALL = ["full", "s20-claim", "s20-anyselector", "s40-claim", "s60-claim"];
+const ALL = ["s20-claim", "s20-anyselector", "s40-claim", "s60-claim", "full"];
 const selected = trims?.length ? trims : ALL;
 
 async function main() {
