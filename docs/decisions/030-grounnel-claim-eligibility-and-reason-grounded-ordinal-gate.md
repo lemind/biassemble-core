@@ -1968,3 +1968,30 @@ passes only 80% — one red in five runs, all of them wrong.
 **Evidence is thin: 6 observations.** These are provisional and should be re-derived once the screen
 has accumulated passes; the screen-failure rate per case across runs is the measurement, not any
 single pass.
+
+### Addendum 15 (2026-09-04) — detection fails on the plain rate again; Addendum 9 is SUPERSEDED
+
+Addendum 9 replaced `rate < floor` with a one-sided binomial test to stop noise-driven false reds.
+It overshot. At N=5 the test can only reject 0/5 and 1/5, so a floor of 0.7 enforced roughly 0.2 —
+g17 detected 2/5 (40%) and the suite reported green. A floor that does not mean its own number is
+worse than a noisy one.
+
+**Rule now: `rate < detectionFloor`, plainly.** `binomCdf`/`DETECTION_ALPHA` deleted, not left dead.
+Variance is absorbed by setting the floor BELOW measured capability, not by weakening the comparison
+— the floor is a "broken below this" line, never an aspiration.
+
+Post-fix detection over 12 observations per case, and how often each floor false-reds a healthy case
+at N=5:
+
+| case | observed | floor 0.6 | floor 0.7 | decision |
+|---|---|---|---|---|
+| g03, g04, g05, g09, g12, g14 | 7/7 = 1.00 | 0% | 0% | keep 0.8 |
+| g24 | 10/12 = 0.83 | 4% | **20%** | 0.7 → **0.6** (calibration) |
+| g17 | **6/12 = 0.50** | 50% | 74% | **left at 0.7 — it will fail** |
+
+g24 was a calibration error: capability 0.83 against a 0.7 floor false-reds one run in five.
+
+**g17 is not a calibration error — it detects half the time.** Lowering its floor to make it green
+would be moving the number to fit the result, which is the one thing this ADR keeps refusing to do
+(§3e, Addenda 6-8). It stays at 0.7 and fails honestly until the underlying case is fixed. A
+permanently-red g17 is a true statement about the product, not a broken gate.

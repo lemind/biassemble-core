@@ -41,25 +41,7 @@ export const DETECTION_RATE_INITIAL_FLOOR = 0.8;
 /** Repetitions required before a result may fail the suite. Below this, a run is indicative only. */
 export const MIN_VERDICT_REPETITIONS = 5;
 /** One-sided significance for "is detection below the floor" (D030 §3m Addendum 9). */
-export const DETECTION_ALPHA = 0.05;
 
-/**
- * P(X <= k | n, p) — exact one-sided binomial lower tail. n is bounded by repetitions (<= 20), so a
- * plain loop is exact and cheap; logs keep the terms stable rather than overflowing factorials.
- */
-export function binomCdf(k: number, n: number, p: number): number {
-  if (k >= n) return 1;
-  if (k < 0) return 0;
-  if (p <= 0) return 1;
-  if (p >= 1) return 0;
-  let logC = 0;
-  let sum = 0;
-  for (let i = 0; i <= k; i++) {
-    if (i > 0) logC += Math.log(n - i + 1) - Math.log(i);
-    sum += Math.exp(logC + i * Math.log(p) + (n - i) * Math.log(1 - p));
-  }
-  return Math.min(1, sum);
-}
 
 /** Per-expected-claim outcome across N repetitions — the distribution, not a collapsed boolean. */
 export interface ClaimOutcome {
@@ -209,12 +191,14 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
     const floor = spec.detectionFloor ?? DETECTION_RATE_INITIAL_FLOOR;
     for (const c of claims) {
       if (c.kind !== "false" || c.observations < MIN_VERDICT_REPETITIONS) continue;
-      // A hypothesis test, NOT a threshold — never "simplify" back to `rate < floor` (see the ADR).
-      const p = binomCdf(c.correct, c.observations, floor);
-      if (p < DETECTION_ALPHA) {
+      // Plain rate against the floor. A significance test at N=5 could only ever reject 0/5 and
+      // 1/5, so a floor of 0.7 actually enforced ~0.2 — the floor must mean what it says. Set the
+      // floor BELOW measured capability so ordinary variance does not trip it (D030 §3m Addendum 15).
+      const rate = c.correct / c.observations;
+      if (rate < floor) {
         violations.push({
           rule: "below_detection_rate",
-          detail: `"${c.match.slice(0, 60)}": ${c.correct}/${c.observations} = ${(c.correct / c.observations).toFixed(2)}, p=${p.toFixed(3)} — significantly below floor ${floor}`,
+          detail: `"${c.match.slice(0, 60)}": ${c.correct}/${c.observations} = ${rate.toFixed(2)} below floor ${floor}`,
         });
       }
     }

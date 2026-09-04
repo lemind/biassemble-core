@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { binomCdf, evaluateGrounnelRun, type GrounnelRun, type LiveEvalSpec } from "../../../src/evaluation/grounnel-live-gate.js";
+import { evaluateGrounnelRun, type GrounnelRun, type LiveEvalSpec } from "../../../src/evaluation/grounnel-live-gate.js";
 import { normalizeRepeats, scoreGrounnelEvalCase, summarizeGrounnelEvalCases } from "../../../src/evaluation/run-grounnel-eval.js";
 
 describe("Grounnel live eval gate — the gate itself must fail when it should", () => {
@@ -109,14 +109,15 @@ describe("repeated runs (D030 §3k): safety is hard, detection is a rate", () =>
     expect(result.detectionRate).toBeCloseTo(0.4);
   });
 
-  // D030 §3m Addendum 9 — detection now fails on SIGNIFICANCE, not on a raw threshold. The floor is
-  // still 0.80; what changed is that the observation must be statistically incompatible with being
-  // at it. At N=5, 2/5 gives p=0.058 — just short of alpha, so it is recorded, not failed.
-  it("a false claim detected 2/5 is too little evidence to fail; 0/5 is not", () => {
+  // CONTRACT CHANGE (supersedes Addendum 9): detection fails on the plain rate again. The
+  // significance test could only ever reject 0/5 and 1/5 at N=5, so a floor of 0.7 enforced ~0.2 and
+  // 2/5 passed while reporting green. The floor now means what it says; variance is absorbed by
+  // setting the floor below measured capability, not by weakening the comparison.
+  it("a false claim detected 2/5 fails a 0.80 floor — 0.40 is below it, and the floor means it", () => {
     const text = "The first man on the Moon was Buzz Aldrin.";
     const weak = evaluateGrounnelRun(runsOf(["contradicted", "supported", "contradicted", "supported", "supported"], text), falseSpec);
     expect(weak.detectionRate).toBeCloseTo(0.4);
-    expect(weak.violations.map((v) => v.rule)).not.toContain("below_detection_rate");
+    expect(weak.violations.map((v) => v.rule)).toContain("below_detection_rate");
 
     const collapsed = evaluateGrounnelRun(runsOf(["supported", "supported", "supported", "supported", "supported"], text), falseSpec);
     expect(collapsed.violations.map((v) => v.rule)).toContain("below_detection_rate");
@@ -200,16 +201,6 @@ describe("repeated runs (D030 §3k): safety is hard, detection is a rate", () =>
     expect(summary.verdictIsBinding).toBe(false); // coverage is incomplete, and that is reported separately
   });
 
-  it("binomCdf: exact at the edges", () => {
-    expect(binomCdf(5, 5, 0.8)).toBe(1);
-    expect(binomCdf(-1, 5, 0.8)).toBe(0);
-    expect(binomCdf(4, 5, 0.8)).toBeCloseTo(0.67232, 5);
-    expect(binomCdf(4, 10, 0.8)).toBeCloseTo(0.006369, 5);
-    expect(binomCdf(2, 5, 0.8)).toBeCloseTo(0.05792, 5);
-    expect(binomCdf(0, 5, 0.8)).toBeCloseTo(0.00032, 5);
-    expect(binomCdf(0, 5, 0)).toBe(1);
-    expect(binomCdf(4, 5, 1)).toBe(0);
-  });
 
   // CONTRACT CHANGE: this used to assert ok:true — at N>1 the correctness floor was skipped
   // entirely, so a miss never blocked. That also meant 5-of-5 wrong reported ok. A case that
@@ -304,11 +295,11 @@ describe("repeated runs: a partial or unobserved case must never report a pass",
   // g17 carries minCorrectRate 1.0 AND detectionFloor 0.7 — pooling them would fail it on any
   // missed detection, contradicting its own floor. `false` claims answer to detectionFloor at N>=5.
   it("keeps detectionFloor governing false claims, so minCorrectRate 1.0 does not override it", () => {
-    const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, detectionFloor: 0.7, claims: [{ match: "Buzz Aldrin", kind: "false" }] };
+    const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, detectionFloor: 0.6, claims: [{ match: "Buzz Aldrin", kind: "false" }] };
     const runs = (hit: number): GrounnelRun[] =>
       Array.from({ length: 5 }, (_, i) => ({ claims: [claim("The first man on the Moon was Buzz Aldrin.", i < hit ? "contradicted" : "supported")] }));
-    expect(evaluateGrounnelRun(runs(3), s).ok).toBe(true);   // 3/5 detection, not significantly below 0.7
-    expect(evaluateGrounnelRun(runs(0), s).ok).toBe(false);  // total collapse still fails
+    expect(evaluateGrounnelRun(runs(3), s).ok).toBe(true);   // 3/5 = 0.60, exactly at the floor
+    expect(evaluateGrounnelRun(runs(2), s).ok).toBe(false);  // 2/5 = 0.40 is below it, and now says so
   });
 
   it("(review finding) a NaN/garbage repeats value normalizes to 1, never to zero repetitions", () => {
