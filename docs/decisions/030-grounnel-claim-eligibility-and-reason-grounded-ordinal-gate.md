@@ -1878,9 +1878,19 @@ saving stands on its own; the quality objection that motivated this experiment d
 
 **Caveat, stated because it bounds the claim:** today's `full` retrieved 14,142 tokens against the
 63,915 historical average, so this run does not reproduce the historical `24 different + 9 conflict`
-baseline. The experiment proves the *trim* is not the cause; it does not prove what is. The
-remaining suspect is the attribution prompt itself, which treats "a ranking is not a position" —
-making `absent` defensible for the "longest" phrasing.
+baseline. The experiment proves the *trim* is not the cause.
+
+**What the cause IS — the model's persisted `working` names it.** On all three `full` repeats the
+model wrote: *"The passages state that the last flight was 852 feet, not the first … They attribute
+852 feet to the longest flight, which was the last flight. Therefore, the attribution is absent."*
+It located the fact, identified the member as "the last flight, by Wilbur", and ruled out the
+claim's member — which is the prompt's own definition of `different` ("explicitly attributes the
+FACT to a different, IDENTIFIED member"). It answered `absent` anyway. **The model is collapsing
+"not the claim's member" into `absent` rather than `different`.** The step-by-step scaffold is the
+likely reason: steps 1–3 only ever ask "is this the claim's member?", so a negative answer lands on
+`absent` with no step that ever tests the `different` branch. This is a prompt-scaffold defect, and
+it is not the "a ranking is not a position" rule — the model did link "longest" to "last" and still
+refused to answer `different`.
 
 **Do not** re-litigate this with a bigger cap, a new rescue rule, or whole pages. All three are
 measured above.
