@@ -53,9 +53,21 @@ async function main() {
     process.exit(1);
   }
   const cases = caseIds?.length ?? golden.cases.length;
-  const n = repeats === undefined ? 1 : Math.max(1, Math.min(20, Math.trunc(repeats)));
   console.log(`Sending ${eventName}${Object.keys(data).length ? ` ${JSON.stringify(data)}` : ""}...`);
-  console.log(`  ${cases} case(s) × ${n} repetition(s) ≈ ${cases * n * CALLS_PER_CASE_RUN} Gemini calls`);
+  if (repeats === undefined) {
+    // Screen-then-escalate: every case once, then 5 fresh runs for each QUALITY failure (max 8).
+    const screen = cases * CALLS_PER_CASE_RUN;
+    console.log(`  MODE screen+escalate — ${cases} case(s) × 1, then 5 more per failing case (max 8)`);
+    console.log(`  ≈ ${screen} calls if clean, ${screen + 3 * 5 * CALLS_PER_CASE_RUN} with 3 failures, ${screen + 8 * 5 * CALLS_PER_CASE_RUN} at the cap`);
+    console.log(`  (pass --repeats N to force a flat N-repetition pass instead)`);
+  } else {
+    const n = Math.max(1, Math.min(20, Math.trunc(repeats)));
+    console.log(`  MODE flat — ${cases} case(s) × ${n} repetition(s) ≈ ${cases * n * CALLS_PER_CASE_RUN} Gemini calls`);
+  }
+
+  // --dry-run prints the cost and sends nothing: this script spends real quota the moment it runs,
+  // so estimating the cost must not require firing the eval.
+  if (args.includes("--dry-run")) { console.log("--dry-run: nothing sent."); return; }
 
   const result = await inngest.send({ name: eventName, data });
 

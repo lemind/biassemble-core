@@ -30,6 +30,14 @@ const RATE_LIMIT_RE = /too many requests|rate.?limit|quota|usage limit|credits a
 const BILLING_RE = /credits are depleted|spend(ing)? cap/i;
 /** Two could be a transient RPM blip; three in a row is the daily cap, which won't clear mid-run. */
 const RATE_LIMIT_ABORT_AFTER = 3;
+
+/** Screen every case once, then re-run only the failures. A 60%-detection case is caught 8.7% of
+ * the time by one N=5 pass and 92% by five N=1 screens costing the same — D030 §3m Addendum 13. */
+const SCREEN_REPEATS = 1;
+const ESCALATION_REPEATS = 5;
+/** Above this, simultaneous failures are one cause, not N regressions — and 22 escalations costs
+ * more than the flat N=5 pass it replaces, so escalating past this point is strictly worse. */
+const MAX_ESCALATED_CASES = 8;
 // Exact degraded strings the pipeline substitutes for a verdict (pipeline-helpers.ts, pipeline.service.ts).
 // Deliberately NOT the loose regex above: an article about fishing quotas would false-abort on "quota".
 const DEGRADED_MARKERS = ["hit today's AI usage limit", "being rate-limited right now", "search provider's rate limit was reached"];
@@ -61,7 +69,11 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // D030 §3k — this pipeline is stochastic; one repetition is a draw, not a verdict. `repeats`
     // controls N. `caseIds` runs a subset, because one N=5 pass over all 19 cases costs roughly a
     // full day of Gemini daily quota (~1130 calls) — see the ADR's cost table.
-    const repeats = normalizeRepeats(event.data?.repeats ?? 1);
+    // Explicit `repeats` keeps the flat behaviour (needed to measure a rate deliberately); the
+    // default is now screen-then-escalate, which costs ~3x less for a strictly better catch rate.
+    const twoPhase = event.data?.repeats === undefined;
+    const repeats = normalizeRepeats(event.data?.repeats ?? SCREEN_REPEATS);
+    const phase1Repeats = twoPhase ? SCREEN_REPEATS : repeats;
     const caseIds: string[] | undefined = event.data?.caseIds;
     const selected = caseIds?.length ? golden.cases.filter((c) => caseIds.includes(c.id)) : golden.cases;
     if (selected.length === 0) {
@@ -78,26 +90,26 @@ export const evalGrounnelRunJob = inngest.createFunction(
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider, new DrizzleGrounnelSearchCallStore());
 
-    const cases = [];
     // A rate-limited quota doesn't recover inside one run, so grinding through the remaining
     // repetitions just burns wall-clock producing failures — abort and report what completed.
     let consecutiveRateLimited = 0;
     let abortedAfter: string | null = null;
     let abortWasBilling = false;
-    for (const goldenCase of selected) {
-      if (abortedAfter) break;
+
+    /** One step per (case, repetition, phase) — a transient failure in repetition 4 must not make
+     * Inngest re-spend quota on 1..3, and the phase tag keeps screen and escalation steps distinct. */
+    const runCase = async (goldenCase: GoldenCase, n: number, phase: string) => {
       const runs: GrounnelRun[] = [];
       const errors: string[] = [];
-      for (let i = 0; i < repeats; i++) {
+      for (let i = 0; i < n; i++) {
         try {
-          const run = await step.run(`case-${goldenCase.id}-run-${i + 1}`, async () => {
+          const run = await step.run(`${phase}-${goldenCase.id}-run-${i + 1}`, async () => {
             try {
               return await runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase);
             } catch (err) {
               // Inside the step the class survives (outside it, Inngest has serialised it to text —
               // hence RATE_LIMIT_RE below). A 429 fails again immediately, so don't spend 4 retries
-              // and their backoff discovering that: 5 attempts per repetition is what made the
-              // abort take 15 runs instead of 3.
+              // and their backoff discovering that.
               if (err instanceof RateLimitError) throw new NonRetriableError(err.message, { cause: err });
               throw err;
             }
@@ -120,15 +132,46 @@ export const evalGrounnelRunJob = inngest.createFunction(
           break;
         }
       }
-      cases.push(scoreGrounnelEvalCase(goldenCase, runs, errors, minCorrectRateOverride, repeats));
-    }
-    if (abortedAfter) {
-      logger.warn(
-        { module: MODULE, abortedAfter, casesAttempted: cases.length, casesPlanned: selected.length },
-        "Grounnel live eval aborted — Gemini rate limit hit repeatedly; remaining cases skipped"
-      );
+      return { runs, errors };
+    };
+
+    let cases = [];
+    for (const goldenCase of selected) {
+      if (abortedAfter) break;
+      const { runs, errors } = await runCase(goldenCase, phase1Repeats, twoPhase ? "screen" : "case");
+      cases.push(scoreGrounnelEvalCase(goldenCase, runs, errors, minCorrectRateOverride, phase1Repeats));
     }
 
+    // Phase 2 — confirm only what the screen flagged, and only what is worth confirming.
+    let escalated: string[] = [];
+    let systemicFailure: number | null = null;
+    if (twoPhase && !abortedAfter) {
+      // A false accusation at N=1 is already conclusive (the run happened, the accusation is real),
+      // so it fails outright. Only detection is rate-shaped and needs confirming. An errored or
+      // rate-limited case is an infrastructure fact, not a quality signal — never re-spend on it.
+      const candidates = cases.filter(
+        (c) => !c.ok && c.falseAccusations === 0 && (c.errors?.length ?? 0) === 0 && c.runs > 0
+      );
+      if (candidates.length > MAX_ESCALATED_CASES) {
+        systemicFailure = candidates.length;
+        logger.warn(
+          { module: MODULE, screenFailures: candidates.length, cap: MAX_ESCALATED_CASES },
+          "Screen failed on too many cases at once — one cause, not N regressions; escalation skipped"
+        );
+      } else {
+        for (const c of candidates) {
+          if (abortedAfter) break;
+          const goldenCase = selected.find((g) => g.id === c.id)!;
+          const { runs, errors } = await runCase(goldenCase, ESCALATION_REPEATS, "escalate");
+          if (runs.length === 0) continue; // keep the screen result rather than overwrite it with nothing
+          // Scored on the FRESH runs only: the screen run was selected BECAUSE it failed, so pooling
+          // it in guarantees one failed observation and biases the rate down.
+          const rescored = scoreGrounnelEvalCase(goldenCase, runs, errors, minCorrectRateOverride, ESCALATION_REPEATS);
+          cases = cases.map((x) => (x.id === c.id ? rescored : x));
+          escalated.push(c.id);
+        }
+      }
+    }
     const summary = summarizeGrounnelEvalCases(cases);
 
     // Per-case detection distributions — the whole point of repeating. A case at 2/5 and a case at
@@ -164,6 +207,9 @@ export const evalGrounnelRunJob = inngest.createFunction(
         incompleteCases: summary.incompleteCases,
         passed: summary.passed,
         repeats,
+        mode: twoPhase ? "screen+escalate" : "flat",
+        escalated,
+        systemicFailure,
         correctRate: summary.totalMatched === 0 ? null : summary.totalCorrect / summary.totalMatched,
         totalMatched: summary.totalMatched,
         falseAccusations: summary.totalFalseAccusations,
@@ -171,7 +217,9 @@ export const evalGrounnelRunJob = inngest.createFunction(
         detection,
         userFacingReasons,
       },
-      summary.bindingPassed && !summary.verdictIsBinding
+      systemicFailure !== null
+        ? `Grounnel live eval SYSTEMIC — ${systemicFailure} of ${selected.length} cases failed the screen at once (cap ${MAX_ESCALATED_CASES}); escalation skipped, this is one cause not ${systemicFailure} regressions`
+        : summary.bindingPassed && !summary.verdictIsBinding
         ? `Grounnel live eval INDICATIVE ONLY — no binding failure, but ${summary.cases.filter((c) => !c.verdictIsBinding).length} case(s) lacked the observations to be a verdict (repeats=${repeats}, need ${MIN_VERDICT_REPETITIONS})`
         : summary.bindingPassed
           ? "Grounnel live eval passed"
@@ -194,6 +242,18 @@ export const evalGrounnelRunJob = inngest.createFunction(
 
     // An abort is an INFRASTRUCTURE failure, not a quality one — say so first, so a rate-limited
     // run is never mistaken for a regression. Partial scores are still reported, never silently passed.
+    if (systemicFailure !== null) {
+      // NonRetriableError for the same reason as the abort below: re-running 4 times cannot fix a
+      // cause that is broken for every case at once, it just re-spends the screen's quota.
+      throw new NonRetriableError(
+        `Grounnel live eval SYSTEMIC FAILURE — ${systemicFailure} of ${selected.length} cases failed the screen ` +
+          `(cap ${MAX_ESCALATED_CASES}). Escalation was skipped deliberately: simultaneous failures on this many cases ` +
+          `are one cause (bad deploy, degraded retrieval, prompt mismatch), not ${systemicFailure} independent regressions. ` +
+          `Fix the cause and re-run the screen — do NOT read these as ${systemicFailure} separate case regressions.` +
+          `\n${JSON.stringify(compact, null, 2)}`
+      );
+    }
+
     if (abortedAfter) {
       // NonRetriableError, not Error: this function has Inngest's default 4 retries, and a FAILED
       // step is not memoized — a plain throw would re-run the rate-limited cases up to 4 more times.
