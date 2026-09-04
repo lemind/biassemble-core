@@ -7,16 +7,19 @@
  * by Wilbur"), rules out the claim's member, then lands on `absent`. Steps 1-3 only ever ask "is
  * this the claim's member?", so a negative answer has nowhere to go but `absent`.
  *
- * Design: retrieve ONCE per fixture, apply the SHIPPED trim, then vary only the spliced prompt
- * block. Blocks and fixtures travel in the event payload, so a new variant needs no redeploy.
+ * Design: PINNED passages, so the spliced block is the only variable. The first two runs both
+ * retrieved live and were confounded by it — one run returned ordinal evidence ("the last flight,
+ * by Wilbur"), the next ranking-only evidence ("the record flight", "the longest"), on which
+ * `absent` is the CORRECT answer. Blocks and fixtures still travel in the event payload.
  *
- * CONTROL FIXTURES ARE THE POINT. A block that turns g17 into `different` by making the model
- * answer `different` more often is not a fix, it is a Cardinal Rule hazard: a `reason_ordinal`
- * false positive is unrecoverable (D030 §3d). `t-*` fixtures must NOT move.
+ * CONTROL FIXTURES ARE THE POINT. A block that wins by saying `different` more often is not a fix,
+ * it is a Cardinal Rule hazard: a `reason_ordinal` false positive is unrecoverable (D030 §3d).
+ * The three controls pin the three ways `different` would be wrong: ranking-only evidence, a TRUE
+ * ordinal claim, and a fact stated with no member named.
  *
  * PRE-REGISTERED BAR, fixed before any result is seen:
- *   A block passes if it raises `different` on f-ordinal-false AND leaves every t-* control at its
- *   control answer. Any block that moves a control is refuted regardless of what it does for g17.
+ *   A block passes if it raises `different` on f-ordinal-evidence AND holds all three t-* controls
+ *   at their control answers. Any block that moves a control is refuted regardless of the target.
  *
  * Trigger: event "eval/attribution-prompt" (scripts/trigger-attribution-prompt.ts)
  */
@@ -49,26 +52,46 @@ interface Fixture {
   id: string;
   claim: string;
   value: string;
-  query: string;
-  /** What the CURRENT prompt answers. A control that moves is a regression, not a win. */
+  /** Only used when `passages` is absent. Live retrieval reintroduces the variance this pins out. */
+  query?: string;
+  /** PINNED evidence, verbatim. Present = no retrieval, so the prompt block is the only variable. */
+  passages?: string[];
+  /** The answer the CURRENT prompt gives on THIS evidence — the baseline a block must beat or hold. */
   control: string;
-  /** `false` = the claim this gate exists to catch; `true`/`na` = must not move. */
+  /** `target` = should become `different`; `control` = must not move. */
   kind: "target" | "control";
 }
 
+// Verbatim sentences observed in live runs (en.wikipedia.org/wiki/Wright_Flyer and the pages the
+// 2026-09-04 runs retrieved). Pinned so retrieval variance cannot masquerade as a prompt effect.
+const ORDINAL_EVIDENCE = [
+  "The fourth and last flight, by Wilbur, took 59 seconds to cover 852 feet (260 m) over the ground, moving through approximately a half mile of air.",
+  "This flight, the fourth and final of 17 December 1903, was the longest: 852 feet (260 m) covered in 59 seconds.",
+];
+const RANKING_EVIDENCE = [
+  "Orville's brother Wilbur piloting the record flight lasting 59 seconds over a distance of 852 feet.",
+  "The brothers completed three more flights that day, taking turns piloting, the longest traveling 852 feet in 59 seconds.",
+];
+const NO_MEMBER_EVIDENCE = [
+  "The distance over the ground was 852 feet in 59 seconds.",
+  "The aircraft covered 852 feet before touching down.",
+];
+
 const DEFAULT_FIXTURES: Fixture[] = [
-  // The case that pays for the gate: 852 ft belongs to the FOURTH/last flight, not the first.
-  { id: "f-ordinal-false", kind: "target", control: "absent",
-    claim: "The first flight covered 852 feet.", value: "852",
-    query: "The first flight covered 852 feet." },
-  // Same page, same number, TRUE attribution — a block that flips this to `different` is broken.
+  // THE TEST. Evidence names the member by POSITION ("fourth and last"), which is what the gate
+  // exists to catch. `different` is the prompt's own correct answer; `absent` is the defect.
+  { id: "f-ordinal-evidence", kind: "target", control: "absent",
+    claim: "The first flight covered 852 feet.", value: "852", passages: ORDINAL_EVIDENCE },
+  // Ranking-only evidence. `absent` IS correct here (D030 §3e excludes superlatives deliberately),
+  // so a block that turns this into `different` is over-triggering, not fixing.
+  { id: "t-ranking-evidence", kind: "control", control: "absent",
+    claim: "The first flight covered 852 feet.", value: "852", passages: RANKING_EVIDENCE },
+  // Same ordinal evidence, TRUE claim — must stay `same`. Catches a block that just says `different`.
   { id: "t-ordinal-true", kind: "control", control: "same",
-    claim: "The fourth flight covered 852 feet.", value: "852",
-    query: "The fourth flight covered 852 feet." },
-  // Genuinely unattributed: the pages state the height without selecting a member.
-  { id: "t-genuinely-absent", kind: "control", control: "absent",
-    claim: "The first tower measured 1083 feet.", value: "1083",
-    query: "Eiffel Tower height 1083 feet." },
+    claim: "The fourth flight covered 852 feet.", value: "852", passages: ORDINAL_EVIDENCE },
+  // Fact stated with no member named at all — the textbook `absent`, a real repeated-set claim.
+  { id: "t-no-member", kind: "control", control: "absent",
+    claim: "The first flight covered 852 feet.", value: "852", passages: NO_MEMBER_EVIDENCE },
 ];
 
 interface Variant { id: string; block: string }
@@ -123,11 +146,14 @@ export const evalAttributionPromptJob = inngest.createFunction(
 
     logger.info({ module: MODULE, runId, calls: variants.length * fixtures.length * repeats }, "Attribution prompt experiment starting");
 
-    // Retrieve ONCE per fixture. Every variant judges identical passages, so the block is the only variable.
+    // Pinned passages win outright: live retrieval is what confounded the first two experiments,
+    // returning ranking-only evidence one run and ordinal evidence the next (Addendum 11 follow-up).
     const passagesByFixture: Record<string, string[]> = {};
     for (const f of fixtures) {
+      if (f.passages?.length) { passagesByFixture[f.id] = f.passages; continue; }
+      if (!f.query) throw new Error(`Fixture ${f.id} has neither pinned passages nor a query`);
       passagesByFixture[f.id] = await step.run(`retrieve-${f.id}`, async () => {
-        const sources = await searchProvider.search(f.query, { runId, claimId: randomUUID() });
+        const sources = await searchProvider.search(f.query!, { runId, claimId: randomUUID() });
         return sources.filter((s) => s.status === "ok" && s.text).slice(0, 3)
           .map((s) => buildPassageSentences(f.claim, s.text!, TRIM_SENTENCES).map((x) => x.text).join(" "));
       });

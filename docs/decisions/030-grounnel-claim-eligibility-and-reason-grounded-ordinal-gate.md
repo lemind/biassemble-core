@@ -1885,12 +1885,28 @@ model wrote: *"The passages state that the last flight was 852 feet, not the fir
 852 feet to the longest flight, which was the last flight. Therefore, the attribution is absent."*
 It located the fact, identified the member as "the last flight, by Wilbur", and ruled out the
 claim's member — which is the prompt's own definition of `different` ("explicitly attributes the
-FACT to a different, IDENTIFIED member"). It answered `absent` anyway. **The model is collapsing
-"not the claim's member" into `absent` rather than `different`.** The step-by-step scaffold is the
-likely reason: steps 1–3 only ever ask "is this the claim's member?", so a negative answer lands on
-`absent` with no step that ever tests the `different` branch. This is a prompt-scaffold defect, and
-it is not the "a ranking is not a position" rule — the model did link "longest" to "last" and still
-refused to answer `different`.
+FACT to a different, IDENTIFIED member"). It answered `absent` anyway. **On that evidence, the model
+collapsed "not the claim's member" into `absent` rather than `different`.**
+
+**Narrowed 2026-09-04 by the prompt experiment — do not read the above as the general cause.** Four
+prompt blocks (control, `different-branch`, `decision-table`, `guarded-different`) all returned
+`absent` 0/3 on the target, and the model's `working` shows why: *that* run's retrieval returned
+evidence attributing 852 ft only by RANKING — "the record flight", "the longest" — on which `absent`
+is the CORRECT answer under the prompt's own superlative rule and D030 §3e. The prompt was behaving
+as designed, so the run cannot convict it.
+
+**The variable that actually moved across all three experiments is retrieval.** Whether search
+returns a sentence identifying the 852 ft flight by POSITION ("fourth"/"last") or only by RANKING
+("longest"/"record") decides the answer before any prompt or trim gets a vote — and it differed run
+to run on the same fixture. g17's detection rate is therefore dominated by retrieval variance, not
+by the payload or the scaffold.
+
+**Consequence for method:** an experiment that retrieves live cannot isolate a prompt effect here.
+`eval-attribution-prompt` now PINS its passages, with the two evidence shapes as separate fixtures
+(ordinal-identified = the target; ranking-only = a control where `absent` is right). One earlier
+"control failure" (`different-branch` moving `t-genuinely-absent` 3/3) was a bad fixture, not a bad
+block: "the first tower" is not a member of a repeated set, so the model's `different` was
+defensible. That fixture is replaced.
 
 **Do not** re-litigate this with a bigger cap, a new rescue rule, or whole pages. All three are
 measured above.
