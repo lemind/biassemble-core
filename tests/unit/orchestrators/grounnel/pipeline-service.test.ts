@@ -95,6 +95,48 @@ describe("GrounnelPipelineService (T010)", () => {
     });
   });
 
+  it("D030 §3m Addendum 10: instance_attribution receives VERIFY's trimmed sentences, not whole pages", async () => {
+    const claimId = uuid(1);
+    // Carries an instance selector ("first"), which is what makes it an attribution candidate.
+    const claimText = "The first flight covered 852 feet.";
+    // A long page whose relevant sentence is buried in boilerplate — the shape that produced a
+    // single 808,498-token attribution call in production on 2026-09-02.
+    const filler = Array.from({ length: 120 }, (_, i) => `Unrelated navigation boilerplate paragraph number ${i}.`).join(" ");
+    const carrying = "The fourth and final flight covered 852 feet in 59 seconds.";
+    const passageText = `${filler} ${carrying} ${filler}`;
+
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let verifyPassages: string[] = [];
+    let attributionPassages: string[] = [];
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const pairs = JSON.parse(request.system.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)![1]!) as Array<{
+        id: string; passage_sentences: Record<string, Array<{ n: number; text: string }>>;
+      }>;
+      verifyPassages = Object.values(pairs[0]!.passage_sentences).map((ss) => ss.map((x) => x.text).join(" "));
+      return { results: idsFromRequest(request).map((id) => ({ id, verdict: "supported", evidenceCitations: [], reason: "confirmed", confidence: 0.9 })) };
+    });
+    provider.setResponseFn("You are an attribution checker", (request) => {
+      const checks = JSON.parse(request.system.match(/INSTANCE_CHECKS: (\[.*\])/s)![1]!) as Array<{ id: string; passages: string[] }>;
+      attributionPassages = checks[0]!.passages;
+      return { results: checks.map((c) => ({ id: c.id, attribution: "absent", citation: null })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    expect(attributionPassages.length).toBeGreaterThan(0);
+    // The invariant: attribution judges exactly the evidence VERIFY judged. A gate that overrides a
+    // verdict must not see text the verdict was never formed on.
+    expect(attributionPassages).toEqual(verifyPassages);
+    // And it is a real cut, not a no-op — the whole page is far larger than what was sent.
+    expect(attributionPassages.join(" ").length).toBeLessThan(passageText.length / 2);
+    // The sentence that actually carries the attribution survives the trim.
+    expect(attributionPassages.join(" ")).toContain(carrying);
+  });
+
   it("writes 'unsupported: no evidence found' directly, without any VERIFY call, when no source resolves to usable text", async () => {
     const claimId = uuid(1);
     const claimText = "Some obscure claim.";

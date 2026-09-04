@@ -860,7 +860,20 @@ export class GrounnelPipelineService {
       ),
       this.checkInstanceAttribution(
         auditId,
-        attributionCandidates.map((k) => ({ id: k.result.id, claim: byId.get(k.result.id)!.claim.text, passages: byId.get(k.result.id)!.passages.map((p) => p.text!) }))
+        attributionCandidates.map((k) => {
+          const item = byId.get(k.result.id)!;
+          // The SAME bounded evidence VERIFY judged on, not whole pages: buildPassageSentencesMulti is
+          // pure and reads the same claim/passages, so this is VERIFY's exact slice (D030 §3m Addendum 10).
+          const bySource = buildPassageSentencesMulti(
+            item.claim.text,
+            item.passages.map((p, i) => ({ label: passageLabelForIndex(i), text: p.text! }))
+          );
+          return {
+            id: k.result.id,
+            claim: item.claim.text,
+            passages: Object.values(bySource).map((sentences) => sentences.map((s) => s.text).join(" ")),
+          };
+        })
       ),
     ]);
 

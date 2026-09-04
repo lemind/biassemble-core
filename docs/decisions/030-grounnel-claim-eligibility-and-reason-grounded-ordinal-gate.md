@@ -1769,3 +1769,75 @@ The product target remains 0.80 and is recorded here, not in the pass bar.
 **Reopening trigger:** if a genuine decay from 0.80 to ~0.70 is suspected, the alpha and floor are
 one-line constants — but check the tracked per-case rates first: they are reported with their N on
 every run precisely so a downward trend is visible before the gate fires.
+
+---
+
+### Addendum 10 (2026-09-04) — `instance_attribution` judged evidence VERIFY never saw, at ~8× the cost
+
+**Symptom.** Gemini prepay credits ran out on 2026-09-04. Prices did not change — same
+`gemini-2.5-flash-lite` every week since August. Two multipliers stacked over Sept 1–3: calls/day
+1,329 → 2,400 (eight golden-suite passes in three days, 81% of all calls), *and* tokens per call
+3,150 → 4,300. This addendum is the second multiplier.
+
+**`verify/instance_attribution` was 3.8% of September calls and 42% of all tokens.**
+
+| | value |
+| --- | --- |
+| calls (September) | 250 |
+| avg input | **63,915 tokens** |
+| max input | **808,498 tokens** (one call) |
+| min input | 1,334 tokens |
+
+On the same 125 runs, reading the *same* passages: `verify/primary` averaged **8,545** input tokens,
+`instance_attribution` **69,051** — **8.1×**. One production run makes it concrete: an ordinary
+article, 36 claims, largest page 14,612 chars; its 9 VERIFY calls cost 93,375 tokens and every other
+call together ~215,000 — and one attribution call cost **808,498**, roughly 4× the whole rest of the run.
+
+**Cause.** `callVerify` runs its passages through `buildPassageSentencesMulti` (`MAX_SENTENCES = 20`,
+claim-relevant selection). The attribution call site passed `p.text!` — raw full page text — for
+every candidate in the batch, `JSON.stringify`'d into one prompt. Claims from one article share
+sources, so the same page was serialised once per claim. `claimId` is only set when
+`items.length === 1`, which is why the giant calls carry `claim_id = NULL`: null marks the batched,
+expensive ones.
+
+**The real defect is not cost.** Attribution could see evidence VERIFY was never shown and then force
+`contradicted` over a verdict formed without that text. A gate that overrides a verdict must judge
+the evidence the verdict was formed on.
+
+**Fix.** Build attribution's passages with `buildPassageSentencesMulti` and flatten each source to a
+string, keeping the `passages: string[]` contract v2.0.0 requires (its citation check compares
+against `passages.join("\n\n")`; passing `Record<label, PassageSentence[]>` would break the prompt).
+The function is **pure** and both call sites read `claim.text`/`passages` from the same `byId`
+objects, so this is VERIFY's exact slice — not a second, differently-selected 20.
+
+**This is a cost fix with a detection risk, not a free win.** The gate maps
+`different → contradicted`, `conflict → unverifiable`, `same`/`absent` → no-op. If the trim drops a
+carrying sentence, `different` degrades to `absent` and the gate stops accusing — a missed detection,
+never a false accusation, and §3d makes a wrong `contradicted` here unrecoverable, so less text is
+the conservative direction. But **g17 is this gate**: 33 of 40 `contradicted` overrides and 15 of 15
+`unverifiable` ones in all eval history come from it, against a case already at 0.636 vs a 0.70 floor.
+
+Evidence the risk is small for that case specifically: the `input_payload` captured on 2026-09-03
+shows VERIFY's 20-sentence bundle already contains *"Wilbur piloted the fourth and longest flight of
+the day, covering 852 feet"* verbatim in **every** payload. The carrying sentence is inside the trim.
+
+**Blast radius:** 193 September answers — `same` 122, `absent` 50, `different` 12, `conflict` 9. Only
+**21 of 193 (11%)** move a verdict at all.
+
+**Expected:** attribution drops ~8×, from 42% of tokens to ~5% — **~37% off the total bill**,
+production included, independent of eval volume.
+
+**Not verifiable offline:** whether trimming changes an answer. `grounnel_search_pages.excerpt` is
+truncated (avg 2,049 chars, max 15,044), so the historical payload cannot be reconstructed.
+
+**Validation when credits return** — g17 at `--repeats 5` (~60 calls), recording three outcomes
+separately: unchanged (ideal); `different`/`conflict` → `absent`/`same` (a lost catch, the number
+that matters); and `same`/`absent` → `different`/`conflict`, which is **impossible if trimming only
+removes text** and therefore indicates an implementation bug. Quote tokens, not call counts.
+
+**Deliberately not in this change:** deduping pages shared across claims in a batch. It is the rest
+of the saving and it changes how `passages` key per claim — a separate diff, after this one is
+measured. `{ claim, fact: claim }` duplication left alone: noise, not cost, and the schema requires it.
+
+**Do not** reach for `ORDINAL_WORDS` widening or re-enabling `subject_entity` to replace any catch
+this loses — both are closed (Addenda 6–8).
