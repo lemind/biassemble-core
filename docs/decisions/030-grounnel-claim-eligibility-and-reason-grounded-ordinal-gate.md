@@ -1943,3 +1943,28 @@ run that spans a deploy.
 
 **Do not** revisit the trim (Addendum 11), the sentence cap, `ORDINAL_WORDS` (§3e), or
 `subject_entity` (Addenda 6–8) to move this gate. All measured, all refuted.
+
+### Addendum 14 (2026-09-04) — floors set from measurement; g17's minCorrectRate is inert
+
+Post-fix observations (28-case screen + the N=5 pass, strip deployed): only two claims sit below
+100%. They need opposite treatment, because the two floors govern different things.
+
+| case | kind | observed | change |
+|---|---|---|---|
+| g17 | `false` | 4/6 = 0.67 | **none** |
+| g22 | `true` | 5/6 = 0.83 | `minCorrectRate` 1.0 → **0.6** |
+
+**g17: nothing to set.** Its only claim is `false`, so `minCorrectRate` never applies — at N=1 a miss
+scores 0.00 and fails any positive floor, and at N>1 the floor covers non-`false` claims only. The
+field is inert; `detectionFloor` 0.7 is what governs. Lowering that floor would make the gate
+*weaker*, not more honest: at N=5 the significance test rejects k≤1 at 0.7 but only k≤0 at 0.6.
+
+**g22: 1.0 was the wrong claim about a stochastic case.** A `true`-claim case at 1.0 is not
+rate-shaped, so a screen miss is final and un-escalatable — it would hard-fail the suite on roughly
+1 run in 6. At 0.6 it escalates instead and is judged over 5 fresh runs. Floor chosen for noise, not
+aspiration: with a true rate near 0.83, a 0.6 floor passes a healthy case 97% of the time, where 0.8
+passes only 80% — one red in five runs, all of them wrong.
+
+**Evidence is thin: 6 observations.** These are provisional and should be re-derived once the screen
+has accumulated passes; the screen-failure rate per case across runs is the measurement, not any
+single pass.

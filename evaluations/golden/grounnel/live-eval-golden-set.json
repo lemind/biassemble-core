@@ -241,7 +241,7 @@
     {
       "id": "g22-subject-entity-low-context-subclause",
       "text": "The Wright brothers achieved the first successful powered flight in 1903. The fourth and final flight that day covered 852 feet.",
-      "minCorrectRate": 1.0,
+      "minCorrectRate": 0.6,
       "claims": [
         {
           "match": "fourth and final flight that day covered 852 feet",
