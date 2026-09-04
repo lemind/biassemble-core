@@ -75,7 +75,10 @@ function applyTrim(name: TrimName, claim: string, value: string, text: string): 
   }
 }
 
-const ALL_TRIMS: TrimName[] = ["full", "s20-claim", "s20-anyselector", "s40-claim", "s60-claim"];
+const ATTEMPTS = 3;
+
+/** `full` runs LAST: it is the likeliest to fail or time out, and it must not do so before the cheap variants bank their data. */
+const ALL_TRIMS: TrimName[] = ["s20-claim", "s20-anyselector", "s40-claim", "s60-claim", "full"];
 
 export const evalAttributionTrimJob = inngest.createFunction(
   { id: "eval-attribution-trim", name: "Experiment — Addendum 10 attribution trim variants" },
@@ -123,29 +126,43 @@ export const evalAttributionTrimJob = inngest.createFunction(
     const results: Array<Record<string, unknown>> = [];
     for (const trim of trims) {
       for (let i = 0; i < repeats; i++) {
-        const out = await step.run(`${trim}-${i + 1}`, async () => {
-          const trimmed = passages.flatMap((p) => {
-            const parts = applyTrim(trim, fixture.claim, fixture.value, p.text);
-            return [parts.join(" ")];
+        let out: Record<string, unknown>;
+        try {
+          out = await step.run(`${trim}-${i + 1}`, async () => {
+            const trimmed = passages.flatMap((p) => {
+              const parts = applyTrim(trim, fixture.claim, fixture.value, p.text);
+              return [parts.join(" ")];
+            });
+            const checks = [{ id: fixture.id, claim: fixture.claim, fact: fixture.claim, passages: trimmed }];
+            const system = prompts.render("grounnel-instance-attribution", { instance_checks: JSON.stringify(checks) });
+            const parsed = await callLlmForJson({
+              provider, system, user: "Return the JSON now.",
+              schema: InstanceAttributionResponseSchema,
+              expectedKeys: ["results"],
+              // Both fields quote passage text verbatim — production excludes them from the scan for the same reason.
+              quotedFields: ["citation", "working"],
+              attempts: ATTEMPTS,
+              module: MODULE,
+              operation: `${MODULE}.${trim}`,
+              isValid: (r) => Array.isArray(r.results),
+              onComplete: llmCallStore.recordCall({
+                runId, stage: "verify", callType: "attribution_experiment",
+                provider: provider.mode, model: env.GEMINI_MODEL, promptVersion: `trim-${trim}`,
+              }),
+            });
+            const r = (parsed as { results?: Array<{ attribution?: string; citation?: string | null }> }).results?.[0];
+            return {
+              trim, rep: i + 1,
+              chars: trimmed.join(" ").length,
+              attribution: r?.attribution ?? "(none)",
+              citation: (r?.citation ?? "").slice(0, 120),
+            };
           });
-          const checks = [{ id: fixture.id, claim: fixture.claim, fact: fixture.claim, passages: trimmed }];
-          const system = prompts.render("grounnel-instance-attribution", { instance_checks: JSON.stringify(checks) });
-          const parsed = await callLlmForJson({
-            provider, system, user: "Return the JSON now.",
-            schema: InstanceAttributionResponseSchema,
-            operation: `${MODULE}.${trim}`,
-            context: { runId, stage: "verify", callType: "attribution_experiment", promptVersion: `trim-${trim}` },
-            store: llmCallStore,
-            injectionScanFields: ["citation", "working"],
-          } as never);
-          const r = (parsed as { results?: Array<{ attribution?: string; citation?: string | null }> }).results?.[0];
-          return {
-            trim, rep: i + 1,
-            chars: trimmed.join(" ").length,
-            attribution: r?.attribution ?? "(none)",
-            citation: (r?.citation ?? "").slice(0, 120),
-          };
-        });
+        } catch (err) {
+          // One variant dying must not cost the other four their data — that is what killed run 1.
+          logger.warn({ module: MODULE, runId, trim, rep: i + 1, err }, "Trim variant failed — continuing with the rest");
+          out = { trim, rep: i + 1, chars: 0, attribution: "(failed)", citation: "" };
+        }
         results.push(out);
       }
     }
