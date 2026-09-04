@@ -126,6 +126,8 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
   let correct = 0;
   let detectionObservations = 0;
   let detectionCorrect = 0;
+  let nonDetectionObservations = 0;
+  let nonDetectionCorrect = 0;
 
   for (const expected of spec.claims) {
     const found = runs.map((r) => findClaim(r, expected.match));
@@ -162,6 +164,11 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
     if (expected.kind === "false") {
       detectionObservations += outcome.observations;
       detectionCorrect += outcome.correct;
+    } else {
+      // Kept apart so minCorrectRate and detectionFloor cannot fight: g17 is 1.0 AND 0.7, and
+      // pooling them would fail it on any missed detection, contradicting its own floor.
+      nonDetectionObservations += outcome.observations;
+      nonDetectionCorrect += outcome.correct;
     }
   }
 
@@ -178,10 +185,8 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
       detail: `no expected claim was produced in any of the ${runs.length} repetition(s) — nothing was scored`,
     });
   } else if (runs.length === 1) {
-    // N=1 keeps the original all-kinds floor. At N>1 only the two gates the protocol actually
-    // defines apply: safety (hard, above) and detection (soft) — a `true` claim landing
-    // `unsupported` in 1 of 5 runs is a recorded miss, not a deploy blocker, and must not be
-    // laundered into a pass/fail bit.
+    // The SCREEN. One run, all kinds pooled: a missed detection here is the signal that triggers
+    // escalation, so `false` claims must count at N=1 even though detectionFloor governs at N>=5.
     if (correctRate < spec.minCorrectRate) {
       violations.push({
         rule: "below_correct_rate",
@@ -189,6 +194,16 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
       });
     }
   } else {
+    // The floor applies at EVERY N, over non-`false` claims. It used to apply only at N=1, so a
+    // case wrong in 5 of 5 runs reported ok — the floor was deleted, not relaxed. A case that
+    // genuinely flakes says so by LOWERING its own minCorrectRate; the gate never opts out.
+    const ndRate = nonDetectionObservations === 0 ? null : nonDetectionCorrect / nonDetectionObservations;
+    if (ndRate !== null && ndRate < spec.minCorrectRate) {
+      violations.push({
+        rule: "below_correct_rate",
+        detail: `${nonDetectionCorrect}/${nonDetectionObservations} = ${ndRate.toFixed(2)} below floor ${spec.minCorrectRate}`,
+      });
+    }
     // Detection is gated PER false claim, not on the summed rate: summing hides one claim at 0/5
     // behind two at 5/5, and separate claims do not share a rate. D030 §3m Addendum 9.
     const floor = spec.detectionFloor ?? DETECTION_RATE_INITIAL_FLOOR;

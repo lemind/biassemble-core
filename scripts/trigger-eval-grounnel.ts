@@ -20,7 +20,12 @@ const args = process.argv.slice(2);
 
 function getArg(flag: string): number | undefined {
   const idx = args.indexOf(flag);
-  return idx !== -1 && args[idx + 1] ? parseFloat(args[idx + 1]!) : undefined;
+  if (idx === -1 || !args[idx + 1]) return undefined;
+  const n = parseFloat(args[idx + 1]!);
+  // NaN JSON-serialises to null, which is NOT undefined — the job would silently drop out of
+  // two-phase mode into flat N=1 with escalation disabled, the worst of both modes.
+  if (Number.isNaN(n)) { console.error(`${flag} expects a number, got "${args[idx + 1]}"`); process.exit(1); }
+  return n;
 }
 
 /** Comma-separated case ids, e.g. --cases g17-wright-brothers-ordinal,g20-apple-earnings-year-over-year */
@@ -58,7 +63,7 @@ async function main() {
     // Screen-then-escalate: every case once, then 5 fresh runs for each QUALITY failure (max 8).
     const screen = cases * CALLS_PER_CASE_RUN;
     console.log(`  MODE screen+escalate — ${cases} case(s) × 1, then 5 more per failing case (max 8)`);
-    console.log(`  ≈ ${screen} calls if clean, ${screen + 3 * 5 * CALLS_PER_CASE_RUN} with 3 failures, ${screen + 8 * 5 * CALLS_PER_CASE_RUN} at the cap`);
+    console.log(`  ≈ ${screen} calls if clean, ${screen + Math.min(cases, 3) * 5 * CALLS_PER_CASE_RUN} with 3 failures, ${screen + Math.min(cases, 8) * 5 * CALLS_PER_CASE_RUN} at the cap`);
     console.log(`  (pass --repeats N to force a flat N-repetition pass instead)`);
   } else {
     const n = Math.max(1, Math.min(20, Math.trunc(repeats)));

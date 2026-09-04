@@ -93,6 +93,9 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // A rate-limited quota doesn't recover inside one run, so grinding through the remaining
     // repetitions just burns wall-clock producing failures — abort and report what completed.
     let consecutiveRateLimited = 0;
+    /** A degraded run "succeeds" with rate-limit text instead of verdicts, so it leaves `errors`
+     * empty — without this the escalation filter cannot tell it from a real quality failure. */
+    const degradedCaseIds = new Set<string>();
     let abortedAfter: string | null = null;
     let abortWasBilling = false;
 
@@ -117,7 +120,8 @@ export const evalGrounnelRunJob = inngest.createFunction(
           runs.push(run);
           // A degraded run "succeeds" with rate-limit text in place of verdicts — scoring that as a
           // real result is worse than failing, so it counts toward the abort too (D026 §17).
-          consecutiveRateLimited = runIsRateLimited(run) ? consecutiveRateLimited + 1 : 0;
+          if (runIsRateLimited(run)) { consecutiveRateLimited++; degradedCaseIds.add(goldenCase.id); }
+          else consecutiveRateLimited = 0;
         } catch (err) {
           // One repetition failing must not abandon the case — the remaining repetitions still
           // carry signal, and a partial case is reported as partial rather than silently passing.
@@ -149,13 +153,29 @@ export const evalGrounnelRunJob = inngest.createFunction(
       // A false accusation at N=1 is already conclusive (the run happened, the accusation is real),
       // so it fails outright. Only detection is rate-shaped and needs confirming. An errored or
       // rate-limited case is an infrastructure fact, not a quality signal — never re-spend on it.
-      const candidates = cases.filter(
-        (c) => !c.ok && c.falseAccusations === 0 && (c.errors?.length ?? 0) === 0 && c.runs > 0
+      // Only RATE-SHAPED cases are worth 5 more runs. `minCorrectRate: 1.0` means "must never be
+      // wrong", so one failed run already is the verdict — escalating it is incoherent and costs
+      // 5 runs to re-learn what the screen proved. A `false` claim is always rate-shaped
+      // (detectionFloor governs it), and any case that declares a floor below 1.0 is too.
+      const rateShaped = (id: string) => {
+        const g = selected.find((x) => x.id === id);
+        if (!g) return false;
+        const floor = minCorrectRateOverride ?? g.minCorrectRate;
+        return g.claims.some((cl) => cl.kind === "false") || floor < 1;
+      };
+      const screenFailures = cases.filter((c) => !c.ok && c.runs > 0);
+      const candidates = screenFailures.filter(
+        // Errored/degraded runs are infrastructure facts, not quality signals — never re-spend on
+        // them. A degraded run SUCCEEDS with rate-limit text instead of verdicts, so `errors` is
+        // empty and only `degraded` can see it.
+        (c) => c.falseAccusations === 0 && (c.errors?.length ?? 0) === 0 && !degradedCaseIds.has(c.id) && rateShaped(c.id)
       );
-      if (candidates.length > MAX_ESCALATED_CASES) {
-        systemicFailure = candidates.length;
+      // Counted over EVERY screen failure, not just the escalation candidates: a VERIFY regression
+      // that false-accuses everything would otherwise leave candidates empty and never trip this.
+      if (screenFailures.length > MAX_ESCALATED_CASES) {
+        systemicFailure = screenFailures.length;
         logger.warn(
-          { module: MODULE, screenFailures: candidates.length, cap: MAX_ESCALATED_CASES },
+          { module: MODULE, screenFailures: screenFailures.length, cap: MAX_ESCALATED_CASES },
           "Screen failed on too many cases at once — one cause, not N regressions; escalation skipped"
         );
       } else {
@@ -206,7 +226,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
         bindingFailures: summary.bindingFailures,
         incompleteCases: summary.incompleteCases,
         passed: summary.passed,
-        repeats,
+        repeats: twoPhase ? null : repeats,
         mode: twoPhase ? "screen+escalate" : "flat",
         escalated,
         systemicFailure,
@@ -271,9 +291,15 @@ export const evalGrounnelRunJob = inngest.createFunction(
     // observations and failed, no partial case. Per case, never suite-wide — D030 §3m Addendum 9.
     if (!summary.bindingPassed) {
       const failed = compact.filter((c) => !c.ok);
-      throw new Error(
+      // NonRetriableError for the same reason as the two throws above: a confirmed quality failure
+      // is not fixed by re-running, and a plain Error re-executes every failed step 4 more times.
+      throw new NonRetriableError(
         `Grounnel live eval failed (${summary.totalCorrect}/${summary.totalMatched} correct, ` +
-          `${summary.totalFalseAccusations} false accusations, repeats=${repeats}):\n${JSON.stringify(failed, null, 2)}`
+          `${summary.totalFalseAccusations} false accusations, ` +
+          // `repeats` is 1 in two-phase mode regardless of what was escalated — saying so would
+          // read as "single draw" for a failure actually confirmed over ESCALATION_REPEATS runs.
+          (twoPhase ? `screen+escalate, confirmed at N=${ESCALATION_REPEATS}: ${escalated.join(", ") || "none"}` : `repeats=${repeats}`) +
+          `):\n${JSON.stringify(failed, null, 2)}`
       );
     }
 

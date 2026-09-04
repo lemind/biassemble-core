@@ -211,12 +211,17 @@ describe("repeated runs (D030 §3k): safety is hard, detection is a rate", () =>
     expect(binomCdf(4, 5, 1)).toBe(0);
   });
 
-  it("a true claim missed in 1 of 5 is recorded but is NOT a deploy blocker (only safety is hard)", () => {
+  // CONTRACT CHANGE: this used to assert ok:true — at N>1 the correctness floor was skipped
+  // entirely, so a miss never blocked. That also meant 5-of-5 wrong reported ok. A case that
+  // legitimately flakes now says so by declaring minCorrectRate below 1.0 (asserted above);
+  // 1.0 means "must never be wrong" and one miss is the verdict at any N.
+  it("a true claim missed in 1 of 5 FAILS a case whose declared floor is 1.0", () => {
     const runs = runsOf(["supported", "supported", "unsupported", "supported", "supported"], "The Eiffel Tower was completed in 1889.");
     const result = evaluateGrounnelRun(runs, trueSpec);
     expect(result.correctRate).toBeCloseTo(0.8);
     expect(result.safetyOk).toBe(true);
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.violations.map((v) => v.rule)).toContain("below_correct_rate");
   });
 
   it("N=1 keeps the original semantics exactly — the strict minCorrectRate floor still applies", () => {
@@ -275,6 +280,35 @@ describe("repeated runs: a partial or unobserved case must never report a pass",
     const result = evaluateGrounnelRun(empty, { id: "s", minCorrectRate: 1, claims: [{ match: "Eiffel Tower", kind: "true" }] });
     expect(result.matched).toBe(0);
     expect(result.ok).toBe(false);
+  });
+
+  // The floor used to apply ONLY at runs.length === 1, so a case wrong in every one of 5 runs
+  // reported ok:true — the floor was deleted at N>1, not relaxed. Escalation then rescored a
+  // screen failure at N=5 and laundered it into a confirmed pass.
+  it("(review finding) fails a case wrong in all 5 runs — the floor applies at every N, not just N=1", () => {
+    const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, claims: [{ match: "Eiffel Tower", kind: "true" }] };
+    const wrong: GrounnelRun[] = Array.from({ length: 5 }, () => ({ claims: [claim("The Eiffel Tower stands.", "unverifiable")] }));
+    const result = evaluateGrounnelRun(wrong, s);
+    expect(result.ok).toBe(false);
+    expect(result.violations.map((v) => v.rule)).toContain("below_correct_rate");
+  });
+
+  it("a case that declares a floor below 1.0 tolerates a miss at that rate but not below it", () => {
+    const s: LiveEvalSpec = { id: "s", minCorrectRate: 0.8, claims: [{ match: "Eiffel Tower", kind: "true" }] };
+    const runs = (bad: number): GrounnelRun[] =>
+      Array.from({ length: 5 }, (_, i) => ({ claims: [claim("The Eiffel Tower stands.", i < bad ? "unverifiable" : "supported")] }));
+    expect(evaluateGrounnelRun(runs(1), s).ok).toBe(true);   // 4/5 = 0.80, at the floor
+    expect(evaluateGrounnelRun(runs(2), s).ok).toBe(false);  // 3/5 = 0.60, below it
+  });
+
+  // g17 carries minCorrectRate 1.0 AND detectionFloor 0.7 — pooling them would fail it on any
+  // missed detection, contradicting its own floor. `false` claims answer to detectionFloor at N>=5.
+  it("keeps detectionFloor governing false claims, so minCorrectRate 1.0 does not override it", () => {
+    const s: LiveEvalSpec = { id: "s", minCorrectRate: 1, detectionFloor: 0.7, claims: [{ match: "Buzz Aldrin", kind: "false" }] };
+    const runs = (hit: number): GrounnelRun[] =>
+      Array.from({ length: 5 }, (_, i) => ({ claims: [claim("The first man on the Moon was Buzz Aldrin.", i < hit ? "contradicted" : "supported")] }));
+    expect(evaluateGrounnelRun(runs(3), s).ok).toBe(true);   // 3/5 detection, not significantly below 0.7
+    expect(evaluateGrounnelRun(runs(0), s).ok).toBe(false);  // total collapse still fails
   });
 
   it("(review finding) a NaN/garbage repeats value normalizes to 1, never to zero repetitions", () => {
