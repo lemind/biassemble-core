@@ -1,25 +1,8 @@
 /**
- * Experiment — which passage trim should feed `instance_attribution`? (D030 §3m Addendum 10)
+ * Experiment — which passage trim should feed `instance_attribution`? (D030 §3m Addenda 10-11).
  *
- * Addendum 10 cut attribution's payload 24x (63,915 -> 2,626 avg tokens) by sending VERIFY's
- * 20-sentence slice instead of whole pages. The 2026-09-04 g17 run showed a cost: the gate fired
- * 0/39 against a 6-17% historical rate, and every answer was `same`/`absent` where full pages
- * produced 24 `different` + 9 `conflict`.
- *
- * Suspected mechanism: `buildPassageSentences`'s selector rescue hunts for the CLAIM's own selector
- * ("first"). Attribution needs the opposite — the sentence naming a DIFFERENT member ("the fourth
- * and last flight ... 852 feet"). A rescue tuned for VERIFY can evict exactly what attribution needs.
- *
- * Design: retrieve ONCE, then run every trim variant against the SAME passages, so the trim is the
- * only thing that varies. Variants and fixtures travel in the event payload, so trying another one
- * needs no redeploy.
- *
- * PRE-REGISTERED BAR, fixed before any result is seen:
- *   A variant passes if it recovers `different` on the g17 false claim at a rate comparable to
- *   `full`, AND stays under 10,000 input tokens. A variant that only matches `full` by also
- *   costing like `full` is refuted, not a winner.
- *
- * Trigger: event "eval/attribution-trim" (scripts/trigger-attribution-trim.ts)
+ * Retrieves once, then runs every trim on the SAME passages so the trim is the only variable.
+ * Outcome and the refuted hypothesis are recorded in the ADR, not here.
  */
 import { randomUUID } from "node:crypto";
 import { inngest } from "./client.js";

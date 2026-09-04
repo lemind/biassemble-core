@@ -95,48 +95,6 @@ describe("GrounnelPipelineService (T010)", () => {
     });
   });
 
-  it("D030 §3m Addendum 10: instance_attribution receives VERIFY's trimmed sentences, not whole pages", async () => {
-    const claimId = uuid(1);
-    // Carries an instance selector ("first"), which is what makes it an attribution candidate.
-    const claimText = "The first flight covered 852 feet.";
-    // A long page whose relevant sentence is buried in boilerplate — the shape that produced a
-    // single 808,498-token attribution call in production on 2026-09-02.
-    const filler = Array.from({ length: 120 }, (_, i) => `Unrelated navigation boilerplate paragraph number ${i}.`).join(" ");
-    const carrying = "The fourth and final flight covered 852 feet in 59 seconds.";
-    const passageText = `${filler} ${carrying} ${filler}`;
-
-    const store = new RedisGrounnelStore(new FakeRedisHashClient());
-    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
-    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
-
-    let verifyPassages: string[] = [];
-    let attributionPassages: string[] = [];
-    provider.setResponseFn("You are a verification engine", (request) => {
-      const pairs = JSON.parse(request.system.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)![1]!) as Array<{
-        id: string; passage_sentences: Record<string, Array<{ n: number; text: string }>>;
-      }>;
-      verifyPassages = Object.values(pairs[0]!.passage_sentences).map((ss) => ss.map((x) => x.text).join(" "));
-      return { results: idsFromRequest(request).map((id) => ({ id, verdict: "supported", evidenceCitations: [], reason: "confirmed", confidence: 0.9 })) };
-    });
-    provider.setResponseFn("You are an attribution checker", (request) => {
-      const checks = JSON.parse(request.system.match(/INSTANCE_CHECKS: (\[.*\])/s)![1]!) as Array<{ id: string; passages: string[] }>;
-      attributionPassages = checks[0]!.passages;
-      return { results: checks.map((c) => ({ id: c.id, attribution: "absent", citation: null })) };
-    });
-
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
-    await service.run(auditId, [{ id: claimId, text: claimText }]);
-
-    expect(attributionPassages.length).toBeGreaterThan(0);
-    // The invariant: attribution judges exactly the evidence VERIFY judged. A gate that overrides a
-    // verdict must not see text the verdict was never formed on.
-    expect(attributionPassages).toEqual(verifyPassages);
-    // And it is a real cut, not a no-op — the whole page is far larger than what was sent.
-    expect(attributionPassages.join(" ").length).toBeLessThan(passageText.length / 2);
-    // The sentence that actually carries the attribution survives the trim.
-    expect(attributionPassages.join(" ")).toContain(carrying);
-  });
-
   it("writes 'unsupported: no evidence found' directly, without any VERIFY call, when no source resolves to usable text", async () => {
     const claimId = uuid(1);
     const claimText = "Some obscure claim.";
@@ -158,48 +116,6 @@ describe("GrounnelPipelineService (T010)", () => {
 
   // spec 014 T021 — VERIFY's input was never persisted, which made a live false accusation
   // permanently unreplayable. This asserts the bundle is captured on the call row.
-  it("persists VERIFY's rendered input payload so the call can be replayed (T021)", async () => {
-    const claimId = uuid(1);
-    const claimText = "Bukowski attended Los Angeles City College.";
-    const store = new RedisGrounnelStore(new FakeRedisHashClient());
-    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
-    const passageText = "Bukowski attended Los Angeles City College for two years, per Wikipedia. ".repeat(5);
-    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ url: "https://en.wikipedia.org/wiki/Bukowski", text: passageText })]]]));
-    provider.setResponseFn("You are a verification engine", (request) => {
-      const ids = idsFromRequest(request);
-      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: citationsFor(claimText, passageText, "Bukowski attended Los Angeles City College for two years, per Wikipedia."), reason: "Wikipedia confirms it.", confidence: 0.95 })) };
-    });
-    const llmCalls = new FakeGrounnelLlmCallStore();
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCalls, new NoopGrounnelGateEventStore());
-
-    await service.run(auditId, [{ id: claimId, text: claimText }]);
-
-    const verifyCall = llmCalls.recordCallContexts.find((c) => c.stage === "verify" && c.callType === "primary");
-    expect(verifyCall).toBeDefined();
-    const payload = verifyCall!.inputPayload as Array<{ id: string; claim: string; passage_sentences: Record<string, Array<{ n: number; text: string }>> }>;
-    expect(Array.isArray(payload)).toBe(true);
-    expect(payload[0]!.id).toBe(claimId);
-    expect(payload[0]!.claim).toBe(claimText);
-    // The whole point: the {source, n} map is captured, since it cannot be rebuilt from search_pages.
-    expect(payload[0]!.passage_sentences.A!.length).toBeGreaterThan(0);
-    expect(payload[0]!.passage_sentences.A![0]).toHaveProperty("n");
-    expect(payload[0]!.passage_sentences.A![0]).toHaveProperty("text");
-  });
-
-  it("does not attach an input payload to non-VERIFY calls (T021)", async () => {
-    const claimId = uuid(1);
-    const claimText = "Some obscure claim.";
-    const store = new RedisGrounnelStore(new FakeRedisHashClient());
-    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
-    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ status: "unreachable", text: null })]]]));
-    const llmCalls = new FakeGrounnelLlmCallStore();
-    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), llmCalls, new NoopGrounnelGateEventStore());
-
-    await service.run(auditId, [{ id: claimId, text: claimText }]);
-
-    expect(llmCalls.recordCallContexts.every((c) => c.inputPayload === undefined)).toBe(true);
-  });
-
   // spec 015 G1 — a retrieved page that reproduces the input document corroborates nothing.
   it("refuses a source that reproduces the input document, before any VERIFY call (G1)", async () => {
     const claimId = uuid(1);

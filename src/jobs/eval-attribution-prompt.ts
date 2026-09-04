@@ -1,31 +1,8 @@
 /**
- * Experiment — does the attribution prompt's scaffold cause `absent` where `different` is right?
- * (D030 §3m Addendum 11 follow-up)
+ * Experiment — attribution prompt/FACT variants on PINNED passages (D030 §3m Addenda 11-12).
  *
- * Addendum 11 exonerated the trim: the refuting sentence reaches the model in every variant and it
- * still answers `absent`. Its own `working` shows why — it identifies the member ("the last flight,
- * by Wilbur"), rules out the claim's member, then lands on `absent`. Steps 1-3 only ever ask "is
- * this the claim's member?", so a negative answer has nowhere to go but `absent`.
- *
- * Design: PINNED passages, so the spliced block is the only variable. The first two runs both
- * retrieved live and were confounded by it — one run returned ordinal evidence ("the last flight,
- * by Wilbur"), the next ranking-only evidence ("the record flight", "the longest"), on which
- * `absent` is the CORRECT answer. Blocks and fixtures still travel in the event payload.
- *
- * CONTROL FIXTURES ARE THE POINT. A block that wins by saying `different` more often is not a fix,
- * it is a Cardinal Rule hazard: a `reason_ordinal` false positive is unrecoverable (D030 §3d).
- * The three controls pin the three ways `different` would be wrong: ranking-only evidence, a TRUE
- * ordinal claim, and a fact stated with no member named.
- *
- * PRE-REGISTERED BAR, fixed before any result is seen:
- *   PROMPT axis — a block passes if it raises `different` on f-ordinal-evidence AND holds all t-*
- *   controls. (Run 2026-09-04: all four blocks scored 0/3. Refuted.)
- *   FACT axis — stripping the member from FACT passes if f-fact-stripped answers `different` while
- *   t-stripped-true stays `same`, t-stripped-ranking stays `absent` and t-stripped-no-member stays
- *   `absent`. A `different` on either stripped control is a false accusation and refutes the fix
- *   outright: a reason_ordinal false positive is unrecoverable (D030 §3d).
- *
- * Trigger: event "eval/attribution-prompt" (scripts/trigger-attribution-prompt.ts)
+ * Blocks and fixtures travel in the event payload, so a new hypothesis needs no redeploy.
+ * Controls must not move: a `different` on a t-* fixture is a false accusation, not a win.
  */
 import { randomUUID } from "node:crypto";
 import { inngest } from "./client.js";

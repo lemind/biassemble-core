@@ -104,6 +104,18 @@ describe("stripInstanceSelector", () => {
     expect(stripInstanceSelector("The first flight covered 852 feet.")).toBe("The flight covered 852 feet.");
   });
 
+  // A wrong strip corrupts FACT and can force an unrecoverable `contradicted` (D030 §3d), so every
+  // ambiguous shape must no-op instead. Each row below produced a mangled FACT before the guards.
+  it.each([
+    ["hyphen compound", "Amazon's third-quarter revenue rose 15% year over year."],
+    ["hyphen superlative", "Tesla became the second-largest automaker in Europe last year."],
+    ["proper noun", "The Second Amendment was ratified in 1791."],
+    ["copula predicate", "Apollo 11 was the first crewed lunar landing."],
+    ["copula predicate, named subject", "Aldrin was the second man to walk on the moon."],
+  ])("refuses to strip when the ordinal is not a standalone selector (%s)", (_why, claim) => {
+    expect(stripInstanceSelector(claim)).toBe(claim);
+  });
+
   // The true and false variants must yield the SAME fact — the CLAIM still carries the selector,
   // and it is the gate's job to compare that against the attributed member.
   it("yields the same FACT for the true and false variants of one claim", () => {
