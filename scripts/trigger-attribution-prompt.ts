@@ -13,16 +13,20 @@ const args = process.argv.slice(2);
 const arg = (k: string) => { const i = args.indexOf(`--${k}`); return i !== -1 ? args[i + 1] : undefined; };
 const repeats = Number(arg("repeats") ?? 3);
 
-const VARIANTS = 4, FIXTURES = 4;
+
+
+const variants = arg("variants")?.split(",").map((s) => s.trim()).filter(Boolean);
+const fixtures = arg("fixtures")?.split(",").map((s) => s.trim()).filter(Boolean);
 
 async function main() {
-  const calls = VARIANTS * FIXTURES * repeats;
-  console.log(`Addendum 11 prompt experiment — ${VARIANTS} variants x ${FIXTURES} fixtures x ${repeats} = ${calls} Gemini calls`);
+  const nV = variants?.length ?? 4, nF = fixtures?.length ?? 8;
+  const calls = nV * nF * repeats;
+  console.log(`Addendum 11 prompt experiment — ${nV} variants x ${nF} fixtures x ${repeats} = ${calls} Gemini calls`);
   console.log(`  ~1,100 input tokens each => ~${(calls * 1100 / 1000).toFixed(0)}k input tokens total`);
-  console.log("  PASS: raises `different` on f-ordinal-evidence AND holds all three t-* controls.");
+  console.log("  PASS: the target moves to `different` AND every t-* control holds its answer.");
   console.log("  A block that moves a control is refuted — a reason_ordinal false positive is unrecoverable.\n");
   if (args.includes("--dry-run")) { console.log("--dry-run: nothing sent."); return; }
-  const r = await inngest.send({ name: "eval/attribution-prompt", data: { repeats } });
+  const r = await inngest.send({ name: "eval/attribution-prompt", data: { repeats, variantIds: variants, fixtureIds: fixtures } });
   console.log(`✓ triggered: ${r.ids.join(", ")}`);
 }
 main().catch((e) => { console.error(e.message || e); process.exit(1); });

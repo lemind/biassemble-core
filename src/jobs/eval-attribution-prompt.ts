@@ -18,8 +18,12 @@
  * ordinal claim, and a fact stated with no member named.
  *
  * PRE-REGISTERED BAR, fixed before any result is seen:
- *   A block passes if it raises `different` on f-ordinal-evidence AND holds all three t-* controls
- *   at their control answers. Any block that moves a control is refuted regardless of the target.
+ *   PROMPT axis — a block passes if it raises `different` on f-ordinal-evidence AND holds all t-*
+ *   controls. (Run 2026-09-04: all four blocks scored 0/3. Refuted.)
+ *   FACT axis — stripping the member from FACT passes if f-fact-stripped answers `different` while
+ *   t-stripped-true stays `same`, t-stripped-ranking stays `absent` and t-stripped-no-member stays
+ *   `absent`. A `different` on either stripped control is a false accusation and refutes the fix
+ *   outright: a reason_ordinal false positive is unrecoverable (D030 §3d).
  *
  * Trigger: event "eval/attribution-prompt" (scripts/trigger-attribution-prompt.ts)
  */
@@ -56,6 +60,8 @@ interface Fixture {
   query?: string;
   /** PINNED evidence, verbatim. Present = no retrieval, so the prompt block is the only variable. */
   passages?: string[];
+  /** What production sends as FACT. Defaults to the claim, which is production's actual behaviour. */
+  fact?: string;
   /** The answer the CURRENT prompt gives on THIS evidence — the baseline a block must beat or hold. */
   control: string;
   /** `target` = should become `different`; `control` = must not move. */
@@ -92,6 +98,27 @@ const DEFAULT_FIXTURES: Fixture[] = [
   // Fact stated with no member named at all — the textbook `absent`, a real repeated-set claim.
   { id: "t-no-member", kind: "control", control: "absent",
     claim: "The first flight covered 852 feet.", value: "852", passages: NO_MEMBER_EVIDENCE },
+
+  // --- FACT axis (Addendum 11 follow-up) -------------------------------------------------------
+  // Production sends `fact: claim`, so the FACT arrives with its own member baked in and the model
+  // reads "no passage attributes [THE FIRST FLIGHT covered 852 ft] to anyone" -> `absent`. These
+  // strip the selector so FACT is the asserted value alone, which is what the prompt's own opening
+  // paragraph describes ("a CLAIM that selects one member ... the FACT it asserts about it").
+  { id: "f-fact-stripped", kind: "target", control: "absent",
+    claim: "The first flight covered 852 feet.", fact: "covered 852 feet",
+    value: "852", passages: ORDINAL_EVIDENCE },
+  // Stripping the FACT must not turn a TRUE ordinal claim into a false accusation.
+  { id: "t-stripped-true", kind: "control", control: "same",
+    claim: "The fourth flight covered 852 feet.", fact: "covered 852 feet",
+    value: "852", passages: ORDINAL_EVIDENCE },
+  // Nor may it defeat the deliberate superlative exclusion (D030 §3e) — ranking evidence stays `absent`.
+  { id: "t-stripped-ranking", kind: "control", control: "absent",
+    claim: "The first flight covered 852 feet.", fact: "covered 852 feet",
+    value: "852", passages: RANKING_EVIDENCE },
+  // Nor invent an attribution where the passages name no member at all.
+  { id: "t-stripped-no-member", kind: "control", control: "absent",
+    claim: "The first flight covered 852 feet.", fact: "covered 852 feet",
+    value: "852", passages: NO_MEMBER_EVIDENCE },
 ];
 
 interface Variant { id: string; block: string }
@@ -122,8 +149,15 @@ export const evalAttributionPromptJob = inngest.createFunction(
   async ({ event, step }) => {
     if (!env.TAVILY_API_KEY) throw new Error("TAVILY_API_KEY is not set — required for this experiment's retrieval.");
     const repeats = Math.max(1, Math.min(5, Number(event.data?.repeats ?? 3)));
-    const fixtures: Fixture[] = event.data?.fixtures?.length ? event.data.fixtures : DEFAULT_FIXTURES;
-    const variants: Variant[] = event.data?.variants?.length ? event.data.variants : DEFAULT_VARIANTS;
+    // `fixtures`/`variants` supply new ones; `fixtureIds`/`variantIds` select from the built-ins, so
+    // a single axis can be run without re-sending the whole definition.
+    const allFixtures: Fixture[] = event.data?.fixtures?.length ? event.data.fixtures : DEFAULT_FIXTURES;
+    const allVariants: Variant[] = event.data?.variants?.length ? event.data.variants : DEFAULT_VARIANTS;
+    const fIds: string[] | undefined = event.data?.fixtureIds?.length ? event.data.fixtureIds : undefined;
+    const vIds: string[] | undefined = event.data?.variantIds?.length ? event.data.variantIds : undefined;
+    const fixtures = fIds ? allFixtures.filter((f) => fIds.includes(f.id)) : allFixtures;
+    const variants = vIds ? allVariants.filter((v) => vIds.includes(v.id)) : allVariants;
+    if (fixtures.length === 0 || variants.length === 0) throw new Error("No fixtures or variants selected");
 
     const provider = new GeminiProvider();
     const prompts = new PromptRegistry();
@@ -171,7 +205,7 @@ export const evalAttributionPromptJob = inngest.createFunction(
           let out: Record<string, unknown>;
           try {
             out = await step.run(`${variant.id}-${f.id}-${i + 1}`, async () => {
-              const checks = [{ id: f.id, claim: f.claim, fact: f.claim, passages: trimmed }];
+              const checks = [{ id: f.id, claim: f.claim, fact: f.fact ?? f.claim, passages: trimmed }];
               const rendered = prompts.render("grounnel-instance-attribution", { instance_checks: JSON.stringify(checks) });
               const parsed = await callLlmForJson({
                 provider, system: splice(rendered, variant.block), user: "Return the JSON now.",
