@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractInstanceSelector, passageMatchesSelector } from "../../../src/lib/instance-selector.js";
+import { extractInstanceSelector, passageMatchesSelector, stripInstanceSelector } from "../../../src/lib/instance-selector.js";
 
 describe("extractInstanceSelector (D030 §3f) — which occurrence of a repeated entity a claim names", () => {
   it("extracts a sequence selector and its anchor (up to 2 content words)", () => {
@@ -85,5 +85,33 @@ describe("passageMatchesSelector — confirms a passage names the SAME instance 
   it("returns false, not true, on a passage with no selector at all — this is an additive signal, never a rejection", () => {
     const sel = extractInstanceSelector("The first flight covered 852 feet.")!;
     expect(passageMatchesSelector(sel, "The flight covered 852 feet.")).toBe(false);
+  });
+});
+
+describe("stripInstanceSelector", () => {
+  // The Cardinal Rule guard: no selector means the gate abstains, so FACT must be untouched.
+  it.each([
+    "The Eiffel Tower is 1083 feet tall.",
+    "The first and second flights both failed.",
+    "First.",
+    "",
+  ])("is a byte-identical no-op when no selector is extracted: %s", (claim) => {
+    expect(extractInstanceSelector(claim)).toBeNull();
+    expect(stripInstanceSelector(claim)).toBe(claim);
+  });
+
+  it("removes the selector so FACT no longer names the member", () => {
+    expect(stripInstanceSelector("The first flight covered 852 feet.")).toBe("The flight covered 852 feet.");
+  });
+
+  // The true and false variants must yield the SAME fact — the CLAIM still carries the selector,
+  // and it is the gate's job to compare that against the attributed member.
+  it("yields the same FACT for the true and false variants of one claim", () => {
+    expect(stripInstanceSelector("The fourth flight covered 852 feet."))
+      .toBe(stripInstanceSelector("The first flight covered 852 feet."));
+  });
+
+  it("falls back to the claim when stripping would leave no words", () => {
+    expect(stripInstanceSelector("first first")).toBe("first first");
   });
 });

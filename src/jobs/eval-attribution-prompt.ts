@@ -37,6 +37,7 @@ import { DrizzleGrounnelSearchCallStore } from "../persistence/grounnel-search-c
 import { DrizzleGrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
 import { DrizzleGrounnelLlmCallStore } from "../persistence/grounnel-llm-call-store.js";
 import { buildPassageSentences } from "../orchestrators/grounnel/passage-sentences.js";
+import { stripInstanceSelector } from "../lib/instance-selector.js";
 import { InstanceAttributionResponseSchema } from "../orchestrators/grounnel/pipeline-schemas.js";
 import { callLlmForJson } from "../orchestrators/llm-json-call.js";
 import { env } from "../lib/env.js";
@@ -60,8 +61,10 @@ interface Fixture {
   query?: string;
   /** PINNED evidence, verbatim. Present = no retrieval, so the prompt block is the only variable. */
   passages?: string[];
-  /** What production sends as FACT. Defaults to the claim, which is production's actual behaviour. */
+  /** What production sends as FACT. Defaults to the claim, which was production's old behaviour. */
   fact?: string;
+  /** Derive FACT with the SHIPPED helper, so the tested string cannot drift from production's. */
+  stripFact?: boolean;
   /** The answer the CURRENT prompt gives on THIS evidence — the baseline a block must beat or hold. */
   control: string;
   /** `target` = should become `different`; `control` = must not move. */
@@ -118,6 +121,23 @@ const DEFAULT_FIXTURES: Fixture[] = [
   // Nor invent an attribution where the passages name no member at all.
   { id: "t-stripped-no-member", kind: "control", control: "absent",
     claim: "The first flight covered 852 feet.", fact: "covered 852 feet",
+    value: "852", passages: NO_MEMBER_EVIDENCE },
+
+  // --- PRODUCTION strip -----------------------------------------------------------------------
+  // The fixtures above validated a hand-written bare predicate ("covered 852 feet"). The shipped
+  // helper produces "The flight covered 852 feet." — a DIFFERENT string, so it must be re-measured
+  // before a golden run spends on it. `stripFact` calls the real helper, so this cannot drift.
+  { id: "f-prod-strip", kind: "target", control: "absent",
+    claim: "The first flight covered 852 feet.", stripFact: true,
+    value: "852", passages: ORDINAL_EVIDENCE },
+  { id: "t-prod-strip-true", kind: "control", control: "same",
+    claim: "The fourth flight covered 852 feet.", stripFact: true,
+    value: "852", passages: ORDINAL_EVIDENCE },
+  { id: "t-prod-strip-ranking", kind: "control", control: "absent",
+    claim: "The first flight covered 852 feet.", stripFact: true,
+    value: "852", passages: RANKING_EVIDENCE },
+  { id: "t-prod-strip-no-member", kind: "control", control: "absent",
+    claim: "The first flight covered 852 feet.", stripFact: true,
     value: "852", passages: NO_MEMBER_EVIDENCE },
 ];
 
@@ -205,7 +225,8 @@ export const evalAttributionPromptJob = inngest.createFunction(
           let out: Record<string, unknown>;
           try {
             out = await step.run(`${variant.id}-${f.id}-${i + 1}`, async () => {
-              const checks = [{ id: f.id, claim: f.claim, fact: f.fact ?? f.claim, passages: trimmed }];
+              const fact = f.stripFact ? stripInstanceSelector(f.claim) : (f.fact ?? f.claim);
+              const checks = [{ id: f.id, claim: f.claim, fact, passages: trimmed }];
               const rendered = prompts.render("grounnel-instance-attribution", { instance_checks: JSON.stringify(checks) });
               const parsed = await callLlmForJson({
                 provider, system: splice(rendered, variant.block), user: "Return the JSON now.",

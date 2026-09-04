@@ -23,7 +23,7 @@ import {
   type Verdict,
 } from "./pipeline-helpers.js";
 import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, InstanceAttributionResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
-import { extractInstanceSelector } from "../../lib/instance-selector.js";
+import { stripInstanceSelector, extractInstanceSelector } from "../../lib/instance-selector.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -718,8 +718,9 @@ export class GrounnelPipelineService {
     items: Array<{ id: string; claim: string; passages: string[] }>
   ): Promise<Map<string, InstanceAttribution>> {
     if (items.length === 0) return new Map();
-    // `fact` is the claim itself — production has no separate asserted-value field; see t21-results.md for the fixtures' shape.
-    const checks = items.map((i) => ({ id: i.id, claim: i.claim, fact: i.claim, passages: i.passages }));
+    // FACT must not contain the member the CLAIM selects, or it answers the gate's own question and
+    // forces `absent` — measured, D030 §3m Addendum 12. No selector => unchanged.
+    const checks = items.map((i) => ({ id: i.id, claim: i.claim, fact: stripInstanceSelector(i.claim), passages: i.passages }));
     const system = this.prompts.render("grounnel-instance-attribution", { instance_checks: JSON.stringify(checks) });
     const claimId = items.length === 1 ? items[0]!.id : undefined;
     try {

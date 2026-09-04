@@ -99,6 +99,24 @@ export function extractInstanceSelector(claimText: string): InstanceSelector | n
   return { selector: m[1]!.toLowerCase(), anchor };
 }
 
+/**
+ * The FACT a claim asserts, with its member reference removed (D030 §3m Addendum 12).
+ *
+ * `instance_attribution` asks "which member do the passages attribute this FACT to". Production sent
+ * the whole claim as FACT, so the FACT answered that question itself ("THE FIRST flight covered 852
+ * feet") and the model correctly returned `absent`. Stripping the selector makes it answerable.
+ *
+ * Gated on extractInstanceSelector: no selector means no strip and `fact === claim` byte-for-byte,
+ * so this can never change a claim the gate already abstains on.
+ */
+export function stripInstanceSelector(claimText: string): string {
+  if (!extractInstanceSelector(claimText)) return claimText;
+  // Exactly one match, guaranteed by extractInstanceSelector's own matches.length !== 1 abstention.
+  const stripped = claimText.replace(SELECTOR_RE_G, "").replace(/\s{2,}/g, " ").trim();
+  // A strip that empties the claim or leaves only punctuation is worse than no strip at all.
+  return /[a-z0-9]/i.test(stripped) ? stripped : claimText;
+}
+
 /** True when passageText names the same selector+anchor — additive admission signal only (D030 §3f). */
 export function passageMatchesSelector(sel: InstanceSelector, passageText: string): boolean {
   for (const m of passageText.matchAll(SELECTOR_RE_G)) {
