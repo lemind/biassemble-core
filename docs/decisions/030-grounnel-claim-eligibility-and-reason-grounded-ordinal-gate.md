@@ -1910,3 +1910,36 @@ defensible. That fixture is replaced.
 
 **Do not** re-litigate this with a bigger cap, a new rescue rule, or whole pages. All three are
 measured above.
+
+### Addendum 12 (2026-09-04) — FIXED: `fact` must not contain the member the claim selects
+
+`checkInstanceAttribution` sent `fact: i.claim`. The prompt asks *"which member do the passages
+attribute the FACT to"*, so a FACT reading "**the first** flight covered 852 feet" answered that
+question itself, and `absent` was literally correct. Four prompt blocks could not fix it because
+they all sit downstream of the malformed input. The inline comment ("production has no separate
+asserted-value field") documented the bug as a constraint.
+
+**Fix:** `stripInstanceSelector` (same module, same `SELECTOR_RE_G`, gated on
+`extractInstanceSelector`) removes the selector word. No selector ⇒ `fact === claim` byte-for-byte,
+so the gate can never change a claim it already abstains on. Unit-tested invariant.
+
+| evidence | `fact = claim` (old) | `fact` stripped (new) |
+|---|---|---|
+| ordinal, FALSE claim | absent 6/6 | **different 3/3** |
+| ordinal, TRUE claim | same | same 3/3 |
+| ranking-only | absent | absent 3/3 |
+| no member named | absent | absent 3/3 |
+
+Both strip forms agree (bare predicate "covered 852 feet" and the shipped "The flight covered 852
+feet."), so the result is not an artifact of one phrasing.
+
+**Golden set, N=5, 28/28 cases, scored post-deploy only: FALSE ACCUSATIONS 0, binding failures 0.**
+g17 3/5 binding-pass against its 0.70 floor (was 1/5, p=0.031); g24 5/5. Note g24 *does* strip
+(selector `first`, anchor `computer mouse`) — it is in scope, not insulated, and it held.
+
+**Method note:** `eval-last-green.ts` aggregates by calendar DAY and reported this run RED — g17 at
+N=19, pooling pre-strip runs with post-strip ones. Always window by deploy timestamp when scoring a
+run that spans a deploy.
+
+**Do not** revisit the trim (Addendum 11), the sentence cap, `ORDINAL_WORDS` (§3e), or
+`subject_entity` (Addenda 6–8) to move this gate. All measured, all refuted.
