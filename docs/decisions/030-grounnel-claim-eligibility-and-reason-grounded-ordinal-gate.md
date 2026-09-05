@@ -2081,3 +2081,37 @@ test verified to fail without it.
 **This is not the g17 fix.** It restores ~4 leaked catches; expect roughly 50% → 60-70%, not the 0.7
 floor. It is worth shipping because §3d says these contradictions are immune and on this path they
 were not — a spec violation independent of g17.
+
+### Addendum 19 — the §3d guard measured: leak closed, detection unchanged
+
+Deployed `a76558d`, ran g17 at N=5 (run `01M1R8TR9WFT5ENTH0RSJ67HPD`, ~60 calls).
+
+| | baseline | with guard |
+|---|---|---|
+| target claim `contradicted` | 1/5 | 1/5 |
+| false accusations | 0 | 0 |
+| retry path undoing a protected `contradicted` | 1 | **0** |
+
+The prediction stated before the run (2-3/5) was falsified. The guard closes the leak it was written
+for and mints nothing, so it stays — but it is not a detection fix, and Addendum 18's estimate of
+~4 restored catches was wrong at this sample size.
+
+**Why detection did not move.** Three protected contradictions were minted across the 5 runs, but only
+one landed on the scored claim:
+
+| run | "the first flight covered 852 feet" (scored) | "the first flight lasted 59 seconds" (unscored) |
+|---|---|---|
+| 1 | supported | `contradicted` — `instance_attribution` |
+| 2 | `contradicted` — `reason_ordinal` | supported |
+| 3 | supported | unverifiable |
+| 4 | supported | unverifiable |
+| 5 | supported | `contradicted` — `reason_ordinal` |
+
+Both claims are false by the same error: 59 s and 852 ft both belong to the *fourth* flight. All three
+catches are correct. The golden set scores only the 852 ft claim, so two of them score as zero.
+
+**The finding.** The gate fires on whichever sibling VERIFY happens to write ordinal prose for, and
+which one that is varies run to run. This is Addendum 17's fragility confirmed at claim level rather
+than inferred: detection is conditional on free-text wording, so no gate-side or reconciliation-side
+change can raise the rate. The remaining option is the structured `member` field in the VERIFY schema
+(§3m, open) — matching a field instead of prose. No further gate or reconciliation work on this case.
