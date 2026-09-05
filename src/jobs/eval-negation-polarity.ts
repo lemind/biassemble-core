@@ -43,6 +43,8 @@ interface Fixture {
   /** passage_sentences: source letter -> sentences, exactly the production render shape. */
   passages: Record<string, string[]> | null;
   expect: Verdict;
+  /** Production sends EXTRACT's value here; "" is real when EXTRACT supplies none. */
+  subject_entity?: string;
   /** Pre-registered STEP 2 relationship, for the write-up; not scored directly. */
   relationship: "SAME" | "PARTIAL" | "CONFLICT" | "ABSENT";
 }
@@ -183,7 +185,7 @@ type SchemaVariant = keyof typeof SCHEMAS;
 
 interface ScreenOverride {
   schemaVariant?: SchemaVariant;
-  fixtures?: Array<{ id: string; role: Role; claim: string; passages: Record<string, unknown> | null; expect: Verdict; relationship?: Fixture["relationship"] }>;
+  fixtures?: Array<{ id: string; role: Role; claim: string; passages: Record<string, unknown> | null; expect: Verdict; subject_entity?: string; relationship?: Fixture["relationship"] }>;
   variants?: Array<{ id: string; strategy?: string; blocks: string[] }>;
 }
 
@@ -228,9 +230,9 @@ export const evalNegationPolarityJob = inngest.createFunction(
           const verdict = await step.run(`${variant.id}--${fixture.id}--${i + 1}`, async () => {
             const rendered = prompts.render("grounnel-verify", {
               claim_passage_pairs: JSON.stringify([
-                // subject_entity deliberately empty (a real production value when EXTRACT supplies none),
-                // so the only thing varying across variants is the spliced block.
-                { id: fixture.id, claim: fixture.claim, subject_entity: "", passage_sentences: fixture.passages },
+                // Defaults to "" so the built-in fixtures keep varying only by spliced block; an
+                // event fixture may set it, which is itself the lever the payload screens test.
+                { id: fixture.id, claim: fixture.claim, subject_entity: fixture.subject_entity ?? "", passage_sentences: fixture.passages },
               ]),
               threshold: RENDER_THRESHOLD,
             });
