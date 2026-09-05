@@ -1047,6 +1047,58 @@ describe("GrounnelPipelineService (T010)", () => {
     });
   });
 
+  // D030 §3d/Addendum 18 — the SAME downgrade the two tests above assert must NOT happen when the
+  // contradiction came from a protected gate. reconcileContradictedVerdicts already filtered these;
+  // this retry path computed the originating gate and only logged it, downgrading anyway.
+  it("D030 §3d: does NOT downgrade a retry contradiction that came from reason_ordinal, even when the classifier calls it inconsistent", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 feet.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The fourth and last flight, by Wilbur, took 59 seconds to cover 852 feet over the ground. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      const firstPass = verifyCalls === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          // Pass 1 lands unsupported with a mismatched reason, which is what TRIGGERS the retry.
+          // Pass 2 (the retry) affirms the false claim, and reason_ordinal catches it by spotting
+          // that the reason attributes the fact to the FOURTH flight while the claim selects the first.
+          verdict: firstPass ? "unsupported" : "supported",
+          evidenceCitations: firstPass ? null : citationsFor(claimText, passageText, "The fourth and last flight, by Wilbur, took 59 seconds to cover 852 feet over the ground."),
+          reason: firstPass
+            ? "The passage does not state how far the first flight travelled."
+            : "The passage states that the fourth and final flight covered 852 feet.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    // The classifier calls it inconsistent — which is exactly what used to destroy the catch.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted");
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.some((e) => e.gate === "reason_ordinal" && e.overridden && e.verdictAfter === "contradicted")).toBe(true);
+    // The protected contradiction must survive: no retry gate may take it away.
+    expect(events.some((e) => e.overridden && e.verdictBefore === "contradicted" && e.verdictAfter !== "contradicted")).toBe(false);
+  });
+
   it("D030 §3i Mode B: downgrades a retry that lands on 'supported' to unverifiable when the post-retry classifier says its own reason doesn't support it (real live-test finding, g17 'first flight lasted 59 seconds', 2026-08-23)", async () => {
     const claimId = uuid(1);
     const claimText = "The first flight lasted 59 seconds.";

@@ -2056,3 +2056,28 @@ screened end-to-end through the gate chain.
 unrecoverable-FP gate); the evidence-side ordinal gate is refuted (§3i — 25 catches vs 8 unrecoverable
 FAs). The only untried option is a narrow nudge asking VERIFY to name the member by position in its
 reason — but that is another VERIFY prompt edit, and this addendum is what those cost.
+
+### Addendum 18 (2026-09-05) — §3d protection was applied on one reconciliation path, not both
+
+`reconcileContradictedVerdicts` filters `PROTECTED_CONTRADICTION_GATES` before the classifier call.
+`checkRetryContradiction` computed the same originating gate, **logged it, and downgraded anyway** —
+so a `reason_ordinal` contradiction was immune on one route and destroyed on the other.
+
+Census over every persisted gate trail (141 protected contradictions, zero API cost):
+
+| | |
+|---|---|
+| a retry path undid the catch | 11 (8%) |
+| still ended `contradicted` anyway | 3 |
+| would change to `contradicted` with the guard | **8** |
+| of those, claim NOT ground-truth false | **0** |
+
+All 11 leaks are g17 or its sibling claim from the same text — no other case exercises this path, and
+no leak ever rescued a true claim from an unrecoverable contradiction.
+
+**Fix:** the guard now mirrors line 260 — a protected origin returns the chain unchanged. Regression
+test verified to fail without it.
+
+**This is not the g17 fix.** It restores ~4 leaked catches; expect roughly 50% → 60-70%, not the 0.7
+floor. It is worth shipping because §3d says these contradictions are immune and on this path they
+were not — a spec violation independent of g17.

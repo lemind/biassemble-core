@@ -791,8 +791,21 @@ export class GrounnelPipelineService {
       "Retry landed on a least-scrutinized verdict — logged reconciliation-quality signals"
     );
 
+    // D030 §3d — a protected contradiction is immune to reconciliation on BOTH paths.
+    // reconcileContradictedVerdicts already filters these out; this path computed the same
+    // originating gate and only LOGGED it, downgrading anyway. Simulated over 141 persisted
+    // trails: 8 verdicts restored, 0 new false accusations.
+    const origin = originatingContradictionGate(currentPassGateEvents);
+    if (!consistent && PROTECTED_CONTRADICTION_GATES.has(origin?.gate ?? "")) {
+      logger.info(
+        { module: MODULE, operation: "checkRetryContradiction", auditId, claimId: item.claim.id, gate: origin?.gate },
+        "Retry reconciliation blocked — the contradiction came from a protected gate (D030 §3d)"
+      );
+      return chain;
+    }
+
     if (!consistent) {
-      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, chain.verdict, downgrade.target, originatingContradictionGate(currentPassGateEvents));
+      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, chain.verdict, downgrade.target, origin);
     }
 
     const gateEvent: GateEventInput = {
