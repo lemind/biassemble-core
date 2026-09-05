@@ -1995,3 +1995,37 @@ g24 was a calibration error: capability 0.83 against a 0.7 floor false-reds one 
 would be moving the number to fit the result, which is the one thing this ADR keeps refusing to do
 (§3e, Addenda 6-8). It stays at 0.7 and fails honestly until the underlying case is fixed. A
 permanently-red g17 is a true statement about the product, not a broken gate.
+
+### Addendum 16 (2026-09-05) — seven prompt variants refuted; g17 is a product gap, not a prompt gap
+
+g17 detects 50% (6/12). Its misses are `supported`, not `unverifiable` — the pipeline affirms a
+false claim rather than abstaining. VERIFY receives ordinal-identified evidence in 45 of 46 real
+payloads, so this is not an evidence-availability failure.
+
+**Attribution prompt — 6 variants, all refuted.** Four answer-list wordings (Addendum 11), then a
+member-comparison scaffold with `fact` correctly stripped: byte-identical to control. The stage
+contributes 1 catch in 12 in production. Stop screening it.
+
+**VERIFY prompt — 2 variants, real persisted payloads, 36 calls.**
+
+| variant | false claim | g22 control |
+|---|---|---|
+| control | `supported` 6/6 — reproduces production | held |
+| selector-conflict (mismatch ⇒ CONFLICT) | `supported` 6/6 — no effect | held |
+| selector-partial (mismatch ⇒ PARTIAL) | `partially_supported` 6/6 | held |
+
+The stronger rule did nothing, the weaker one moved everything. VERIFY carries a heavy anti-CONFLICT
+prior (TEMPORAL SCOPE, NUMERIC, QUALIFIED RANK, ATTRIBUTION STRENGTH all route away from CONFLICT,
+under "false positives are worse"). An appended paragraph asking for CONFLICT gets outvoted — do not
+retry that shape.
+
+**Two hypotheses were backwards.** The trim was exonerated (Addendum 11). The "first+852 distractor"
+was the *disambiguator*: removing it flipped `different` → `absent`.
+
+**Method lesson.** The same payload gave `absent` 3/3 and `different` 3/3 in two runs an hour apart.
+Attribution output is unstable at temperature 0, so N=3 screens cannot characterise it — P(3/3 either
+way) = 25% at a true 50%. Arm A survives only because 6/6 has p=1.6% under that null. Size screens
+against the process rate, not the budget.
+
+**Closed by measurement, do not re-propose:** passage trimming, sentence caps, `ORDINAL_WORDS`,
+`subject_entity`, attribution answer-list wordings, attribution scaffold, VERIFY selector-as-CONFLICT.
