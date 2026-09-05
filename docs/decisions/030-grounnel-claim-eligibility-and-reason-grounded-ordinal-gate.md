@@ -2115,3 +2115,39 @@ which one that is varies run to run. This is Addendum 17's fragility confirmed a
 than inferred: detection is conditional on free-text wording, so no gate-side or reconciliation-side
 change can raise the rate. The remaining option is the structured `member` field in the VERIFY schema
 (§3m, open) — matching a field instead of prose. No further gate or reconciliation work on this case.
+
+### Addendum 20 — the input cannot move it either: 27/27 `supported`
+
+Prompt held fixed at v4.6.0, nothing spliced; the INPUT varied. Nine pinned fixtures built from real
+persisted payloads, 3 repeats (run `01M1RDPYCJB40X8Y03DYD3SQ2G`, 27 calls).
+
+| fixture | lever | expect | result |
+|---|---|---|---|
+| f0-baseline | reproduction check | contradicted | `supported` 3/3 — screen valid |
+| f1-subject-member | `subject_entity` = "the first flight of December 17, 1903" | contradicted | `supported` 3/3 |
+| f2-no-title-crumbs | drop heading/worksheet lines | contradicted | `supported` 3/3 |
+| f3-drop-other-member | delete the only "fourth … 852" sentence | unsupported | `supported` 3/3 |
+| c1–c5 | five true-claim controls | supported | `supported` 3/3, all held |
+
+**The mechanism, demonstrated.** Identical payload, claims differing only in the ordinal:
+
+- f0 (claim says *first*) → "Multiple sentences across A, B, and C state that **the first** flight covered 852 feet."
+- c1 (claim says *fourth*) → "The passage states that **the fourth** flight covered 852 feet."
+
+VERIFY copies the claim's member into its reason and reports it as what the passage says. It is not
+performing member identification at all — a STEP 1 failure, not the STEP 2 misapplication Addendum 19
+assumed. f0 additionally cites `C:2` ("The fourth flight lasted 59 seconds and went 852 feet!") as
+*support* for the first-flight claim.
+
+**f3 closes the door on containment.** With the member sentence deleted, the model dropped C from its
+citations and stayed `supported` on A:2/A:3/B:3 — sentences stating 852 with no member named. The
+fusion never depended on the member sentence, so neither sentence removal nor a deterministic
+cited-selector filter can reach it.
+
+**Cost: none.** All five controls held. The predicted new-miss from a narrow `subject_entity` (c3) did
+not occur — because the narrow entity changed nothing in either direction: the model reads "the first
+flight of 17 Dec 1903" and "the fourth and final flight of 17 Dec 1903" as the same entity.
+
+**Combined with Addenda 11–17: 8 prompt levers and 3 input levers refuted, 11 total.** No lever on
+either side of the call has moved this case. Do not spend further calls on g17 without a materially
+new mechanism.
