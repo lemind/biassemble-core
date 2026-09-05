@@ -2029,3 +2029,30 @@ against the process rate, not the budget.
 
 **Closed by measurement, do not re-propose:** passage trimming, sentence caps, `ORDINAL_WORDS`,
 `subject_entity`, attribution answer-list wordings, attribution scaffold, VERIFY selector-as-CONFLICT.
+
+### Addendum 17 (2026-09-05) — g17's catch depends on regex-matching VERIFY's prose; 4.7.0 REVERTED
+
+VERIFY 4.7.0 (INSTANCE SELECTOR block, screened 6/6 in isolation) took g17 detection from 6/12 to
+**0/6** in the pipeline. Reverted (`5391652`).
+
+`grounnel_gate_events` names the mechanism. All six pre-4.7.0 catches came from **`reason_ordinal`**,
+which fired 6× before and **0× after**. The block never changed a verdict — it changed how VERIFY
+*words its reason*, and the deterministic gate's pattern stopped matching.
+
+| `reason_ordinal` | VERIFY's reason | count |
+|---|---|---|
+| FIRED | "the **fourth** and final flight covered 852 feet" | 6 |
+| missed | "the **longest** flight covered 852 feet" | 6 |
+
+g17's 50% is entirely **whether VERIFY writes "fourth" or "longest"** — same evidence, same verdict
+logic, different prose. Superlatives are excluded from `ORDINAL_WORDS` by §3e.
+
+**The structural finding, which outlives this case:** detection here depends on a deterministic gate
+regex-matching an LLM's free-text reason. Any VERIFY prompt edit — for any unrelated purpose — can
+silently break it. Screening a prompt change against VERIFY in isolation predicts nothing; it must be
+screened end-to-end through the gate chain.
+
+**No clean lever remains.** Widening `ORDINAL_WORDS` to superlatives is closed (§3e, and this is the
+unrecoverable-FP gate); the evidence-side ordinal gate is refuted (§3i — 25 catches vs 8 unrecoverable
+FAs). The only untried option is a narrow nudge asking VERIFY to name the member by position in its
+reason — but that is another VERIFY prompt edit, and this addendum is what those cost.
