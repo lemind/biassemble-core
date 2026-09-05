@@ -8,7 +8,7 @@
  * Arm A varies the VERIFY prompt; arm B varies the attribution scaffold. Never both at once — a
  * combined win cannot be attributed, and either could mint a false accusation on the g22 control.
  *
- * Usage: npx tsx --env-file=.env scripts/trigger-wright-screen.ts --arm verify|attribution [--repeats 3] [--dry-run]
+ * Usage: npx tsx --env-file=.env scripts/trigger-wright-screen.ts --arm verify|attribution|distractor [--repeats 3] [--dry-run]
  */
 import { sql } from "drizzle-orm";
 import { inngest } from "../src/jobs/client.js";
@@ -87,8 +87,8 @@ async function realPayloads(limit: number): Promise<Sentences[]> {
 }
 
 async function main() {
-  if (arm !== "verify" && arm !== "attribution") {
-    console.error("--arm must be `verify` or `attribution`");
+  if (arm !== "verify" && arm !== "attribution" && arm !== "distractor") {
+    console.error("--arm must be `verify`, `attribution` or `distractor`");
     process.exit(1);
   }
   const ps = await realPayloads(40);
@@ -113,6 +113,37 @@ async function main() {
     console.log("  FIRST CHECK the control variant reproduces the production failure — if it does not, the fixtures are wrong and every variant result is noise.\n");
     if (dry) { console.log("--dry-run: nothing sent."); return; }
     const r = await inngest.send({ name: "eval/negation-polarity", data: { repeats, fixtures, variants } });
+    console.log(`✓ triggered: ${r.ids.join(", ")}`);
+    return;
+  }
+
+  if (arm === "distractor") {
+    // ONE question: is the first+852 co-mention sufficient to force `absent`? The payload that
+    // answered `absent` in arm B carries "Their final flight of the day bested their FIRST try by
+    // traveling 852 ft" — a sentence naming the claim's selector next to the claimed value.
+    // Nothing is killed here; both rows are observations, not pass/fail.
+    const target = ps[1]!;
+    const isDistractor = (t: string) => /\bfirst\b/i.test(t) && t.includes("852");
+    const asIs = Object.values(target).map((sents) => sents.map((s) => s.text).join(" "));
+    const dropped: string[] = [];
+    const without = Object.values(target).map((sents) =>
+      sents.filter((s) => { if (isDistractor(s.text)) { dropped.push(s.text); return false; } return true; })
+        .map((s) => s.text).join(" ")
+    );
+    if (dropped.length === 0) { console.error("no first+852 sentence in this payload — nothing to test"); process.exit(1); }
+    const fixtures = [
+      { id: "d-with-distractor", kind: "target", control: "absent", claim: FALSE_CLAIM, stripFact: true, value: "852", passages: asIs },
+      { id: "d-without-distractor", kind: "target", control: "absent", claim: FALSE_CLAIM, stripFact: true, value: "852", passages: without },
+    ];
+    const variants = [{ id: "control", block: "" }];
+    console.log("DISTRACTOR TEST — same payload, same prompt, one sentence in vs out");
+    console.log(`  ${variants.length} variant x ${fixtures.length} fixtures x ${repeats} = ${variants.length * fixtures.length * repeats} Gemini calls`);
+    console.log(`  removed ${dropped.length} sentence(s):`);
+    for (const d of dropped) console.log(`    - ${d.slice(0, 110)}`);
+    console.log("  IF removing it flips `absent` -> `different`, the residual miss is retrieval/selection, not wording.");
+    console.log("  IF it stays `absent`, the residual class is real and no prompt reaches it.\n");
+    if (dry) { console.log("--dry-run: nothing sent."); return; }
+    const r = await inngest.send({ name: "eval/attribution-prompt", data: { repeats, fixtures, variants } });
     console.log(`✓ triggered: ${r.ids.join(", ")}`);
     return;
   }
