@@ -99,6 +99,14 @@ export function extractInstanceSelector(claimText: string): InstanceSelector | n
   return { selector: m[1]!.toLowerCase(), anchor };
 }
 
+/** Determiners that introduce a member selector, possessives included ("SpaceX's fourth launch"). */
+const DETERMINER = "(?:the|its|his|her|their|our|my|your|[\\w\u2019']+['\u2019]s)";
+const DETERMINER_BEFORE_RE = new RegExp(`(?:\\b|^)${DETERMINER}\\s+$`, "i");
+/** Same determiners after a copula: there the ordinal is the assertion, not a selector. */
+const PREDICATE_BEFORE_RE = new RegExp(`\\b(?:was|is|are|were|be|been|became|becomes|remains|ranked|as)\\s+(?:${DETERMINER}\\s+)?$`, "i");
+/** Closed list of heads that make the ordinal part of a compound name or period, not a member. */
+const COMPOUND_HEAD_RE = /^\s+(?:quarter|half|inning|world|amendment|avenue|street|lady|place|degree|person|edition|estate|reich|republic|crusade)\b/i;
+
 /**
  * The FACT a claim asserts, with its member reference removed (D030 §3m Addendum 12).
  *
@@ -112,12 +120,22 @@ export function stripInstanceSelector(claimText: string): string {
   if (!m) return claimText;
   const start = m.index!;
   const end = start + m[0].length;
+  const before = claimText.slice(0, start);
+  // A member selector is a determiner + ordinal. Without this, "Tesla took first place", "Hamilton
+  // finished third" and "First Republic Bank" all stripped into a different assertion (review).
+  if (!DETERMINER_BEFORE_RE.test(before)) return claimText;
+  const after = claimText.slice(end);
+  // "the third of March", "one third of voters" — an of-phrase is a date or a fraction, not a member.
+  if (/^\s+of\b/i.test(after)) return claimText;
+  // "the first quarter", "the second world war" — a compound name or fiscal period, not a member.
+  if (COMPOUND_HEAD_RE.test(after)) return claimText;
   // Hyphen compound: "third-quarter revenue" would strip to "-quarter revenue".
   if (claimText[start - 1] === "-" || claimText[end] === "-") return claimText;
-  // Proper noun mid-sentence: "the Second Amendment" is a name, not the second of a set.
-  if (start > 0 && /^[A-Z]/.test(m[0]!)) return claimText;
-  // Copula predicate: in "was the first crewed landing" the ordinal IS the assertion, not a selector.
-  if (/\b(?:was|is|are|were|be|been|became|becomes|remains|ranked)\s+(?:the\s+)?$/i.test(claimText.slice(0, start))) return claimText;
+  // Proper noun: "the Second Amendment" is a name, not the second of a set.
+  if (/^[A-Z]/.test(m[0]!)) return claimText;
+  // Predicate position: in "was the first landing" or "regarded as the second man" the ordinal IS
+  // the assertion, not a selector.
+  if (PREDICATE_BEFORE_RE.test(before)) return claimText;
   const stripped = (claimText.slice(0, start) + claimText.slice(end)).replace(/\s{2,}/g, " ").trim();
   // A strip that empties the claim or leaves only punctuation is worse than no strip at all.
   return /[a-z0-9]/i.test(stripped) ? stripped : claimText;
