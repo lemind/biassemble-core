@@ -179,6 +179,10 @@
         {
           "match": "first flight covered 852 feet",
           "kind": "false"
+        },
+        {
+          "match": "four flights",
+          "kind": "true"
         }
       ]
     },

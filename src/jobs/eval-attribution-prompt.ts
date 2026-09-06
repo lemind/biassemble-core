@@ -6,6 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { inngest } from "./client.js";
+import { insertBeforeAnchor } from "./prompt-splice.js";
 import { GeminiProvider } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
 import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
@@ -133,12 +134,7 @@ const DEFAULT_VARIANTS: Variant[] = [
     "STEP 5. If you identified a member that is not the claim's member, answer \"different\" and cite that sentence VERBATIM. Do not answer \"different\" unless you can quote a sentence that names that other member; if you cannot quote one, answer \"absent\"." },
 ];
 
-function splice(rendered: string, block: string): string {
-  if (!block) return rendered;
-  const at = rendered.indexOf(INSERT_BEFORE);
-  if (at === -1) throw new Error(`Cannot splice — anchor "${INSERT_BEFORE}" not found in the rendered attribution prompt`);
-  return `${rendered.slice(0, at)}${block}\n\n${rendered.slice(at)}`;
-}
+const splice = (rendered: string, block: string) => insertBeforeAnchor(rendered, INSERT_BEFORE, block ? [block] : []);
 
 export const evalAttributionPromptJob = inngest.createFunction(
   { id: "eval-attribution-prompt", name: "Experiment — Addendum 11 attribution prompt variants" },

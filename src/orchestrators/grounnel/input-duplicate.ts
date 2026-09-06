@@ -1,6 +1,6 @@
 // Recognises a retrieved page that is a REPUBLICATION of the document under test (spec 015 T002).
 // Pure, deterministic, zero-LLM. See specs/015 tasks.md for the simulation that set the threshold.
-// NOT WIRED YET: call sites need the run's input text threaded into resolveEvidence (spec 015 T009).
+// Wired into resolveEvidence and escalateUnresolved; routes/grounnel.ts threads the input text.
 
 /** Word-shingle width. Below 5 a shared quotation is indistinguishable from a shared document. */
 const SHINGLE_K = 5;
@@ -34,11 +34,25 @@ export function shingles(text: string, k = SHINGLE_K): Set<string> {
   return out;
 }
 
+// The input is re-checked once per source, per claim, per escalation tier — re-shingling it each
+// time dominated retrieval. One slot: concurrent runs thrash it back to today's cost, never wrong.
+let inputCache: { text: string; set: Set<string> } | null = null;
+
+/** Drop the retained set — the run that populated it is over. Callers must run this on every path. */
+export function clearInputShingleCache(): void {
+  inputCache = null;
+}
+function inputShingles(text: string): Set<string> {
+  if (inputCache?.text === text) return inputCache.set;
+  inputCache = { text, set: shingles(text) };
+  return inputCache.set;
+}
+
 /** Fraction of `pageText`'s shingles that also occur in `inputText`. 0 when either is too short. */
 export function inputDuplicateScore(pageText: string, inputText: string): number {
   const page = shingles(pageText);
   if (page.size < MIN_SHINGLES) return 0;
-  const input = shingles(inputText);
+  const input = inputShingles(inputText);
   if (input.size < MIN_SHINGLES) return 0;
   let hits = 0;
   for (const s of page) if (input.has(s)) hits++;

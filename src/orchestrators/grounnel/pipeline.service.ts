@@ -4,7 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
-import { isInputDuplicate } from "./input-duplicate.js";
+import { clearInputShingleCache, isInputDuplicate } from "./input-duplicate.js";
 import { composeUserFacingReason, evidenceMatchesPassage, rewriteUngroundedAffirmativeReason, type InstanceAttribution } from "./gates.js";
 import { runGateChain, type Diagnostic } from "./pipeline-gate-chain.js";
 import {
@@ -148,6 +148,8 @@ export class GrounnelPipelineService {
       } finally {
         // D026 §15 — must clear on every path or the run sticks at "verifying" forever.
         await this.grounnelStore.setEscalating(auditId, false);
+        // The G1 cache holds this document's whole shingle set; nothing else evicts it.
+        clearInputShingleCache();
       }
     } catch (err) {
       // Otherwise status never reaches "failed" on an uncaught error — stuck at its prior status forever.

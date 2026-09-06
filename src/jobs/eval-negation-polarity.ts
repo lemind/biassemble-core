@@ -8,6 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { inngest } from "./client.js";
+import { insertBeforeAnchor } from "./prompt-splice.js";
 import { GeminiProvider } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
 import { DrizzleGrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
@@ -165,10 +166,7 @@ export const VARIANTS: Array<{ id: string; strategy: string; blocks: string[] }>
 
 /** Insert ahead of one section header. Never replaces a range, so no section can be deleted. */
 export function buildVariantPrompt(rendered: string, blocks: string[]): string {
-  if (blocks.length === 0) return rendered;
-  const at = rendered.indexOf(INSERT_BEFORE);
-  if (at === -1) throw new Error(`Cannot splice — anchor "${INSERT_BEFORE}" not found in rendered VERIFY prompt`);
-  return `${rendered.slice(0, at)}${blocks.join("\n\n")}\n\n${rendered.slice(at)}`;
+  return insertBeforeAnchor(rendered, INSERT_BEFORE, blocks);
 }
 
 export const dryRunCallCount = (repeats: number) => VARIANTS.length * RUNNABLE.length * repeats;
