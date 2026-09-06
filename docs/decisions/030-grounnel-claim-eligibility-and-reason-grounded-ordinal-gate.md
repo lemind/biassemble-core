@@ -1944,6 +1944,30 @@ run that spans a deploy.
 **Do not** revisit the trim (Addendum 11), the sentence cap, `ORDINAL_WORDS` (§3e), or
 `subject_entity` (Addenda 6–8) to move this gate. All measured, all refuted.
 
+### Addendum 13 (2026-09-04) — why screen-then-escalate beats a flat N=5 pass
+
+Written retroactively: `eval-grounnel-run.ts` cited "Addendum 13" for its budget constants and no
+such addendum existed, so the calculation was unverifiable (review finding). The figure quoted in
+that comment, 8.7%, was also wrong — it is 7.8% transposed, and 7.8% is a different quantity.
+
+Take a case whose true detection rate has fallen to 0.6 against a `detectionFloor` of 0.8. Compare
+two ways to spend the same number of calls:
+
+| | P(the regression is flagged) |
+|---|---|
+| one flat N=5 pass — fails when <= 3 of 5 are caught | **0.663** |
+| five N=1 screens — each fails when its single run misses | **0.922** |
+
+(0.078 is the remaining case: all five screens pass. That is the number the old comment garbled.)
+
+Screens win because `minCorrectRate: 1.0` makes one miss conclusive, while the N=5 pass has to clear
+a rate floor and tolerates one miss by design. Hence `SCREEN_REPEATS = 1`, `ESCALATION_REPEATS = 5`.
+
+`MAX_ESCALATED_CASES = 8` is a cost bound, not a power one: 8 escalations plus the 28-case screen is
+168 case-runs against the 140 a flat N=5 pass costs, so escalating much past 8 is strictly worse than
+the thing it replaces — and simultaneous failures at that scale are one cause, not N regressions.
+
+
 ### Addendum 14 (2026-09-04) — floors set from measurement; g17's minCorrectRate is inert
 
 Post-fix observations (28-case screen + the N=5 pass, strip deployed): only two claims sit below
@@ -2173,3 +2197,46 @@ both floors, so g17 goes red the moment it calls a true claim false — the prop
 every run. Detection is still recorded per run; it is no longer gated.
 
 Revisit only with a materially new mechanism, not another prompt or payload variation.
+
+### Addendum 22 — review: the eval gate could not fail, and g17 enforced nothing
+
+High-effort review of the branch. Two findings invalidate claims made in Addenda 19–21.
+
+**The suite could not fail in its default mode.** Moving the throw from `!summary.passed` to
+`!summary.bindingPassed` (Addendum 13's screen mode) made quality failures unreportable:
+`bindingFailures` counts only cases where `verdictIsBinding`, which required `runs >= 5`, and the
+screen runs every case once. The ~19 cases with `minCorrectRate: 1.0` and no `false` claim are never
+escalated either, so they could never become binding. `pnpm eval:grounnel` exited 0 with every case
+failing, provided nothing landed `contradicted`. Three reviewers reproduced it independently.
+
+The first fix made those cases binding at N=1. **Review rejected it**: that predicate is the exact
+complement of `rateShaped`, so the 19 cases it made binding are precisely the ones escalation refuses
+to re-run — one stochastic draw would hard-fail the suite with no confirming observation, on cases
+D026 already documents as flaky (g11 found its claim in 2 of 5 attempts; g08 drops a claim entirely).
+
+Shipped instead: **every** screen failure escalates, and binding still requires the repetitions.
+`rateShaped` is gone. Confirmation costs 5 runs only when something already failed, and the
+`MAX_ESCALATED_CASES` cap plus the systemic-failure throw still bound the spend.
+
+**Detection was ungated at N=2..4.** The per-claim loop skipped any claim below
+`MIN_VERDICT_REPETITIONS`, and the pooled check it replaced had applied at every `runs.length > 1`.
+A deliberate 3-repeat measurement of a fully collapsed detector reported green. Now enforced at every
+observation count; `verdictIsBinding` alone marks those results non-confirmatory.
+
+**Addendum 21 was wrong about what g17 still enforces.** `no_false_accusation` is guarded by
+`expected.kind !== "false"` — it protects TRUE claims from being called false. g17 listed only a
+`false` claim, so with both floors at 0 nothing could fire and the case was a permanent green.
+Fixed by listing the text's true claim ("four flights") alongside the false one: the floors stay 0,
+detection stays ungated, and an accusation against the true claim now fails the case.
+
+**Also fixed.** `underObservedFalseClaim` scanned only produced claims, so a `false` claim EXTRACT
+never produced still reported a binding pass — now scanned over the spec. `stripInstanceSelector` now
+requires a determiner before the ordinal and rejects of-phrases and a closed list of compound heads:
+without those, "Tesla took first place", "First Republic Bank", "the third of March", "in the first
+quarter" and "the second world war" stripped into different assertions, each able to mint an
+unrecoverable `contradicted` via the protected `instance_attribution` gate. Review caught two
+regressions in the first attempt — possessive determiners ("SpaceX's fourth launch") stopped
+stripping at all, and the predicate guard let "This was their first win" through because it matched
+only `the`. 23 pinned cases now cover both directions. `isInputDuplicate` re-shingled the whole
+input per source per claim (measured 37x on the retrieval path). Addendum 13 was written; its 8.7%
+figure was a transposed 7.8% and the real number is 66%.
