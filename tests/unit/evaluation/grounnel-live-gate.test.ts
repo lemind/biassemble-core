@@ -139,13 +139,29 @@ describe("repeated runs (D030 §3k): safety is hard, detection is a rate", () =>
     expect(ten.violations.map((v) => v.rule)).toContain("below_detection_rate");
   });
 
-  it("below MIN_VERDICT_REPETITIONS the detection test is skipped and the result is not binding", () => {
+  it("below MIN_VERDICT_REPETITIONS detection is still scored, but the result is not binding", () => {
     const text = "The first man on the Moon was Buzz Aldrin.";
+    // Skipping the check here left N=2..4 with no detection gate at all — a collapsed detector
+    // reported green on a deliberate 3-repeat measurement (review finding).
     const four = evaluateGrounnelRun(runsOf(["contradicted", "supported", "supported", "supported"], text), falseSpec);
     expect(four.verdictIsBinding).toBe(false);
-    expect(four.violations.map((v) => v.rule)).not.toContain("below_detection_rate");
+    expect(four.violations.map((v) => v.rule)).toContain("below_detection_rate");
 
     const five = evaluateGrounnelRun(runsOf(["supported", "supported", "supported", "supported", "supported"], text), falseSpec);
+    expect(five.verdictIsBinding).toBe(true);
+  });
+
+  it("a screen failure is never binding on one draw — it has to be escalated to N=5 first", () => {
+    const spec = { id: "g-must", minCorrectRate: 1.0, claims: [{ match: "located in Paris", kind: "true" as const }] };
+    const text = "The Eiffel Tower is located in Paris.";
+    // Making this binding at N=1 was the first attempt at the screen-mode fix; it hard-failed the
+    // suite on one stochastic draw of a case escalation refuses to re-run. D030 §3m Addendum 22.
+    const one = evaluateGrounnelRun([{ claims: [claim(text, "unsupported")] }], spec);
+    expect(one.ok).toBe(false);
+    expect(one.verdictIsBinding).toBe(false);
+    // Confirmed over the repetitions, it binds and the suite may fail on it.
+    const five = evaluateGrounnelRun(runsOf(["unsupported", "unsupported", "unsupported", "unsupported", "unsupported"], text), spec);
+    expect(five.ok).toBe(false);
     expect(five.verdictIsBinding).toBe(true);
   });
 

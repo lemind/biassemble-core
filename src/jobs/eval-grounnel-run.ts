@@ -31,7 +31,7 @@ const BILLING_RE = /credits are depleted|spend(ing)? cap/i;
 /** Two could be a transient RPM blip; three in a row is the daily cap, which won't clear mid-run. */
 const RATE_LIMIT_ABORT_AFTER = 3;
 
-/** Screen every case once, then re-run only the failures. A 60%-detection case is caught 8.7% of
+/** Screen every case once, then re-run only the failures. A 60%-detection case is flagged 66% of
  * the time by one N=5 pass and 92% by five N=1 screens costing the same — D030 §3m Addendum 13. */
 const SCREEN_REPEATS = 1;
 const ESCALATION_REPEATS = 5;
@@ -150,25 +150,14 @@ export const evalGrounnelRunJob = inngest.createFunction(
     let escalated: string[] = [];
     let systemicFailure: number | null = null;
     if (twoPhase && !abortedAfter) {
-      // A false accusation at N=1 is already conclusive (the run happened, the accusation is real),
-      // so it fails outright. Only detection is rate-shaped and needs confirming. An errored or
-      // rate-limited case is an infrastructure fact, not a quality signal — never re-spend on it.
-      // Only RATE-SHAPED cases are worth 5 more runs. `minCorrectRate: 1.0` means "must never be
-      // wrong", so one failed run already is the verdict — escalating it is incoherent and costs
-      // 5 runs to re-learn what the screen proved. A `false` claim is always rate-shaped
-      // (detectionFloor governs it), and any case that declares a floor below 1.0 is too.
-      const rateShaped = (id: string) => {
-        const g = selected.find((x) => x.id === id);
-        if (!g) return false;
-        const floor = minCorrectRateOverride ?? g.minCorrectRate;
-        return g.claims.some((cl) => cl.kind === "false") || floor < 1;
-      };
+      // EVERY screen failure escalates. Restricting this to rate-shaped cases left the rest stuck
+      // at N=1, permanently non-binding and unable to fail the suite — D030 §3m Addendum 22.
+      // A false accusation is conclusive at N=1 (the run happened, the accusation is real) and
+      // fails outright. An errored or rate-limited case is an infrastructure fact, not a quality
+      // signal — a degraded run SUCCEEDS with rate-limit text, so only `degraded` can see it.
       const screenFailures = cases.filter((c) => !c.ok && c.runs > 0);
       const candidates = screenFailures.filter(
-        // Errored/degraded runs are infrastructure facts, not quality signals — never re-spend on
-        // them. A degraded run SUCCEEDS with rate-limit text instead of verdicts, so `errors` is
-        // empty and only `degraded` can see it.
-        (c) => c.falseAccusations === 0 && (c.errors?.length ?? 0) === 0 && !degradedCaseIds.has(c.id) && rateShaped(c.id)
+        (c) => c.falseAccusations === 0 && (c.errors?.length ?? 0) === 0 && !degradedCaseIds.has(c.id)
       );
       // Counted over EVERY screen failure, not just the escalation candidates: a VERIFY regression
       // that false-accuses everything would otherwise leave candidates empty and never trip this.

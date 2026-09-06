@@ -40,8 +40,6 @@ export const DETECTION_RATE_INITIAL_FLOOR = 0.8;
 
 /** Repetitions required before a result may fail the suite. Below this, a run is indicative only. */
 export const MIN_VERDICT_REPETITIONS = 5;
-/** One-sided significance for "is detection below the floor" (D030 §3m Addendum 9). */
-
 
 /** Per-expected-claim outcome across N repetitions — the distribution, not a collapsed boolean. */
 export interface ClaimOutcome {
@@ -190,7 +188,9 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
     // behind two at 5/5, and separate claims do not share a rate. D030 §3m Addendum 9.
     const floor = spec.detectionFloor ?? DETECTION_RATE_INITIAL_FLOOR;
     for (const c of claims) {
-      if (c.kind !== "false" || c.observations < MIN_VERDICT_REPETITIONS) continue;
+      // Enforced at EVERY observation count. Skipping below MIN_VERDICT_REPETITIONS left N=2..4
+      // with no detection gate at all; `verdictIsBinding` already marks those as non-confirmatory.
+      if (c.kind !== "false" || c.observations === 0) continue;
       // Plain rate against the floor. A significance test at N=5 could only ever reject 0/5 and
       // 1/5, so a floor of 0.7 actually enforced ~0.2 — the floor must mean what it says. Set the
       // floor BELOW measured capability so ordinary variance does not trip it (D030 §3m Addendum 15).
@@ -206,7 +206,10 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
 
   // Binding means the test that matters actually had the observations to run. A false claim EXTRACT
   // produced in only 4 of 6 repetitions leaves detection untested, and untested is not a pass.
-  const underObservedFalseClaim = claims.some((c) => c.kind === "false" && c.observations < MIN_VERDICT_REPETITIONS);
+  // Scanned over spec.claims, not `claims`: one EXTRACT never produced is absent from the latter.
+  const underObservedFalseClaim = spec.claims.some(
+    (e) => e.kind === "false" && (claims.find((c) => c.match === e.match)?.observations ?? 0) < MIN_VERDICT_REPETITIONS
+  );
   const verdictIsBinding = runs.length >= MIN_VERDICT_REPETITIONS && !underObservedFalseClaim;
 
   return { ok: violations.length === 0, verdictIsBinding, runs: runs.length, safetyOk, correctRate, detectionRate, correct, matched, claims, violations };
