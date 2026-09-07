@@ -19,6 +19,9 @@ const EXTRACT_ATTEMPTS = 3;
 // spec.md Assumption 6 — the real number is still an open, ask-first question. This is a
 // placeholder so the service is runnable, not a tuned decision (tasks.md T009).
 const MAX_CLAIMS = 100;
+// EXTRACT emits up to MAX_CLAIMS claims, each with a verbatim source_excerpt, so it is the slowest
+// call in the system: p50 494ms but 19.2s measured on a 13.7KB document. D030 §3m Addendum 23.
+const EXTRACT_TIMEOUT_MS = 60_000;
 // D030 §3b — one Gemini call per claim, unbatched; same value/rationale as SEARCH_CONCURRENCY (pipeline.service.ts).
 const ELIGIBILITY_CONCURRENCY = 20;
 // D031 — a hung fan-out used to run silently until the shared maxDuration:300 kill; 2min leaves room for pipelineService.run() after.
@@ -72,6 +75,7 @@ export class GrounnelExtractService {
         // quotedFields, same mechanism VERIFY's evidence already uses).
         quotedFields: ["source_excerpt"],
         attempts: EXTRACT_ATTEMPTS,
+        timeoutMs: EXTRACT_TIMEOUT_MS,
         module: MODULE,
         operation: "run",
         isValid: (result) => !!result.claims,
