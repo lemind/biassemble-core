@@ -802,7 +802,30 @@ which it was not under the lexical version.
 
 - [x] T039 [W7] **Revert T034 and T037.** No relevance filter on the rerank success path. A relevance
   score cannot gate a fact-checker, and neither proxy for it worked
-- [ ] T040 [W7] Re-run golden + article deployed. **Gate: FA = 0, and g05/g12/g24 back to detecting**
+- [x] T040 [W7] Re-run golden + article deployed. **Gate: FA = 0, and g05/g12/g24 back to detecting**
+  — FA = 0 ✅, g05 and g12 restored ✅, **g24 still failing** ❌
+
+**T040 RESULTS (2026-09-07)** — deploy `dpl_BTChLR…` (a95cc2d), golden `01M1YGNF6M72TXVDVWDBJEDTC0`.
+
+| eval | build | correct | FA | binding failures |
+|---|---|---|---|---|
+| `01M1Y6KR` | pre-T031 | 32/33 | 0 | none |
+| `01M1YEVK` | T031 + filter | 34/45 | 0 | g05, g12, g24 |
+| `01M1YGNF` | T031, no filter | **33/37** | **0** | **g24 only** |
+
+The revert restored g05 and g12 exactly as predicted, confirming the filter was the cause.
+
+**g24 is not a window effect.** "The first computer mouse was wireless" ran with `rerank rows: 3,
+selected: 3` — the pool was 3, so T031's wider window is not in the mechanism. VERIFY's own reason
+gives it away: *"Source A explicitly states 'The Logitech Metaphor, the first wireless mouse (1984)'"*.
+Retrieval surfaced wireless-mouse history pages and VERIFY matched **"first wireless mouse"** to
+**"first computer mouse was wireless"** — a superlative/instance conflation, the same family as g17,
+and `retry_decision` then upgraded `partially_supported → supported`.
+
+**Not established as a regression.** g24 passed a single screening run pre-T031 and is now 1/5; with
+no N=5 baseline, one passing observation is weak evidence either way. What is established: the pool
+size rules out the window, and the failure is a wrong `supported` on a false claim — a miss, not a
+false accusation. FA has now measured **0 across all three evals** and both article runs.
 
 **T039 EVIDENCE (2026-09-07)** — golden run `01M1YEVKJ4ZMKJD10RNBN2VVC0` FAILED: 34/45 correct,
 **FA = 0**, three cases confirmed lost at N=5 — `g05-statue-of-liberty`, `g12-bukowski-death-year`,
