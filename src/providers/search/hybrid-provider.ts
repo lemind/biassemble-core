@@ -4,12 +4,22 @@ import { extractKeyTerms, scoreKeyTermMatches, buildSearchQuery } from "../../li
 // nothing orchestrator-specific), reused here rather than duplicated: same relevance-selection
 // logic pipeline.service.ts's rerankPassages uses for its own LLM-facing excerpt.
 import { buildPassageSentences } from "../../orchestrators/grounnel/passage-sentences.js";
+import { normalizeUrlKey } from "../../orchestrators/grounnel/pipeline-helpers.js";
 import type { SearchProvider, SearchPassage, SourceStatus } from "./search-provider.js";
 import type { GrounnelSearchCallStore } from "../../persistence/grounnel-search-call-store.js";
 
 const MODULE = "hybrid-search-provider";
 const GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const MAX_CANDIDATES = 3;
+// spec 017 T017 — a TARGET of usable pages, not a number of attempts. Fetching exactly N and
+// keeping whatever survived left VERIFY with 1-2 pages while 39% of discovered URLs went untried.
+const MAX_CANDIDATES = 5;
+// Bounds the cost of chasing that target: at most this many attempts per usable page wanted.
+const FETCH_ATTEMPT_BUDGET_MULTIPLIER = 2;
+// spec 017 T029 — a bare-domain title means Gemini could not read the page either; such candidates
+// fetch OK 0.1% of the time (measured, n=4820). See tasks.md T029 for the table.
+const BARE_DOMAIN_TITLE_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
+/** discoverUrls' own fallback title when Gemini omits one — carries no fetchability signal. */
+const GROUNDING_REDIRECT_HOST = "vertexaisearch.cloud.google.com";
 // D026 §6 — Tavily's results are already fetched with text (T031), free to retain more than
 // MAX_CANDIDATES, which still gates DIY's real per-URL network fetches.
 const FALLBACK_RETAINED_CANDIDATES = 8;
@@ -144,6 +154,24 @@ function extractTitleFromHtml(html: string): string | null {
   return decoded.length > 0 ? decoded : null;
 }
 
+/** spec 017 T029 — try bare-domain-titled candidates LAST, never drop them. Stable, so discovery order survives within each group. */
+export function orderByFetchability<T extends { title: string }>(candidates: T[]): T[] {
+  // discoverUrls falls back to domainOf(redirect uri) when Gemini omits a title, which also looks
+  // bare — demoting those would apply Gemini's signal to candidates it says nothing about.
+  const isBare = (t: string): boolean => {
+    const title = t.trim();
+    // An empty title is the same "Gemini could not read it" signal as a bare domain — without this
+    // it fails the regex and sorts FIRST, inverting the whole point (review finding).
+    if (title.length === 0) return true;
+    return title !== GROUNDING_REDIRECT_HOST && BARE_DOMAIN_TITLE_RE.test(title);
+  };
+  // Partition, not a comparator: the predicate runs n times instead of n log n, and stays stable.
+  const bare: T[] = [];
+  const rich: T[] = [];
+  for (const c of candidates) (isBare(c.title) ? bare : rich).push(c);
+  return [...rich, ...bare];
+}
+
 /** D021 — Gemini's google_search for URL discovery only, never content/verdicts (D019 §3 still applies). DIY-fetches top candidates; falls back to `fallback` only when every DIY attempt fails. */
 export class HybridSearchProvider implements SearchProvider {
   constructor(
@@ -153,21 +181,76 @@ export class HybridSearchProvider implements SearchProvider {
     private readonly searchCallStore: GrounnelSearchCallStore
   ) {}
 
-  async search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily"; maxCandidates?: number }): Promise<SearchPassage[]> {
+  async search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily"; maxCandidates?: number; failedUrlKeys?: Set<string> }): Promise<SearchPassage[]> {
     if (context?.searchFlow === "tavily") {
       return this.runFallback(query, context);
     }
 
-    const candidates = await this.discoverUrls(query);
+    const candidates = orderByFetchability(await this.discoverUrls(query));
     // D026 §13 — escalation-only override of MAX_CANDIDATES; a fresh discoverUrls() call above,
     // so a higher tier may surface different/more candidates than a prior tier's discovery did
     // (live search isn't deterministic — same reason every other variance in this pipeline exists).
-    const fetchCap = context?.maxCandidates ?? MAX_CANDIDATES;
-    // D026 §19 — everything discoverUrls() returned beyond fetchCap was never fetched at all and,
-    // until now, was silently discarded — closing the gap T053's own trigger first named
-    // ("discovery returned 7 candidates, only 3 ever got fetched") without a way to see the other 4.
+    const usableTarget = context?.maxCandidates ?? MAX_CANDIDATES;
+    const attemptBudget = Math.min(candidates.length, usableTarget * FETCH_ATTEMPT_BUDGET_MULTIPLIER);
+
+    // spec 017 T017 — waves, not one flat slice: parallel batches sized to the shortfall until
+    // `usableTarget` pages actually resolve to text, bounded by attemptBudget. Fetching a fixed N
+    // and keeping the survivors is what left VERIFY with 1-2 pages (D026 §19's own gap).
+    const attempted: SearchPassage[] = [];
+    let cursor = 0;
+    let usable = 0;
+    while (usable < usableTarget && cursor < candidates.length && attempted.length < attemptBudget) {
+      const waveSize = Math.min(usableTarget - usable, candidates.length - cursor, attemptBudget - attempted.length);
+      const wave = candidates.slice(cursor, cursor + waveSize);
+      cursor += waveSize;
+      // Granularity, decided (D023 §6): one row per attempted DIY candidate — real per-URL
+      // status/timing, matching this method's own "returns every attempted source" contract.
+      const results = await Promise.all(
+        wave.map(async (candidate) => {
+          const t0 = Date.now();
+          const result: SearchPassage = { ...(await this.fetchCandidate(candidate, context?.failedUrlKeys)), retrievalMethod: "diy_fetch" };
+          if (context) {
+            // D026 §20 — reviewed finding: a blind `.slice(0, N)` character prefix captured mostly
+            // nav chrome on long pages (Wikipedia's "Jump to content / Main menu" before any real
+            // text). Select by relevance instead — the same claim-key-term sentence scoring VERIFY's
+            // own passage pooling uses — bounded by sentence count, never by character position.
+            const excerpt =
+              result.status === "ok" && result.text
+                ? buildPassageSentences(query, result.text)
+                    .map((s) => s.text)
+                    .join(" ")
+                : undefined;
+            this.searchCallStore.recordSearchCall({
+              runId: context.runId,
+              claimId: context.claimId,
+              query,
+              callType: "diy_fetch",
+              url: result.url,
+              resultCount: 1,
+              // Review finding — a memo skip is NOT a fresh 403. Recording it as one would inflate
+              // the blocked rate in the very census used to judge whether this change worked.
+              status: result.memoSkipped ? "not_attempted" : result.status,
+              durationMs: Date.now() - t0,
+              excerpt,
+            });
+          }
+          // spec 017 T017 (review finding) — memoize ONLY permanent failures. `unreachable` is a
+          // mixed bag: 404, 429, 5xx and timeouts all land there, and a timeout keeps the opaque
+          // redirect url, which could never match anyway. Losing a good page costs more than a refetch.
+          if (context?.failedUrlKeys && (result.status === "blocked" || result.status === "paywalled")) {
+            context.failedUrlKeys.add(normalizeUrlKey(result.url));
+          }
+          return result;
+        })
+      );
+      attempted.push(...results);
+      usable += results.filter((r) => r.status === "ok" && r.text).length;
+    }
+
+    // D026 §19 — candidates the loop never needed stay visible, so "discovery found 10, we used 4"
+    // is still answerable from telemetry.
     if (context) {
-      for (const skipped of candidates.slice(fetchCap)) {
+      for (const skipped of candidates.slice(cursor)) {
         this.searchCallStore.recordSearchCall({
           runId: context.runId,
           claimId: context.claimId,
@@ -180,38 +263,6 @@ export class HybridSearchProvider implements SearchProvider {
         });
       }
     }
-    // Granularity, decided (D023 §6): one row per attempted DIY candidate — real per-URL
-    // status/timing, matching this method's own "returns every attempted source" contract.
-    const attempted = await Promise.all(
-      candidates.slice(0, fetchCap).map(async (candidate) => {
-        const t0 = Date.now();
-        const result: SearchPassage = { ...(await this.fetchCandidate(candidate)), retrievalMethod: "diy_fetch" };
-        if (context) {
-          // D026 §20 — reviewed finding: a blind `.slice(0, N)` character prefix captured mostly
-          // nav chrome on long pages (Wikipedia's "Jump to content / Main menu" before any real
-          // text). Select by relevance instead — the same claim-key-term sentence scoring VERIFY's
-          // own passage pooling uses — bounded by sentence count, never by character position.
-          const excerpt =
-            result.status === "ok" && result.text
-              ? buildPassageSentences(query, result.text)
-                  .map((s) => s.text)
-                  .join(" ")
-              : undefined;
-          this.searchCallStore.recordSearchCall({
-            runId: context.runId,
-            claimId: context.claimId,
-            query,
-            callType: "diy_fetch",
-            url: result.url,
-            resultCount: 1,
-            status: result.status,
-            durationMs: Date.now() - t0,
-            excerpt,
-          });
-        }
-        return result;
-      })
-    );
 
     // D026 §10 — rank before picking, same as runFallback (D026 §6): discovery order isn't a
     // relevance signal, just whatever order Gemini's grounding search happened to return.
@@ -337,7 +388,7 @@ export class HybridSearchProvider implements SearchProvider {
     return [];
   }
 
-  private async fetchCandidate(candidate: { url: string; title: string }): Promise<SearchPassage> {
+  private async fetchCandidate(candidate: { url: string; title: string }, failedUrlKeys?: Set<string>): Promise<SearchPassage> {
     let lastNetworkError: unknown;
     for (let attempt = 1; attempt <= CANDIDATE_FETCH_ATTEMPTS; attempt++) {
       let response: Response;
@@ -376,9 +427,16 @@ export class HybridSearchProvider implements SearchProvider {
         continue;
       }
 
+      const resolvedUrl = response.url || candidate.url;
+      // spec 017 T017 — the discovery URL is an opaque grounding redirect, so this is the FIRST
+      // point the real page is known. Bail before downloading a body already known to be unusable.
+      if (failedUrlKeys?.has(normalizeUrlKey(resolvedUrl))) {
+        logger.info({ module: MODULE, operation: "fetchCandidate", url: resolvedUrl }, "Skipping a page that already failed earlier in this run");
+        return { url: resolvedUrl, title: candidate.title, domain: domainOf(resolvedUrl), status: "blocked", text: null, memoSkipped: true };
+      }
       const html = await response.text();
       const text = extractTextFromHtml(html);
-      const finalUrl = response.url || candidate.url;
+      const finalUrl = resolvedUrl;
       // The real fetched page's own <title> tag beats discoverUrls()'s domain-derived guess —
       // real HTML is only in hand here, not at discovery time.
       const title = extractTitleFromHtml(html) ?? candidate.title;

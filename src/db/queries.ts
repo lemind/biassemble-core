@@ -683,6 +683,8 @@ export async function insertGrounnelLlmCall(data: {
   promptVersion: string;
   rawResponse: string | null;
   parsedOutput: unknown;
+  // spec 014 T021 — VERIFY's rendered input; null for every other stage.
+  inputPayload?: unknown;
   status: "success" | "timeout" | "error";
   failureType: "schema_validation" | "parse_error" | "provider_error" | "timeout" | "other" | null;
   inputTokens: number | null;
@@ -751,7 +753,7 @@ export async function insertGrounnelGateEvents(
   rows: Array<{
     runId: string;
     claimId: string;
-    gate: "reason_consistency" | "implicit_negation" | "reason_year" | "reason_ordinal" | "instance_attribution" | "subject_entity" | "counterfact_ignored" | "contradiction_evidence" | "claim_reason_overlap" | "numeric" | "year" | "retry_reconciliation" | "escalation_replacement" | "retry_decision";
+    gate: "reason_consistency" | "implicit_negation" | "reason_year" | "reason_ordinal" | "instance_attribution" | "subject_entity" | "counterfact_ignored" | "contradiction_evidence" | "affirmation_evidence" | "claim_reason_overlap" | "numeric" | "year" | "retry_reconciliation" | "escalation_replacement" | "retry_decision";
     verdictBefore: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
     verdictAfter: "supported" | "partially_supported" | "unsupported" | "contradicted" | "unverifiable" | "excluded" | null;
     overridden: boolean;

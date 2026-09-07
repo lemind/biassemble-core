@@ -54,10 +54,17 @@ async function main() {
   console.log("\n─── Grounnel live eval summary ───");
   console.log(`Aggregate correct rate: ${summary.totalMatched === 0 ? "n/a" : (summary.totalCorrect / summary.totalMatched).toFixed(2)} (${summary.totalCorrect}/${summary.totalMatched})`);
   console.log(`False positives (true/silent claim marked contradicted): ${summary.totalFalseAccusations}`);
+  console.log(`Binding failures: ${summary.bindingFailures}   incomplete cases: ${summary.incompleteCases}`);
 
-  if (!summary.passed) {
+  // Same gate as the Inngest job — `summary.passed` alone exits 1 on a single-draw coin flip, and
+  // two entrypoints into one scorer must not disagree about what a failure is (D030 §3m Addendum 9).
+  if (!summary.bindingPassed) {
     console.error("\nFAILED");
     process.exit(1);
+  }
+  if (!summary.verdictIsBinding) {
+    console.log(`\nINDICATIVE ONLY — no binding failure, but some case(s) lacked the observations to be a verdict.`);
+    return;
   }
   console.log("\nPASSED");
 }

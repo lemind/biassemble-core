@@ -19,16 +19,39 @@ const EXTRACT_ATTEMPTS = 3;
 // spec.md Assumption 6 — the real number is still an open, ask-first question. This is a
 // placeholder so the service is runnable, not a tuned decision (tasks.md T009).
 const MAX_CLAIMS = 100;
+// EXTRACT emits up to MAX_CLAIMS claims, each with a verbatim source_excerpt, so it is the slowest
+// call in the system: p50 494ms but 19.2s measured on a 13.7KB document. D030 §3m Addendum 23.
+const EXTRACT_TIMEOUT_MS = 60_000;
 // D030 §3b — one Gemini call per claim, unbatched; same value/rationale as SEARCH_CONCURRENCY (pipeline.service.ts).
 const ELIGIBILITY_CONCURRENCY = 20;
+// spec 017 T012 — cap so a runaway EXTRACT list cannot flood the per-entity slot allocator.
+const MAX_SUBJECT_ENTITIES = 4;
 // D031 — a hung fan-out used to run silently until the shared maxDuration:300 kill; 2min leaves room for pipelineService.run() after.
 const ELIGIBILITY_PHASE_TIMEOUT_MS = 2 * 60 * 1000;
+
+/** Spec 017 T012 — a claim naming several checkable things ("CSS before the Internet"). Returns []
+ *  unless at least two distinct entities survive, so single-entity claims keep today's path exactly. */
+export function normalizeSubjectEntities(raw: string[], subjectEntity: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of [subjectEntity, ...raw]) {
+    const t = e.trim();
+    const key = t.toLowerCase();
+    if (t.length === 0 || seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length === MAX_SUBJECT_ENTITIES) break;
+  }
+  return out.length >= 2 ? out : [];
+}
 
 const ExtractResponseSchema = z.object({
   // .default("") — a missing/malformed excerpt must not drop the whole claim via repair.ts's
   // salvageArrays (D028 §4); empty string reads as no-excerpt below. subject_entity (g17) follows
   // the same convention — "" just means EXTRACT found no distinguishing entity for this claim.
-  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default(""), subject_entity: z.string().default("") })),
+  // subject_entities (spec 017 T012) — .catch, not .default: .default only covers an ABSENT field,
+  // and a comma-joined string (the usual list malformation) would drop the claim via salvageArrays.
+  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default(""), subject_entity: z.string().default(""), subject_entities: z.array(z.string()).catch([]) })),
   truncated: z.boolean(),
 });
 
@@ -72,6 +95,7 @@ export class GrounnelExtractService {
         // quotedFields, same mechanism VERIFY's evidence already uses).
         quotedFields: ["source_excerpt"],
         attempts: EXTRACT_ATTEMPTS,
+        timeoutMs: EXTRACT_TIMEOUT_MS,
         module: MODULE,
         operation: "run",
         isValid: (result) => !!result.claims,
@@ -107,6 +131,9 @@ export class GrounnelExtractService {
       // g17 — no substring check against `text` (unlike sourceExcerpt): a canonical name, not a
       // verbatim quote, so it can legitimately differ from the article's own wording.
       subjectEntity: c.subject_entity.trim(),
+      // spec 017 T012 — only a genuine multi-topic list survives: deduped case-insensitively,
+      // capped, and dropped entirely below 2 so a one-entity echo cannot change any behaviour.
+      subjectEntities: normalizeSubjectEntities(c.subject_entities, c.subject_entity),
     }));
     const { id } = await this.grounnelStore.createAudit({ id: runId, text, maxClaims: MAX_CLAIMS, claims, truncated });
 

@@ -1,0 +1,954 @@
+[
+  {
+    "variant": "v0-control",
+    "verdict": "FAIL — controls broken: c1-affirmative-not-conflict, c5-narrower-same-predicate",
+    "negation": "12/24",
+    "reporting": "0/12",
+    "blockB": "6/6",
+    "control": "9/15",
+    "per": [
+      {
+        "id": "n1-pentagon-investigating",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n2-decision-under-review",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "n3-measure-considered",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n4-pentagon-concluded",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n5-acquisition-announced",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n6-law-approved",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n7-statement-not-finding",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n8-finding-issued",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r1-confirm-plus-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r2-confirm-post-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r3-posts-did-not-say",
+        "role": "reporting",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "r4-object-fact-only",
+        "role": "reporting",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r5-isp100-taught-vs-required",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "r6-mona-lisa-why-vs-theft",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c1-affirmative-not-conflict",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "c2-negated-unrelated",
+        "role": "control",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c3-finding-beside-hedging",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "c5-narrower-same-predicate",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c1prime-affirmative-object-fact",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      }
+    ]
+  },
+  {
+    "variant": "vA-negation",
+    "verdict": "FAIL — controls broken: c5-narrower-same-predicate",
+    "negation": "12/24",
+    "reporting": "3/12",
+    "blockB": "6/6",
+    "control": "12/15",
+    "per": [
+      {
+        "id": "n1-pentagon-investigating",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n2-decision-under-review",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "n3-measure-considered",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n4-pentagon-concluded",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n5-acquisition-announced",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n6-law-approved",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n7-statement-not-finding",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n8-finding-issued",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r1-confirm-plus-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "r2-confirm-post-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r3-posts-did-not-say",
+        "role": "reporting",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "r4-object-fact-only",
+        "role": "reporting",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r5-isp100-taught-vs-required",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "r6-mona-lisa-why-vs-theft",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c1-affirmative-not-conflict",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "partially_supported",
+          "partially_supported",
+          "partially_supported"
+        ]
+      },
+      {
+        "id": "c2-negated-unrelated",
+        "role": "control",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c3-finding-beside-hedging",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "c5-narrower-same-predicate",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c1prime-affirmative-object-fact",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      }
+    ]
+  },
+  {
+    "variant": "vB-predicate",
+    "verdict": "FAIL — controls broken: c1-affirmative-not-conflict, c5-narrower-same-predicate",
+    "negation": "12/24",
+    "reporting": "0/12",
+    "blockB": "6/6",
+    "control": "9/15",
+    "per": [
+      {
+        "id": "n1-pentagon-investigating",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n2-decision-under-review",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "n3-measure-considered",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n4-pentagon-concluded",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n5-acquisition-announced",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n6-law-approved",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n7-statement-not-finding",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n8-finding-issued",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r1-confirm-plus-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r2-confirm-post-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r3-posts-did-not-say",
+        "role": "reporting",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "r4-object-fact-only",
+        "role": "reporting",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r5-isp100-taught-vs-required",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "r6-mona-lisa-why-vs-theft",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c1-affirmative-not-conflict",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "c2-negated-unrelated",
+        "role": "control",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c3-finding-beside-hedging",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "c5-narrower-same-predicate",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c1prime-affirmative-object-fact",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      }
+    ]
+  },
+  {
+    "variant": "vAB-both",
+    "verdict": "FAIL — controls broken: c5-narrower-same-predicate",
+    "negation": "15/24",
+    "reporting": "0/12",
+    "blockB": "6/6",
+    "control": "12/15",
+    "per": [
+      {
+        "id": "n1-pentagon-investigating",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n2-decision-under-review",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "n3-measure-considered",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "n4-pentagon-concluded",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n5-acquisition-announced",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n6-law-approved",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "n7-statement-not-finding",
+        "role": "negation",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "partially_supported",
+          "partially_supported",
+          "partially_supported"
+        ]
+      },
+      {
+        "id": "n8-finding-issued",
+        "role": "negation",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r1-confirm-plus-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r2-confirm-post-rebuttal",
+        "role": "reporting",
+        "expect": "supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r3-posts-did-not-say",
+        "role": "reporting",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "r4-object-fact-only",
+        "role": "reporting",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "r5-isp100-taught-vs-required",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "r6-mona-lisa-why-vs-theft",
+        "role": "block-b",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c1-affirmative-not-conflict",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "partially_supported",
+          "partially_supported",
+          "partially_supported"
+        ]
+      },
+      {
+        "id": "c2-negated-unrelated",
+        "role": "control",
+        "expect": "unsupported",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "unsupported",
+          "unsupported",
+          "unsupported"
+        ]
+      },
+      {
+        "id": "c3-finding-beside-hedging",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      },
+      {
+        "id": "c5-narrower-same-predicate",
+        "role": "control",
+        "expect": "partially_supported",
+        "n": 3,
+        "hits": 0,
+        "got": [
+          "supported",
+          "supported",
+          "supported"
+        ]
+      },
+      {
+        "id": "c1prime-affirmative-object-fact",
+        "role": "control",
+        "expect": "contradicted",
+        "n": 3,
+        "hits": 3,
+        "got": [
+          "contradicted",
+          "contradicted",
+          "contradicted"
+        ]
+      }
+    ]
+  }
+]

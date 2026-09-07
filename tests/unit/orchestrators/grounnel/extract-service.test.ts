@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { GrounnelExtractService } from "../../../../src/orchestrators/grounnel/extract.service.js";
+import { GrounnelExtractService, normalizeSubjectEntities } from "../../../../src/orchestrators/grounnel/extract.service.js";
 import { RedisGrounnelStore } from "../../../../src/persistence/grounnel-store.js";
 import { PromptRegistry } from "../../../../src/prompts/registry.js";
 import { RateLimitError } from "../../../../src/providers/gemini.js";
@@ -454,5 +454,48 @@ describe("GrounnelExtractService (T009)", () => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+describe("spec 017 T012 — subject_entities for multi-topic claims", () => {
+  it("keeps a genuine comparison, subjectEntity first", () => {
+    expect(normalizeSubjectEntities(["the Internet"], "CSS")).toEqual(["CSS", "the Internet"]);
+  });
+
+  it("returns [] when only one entity survives, so single-subject claims keep today's path", () => {
+    // The dangerous shape: EXTRACT echoing the subject back as a one-item list.
+    expect(normalizeSubjectEntities(["CSS"], "CSS")).toEqual([]);
+    expect(normalizeSubjectEntities([], "CSS")).toEqual([]);
+    expect(normalizeSubjectEntities([], "")).toEqual([]);
+  });
+
+  it("dedupes case-insensitively and drops blanks rather than counting them toward the pair", () => {
+    expect(normalizeSubjectEntities(["  css  ", "", "   "], "CSS")).toEqual([]);
+    expect(normalizeSubjectEntities(["the internet", "The Internet"], "CSS")).toEqual(["CSS", "the internet"]);
+  });
+
+  it("caps the list at four so a runaway EXTRACT response cannot flood slot allocation", () => {
+    const out = normalizeSubjectEntities(["B", "C", "D", "E", "F"], "A");
+    expect(out).toEqual(["A", "B", "C", "D"]);
+  });
+
+  it("parses subject_entities off the model response and puts it on the pipeline claim", async () => {
+    const provider = new MockProvider();
+    provider.setDefault({
+      claims: [
+        { claim: "CSS was invented before the Internet.", source_excerpt: "", subject_entity: "CSS", subject_entities: ["CSS", "the Internet"] },
+        { claim: "The Great Fire of London happened in 1666.", source_excerpt: "", subject_entity: "Great Fire of London" },
+      ],
+      truncated: false,
+    });
+    const { service } = makeService(provider);
+    const { pendingClaims } = await service.run("CSS was invented before the Internet. The Great Fire of London happened in 1666.");
+
+    const comparative = pendingClaims.find((c) => c.text.startsWith("CSS"))!;
+    expect(comparative.subjectEntities).toEqual(["CSS", "the Internet"]);
+    // Absent field: back-compat, and the claim keeps its single-entity behaviour.
+    const single = pendingClaims.find((c) => c.text.startsWith("The Great Fire"))!;
+    expect(single.subjectEntities).toEqual([]);
+    expect(single.subjectEntity).toBe("Great Fire of London");
   });
 });

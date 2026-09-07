@@ -173,11 +173,16 @@
     {
       "id": "g17-wright-brothers-ordinal",
       "text": "On December 17, 1903, the Wright brothers made the first successful powered airplane flights near Kitty Hawk, North Carolina. The brothers made four flights that day, each longer than the last. The first flight covered 852 feet and lasted 59 seconds.",
-      "minCorrectRate": 1.0,
+      "minCorrectRate": 0,
+      "detectionFloor": 0,
       "claims": [
         {
           "match": "first flight covered 852 feet",
           "kind": "false"
+        },
+        {
+          "match": "four flights",
+          "kind": "true"
         }
       ]
     },
@@ -240,7 +245,7 @@
     {
       "id": "g22-subject-entity-low-context-subclause",
       "text": "The Wright brothers achieved the first successful powered flight in 1903. The fourth and final flight that day covered 852 feet.",
-      "minCorrectRate": 1.0,
+      "minCorrectRate": 0.6,
       "claims": [
         {
           "match": "fourth and final flight that day covered 852 feet",
@@ -263,6 +268,7 @@
       "id": "g24-mouse-superlative",
       "text": "The first computer mouse was wireless. It was invented by Douglas Engelbart at SRI International and first demonstrated in 1968.",
       "minCorrectRate": 1.0,
+      "detectionFloor": 0.6,
       "claims": [
         {
           "match": "first computer mouse was wireless",

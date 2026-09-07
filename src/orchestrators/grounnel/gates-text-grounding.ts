@@ -191,15 +191,14 @@ export interface GateOneResult {
   reason: "evidence_null" | "evidence_not_grounded" | null;
 }
 
-/** Gate #1 — contradiction evidence gate (D019 §2, tasks.md T003). Only fires on `contradicted`. */
-export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResult {
-  if (input.verdict !== "contradicted") {
+/** The evidence floor itself: a verdict it applies to must cite evidence grounded in the passage. */
+function evidenceFloorGate(input: GateOneInput, appliesTo: readonly string[]): GateOneResult {
+  if (!appliesTo.includes(input.verdict)) {
     return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
   }
   // Trimmed, not just truthy — a whitespace-only string is truthy but carries no real content.
   const hasContent = !!input.evidence?.trim();
-  const evidenceOk = hasContent && evidenceMatchesPassage(input.evidence!, input.passageText);
-  if (evidenceOk) {
+  if (hasContent && evidenceMatchesPassage(input.evidence!, input.passageText)) {
     return { verdict: input.verdict, evidence: input.evidence, overridden: false, reason: null };
   }
   return {
@@ -208,4 +207,15 @@ export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResu
     overridden: true,
     reason: hasContent ? "evidence_not_grounded" : "evidence_null",
   };
+}
+
+/** Gate #1 — contradiction evidence gate (D019 §2, tasks.md T003). Only fires on `contradicted`. */
+export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResult {
+  return evidenceFloorGate(input, ["contradicted"]);
+}
+
+/** Affirmation evidence floor (spec 015 G2) — same floor, affirmative verdicts. VERIFY's own
+ * EVIDENCE rule requires citations for these; 330 of 5,979 shipped without any. */
+export function applyAffirmationEvidenceGate(input: GateOneInput): GateOneResult {
+  return evidenceFloorGate(input, ["supported", "partially_supported"]);
 }

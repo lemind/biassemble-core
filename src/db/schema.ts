@@ -392,6 +392,10 @@ export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   promptVersion: text("prompt_version").notNull(),
   rawResponse: text("raw_response"),
   parsedOutput: jsonb("parsed_output"),
+  // spec 014 T021 — the exact rendered input for stage='verify', so a failure is replayable. Nothing
+  // else persists it: a live false accusation was permanently unreconstructible without this.
+  // Batch-level (the call is the replay unit), bounded by pool size x MAX_SENTENCES.
+  inputPayload: jsonb("input_payload"),
   status: text("status", { enum: ["success", "timeout", "error"] }).notNull(),
   failureType: text("failure_type", { enum: ["schema_validation", "parse_error", "provider_error", "timeout", "other"] }),
   inputTokens: integer("input_tokens"),
@@ -455,9 +459,10 @@ export const grounnelSearchPages = grounnel.table("grounnel_search_pages", {
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id").notNull(),
   url: text("url").notNull(),
-  // Capped, cleaned extracted text — exactly what downstream logic (reranking, passage selection)
-  // actually received, not raw HTML and not the full page (RERANK_EXCERPT_LENGTH-scale, not a
-  // full-article dump — see pipeline.service.ts).
+  // Capped, cleaned extracted text as SEARCH produced it. NOT what VERIFY reads: it is selected
+  // against the search query and newline-collapsed, so sentence boundaries and {source, n}
+  // numbering differ from the rendered bundle (spec 014 T014 — replay gave n=4 where VERIFY cited
+  // n=6). For VERIFY's actual input see grounnel_llm_calls.input_payload.
   excerpt: text("excerpt").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -478,7 +483,7 @@ export const grounnelRerankDecisions = grounnel.table("grounnel_rerank_decisions
   lexicalScore: doublePrecision("lexical_score").notNull(),
   llmScore: doublePrecision("llm_score").notNull(),
   combinedScore: doublePrecision("combined_score").notNull(),
-  // Whether this candidate survived resolveEvidence's MAX_VERIFY_PASSAGES slice, i.e. whether
+  // Whether this candidate survived resolveEvidence's slice, i.e. whether
   // VERIFY actually saw it — the whole point of this table is answering "was it even considered."
   selected: boolean("selected").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -498,7 +503,7 @@ export const grounnelGateEvents = grounnel.table("grounnel_gate_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => grounnelRuns.runId, { onDelete: "cascade" }),
   claimId: uuid("claim_id").notNull().references(() => grounnelClaims.claimId, { onDelete: "cascade" }),
-  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "reason_ordinal", "instance_attribution", "subject_entity", "counterfact_ignored", "contradiction_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation", "escalation_replacement", "retry_decision"] }).notNull(),
+  gate: text("gate", { enum: ["reason_consistency", "implicit_negation", "reason_year", "reason_ordinal", "instance_attribution", "subject_entity", "counterfact_ignored", "contradiction_evidence", "affirmation_evidence", "claim_reason_overlap", "numeric", "year", "retry_reconciliation", "escalation_replacement", "retry_decision"] }).notNull(),
   // D032 §4 #8/#9/T5 — "excluded" listed for type parity only (GateEventInput uses the shared
   // Verdict type); never written here, excluded claims never reach the gate chain.
   verdictBefore: text("verdict_before", { enum: ["supported", "partially_supported", "unsupported", "contradicted", "unverifiable", "excluded"] }),

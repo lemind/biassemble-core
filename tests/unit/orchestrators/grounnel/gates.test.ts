@@ -1,5 +1,9 @@
+import { contradictionIsProtected, type Verdict } from "../../../../src/orchestrators/grounnel/pipeline-helpers.js";
+import type { GateEventInput } from "../../../../src/persistence/grounnel-gate-event-store.js";
 import { describe, it, expect } from "vitest";
+import { runGateChain } from "../../../../src/orchestrators/grounnel/pipeline-gate-chain.js";
 import {
+  applyAffirmationEvidenceGate,
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
@@ -1836,5 +1840,118 @@ describe("rewriteUngroundedAffirmativeReason — D031, real live-test finding: u
   it("real captured example: the second Wright-brothers claim from the same live run", () => {
     const result = rewriteUngroundedAffirmativeReason("unverifiable", 0, "Multiple sources state the first flight covered 120 feet.");
     expect(result).toBe(REPLACEMENT);
+  });
+});
+
+describe("applyAffirmationEvidenceGate (spec 015 G2)", () => {
+  const PASSAGE = "The SCA is an international non-profit volunteer educational organization.";
+
+  it("downgrades supported with null evidence to unsupported", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: null, passageText: PASSAGE });
+    expect(r).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_null" });
+  });
+
+  it("downgrades supported with whitespace-only evidence", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: "   \n ", passageText: PASSAGE });
+    expect(r.verdict).toBe("unsupported");
+    expect(r.reason).toBe("evidence_null");
+  });
+
+  it("downgrades partially_supported with null evidence", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "partially_supported", evidence: null, passageText: PASSAGE });
+    expect(r.verdict).toBe("unsupported");
+    expect(r.overridden).toBe(true);
+  });
+
+  it("downgrades evidence that is not grounded in the passage", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: "Something never stated anywhere.", passageText: PASSAGE });
+    expect(r).toEqual({ verdict: "unsupported", evidence: null, overridden: true, reason: "evidence_not_grounded" });
+  });
+
+  it("leaves supported alone when the evidence is grounded", () => {
+    const r = applyAffirmationEvidenceGate({ verdict: "supported", evidence: PASSAGE, passageText: PASSAGE });
+    expect(r).toEqual({ verdict: "supported", evidence: PASSAGE, overridden: false, reason: null });
+  });
+
+  // Downgrade-only, and never touches the contradiction side — that is gate #1's job.
+  it.each(["contradicted", "unsupported", "unverifiable", "excluded"] as const)("does not fire on %s", (verdict) => {
+    const r = applyAffirmationEvidenceGate({ verdict, evidence: null, passageText: PASSAGE });
+    expect(r).toEqual({ verdict, evidence: null, overridden: false, reason: null });
+  });
+});
+
+describe("spec 017 T026 — REVERTED: only the gate that PRODUCED the contradiction protects it", () => {
+  const ev = (gate: string, verdictBefore: Verdict, verdictAfter: Verdict, overridden = true) =>
+    ({ gate, verdictBefore, verdictAfter, overridden, reason: null }) as GateEventInput;
+
+  it("does NOT protect the Wright/A trail — an earlier protected gate cannot confer immunity", () => {
+    // Wright/A is real and the verdict there was correct, but its trail is byte-identical in shape
+    // AND reason code (instance_attribution_conflict) to a numeric false accusation downstream of
+    // an "I can't tell" abstention. With no way to tell them apart, protecting is the unsafe side:
+    // protectedContradictionClaimIds also blocks escalation, so a wrong verdict would ship with
+    // neither reconciliation nor a second retrieval pass. Reverted on review.
+    const trail = [
+      ev("instance_attribution", "supported", "unverifiable"),
+      ev("retry_decision", "unverifiable", "contradicted"),
+    ];
+    expect(contradictionIsProtected(trail)).toBe(false);
+  });
+
+  it("still protects the original shape — the protected gate IS the originating one", () => {
+    expect(contradictionIsProtected([ev("reason_ordinal", "unsupported", "contradicted")])).toBe(true);
+  });
+
+  it("does not protect a contradiction no protected gate contributed to", () => {
+    const trail = [ev("numeric", "supported", "unsupported"), ev("retry_decision", "unsupported", "contradicted")];
+    expect(contradictionIsProtected(trail)).toBe(false);
+  });
+
+  it("does not protect when a protected gate fired AFTER the contradiction either", () => {
+    const trail = [ev("retry_decision", "unsupported", "contradicted"), ev("instance_attribution", "contradicted", "unverifiable")];
+    expect(contradictionIsProtected(trail)).toBe(false);
+  });
+
+  it("returns false when nothing ever produced a contradiction", () => {
+    expect(contradictionIsProtected([ev("numeric", "supported", "unsupported")])).toBe(false);
+    expect(contradictionIsProtected([])).toBe(false);
+  });
+});
+
+describe("implicit_negation window (spec 017 T036)", () => {
+  // This is the only gate that UPGRADES to `contradicted`, i.e. the only one that manufactures an
+  // accusation. Condition 3's precision comes from a NARROW passage corpus; T031 widened what VERIFY
+  // reads to ~24 pages, so the gate reads its own bounded slice instead (Cardinal Rule).
+  const base = {
+    verdict: "unsupported" as const,
+    reason: "The first powered flight was at Kill Devil Hills, not Kitty Hawk.",
+    evidence: null,
+    claimText: "The Wright brothers' 1903 Flyer made the first powered flight at Kitty Hawk.",
+    subjectEntity: "",
+    reasonSupportsVerdict: null,
+    instanceAttribution: null,
+  };
+
+  // Asserted on the gate's own event, not the chain verdict: with evidence null, gate #1 correctly
+  // reverts any upgrade, which would mask what this gate decided.
+  const negationVerdict = (input: { passageText: string; negationPassageText: string }): string =>
+    runGateChain({ ...base, ...input }).gateEvents.find((e) => e.gate === "implicit_negation")!.verdictAfter;
+
+  it("does not upgrade when the second entity appears only outside the negation window", () => {
+    expect(
+      negationVerdict({
+        // The wide corpus gate #1 uses DOES contain "1903" — that must not feed condition 3.
+        passageText: "Some unrelated page.\n\nAnother page mentioning 1903 and the Wright brothers.",
+        negationPassageText: "Some unrelated page about coastal geography.",
+      })
+    ).toBe("unsupported");
+  });
+
+  it("still upgrades when the second entity is inside the negation window", () => {
+    expect(
+      negationVerdict({
+        passageText: "Some unrelated page about coastal geography.",
+        negationPassageText: "The 1903 Flyer lifted off from the sands below Kill Devil Hills.",
+      })
+    ).toBe("contradicted");
   });
 });

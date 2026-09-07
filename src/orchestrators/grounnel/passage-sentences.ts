@@ -83,7 +83,7 @@ export function buildPassageSentences(claimText: string, passageText: string, ma
   });
 }
 
-/** Numbers each of up to MAX_VERIFY_PASSAGES ranked passages independently, grouped by source label ("A" = highest-ranked). D026 §11. */
+/** Numbers each ranked passage independently, grouped by source label ("A" = highest-ranked). Each is capped at maxSentencesPerPassage, so pool size scales the payload linearly. D026 §11. */
 export function buildPassageSentencesMulti(
   claimText: string,
   passages: Array<{ label: string; text: string }>,

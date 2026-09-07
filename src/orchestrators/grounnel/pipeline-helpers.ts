@@ -20,14 +20,58 @@ export interface PipelineClaimInput {
   sourceExcerpt: string | null;
   // g17 — EXTRACT's disambiguated name for who/what this claim is about, or "" when none applies.
   subjectEntity: string;
+  // spec 017 T012 — every entity a multi-topic claim is about, subjectEntity first. Empty (the
+  // common case) means one topic; consumers must fall back to subjectEntity unchanged.
+  subjectEntities?: string[];
+}
+
+/** A candidate plus the scores it carries between escalation tiers (spec 017 T003). */
+export interface ScoredSource {
+  source: SearchPassage;
+  /** Discovery-rank percentile in the pool that FOUND it — frozen, never recomputed (spec 017). */
+  lexicalScore: number;
+  /** Rerank score from the tier that ranked it; absent on the two paths that never call the LLM. */
+  llmScore?: number;
+}
+
+/** Mirrors rerankPassages' own average. Capping on lexical alone would keep lex=100/llm=20 noise over a lex=40/llm=95 page. */
+export function combinedOf(s: ScoredSource): number {
+  return s.llmScore === undefined ? s.lexicalScore : (s.lexicalScore + s.llmScore) / 2;
+}
+
+// Unambiguous tracking params only. Measured over 365 real retrieved URLs: content-bearing keys
+// dominate (id 148, page 121, doc_id 45) and the only tracker present is utm_source (14).
+const TRACKING_PARAM_RE = /^(?:utm_|fbclid$|gclid$|msclkid$|mc_[ce]id$|igshid$)/i;
+
+// Same page can arrive under http/https, a trailing slash, or a tracking param across tiers — one
+// key or the union double-counts and wastes a VERIFY slot (spec 017 T005, review finding).
+export function normalizeUrlKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.replace(/\/+$/, "");
+    // Re-encoded, not raw: searchParams DECODES, so `?a=1%26b=2` (one param) would otherwise
+    // produce the same key as `?a=1&b=2` (two) and silently drop a distinct page (review finding).
+    const params = [...u.searchParams.entries()].filter(([k]) => !TRACKING_PARAM_RE.test(k)).sort(([a], [b]) => a.localeCompare(b));
+    const query = params.length ? `?${params.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")}` : "";
+    // `www.` is the same equivalence class as the scheme and differs far more often across providers.
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    return `${host}${path}${query}`;
+  } catch {
+    return url.trim().toLowerCase().replace(/\/+$/, "");
+  }
 }
 
 export interface ResolvedEvidence {
   claim: PipelineClaimInput;
-  // D026 §11 — up to MAX_VERIFY_PASSAGES ranked sources; array order is rank order, which
+  // D026 §11 — the ranked sources VERIFY reads; array order is rank order, which
   // callVerify's label assignment depends on being meaningful.
   passages: SearchPassage[];
   sources: SearchPassage[];
+  // spec 015 G1 — set when every usable source was refused as a copy of the input document, so the
+  // user-facing reason can say that instead of the generic "no source found" (which would be false).
+  allSourcesWereInputDuplicates?: boolean;
+  // spec 017 — the capped ranked pool this tier considered, so the next tier can rank over it too.
+  rankedPool?: ScoredSource[];
 }
 
 export interface ResolvedWithPassage extends ResolvedEvidence {
@@ -62,10 +106,13 @@ export function buildGeminiRateLimitMessage(err: RateLimitError): string {
   return "We're being rate-limited right now. Please try again in a few minutes.";
 }
 
+/** The A-Z codec's own ceiling — owned here, where the codec lives, not copied by its callers. */
+export const MAX_LABELLED_PASSAGES = 26;
+
 // D027 §2 — callVerify's citation label codec ("A"-"Z" over `passages`, rank order); single-letter
-// only, coupled by convention to MAX_VERIFY_PASSAGES staying ≤ 26 (guarded below, not just assumed).
+// only. Callers must slice first; this throws rather than trusting them (spec 017 T031).
 export function passageLabelForIndex(i: number): string {
-  if (i >= 26) throw new Error(`passageLabelForIndex: index ${i} exceeds the single-letter A-Z label scheme`);
+  if (i >= MAX_LABELLED_PASSAGES) throw new Error(`passageLabelForIndex: index ${i} exceeds the single-letter A-Z label scheme`);
   return String.fromCharCode(65 + i);
 }
 export function passageIndexForLabel(label: string): number {
@@ -80,6 +127,15 @@ export const PROTECTED_CONTRADICTION_GATES: ReadonlySet<string> = new Set(["reas
 export function originatingContradictionGate(gateEvents: GateEventInput[]): { gate: string; reason: GateReason | null } | null {
   const event = gateEvents.findLast((e) => e.overridden && e.verdictAfter === "contradicted");
   return event ? { gate: event.gate, reason: event.reason } : null;
+}
+
+/**
+ * Whether this contradiction is immune to reconciliation (D030 §3d). Only the gate that PRODUCED
+ * the contradiction counts. Spec 017 T026 tried widening this to any protected gate firing earlier
+ * in the chain, to rescue Wright/A; reverted on review — see tasks.md Phase 8.
+ */
+export function contradictionIsProtected(gateEvents: GateEventInput[]): boolean {
+  return PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEvents)?.gate ?? "");
 }
 
 // Shared by all 3 reconciliation-downgrade sites (tasks.md backlog) — one aggregatable log stream; verdictBefore varies by site.

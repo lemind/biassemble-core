@@ -1,0 +1,1 @@
+ALTER TABLE "grounnel"."grounnel_llm_calls" ADD COLUMN "input_payload" jsonb;

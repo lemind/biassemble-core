@@ -1,6 +1,23 @@
 <!-- SPECKIT START -->
-Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix) is implemented and
-live-verified. The ADR is the authoritative record — read it before changing this area:
+**Active plan**: feature 017 — escalation pool union. Escalation re-discovered from scratch each
+tier and discarded the prior pool: 50 already-selected pages thrown away across 50 tier transitions.
+U1 (carry the pool) is implemented and unit-green; U2 (deployed 3-repeat eval, gate **FA = 0**, plus
+a churn re-query that must read 0) is not run yet.
+
+- specs/017-escalation-pool-union/plan.md — implementation plan
+- specs/017-escalation-pool-union/tasks.md — task breakdown
+
+Prior: feature 014 — VERIFY negated-claim polarity. A true claim was returned `contradicted` on live
+run `9a784003` (Cardinal Rule violation).
+
+- specs/014-verify-negated-claim-polarity/plan.md — implementation plan
+- specs/014-verify-negated-claim-polarity/tasks.md — task breakdown
+
+Feature 013 (Grounnel D032 remediation — T27 contentless-claim eligibility, T31 `subject_entity`
+disable) is merged. The disable was briefly reverted and re-applied on 2026-09-03 — do not re-enable
+`subject_entity` to fix detection: it only writes `unverifiable`, never `contradicted` (D030 §3m Addendum 8). Feature 012 (Grounnel ordinal gate + claim eligibility + g17 subject-entity fix)
+is implemented and live-verified. The ADR is the authoritative record — read it before changing
+this area:
 
 - docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md
 - specs/012-grounnel-ordinal-eligibility-gates/spec.md — original feature specification

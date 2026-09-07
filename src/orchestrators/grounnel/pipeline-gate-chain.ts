@@ -1,6 +1,7 @@
-// The 10-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 6) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
+// The 11-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 8) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
 
 import {
+  applyAffirmationEvidenceGate,
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
   applyCounterfactIgnoredGate,
@@ -13,7 +14,7 @@ import {
   applyYearGate,
   type InstanceAttribution,
 } from "./gates.js";
-import { originatingContradictionGate, PROTECTED_CONTRADICTION_GATES, type Verdict } from "./pipeline-helpers.js";
+import { contradictionIsProtected, type Verdict } from "./pipeline-helpers.js";
 import type { GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
 
@@ -30,6 +31,9 @@ export interface GateChainInput {
   evidence: string | null;
   claimText: string;
   passageText: string;
+  // spec 017 T036 — implicit_negation's condition 3 is a precision guard calibrated when VERIFY read
+  // 3 passages; T031 widened that to ~24, which would make a `some(includes)` over it near-vacuous.
+  negationPassageText: string;
   subjectEntity: string;
   // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
   reasonSupportsVerdict: boolean | null;
@@ -61,7 +65,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
     verdict,
     reason: input.reason,
     claimText: input.claimText,
-    passageText: input.passageText,
+    passageText: input.negationPassageText,
   });
   gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
   verdict = implicitNegation.verdict;
@@ -125,7 +129,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
     claimText: input.claimText,
     verdict,
     evidence,
-    contradictionProtectedFromForceSupported: verdict === "contradicted" && PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEvents)?.gate ?? ""),
+    contradictionProtectedFromForceSupported: verdict === "contradicted" && contradictionIsProtected(gateEvents),
   });
   gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
   verdict = gate2.verdict;
@@ -135,8 +139,15 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   gateEvents.push({ gate: "year", verdictBefore: verdict, verdictAfter: gate2b.verdict, overridden: gate2b.overridden, reason: gate2b.reason });
   verdict = gate2b.verdict;
 
-  // g17 subject_entity — DISABLED 2026-08-31 (D030 §3m Addendum 6): 0 confirmed genuine catches in
-  // 320 firings vs a ~75% false-trigger rate; 7 fix candidates refuted. Call site skipped, not deleted.
+  // g17 subject_entity — DISABLED again 2026-09-03 (D030 §3m Addendum 8): the gate only ever writes
+  // `unverifiable`, so it cannot raise detection; the Addendum 7 re-enable is refuted. Call site skipped.
+
+  // Affirmation evidence floor (spec 015 G2) — LAST so it is a real floor: applyNumericGate and
+  // applyYearGate can force `supported` after gate #1, and that promotion must also carry evidence.
+  const gate1c = applyAffirmationEvidenceGate({ verdict, evidence, passageText: input.passageText });
+  gateEvents.push({ gate: "affirmation_evidence", verdictBefore: verdict, verdictAfter: gate1c.verdict, overridden: gate1c.overridden, reason: gate1c.reason });
+  verdict = gate1c.verdict;
+  evidence = gate1c.evidence;
 
   // D025 §2 — retry fires on any ERROR-severity diagnostic; the field exists so a future WARNING/INFO gate doesn't force one.
   const needsRetry = diagnostics.some((d) => d.severity === "ERROR");

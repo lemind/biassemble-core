@@ -114,6 +114,54 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(provider.getCallCount()).toBe(0);
   });
 
+  // spec 014 T021 — VERIFY's input was never persisted, which made a live false accusation
+  // permanently unreplayable. This asserts the bundle is captured on the call row.
+  // spec 015 G1 — a retrieved page that reproduces the input document corroborates nothing.
+  it("refuses a source that reproduces the input document, before any VERIFY call (G1)", async () => {
+    const claimId = uuid(1);
+    const claimText = "Alishba Rana was the only one in a class of 25 who could not write.";
+    const article = [
+      "I did not know why, but I was the only one in a class of 25 people who did not know how to write.",
+      "My writing journey took its first progressive steps in grade five when I met my teacher.",
+      "She taught me the value of my stories and helped shift my perspective on what writing could be.",
+    ].join(" ");
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: article, maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    // The "corroborating" page is the article itself, republished on another host.
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ url: "https://mirror.example.com/essay", text: article })]]]));
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+
+    await service.run(auditId, [{ id: claimId, text: claimText }], "defaultFlow", article);
+
+    const claim = (await store.getStatus(auditId))!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("unsupported");
+    // The whole point: the duplicate never costs a VERIFY call, and never becomes evidence.
+    expect(provider.getCallCount()).toBe(0);
+    // Review finding: the generic "no relevant source found" would be false here — sources WERE
+    // found and refused. The user is told which of the two actually happened.
+    expect(claim.reason).toContain("copies of the text you submitted");
+  });
+
+  it("keeps a genuinely independent source when the input text is supplied (G1 does not over-fire)", async () => {
+    const claimId = uuid(1);
+    const claimText = "The Eiffel Tower was completed in 1889.";
+    const article = "A personal essay about learning to write, containing nothing at all about Paris landmarks or their construction dates anywhere in it.";
+    const passage = "The Eiffel Tower was completed in 1889 for the World's Fair held in Paris that year. ".repeat(5);
+    const cited = "The Eiffel Tower was completed in 1889 for the World's Fair held in Paris that year.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: article, maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ url: "https://en.wikipedia.org/wiki/Eiffel_Tower", text: passage })]]]));
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: citationsFor(claimText, passage, cited), reason: "The passage states the completion year.", confidence: 0.95 })) };
+    });
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+
+    await service.run(auditId, [{ id: claimId, text: claimText }], "defaultFlow", article);
+
+    expect((await store.getStatus(auditId))!.claims.find((c) => c.id === claimId)!.verdict).toBe("supported");
+  });
+
   it("writes 'unsupported: no evidence found' when the only passage is dropped by gate #4's relevance filter, with zero VERIFY calls", async () => {
     const claimId = uuid(1);
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
@@ -327,13 +375,14 @@ describe("GrounnelPipelineService (T010)", () => {
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
-    // Nauru's page — ranked worst lexically (4th) — was pulled into the top MAX_VERIFY_PASSAGES (3)
-    // pool by its semantic score, and the worst-scoring irrelevant page (Vatican's Swiss Guard one)
-    // was the one excluded by the slice, not Nauru's.
+    // Nauru's page — ranked worst lexically (4th) — is promoted to label "A" by its semantic score.
+    // spec 017 T039: the off-topic Vatican pages are OUTRANKED, not excluded. A low rerank score
+    // cannot gate a fact-checker — refuting pages score low too (the g05 Statue of Liberty case).
     const sentPayload = JSON.parse(capturedSystem.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)![1]!);
-    const pooledText = JSON.stringify(sentPayload[0].passage_sentences);
-    expect(pooledText).toContain("resident population of approximately 12,000");
-    expect(pooledText).not.toContain("Swiss Guard");
+    const labels = Object.keys(sentPayload[0].passage_sentences);
+    expect(labels[0]).toBe("A");
+    expect(JSON.stringify(sentPayload[0].passage_sentences.A)).toContain("resident population of approximately 12,000");
+    expect(labels).toEqual(["A", "B", "C", "D"]);
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
@@ -448,8 +497,9 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(nauru.selected).toBe(true);
     expect(vatican3.lexicalScore).toBeCloseTo(50); // 100 * (1 - 2/4)
     expect(vatican3.llmScore).toBe(5);
-    expect(vatican3.selected).toBe(false); // excluded by the MAX_VERIFY_PASSAGES=3 slice
-    expect(decisions.filter((d) => d.selected)).toHaveLength(3);
+    // spec 017 T039 — the scores decide ORDER, not membership: VERIFY reads all four.
+    expect(vatican3.selected).toBe(true);
+    expect(decisions.filter((d) => d.selected)).toHaveLength(4);
   });
 
   it("D026 §19: attributes claimId to single-claim LLM calls (rerank, retry) but leaves it unset for a genuinely batched VERIFY call", async () => {
@@ -999,6 +1049,58 @@ describe("GrounnelPipelineService (T010)", () => {
     });
   });
 
+  // D030 §3d/Addendum 18 — the SAME downgrade the two tests above assert must NOT happen when the
+  // contradiction came from a protected gate. reconcileContradictedVerdicts already filtered these;
+  // this retry path computed the originating gate and only logged it, downgrading anyway.
+  it("D030 §3d: does NOT downgrade a retry contradiction that came from reason_ordinal, even when the classifier calls it inconsistent", async () => {
+    const claimId = uuid(1);
+    const claimText = "The first flight covered 852 feet.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const passageText = "The fourth and last flight, by Wilbur, took 59 seconds to cover 852 feet over the ground. ".repeat(5);
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: passageText })]]]));
+
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      const firstPass = verifyCalls === 1;
+      return {
+        results: ids.map((id) => ({
+          id,
+          // Pass 1 lands unsupported with a mismatched reason, which is what TRIGGERS the retry.
+          // Pass 2 (the retry) affirms the false claim, and reason_ordinal catches it by spotting
+          // that the reason attributes the fact to the FOURTH flight while the claim selects the first.
+          verdict: firstPass ? "unsupported" : "supported",
+          evidenceCitations: firstPass ? null : citationsFor(claimText, passageText, "The fourth and last flight, by Wilbur, took 59 seconds to cover 852 feet over the ground."),
+          reason: firstPass
+            ? "The passage does not state how far the first flight travelled."
+            : "The passage states that the fourth and final flight covered 852 feet.",
+          confidence: 0.9,
+        })),
+      };
+    });
+
+    // The classifier calls it inconsistent — which is exactly what used to destroy the catch.
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: false })) };
+    });
+
+    const gateEventStore = new FakeGrounnelGateEventStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), gateEventStore);
+    await service.run(auditId, [{ id: claimId, text: claimText }]);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.verdict).toBe("contradicted");
+
+    const events = gateEventStore.calls[0]!.events;
+    expect(events.some((e) => e.gate === "reason_ordinal" && e.overridden && e.verdictAfter === "contradicted")).toBe(true);
+    // The protected contradiction must survive: no retry gate may take it away.
+    expect(events.some((e) => e.overridden && e.verdictBefore === "contradicted" && e.verdictAfter !== "contradicted")).toBe(false);
+  });
+
   it("D030 §3i Mode B: downgrades a retry that lands on 'supported' to unverifiable when the post-retry classifier says its own reason doesn't support it (real live-test finding, g17 'first flight lasted 59 seconds', 2026-08-23)", async () => {
     const claimId = uuid(1);
     const claimText = "The first flight lasted 59 seconds.";
@@ -1207,7 +1309,7 @@ describe("GrounnelPipelineService (T010)", () => {
         searchCalls.push(context?.maxCandidates);
         // Real shape: the base 3-candidate pool never surfaces the one page that states the fact;
         // a wider pool (tier 5+) does — no code path here cares about the exact number past 3.
-        if ((context?.maxCandidates ?? 3) <= 3) {
+        if ((context?.maxCandidates ?? 3) <= 5) {
           return [webSource({ status: "unreachable", text: null })];
         }
         return [webSource({ text: passageText })];
@@ -1226,8 +1328,8 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("supported");
     expect(claim.evidence).toBe("The blue whale is the largest animal ever to have lived on Earth.");
-    // Base pass (no maxCandidates), then tier 5 finds it — tier 8 never needed.
-    expect(searchCalls).toEqual([undefined, 5]);
+    // Base pass (no maxCandidates), then tier 8 finds it — tier 11 never needed (spec 017 T017 ladder).
+    expect(searchCalls).toEqual([undefined, 8]);
     // D026 §14 — escalation finished cleanly, so the run-level flag is back to false and the
     // aggregate status correctly reads "done", not stuck reporting "verifying".
     expect(status!.status).toBe("done");
@@ -1278,7 +1380,7 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.verdict).toBe("supported");
     expect(claim.evidence).toBe("Mount Kilimanjaro's summit, Uhuru Peak, sits at 5,895 meters above sea level.");
     // Base pass (no maxCandidates), then tier 5 finds the precise figure — tier 8 never needed.
-    expect(searchCalls).toEqual([undefined, 5]);
+    expect(searchCalls).toEqual([undefined, 8]);
   });
 
   it("D026 §17: downgrades an escalation round's flip AWAY from a correct 'contradicted' verdict when the reason-consistency check says the new answer doesn't hold up", async () => {
@@ -1292,9 +1394,9 @@ describe("GrounnelPipelineService (T010)", () => {
     const search: SearchProvider = {
       async search(_query, context) {
         const cap = context?.maxCandidates ?? 3;
-        if (cap <= 3) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
-        if (cap === 5) return [webSource({ text: noisyPassage })]; // tier 5: noisier, off-topic page
-        return [webSource({ status: "unreachable", text: null })]; // tier 8: nothing further, never needed
+        if (cap <= 5) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
+        if (cap === 8) return [webSource({ text: noisyPassage })]; // tier 5: noisier, off-topic page
+        return [webSource({ status: "unreachable", text: null })]; // tier 11: nothing further, never needed
       },
     };
 
@@ -1356,7 +1458,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const search: SearchProvider = {
       async search(_query, context) {
-        if ((context?.maxCandidates ?? 3) <= 3) {
+        if ((context?.maxCandidates ?? 3) <= 5) {
           return [webSource({ status: "unreachable", text: null })]; // base pass: no evidence, triggers escalation
         }
         throw new Error("search provider exploded mid-escalation");
@@ -1385,7 +1487,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const search: SearchProvider = {
       async search(_query, context) {
-        if ((context?.maxCandidates ?? 3) <= 3) {
+        if ((context?.maxCandidates ?? 3) <= 5) {
           return [webSource({ status: "unreachable", text: null })];
         }
         return [webSource({ text: passageText })];
@@ -1501,24 +1603,24 @@ describe("GrounnelPipelineService (T010)", () => {
     // assertions below all target calls[0], the main pass's own record, unaffected by the later ones.
     expect(gateEventStore.calls).toHaveLength(3);
     const events = gateEventStore.calls[0]!.events;
-    // 9 gates x 2 passes, plus D025 §5's retry-contradiction check and D030 §3k's telemetry-only
-    // retry_decision summary. Was 10 gates until subject_entity was disabled (D030 §3m Addendum 6).
-    expect(events).toHaveLength(22);
+    // 11 gates x 2 passes, plus D025 §5's retry-contradiction check and D030 §3k's telemetry-only
+    // retry_decision summary. 12 while subject_entity was briefly re-enabled (D030 §3m Addendum 8).
+    expect(events).toHaveLength(24);
     expect(events.filter((e) => e.gate === "contradiction_evidence")).toHaveLength(2);
     // The original pass's downgrade (the reason this retried at all) is still present.
     // Index 6: spec 013 T21's instance_attribution now sits between reason_ordinal and counterfact_ignored.
     expect(events[6]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "unsupported", reason: "evidence_null" });
     // The retry pass's success is also present, distinguishable by looking further into the array.
-    // Index 16: each pass is 10 gates since subject_entity was disabled (offset 6 within a pass).
-    expect(events[16]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
+    // Index 17: each pass is 11 gates (offset 6 within a pass), so pass 2 starts at 11.
+    expect(events[17]).toMatchObject({ gate: "contradiction_evidence", verdictAfter: "contradicted", reason: null });
     // D025 §5 — the post-retry check itself, appended last; the default beforeEach classifier mock
     // says "consistent", so it validates the retry's contradiction rather than downgrading it.
-    expect(events[20]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
+    expect(events[22]).toMatchObject({ gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "contradicted", overridden: false, reason: null });
     // D030 §3k — telemetry-only summary of the whole retry decision: firstPass ended "unsupported"
     // (the evidence_null downgrade at events[6]), the retry ultimately landed on "contradicted" —
     // a real change, so overridden:true — and the reason names the ERROR that triggered the retry
     // in the first place (evidence_null), not the retry's own outcome.
-    expect(events[21]).toMatchObject({ gate: "retry_decision", verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true, reason: "evidence_null" });
+    expect(events[23]).toMatchObject({ gate: "retry_decision", verdictBefore: "unsupported", verdictAfter: "contradicted", overridden: true, reason: "evidence_null" });
   });
 
   it("T034 (reviewed finding): a RateLimitError during the retry call stops remaining batches, same as the primary VERIFY call", async () => {
@@ -2005,8 +2107,9 @@ describe("GrounnelPipelineService (T010)", () => {
       "claim_reason_overlap",
       "numeric",
       "year",
+      "affirmation_evidence",
     ]);
-    // Real claim: verdict starts and ends "supported" — none of the nine gates should fire.
+    // Real claim: verdict starts and ends "supported" — none of the eleven gates should fire.
     expect(gateEventStore.calls[0]!.events.every((e) => !e.overridden)).toBe(true);
   });
 
@@ -2456,15 +2559,15 @@ describe("GrounnelPipelineService (T010)", () => {
     const search: SearchProvider = {
       async search(_query, context) {
         const cap = context?.maxCandidates ?? 3;
-        if (cap <= 3) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
-        if (cap === 5) return [webSource({ text: irrelevantPassage })]; // tier 5: real page, nothing to cite for this fact
-        return [webSource({ status: "unreachable", text: null })]; // tier 8: nothing further, never needed
+        if (cap <= 5) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
+        if (cap === 8) return [webSource({ text: irrelevantPassage })]; // tier 8: real page, nothing to cite for this fact
+        return [webSource({ status: "unreachable", text: null })]; // tier 11: nothing further, never needed
       },
     };
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      const wide = provider.getCallCount() > 1; // first call is the base pool; only tier 5 calls VERIFY again
+      const wide = provider.getCallCount() > 1; // first call is the base pool; only tier 8 calls VERIFY again
       return {
         results: ids.map((id) => ({
           id,
@@ -2482,7 +2585,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    // The core assertion: tier 5's evidence-empty "unsupported" must NOT overwrite the base pool's grounded "contradicted".
+    // The core assertion: tier 8's evidence-empty "unsupported" must NOT overwrite the base pool's grounded "contradicted".
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("Heinrich Muller actually died on March 9, 1994, according to public records.");
 
@@ -2585,5 +2688,342 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const events = gateEventStore.calls.flatMap((c) => c.events);
     expect(events.some((e) => e.gate === "escalation_replacement" && e.overridden === false && e.verdictBefore === "contradicted" && e.verdictAfter === "unverifiable")).toBe(true);
+  });
+});
+
+describe("spec 017 — escalation pool union", () => {
+  let provider: MockProvider;
+
+  beforeEach(() => {
+    provider = new MockProvider();
+    provider.setResponseFn("You are a consistency auditor", (request) => {
+      const ids = idsFromConsistencyRequest(request);
+      return { results: ids.map((id) => ({ id, consistent: true })) };
+    });
+    provider.setResponseFn("You are an attribution checker", (request) => {
+      const ids = idsFromAttributionRequest(request);
+      return { results: ids.map((id) => ({ id, attribution: "absent", citation: null })) };
+    });
+  });
+
+  // Every candidate title the reranker sees, per call — the union is what these lists prove.
+  function captureRerankPools(scoreByTitle: (title: string) => number): string[][] {
+    const pools: string[][] = [];
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string; title: string }>;
+      pools.push(candidates.map((c) => c.title));
+      return { results: candidates.map((c) => ({ id: c.id, score: scoreByTitle(c.title) })) };
+    });
+    return pools;
+  }
+
+  const CLAIM = "CSS was invented before the Internet.";
+  const cssText = "CSS emerged in the early 1990s and the first specification was released in 1996. ".repeat(5);
+  const netText = "The Internet's prototype came into being more than fifty years ago in 1969. ".repeat(5);
+
+  it("keeps a base-tier page that the escalation tier never rediscovered — the CSS/B shape, where the deciding page was fetched then thrown away", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    // Base pass finds the Internet-date page; the wider tier re-discovers only CSS pages.
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) {
+          return [webSource({ url: "https://prysmian.example/when", title: "When was the Internet invented", text: netText }), webSource({ url: "https://css-1.example", title: "History of CSS", text: cssText })];
+        }
+        return [webSource({ url: "https://css-2.example", title: "CSS versions", text: cssText })];
+      },
+    };
+    const pools = captureRerankPools((t) => (t.includes("CSS") ? 90 : 20));
+
+    let escalated = false;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      if (!escalated) {
+        escalated = true;
+        return { results: ids.map((id) => ({ id, verdict: "unsupported", evidenceCitations: [], reason: "Not enough to compare the two dates.", confidence: 0.5 })) };
+      }
+      return { results: ids.map((id) => ({ id, verdict: "contradicted", evidenceCitations: citationsFor(CLAIM, netText, "The Internet's prototype came into being more than fifty years ago in 1969."), reason: "The Internet predates CSS.", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    // The escalation tier fetched one CSS page, but ranked over three: its own plus both carried.
+    expect(pools[1]).toEqual(expect.arrayContaining(["CSS versions", "When was the Internet invented", "History of CSS"]));
+    expect(pools[1]!.length).toBe(3);
+
+    // Review finding — the carried page is what got cited, so it must also appear in the claim's own
+    // source list. Before the fix `sources` held only the escalation tier's single fresh fetch.
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    const sourceUrls = claim.sources.map((s) => (s as { url: string }).url);
+    expect(sourceUrls).toContain("https://prysmian.example/when");
+    // The invariant the bug broke: every citation URL must appear in the claim's own source list.
+    expect(sourceUrls).toEqual(expect.arrayContaining(claim.citations.map((c) => c.url)));
+  });
+
+  it("ranks a single new fetch against the carried pool instead of short-circuiting past the reranker", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) {
+          return [webSource({ url: "https://a.example", title: "Page A", text: cssText }), webSource({ url: "https://b.example", title: "Page B", text: netText })];
+        }
+        // Exactly ONE new source: pre-union this hit rerankPassages' `length <= 1` short-circuit.
+        return [webSource({ url: "https://c.example", title: "Page C", text: netText })];
+      },
+    };
+    const pools = captureRerankPools(() => 50);
+
+    let first = true;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const verdict = first ? "unsupported" : "supported";
+      first = false;
+      return { results: ids.map((id) => ({ id, verdict, evidenceCitations: verdict === "supported" ? citationsFor(CLAIM, netText, "The Internet's prototype came into being more than fifty years ago in 1969.") : [], reason: "r", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    expect(pools.length).toBe(2);
+    expect(pools[1]!.sort()).toEqual(["Page A", "Page B", "Page C"]);
+  });
+
+  it("carries each page's frozen discovery score rather than re-scoring it by position in the union", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) {
+          // Discovery rank 0 of 2 -> lexicalScore 100. It must still be 100 after being carried.
+          return [webSource({ url: "https://top.example", title: "Ranked first at discovery", text: netText }), webSource({ url: "https://second.example", title: "Ranked second", text: cssText })];
+        }
+        return [webSource({ url: "https://new.example", title: "Fresh page", text: cssText })];
+      },
+    };
+    captureRerankPools(() => 20);
+
+    let first = true;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const verdict = first ? "unsupported" : "supported";
+      first = false;
+      return { results: ids.map((id) => ({ id, verdict, evidenceCitations: verdict === "supported" ? citationsFor(CLAIM, netText, "The Internet's prototype came into being more than fifty years ago in 1969.") : [], reason: "r", confidence: 0.9 })) };
+    });
+
+    const rerankDecisionStore = new FakeGrounnelRerankDecisionStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore(), rerankDecisionStore);
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    const escalationTier = rerankDecisionStore.calls[1]!.decisions;
+    const carried = escalationTier.find((d) => d.url === "https://top.example")!;
+    // Positional re-scoring in a 3-page union would have given it 100/3*(3-idx); the frozen 100 survives.
+    expect(carried.lexicalScore).toBe(100);
+  });
+
+  it("collapses a re-fetched URL to one entry, keeping the newer body, and never double-counts it in rerank telemetry", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    const staleText = "The Internet's prototype came into being more than fifty years ago in 1969. ".repeat(5);
+    const freshText = "The Internet's prototype came into being more than fifty years ago in 1969. It was called ARPANET. ".repeat(5);
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) {
+          return [webSource({ url: "http://Shared.example/page/", title: "Shared", text: staleText }), webSource({ url: "https://other.example", title: "Other", text: cssText })];
+        }
+        // Same page, different scheme and trailing slash — must normalize to one key.
+        return [webSource({ url: "https://shared.example/page", title: "Shared", text: freshText })];
+      },
+    };
+    const pools = captureRerankPools(() => 50);
+
+    let first = true;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const verdict = first ? "unsupported" : "supported";
+      first = false;
+      return { results: ids.map((id) => ({ id, verdict, evidenceCitations: verdict === "supported" ? citationsFor(CLAIM, freshText, "It was called ARPANET.") : [], reason: "r", confidence: 0.9 })) };
+    });
+
+    const rerankDecisionStore = new FakeGrounnelRerankDecisionStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore(), rerankDecisionStore);
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    // Union is {Shared (newer), Other} — not three entries with Shared twice.
+    expect(pools[1]!.length).toBe(2);
+    const urls = rerankDecisionStore.calls[1]!.decisions.map((d) => d.url);
+    expect(urls).toContain("https://shared.example/page");
+    expect(urls).not.toContain("http://Shared.example/page/");
+  });
+
+  it("drops a carried URL outright when its re-fetch is refused as a copy of the input document", async () => {
+    const claimId = uuid(1);
+    // Must be varied, not one repeated sentence: shingles() is a Set, so repetition yields fewer
+    // than MIN_SHINGLES distinct 5-grams and the duplicate check disables itself.
+    const inputText = Array.from({ length: 40 }, (_, i) => `Paragraph ${i} of the submitted document discusses how zebrafish regenerate cardiac tissue after injury number ${i}.`).join(" ");
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: inputText, maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) {
+          return [webSource({ url: "https://mirror.example", title: "Mirror", text: netText }), webSource({ url: "https://keep.example", title: "Keep", text: cssText })];
+        }
+        // Same URL comes back reproducing the submitted document, alongside one genuinely new page
+        // — so the tier is not a no-op and the refusal is what has to keep Mirror out of the pool.
+        return [webSource({ url: "https://mirror.example", title: "Mirror", text: inputText }), webSource({ url: "https://fresh.example", title: "Fresh", text: cssText })];
+      },
+    };
+    const pools = captureRerankPools(() => 50);
+
+    let first = true;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const verdict = first ? "unsupported" : "supported";
+      first = false;
+      return { results: ids.map((id) => ({ id, verdict, evidenceCitations: verdict === "supported" ? citationsFor(CLAIM, cssText, "CSS emerged in the early 1990s and the first specification was released in 1996.") : [], reason: "r", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }], "defaultFlow", inputText);
+
+    // The stale carried copy is NOT resurrected — the refusal is about the page's current content.
+    expect(pools[1]!.sort()).toEqual(["Fresh", "Keep"]);
+  });
+
+  it("treats a tier that found no new usable source as a no-op instead of re-verifying the carried pool", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) {
+          return [webSource({ url: "https://a.example", title: "A", text: cssText }), webSource({ url: "https://b.example", title: "B", text: netText })];
+        }
+        return [webSource({ url: "https://dead.example", title: "Dead", status: "unreachable", text: null })];
+      },
+    };
+    const pools = captureRerankPools(() => 50);
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "unsupported", evidenceCitations: [], reason: "r", confidence: 0.5 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    // Both escalation tiers fetched nothing usable. Without the guard each would re-rank and
+    // re-VERIFY the identical carried pool, letting a good verdict flip on LLM nondeterminism.
+    expect(pools.length).toBe(1);
+    expect(verifyCalls).toBe(1);
+  });
+
+  it("orders the degraded (no-LLM) rerank by carried score, so a carried page can still win a slot when the ranker is down", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) {
+          return [webSource({ url: "https://weak.example", title: "Weak", text: cssText }), webSource({ url: "https://strong.example", title: "Strong", text: netText })];
+        }
+        return [webSource({ url: "https://n1.example", title: "N1", text: cssText }), webSource({ url: "https://n2.example", title: "N2", text: cssText }), webSource({ url: "https://n3.example", title: "N3", text: cssText })];
+      },
+    };
+    let rerankCalls = 0;
+    provider.setResponseFn("You are a passage relevance ranker", (request) => {
+      rerankCalls++;
+      // Base pass scores the carried page top; the escalation tier's ranker then fails outright.
+      if (rerankCalls > 1) throw new Error("reranker is down");
+      const candidates = JSON.parse(request.system.match(/CANDIDATES: (\[.*\])/s)![1]!) as Array<{ id: string; title: string }>;
+      return { results: candidates.map((c) => ({ id: c.id, score: c.title === "Strong" ? 95 : 5 })) };
+    });
+
+    let capturedSystem = "";
+    let first = true;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      capturedSystem = request.system;
+      const ids = idsFromRequest(request);
+      const verdict = first ? "unsupported" : "supported";
+      first = false;
+      return { results: ids.map((id) => ({ id, verdict, evidenceCitations: verdict === "supported" ? citationsFor(CLAIM, netText, "The Internet's prototype came into being more than fifty years ago in 1969.") : [], reason: "r", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    // Carried "Strong" (lex 50 + llm 95 = 72.5) beats all three fresh pages (lex 100/66/33, no llm
+    // score -> 100/66/33... only the first outranks it), so it must still reach VERIFY. In pool
+    // insertion order it sat last of four and would have been sliced away.
+    const pooled = JSON.stringify(JSON.parse(capturedSystem.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)![1]!)[0].passage_sentences);
+    expect(pooled).toContain("prototype came into being");
+  });
+
+  it("caps the carried pool by combined score, keeping a low-discovery/high-relevance page over a high-discovery/low-relevance one", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    // 20 base pages > the cap of 15. Discovery order is deliberately the inverse of relevance:
+    // page-0 ranks first (lexical 100) but scores 10; page-19 ranks last but scores 95.
+    const base = Array.from({ length: 20 }, (_, i) => webSource({ url: `https://p${i}.example`, title: `Page ${i}`, text: i % 2 === 0 ? cssText : netText }));
+    const search: SearchProvider = {
+      async search(_query, context) {
+        if (context?.maxCandidates === undefined) return base;
+        return [webSource({ url: "https://new.example", title: "Fresh", text: cssText })];
+      },
+    };
+    const pools = captureRerankPools((t) => (t === "Page 0" ? 10 : t === "Page 19" ? 95 : 50));
+
+    let first = true;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      const verdict = first ? "unsupported" : "supported";
+      first = false;
+      return { results: ids.map((id) => ({ id, verdict, evidenceCitations: verdict === "supported" ? citationsFor(CLAIM, cssText, "CSS emerged in the early 1990s and the first specification was released in 1996.") : [], reason: "r", confidence: 0.9 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    // 15 carried + 1 new. Page 19 (lex 5, llm 95 -> 50) survives on relevance despite ranking last
+    // in discovery; the weakest middle pages (llm 50, low lexical) are what fell off.
+    expect(pools[1]!.length).toBe(16);
+    expect(pools[1]).toContain("Page 19");
+    expect(pools[1]).toContain("Fresh");
+  });
+
+  it("leaves a claim that never escalates byte-identical — no carry path taken", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+
+    const search = new FakeSearchProvider(new Map([[CLAIM, [webSource({ url: "https://a.example", title: "A", text: cssText }), webSource({ url: "https://b.example", title: "B", text: netText })]]]));
+    const pools = captureRerankPools(() => 50);
+    provider.setResponseFn("You are a verification engine", (request) => {
+      const ids = idsFromRequest(request);
+      return { results: ids.map((id) => ({ id, verdict: "supported", evidenceCitations: citationsFor(CLAIM, cssText, "CSS emerged in the early 1990s and the first specification was released in 1996."), reason: "r", confidence: 0.95 })) };
+    });
+
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    expect(pools.length).toBe(1);
+    const status = await store.getStatus(auditId);
+    expect(status!.claims.find((c) => c.id === claimId)!.verdict).toBe("supported");
   });
 });

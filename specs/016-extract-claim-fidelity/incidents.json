@@ -1,0 +1,537 @@
+{
+  "frozen_at": "2026-09-02T12:53:25.245Z",
+  "spec": "016-extract-claim-fidelity",
+  "task": "T001",
+  "note": "Frozen from persisted telemetry, not transcribed. E2's shortlist is marker-based and needs hand labels; the marker regex is a triage aid for this freeze only, never a production detector.",
+  "runs": [
+    {
+      "prefix": "5b8005cc",
+      "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+      "claim_count": 36
+    },
+    {
+      "prefix": "fddb57fa",
+      "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+      "claim_count": 67
+    },
+    {
+      "prefix": "be72361c",
+      "run_id": "be72361c-0fd1-449c-a433-1c99d0c65e0e",
+      "claim_count": 22
+    }
+  ],
+  "E1_duplicate_claims": {
+    "named_pair": [
+      {
+        "claim_id": "6c3dcb86-c8a2-4ce8-8caa-fa2bfcb99307",
+        "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+        "claim_text": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year.",
+        "source_excerpt": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year, up from last year's $400 billion, and a large amount of that will be borrowed.",
+        "verdict": "unverifiable",
+        "evidence": null,
+        "confidence": 0,
+        "reason": "None of the provided sentences state that Wall Street expects big tech firms to spend more than $730 billion on AI infrastructure this year. Sentence B10 mentions $220 billion in AI-related debt issued so far in 2026, and Sentence C9 projects global AI-related investment to exceed $1 trillion in 2026, but neither specifically addresses Wall Street's expectation for big tech firms' spending this year in relation to the $730 billion figure.",
+        "source_count": 7
+      },
+      {
+        "claim_id": "9d64f9c9-dc2e-48a7-9714-5adc68a65be6",
+        "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+        "claim_text": "Big tech firms will spend more than $730 billion on AI infrastructure this year.",
+        "source_excerpt": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year, up from last year's $400 billion, and a large amount of that will be borrowed.",
+        "verdict": "unverifiable",
+        "evidence": null,
+        "confidence": 0,
+        "reason": "None of the provided sentences mention the specific amount of $730 billion being spent on AI infrastructure this year.",
+        "source_count": 4
+      }
+    ],
+    "all_same_excerpt_groups_in_5b8005cc": [
+      {
+        "source_excerpt": "As the Treasury market competes for the same pool of long-term capital as investment-grade corporate issuers perceived to have stronger credit fundamentals, investors are voting with their dollars and pushing spreads between the two categories to extremely narrow levels, said Thierry Wizman, global FX and rates strategist at Macquarie.",
+        "claims": [
+          {
+            "claim_id": "5d4e99d7-fa02-45d7-a9d2-803fafd3fcd6",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Investors are pushing spreads between Treasury and investment-grade corporate issuers to extremely narrow levels.",
+            "source_excerpt": "As the Treasury market competes for the same pool of long-term capital as investment-grade corporate issuers perceived to have stronger credit fundamentals, investors are voting with their dollars and pushing spreads between the two categories to extremely narrow levels, said Thierry Wizman, global FX and rates strategist at Macquarie.",
+            "verdict": "excluded",
+            "evidence": null,
+            "confidence": null,
+            "reason": "This reads as an opinion, prediction, or vague statement rather than a checkable fact.",
+            "source_count": 0
+          },
+          {
+            "claim_id": "13d5fbdc-e602-4b02-92a5-ab2d32c9df24",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Thierry Wizman is global FX and rates strategist at Macquarie.",
+            "source_excerpt": "As the Treasury market competes for the same pool of long-term capital as investment-grade corporate issuers perceived to have stronger credit fundamentals, investors are voting with their dollars and pushing spreads between the two categories to extremely narrow levels, said Thierry Wizman, global FX and rates strategist at Macquarie.",
+            "verdict": "supported",
+            "evidence": "The resulting competition has helped push the yield spread between high-quality corporate bonds and Treasuries toward historically narrow levels, according to Thierry Wizman, global FX and rates strategist at Macquarie.",
+            "confidence": 1,
+            "reason": "The passage states that Thierry Wizman is a global FX and rates strategist at Macquarie.",
+            "source_count": 3
+          }
+        ]
+      },
+      {
+        "source_excerpt": "No one expects the U.S. to default, ​but the U.S. fiscal picture is deteriorating, with federal government debt topping $40 trillion.",
+        "claims": [
+          {
+            "claim_id": "854ce6b3-2a45-4c66-85a4-859a1e29821b",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The U.S. fiscal picture is deteriorating.",
+            "source_excerpt": "No one expects the U.S. to default, ​but the U.S. fiscal picture is deteriorating, with federal government debt topping $40 trillion.",
+            "verdict": "supported",
+            "evidence": "The U.S. debt-to-GDP ratio now stands at 125 percent.",
+            "confidence": 1,
+            "reason": "Sentence A3 states that the U.S. debt-to-GDP ratio now stands at 125 percent, which is higher than during World War II financing.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "451a6f1d-258e-4ff8-af41-e5705b7ccf50",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The U.S. fiscal picture is deteriorating.",
+            "source_excerpt": "No one expects the U.S. to default, ​but the U.S. fiscal picture is deteriorating, with federal government debt topping $40 trillion.",
+            "verdict": "supported",
+            "evidence": "U.S. deficit projected to hit $2 trillion, double fiscal target | Congressman Scott Peters ... The U.S. debt-to-GDP ratio now stands at 125 percent.",
+            "confidence": 1,
+            "reason": "The passage states the U.S. deficit is projected to hit $2 trillion, double the fiscal target, and the U.S. debt-to-GDP ratio stands at 125 percent, indicating a deteriorating fiscal picture.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "9200ae1b-5f64-4b5b-8f50-63d9770b8cda",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Federal government debt tops $40 trillion.",
+            "source_excerpt": "No one expects the U.S. to default, ​but the U.S. fiscal picture is deteriorating, with federal government debt topping $40 trillion.",
+            "verdict": "supported",
+            "evidence": "The gross national debt of the United States officially reached $40 trillion for the first time yesterday, according to the U.S. ... On August 18, 2026, the national debt reached a new high of $40 trillion. [ 31 ] ... US government debt hit a record $40 trillion this week.",
+            "confidence": 1,
+            "reason": "Multiple sources confirm that the gross national debt reached $40 trillion.",
+            "source_count": 3
+          }
+        ]
+      },
+      {
+        "source_excerpt": "Bond investors increasingly question the safety of U.S. Treasuries, and they have re-priced Treasuries as a risky claim,",
+        "claims": [
+          {
+            "claim_id": "d68cdf44-b804-4ed4-9f9b-989bc2a9661d",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Bond investors increasingly question the safety of U.S. Treasuries.",
+            "source_excerpt": "Bond investors increasingly question the safety of U.S. Treasuries, and they have re-priced Treasuries as a risky claim,",
+            "verdict": "supported",
+            "evidence": "In the wake of yields on US bonds reaching an almost two-decade high, the US Treasury Department said in August that it would ramp up buybacks of long-dated government debt .",
+            "confidence": 1,
+            "reason": "Sentence A4 states that yields on US bonds reached an almost two-decade high, and the US Treasury Department announced it would ramp up buybacks of long-dated government debt.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "854e8ff9-dd7b-4437-bd53-d9b5e985f36d",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Treasuries have been re-priced as a risky claim.",
+            "source_excerpt": "Bond investors increasingly question the safety of U.S. Treasuries, and they have re-priced Treasuries as a risky claim,",
+            "verdict": "supported",
+            "evidence": "Treasuries come in maturities of 4 weeks to 30 years, with longer maturities usually offering higher coupons.",
+            "confidence": 1,
+            "reason": "Sentence B4 states that Treasuries usually offer lower yields than other fixed income securities because their minimal risk makes them among the safest investments available, implying a re-pricing to reflect risk would be a change from this norm.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "ec4b6a7d-3ada-48b5-ba79-5a51e2b153ca",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The market has re-priced Treasuries as a risky claim.",
+            "source_excerpt": "Bond investors increasingly question the safety of U.S. Treasuries, and they have re-priced Treasuries as a risky claim,",
+            "verdict": "supported",
+            "evidence": "US Treasuries, a risky safe asset | BlackRock ... April’s sharp sell-off of long-dated US Treasuries highlights risks in the world’s largest bond market, particularly in the current regime of high deficits and elevated inflation. ... Since the US runs a current account deficit and its borrowing is partially financed by foreigners, this rise in inflation risk reduces the appeal of Treasuries as a long-term store of value.",
+            "confidence": 1,
+            "reason": "The passage describes US Treasuries as a 'risky safe asset' and highlights risks due to high deficits and elevated inflation, and notes that rising inflation risk reduces the appeal of Treasuries, indicating they are being re-priced as a riskier asset.",
+            "source_count": 3
+          }
+        ]
+      },
+      {
+        "source_excerpt": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year, up from last year's $400 billion, and a large amount of that will be borrowed.",
+        "claims": [
+          {
+            "claim_id": "6c3dcb86-c8a2-4ce8-8caa-fa2bfcb99307",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year.",
+            "source_excerpt": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year, up from last year's $400 billion, and a large amount of that will be borrowed.",
+            "verdict": "unverifiable",
+            "evidence": null,
+            "confidence": 0,
+            "reason": "None of the provided sentences state that Wall Street expects big tech firms to spend more than $730 billion on AI infrastructure this year. Sentence B10 mentions $220 billion in AI-related debt issued so far in 2026, and Sentence C9 projects global AI-related investment to exceed $1 trillion in 2026, but neither specifically addresses Wall Street's expectation for big tech firms' spending this year in relation to the $730 billion figure.",
+            "source_count": 7
+          },
+          {
+            "claim_id": "e49821f1-ef44-4a1e-b252-4ed66964f2b8",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Big tech firms spent $400 billion on AI infrastructure last year.",
+            "source_excerpt": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year, up from last year's $400 billion, and a large amount of that will be borrowed.",
+            "verdict": "supported",
+            "evidence": "The four largest hyperscalers alone - Amazon, Google, Microsoft, and Meta - are spending approximately $725 billion on AI infrastructure this year, up 77% from $410 billion in 2025.",
+            "confidence": 1,
+            "reason": "Sentence A8 states that the four largest hyperscalers are spending approximately $725 billion on AI infrastructure this year, up 77% from $410 billion in 2025. This directly supports the claim that big tech firms spent $410 billion on AI infrastructure last year (2025).",
+            "source_count": 5
+          },
+          {
+            "claim_id": "9d64f9c9-dc2e-48a7-9714-5adc68a65be6",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Big tech firms will spend more than $730 billion on AI infrastructure this year.",
+            "source_excerpt": "Wall Street expects big tech firms will spend more than $730 billion on AI infrastructure this year, up from last year's $400 billion, and a large amount of that will be borrowed.",
+            "verdict": "unverifiable",
+            "evidence": null,
+            "confidence": 0,
+            "reason": "None of the provided sentences mention the specific amount of $730 billion being spent on AI infrastructure this year.",
+            "source_count": 4
+          }
+        ]
+      },
+      {
+        "source_excerpt": "Corporate profits from companies in the Standard & Poor's 500 index (.SPX), opens new tab soared 52% in the second quarter, FactSet data show, bringing company profits as a share of GDP to a record 13.2%, according to the Bureau of Economic Analysis.",
+        "claims": [
+          {
+            "claim_id": "b4ffdbbb-4f48-4cef-8692-e5c2b8288dd1",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Corporate profits from companies in the Standard & Poor's 500 index soared 52% in the second quarter.",
+            "source_excerpt": "Corporate profits from companies in the Standard & Poor's 500 index (.SPX), opens new tab soared 52% in the second quarter, FactSet data show, bringing company profits as a share of GDP to a record 13.2%, according to the Bureau of Economic Analysis.",
+            "verdict": "supported",
+            "evidence": "S&P 500 companies are on track to report a 52% year-over-year profit increase for the second quarter of 2026, driven largely by unrealized gains that Alphabet and Amazon.com booked on their investments in AI companies such as Anthropic. ... S&#x26;P 500 companies are poised to report a 52% year-over-year profit increase for the second quarter of 2026, as mark-to-market gains tied to investments in artificial intelligence (AI) companies significantly boosted earnings. ... Goldman Sachs strategists noted this month that AI infrastructure-related stocks accounted for roughly one-third of S&#x26;P 500 earnings per share (EPS) growth in the second quarter.",
+            "confidence": 1,
+            "reason": "Sentences A3, A5, and A11 state that S&P 500 companies are poised for a 52% profit surge in the second quarter.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "f91fdbf3-d223-4d54-ad08-915d2ff81c8a",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Company profits as a share of GDP reached a record 13.2%.",
+            "source_excerpt": "Corporate profits from companies in the Standard & Poor's 500 index (.SPX), opens new tab soared 52% in the second quarter, FactSet data show, bringing company profits as a share of GDP to a record 13.2%, according to the Bureau of Economic Analysis.",
+            "verdict": "supported",
+            "evidence": "Corporate profits from companies in the Standard & Poor’s 500 index soared 52% in the second quarter, FactSet data show, bringing company profits as a share of GDP to a record 13.2%, according to the Bureau of Economic Analysis.",
+            "confidence": 1,
+            "reason": "Sentence A1 states that company profits as a share of GDP reached a record 13.2% in the second quarter.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "09311c01-1d8b-426a-b2c1-f8d57ed6c91e",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Company profits as a share of GDP reached a record 13.2%.",
+            "source_excerpt": "Corporate profits from companies in the Standard & Poor's 500 index (.SPX), opens new tab soared 52% in the second quarter, FactSet data show, bringing company profits as a share of GDP to a record 13.2%, according to the Bureau of Economic Analysis.",
+            "verdict": "supported",
+            "evidence": "Figures on Wednesday showed that company profits as a share of GDP rose to a record high 13.2% in the three months to June, a quarter that has seen nominal earnings surge more than 50% on aggregate thus far. ... Corporate profits from companies in the Standard & Poor’s 500 index soared 52% in the second quarter, FactSet data show, bringing company profits as a share of GDP to a record 13.2%, according to the Bureau of Economic Analysis.",
+            "confidence": 1,
+            "reason": "Both sentence A1 and B1 state that company profits as a share of GDP rose to a record high of 13.2%.",
+            "source_count": 3
+          }
+        ]
+      },
+      {
+        "source_excerpt": "The U.S. Department of the Treasury Building in Washington, D.C., U.S., July 11, 2026.",
+        "claims": [
+          {
+            "claim_id": "4af3e8a8-61a9-4254-b294-9cb82c81301f",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The U.S. Department of the Treasury Building is in Washington, D.C.",
+            "source_excerpt": "The U.S. Department of the Treasury Building in Washington, D.C., U.S., July 11, 2026.",
+            "verdict": "supported",
+            "evidence": "The historic Treasury Building is located at Fifteenth Street and Pennsylvania Avenue, NW, in Washington, D.C. ... The Treasury Building is located at 1500 Pennsylvania Avenue, NW, in Washington, D.C. was designated a National Historic Landmark in 1972. ... Washington, D.C. , U.S ... The Treasury Building at 1500 Pennsylvania Avenue , NW in Washington, D.C.",
+            "confidence": 1,
+            "reason": "Sentences A6 and A9 state that the Treasury Building is located in Washington, D.C. Sentence B6 and B16 also confirm this.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "1665eab0-a350-4a45-8dca-2479749fc1b4",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The U.S. Department of the Treasury Building was photographed on July 11, 2026.",
+            "source_excerpt": "The U.S. Department of the Treasury Building in Washington, D.C., U.S., July 11, 2026.",
+            "verdict": "unverifiable",
+            "evidence": null,
+            "confidence": 0,
+            "reason": "None of the provided sentences mention a photograph of the U.S. Department of the Treasury Building being taken on July 11, 2026.",
+            "source_count": 3
+          }
+        ]
+      },
+      {
+        "source_excerpt": "The change in the market's structure described by Lustig has made Treasury bonds more vulnerable to periodic supply-demand imbalances and, on the margin, to higher yields, said Ryan Swift, U.S. bond strategist at BCA Research.",
+        "claims": [
+          {
+            "claim_id": "7e2e0c76-9972-41c8-b671-ad53c6170654",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Ryan Swift is U.S. bond strategist at BCA Research.",
+            "source_excerpt": "The change in the market's structure described by Lustig has made Treasury bonds more vulnerable to periodic supply-demand imbalances and, on the margin, to higher yields, said Ryan Swift, U.S. bond strategist at BCA Research.",
+            "verdict": "supported",
+            "evidence": "Ryan Swift ... Ryan Swift | BCA Research ... by Ryan Swift",
+            "confidence": 1,
+            "reason": "The passage identifies Ryan Swift and states he helps investors position US bond portfolios, and sentence B1 explicitly states 'Ryan Swift | BCA Research'.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "4bb34271-5565-42aa-a39c-32e0ce3b53d1",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The change in the market's structure has made Treasury bonds more vulnerable to periodic supply-demand imbalances.",
+            "source_excerpt": "The change in the market's structure described by Lustig has made Treasury bonds more vulnerable to periodic supply-demand imbalances and, on the margin, to higher yields, said Ryan Swift, U.S. bond strategist at BCA Research.",
+            "verdict": "supported",
+            "evidence": "In December, the FOMC directed the New York Fed to conduct reserve management purchases (RMPs) of approximately $40 billion in Treasury bills monthly.",
+            "confidence": 1,
+            "reason": "Sentence A11 explicitly states that the change in the market's structure has made Treasury bonds more vulnerable to periodic supply-demand imbalances and, on the margin, to higher yields.",
+            "source_count": 11
+          },
+          {
+            "claim_id": "e1d34d7f-3b1a-47a2-9190-7b900896ccdb",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The change in the market's structure has made Treasury bonds more vulnerable to higher yields.",
+            "source_excerpt": "The change in the market's structure described by Lustig has made Treasury bonds more vulnerable to periodic supply-demand imbalances and, on the margin, to higher yields, said Ryan Swift, U.S. bond strategist at BCA Research.",
+            "verdict": "supported",
+            "evidence": "The change in the market’s structure described by Lustig ​has made Treasury ‌bonds more vulnerable to periodic supply-demand imbalances and, on the margin, to higher yields, said Ryan Swift, U.S. bond ​strategist at BCA Research. ... That shift has made Treasury prices more sensitive to changes in supply and demand.",
+            "confidence": 1,
+            "reason": "Sentence A11 states that the change in the market's structure has made Treasury bonds more vulnerable to periodic supply-demand imbalances and, on the margin, to higher yields. Sentence B15 states that the shift in the investor base has made Treasury prices more sensitive to changes in supply and demand, which implies vulnerability to higher yields.",
+            "source_count": 3
+          }
+        ]
+      },
+      {
+        "source_excerpt": "A higher term premium and heightened inflation expectations explain part of the backup in rates, market participants say.",
+        "claims": [
+          {
+            "claim_id": "0f903b2e-79e3-41a7-94a4-fb560e4432fb",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "A higher term premium explains part of the backup in rates.",
+            "source_excerpt": "A higher term premium and heightened inflation expectations explain part of the backup in rates, market participants say.",
+            "verdict": "supported",
+            "evidence": "Consistent with Figure 1, this steepness appears to be driven more by higher term premia than by changes in the expected path of short-term interest rates.",
+            "confidence": 0.9,
+            "reason": "The passage states that the steepness of the yield curve appears to be driven more by higher term premia than by changes in the expected path of short-term interest rates, implying that a higher term premium explains part of the backup in rates.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "890a32cd-52c8-4de3-aa60-ab3ee65eb7cb",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Heightened inflation expectations explain part of the backup in rates.",
+            "source_excerpt": "A higher term premium and heightened inflation expectations explain part of the backup in rates, market participants say.",
+            "verdict": "supported",
+            "evidence": "not necessarily fully&#8212;incorporated into the nominal interest rates observed in financial markets, they are important factors in determining market or nominal interest rates and shifts in yield curves.",
+            "confidence": 1,
+            "reason": "Sentence A18 states that inflationary expectations are important factors in determining market or nominal interest rates and shifts in yield curves, which supports the claim that heightened inflation expectations explain part of the backup in rates.",
+            "source_count": 5
+          }
+        ]
+      },
+      {
+        "source_excerpt": "Those shifts in who acts as the marginal buyer of government bonds have increased the price sensitivity of the market and ​fed volatility in long-term Treasury bond prices that can amplify the forces driving up interest rates.",
+        "claims": [
+          {
+            "claim_id": "db79c144-5b72-44c0-861e-98345643fbe5",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The shifts in who acts as the marginal buyer of government bonds have increased the price sensitivity of the market.",
+            "source_excerpt": "Those shifts in who acts as the marginal buyer of government bonds have increased the price sensitivity of the market and ​fed volatility in long-term Treasury bond prices that can amplify the forces driving up interest rates.",
+            "verdict": "supported",
+            "evidence": "We estimate the yield demand elasticity for government bonds across different sectors and how this shapes the way that the government bond market adjusts when central banks implement balance sheet policies. ... We then draw on a demand system approach to compute the yield sensitivity.",
+            "confidence": 0.9,
+            "reason": "Sentence A6 discusses estimating yield demand elasticity for government bonds across different sectors, and A8 discusses using a demand system approach to compute yield sensitivity, which together support the claim that shifts in marginal buyers have increased price sensitivity.",
+            "source_count": 3
+          },
+          {
+            "claim_id": "b7096fee-d211-4156-9b6f-fbdb7b549bc9",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "The shifts in who acts as the marginal buyer of government bonds have fed volatility in long-term Treasury bond prices.",
+            "source_excerpt": "Those shifts in who acts as the marginal buyer of government bonds have increased the price sensitivity of the market and ​fed volatility in long-term Treasury bond prices that can amplify the forces driving up interest rates.",
+            "verdict": "supported",
+            "evidence": "Those shifts in who acts as the marginal buyer of government bonds have increased the price sensitivity ⁠of the market and fed volatility in long-term Treasury bond prices that can amplify the forces driving up interest rates.",
+            "confidence": 1,
+            "reason": "Sentence A7 states that shifts in who acts as the marginal buyer of government bonds have increased price sensitivity and fed volatility in long-term Treasury bond prices.",
+            "source_count": 5
+          },
+          {
+            "claim_id": "c2e35085-bb04-4680-b202-84e847df9d3f",
+            "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+            "claim_text": "Volatility in long-term Treasury bond prices can amplify the forces driving up interest rates.",
+            "source_excerpt": "Those shifts in who acts as the marginal buyer of government bonds have increased the price sensitivity of the market and ​fed volatility in long-term Treasury bond prices that can amplify the forces driving up interest rates.",
+            "verdict": "supported",
+            "evidence": "Those shifts in who acts as the marginal buyer of government bonds have increased the price sensitivity ⁠of the market and fed volatility in long-term Treasury bond prices that can amplify the forces driving up interest rates.",
+            "confidence": 0.9,
+            "reason": "The passage states that shifts in who acts as the marginal buyer of government bonds have increased market price sensitivity and fed volatility in long-term Treasury bond prices, which can amplify the forces driving up interest rates.",
+            "source_count": 5
+          }
+        ]
+      }
+    ],
+    "group_count": 9
+  },
+  "E2_non_assertion_text": {
+    "named": [
+      {
+        "claim_id": "1665eab0-a350-4a45-8dca-2479749fc1b4",
+        "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+        "claim_text": "The U.S. Department of the Treasury Building was photographed on July 11, 2026.",
+        "source_excerpt": "The U.S. Department of the Treasury Building in Washington, D.C., U.S., July 11, 2026.",
+        "verdict": "unverifiable",
+        "evidence": null,
+        "confidence": 0,
+        "reason": "None of the provided sentences mention a photograph of the U.S. Department of the Treasury Building being taken on July 11, 2026.",
+        "source_count": 3
+      }
+    ],
+    "marker_shortlist": [
+      {
+        "claim_id": "1665eab0-a350-4a45-8dca-2479749fc1b4",
+        "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+        "claim_text": "The U.S. Department of the Treasury Building was photographed on July 11, 2026.",
+        "source_excerpt": "The U.S. Department of the Treasury Building in Washington, D.C., U.S., July 11, 2026.",
+        "verdict": "unverifiable",
+        "evidence": null,
+        "confidence": 0,
+        "reason": "None of the provided sentences mention a photograph of the U.S. Department of the Treasury Building being taken on July 11, 2026.",
+        "source_count": 3
+      },
+      {
+        "claim_id": "33b810a6-941e-48f1-bcff-53fc963dd3a3",
+        "run_id": "5b8005cc-97f0-487c-951c-4744548d2679",
+        "claim_text": "Hanno Lustig is a senior fellow at the Stanford Institute for Economic Policy Research.",
+        "source_excerpt": null,
+        "verdict": "supported",
+        "evidence": "Senior Fellow, Stanford Institute for Economic Policy Research ... Stanford Institute for Economic Policy Research (SIEPR)",
+        "confidence": 1,
+        "reason": "Sentences A3 and B7 state that Hanno Lustig is a Senior Fellow at the Stanford Institute for Economic Policy Research.",
+        "source_count": 3
+      },
+      {
+        "claim_id": "c1814112-ae66-4201-8f24-58c24b14f06e",
+        "run_id": "be72361c-0fd1-449c-a433-1c99d0c65e0e",
+        "claim_text": "A spokesperson for the University of Rochester told Reuters in an April 29 email that social media posts claiming the university cut academic ties with Israel are not true.",
+        "source_excerpt": "A spokesperson for the university told Reuters in an April 29 email that the posts are “not true.”",
+        "verdict": "supported",
+        "evidence": "“The University of Rochester has not considered and is not open to discussing an end to its academic involvement with Israeli institutions,” the statement reads. ... University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels. ... \"University administrators in fact made no commitment to either demand, but in particular made no commitment regarding a University divestment from any academic programs or ties with Israel, as is being inaccurately reported on some social media channels.",
+        "confidence": 0.9,
+        "reason": "Multiple sources (A:14, B:12, C:11) state that a University of Rochester spokesperson or administrators made no commitment regarding divestment from academic programs or ties with Israel, directly supporting the claim that social media posts claiming otherwise are untrue.",
+        "source_count": 3
+      },
+      {
+        "claim_id": "0dcec786-3192-487d-a646-1334d2436963",
+        "run_id": "be72361c-0fd1-449c-a433-1c99d0c65e0e",
+        "claim_text": "The Campus Times is a student newspaper.",
+        "source_excerpt": "A spokesperson for Fight Back! News told Reuters in a May 3 email that university administrators “lied” about the outcome of an April 24 meeting with protesters and referred to an April 30 report, opens new tab by the student newspaper the Campus Times, which cites a recording of the meeting.",
+        "verdict": "supported",
+        "evidence": "The Campus Times is the student newspaper for the University of Rochester.",
+        "confidence": 1,
+        "reason": "The passage explicitly states that The Campus Times is the student newspaper for the University of Rochester.",
+        "source_count": 3
+      },
+      {
+        "claim_id": "14228230-df53-4d2e-9efb-f00de175d020",
+        "run_id": "be72361c-0fd1-449c-a433-1c99d0c65e0e",
+        "claim_text": "A spokesperson for Fight Back! News told Reuters in a May 3 email that university administrators lied about the outcome of an April 24 meeting with protesters.",
+        "source_excerpt": "A spokesperson for Fight Back! News told Reuters in a May 3 email that university administrators “lied” about the outcome of an April 24 meeting with protesters and referred to an April 30 report, opens new tab by the student newspaper the Campus Times, which cites a recording of the meeting.",
+        "verdict": "unsupported",
+        "evidence": null,
+        "confidence": 0.9,
+        "reason": "The provided sentences discuss a sit-in at the University of Texas and a pop-up library at Yale, but do not mention a spokesperson for Fight Back! News telling Reuters about university administrators lying about a meeting outcome.",
+        "source_count": 8
+      },
+      {
+        "claim_id": "a1df2c47-e72a-403b-b07c-4c80570bde4a",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana loves nature.",
+        "source_excerpt": "She loves nature and exploring different nature trails with her family.",
+        "verdict": "excluded",
+        "evidence": null,
+        "confidence": null,
+        "reason": "This describes a private, personal circumstance that no public record could confirm or deny.",
+        "source_count": 0
+      },
+      {
+        "claim_id": "c7db70ff-7bcb-494c-a392-40532118810f",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana loves exploring different nature trails with her family.",
+        "source_excerpt": "She loves nature and exploring different nature trails with her family.",
+        "verdict": "excluded",
+        "evidence": null,
+        "confidence": null,
+        "reason": "This describes a private, personal circumstance that no public record could confirm or deny.",
+        "source_count": 0
+      },
+      {
+        "claim_id": "ba1f808c-4381-4592-9015-c0dc5bd3c0df",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana can be found reading a good book in her spare time.",
+        "source_excerpt": "In her spare time, she can be found baking, knitting or reading a good book.",
+        "verdict": "excluded",
+        "evidence": null,
+        "confidence": null,
+        "reason": "This describes a private, personal circumstance that no public record could confirm or deny.",
+        "source_count": 0
+      },
+      {
+        "claim_id": "51e40ba5-f8df-4e62-9218-f83a5c971015",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana loves academia.",
+        "source_excerpt": "Alishba loves academia and spending her days at the university, as she hopes to pursue further education and continue her life in the university setting.",
+        "verdict": "excluded",
+        "evidence": null,
+        "confidence": null,
+        "reason": "This is a subjective opinion, not a checkable fact.",
+        "source_count": 0
+      },
+      {
+        "claim_id": "b3f1bab9-9632-4ccf-bc93-2a39f96d02db",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana hopes to pursue further education.",
+        "source_excerpt": "Alishba loves academia and spending her days at the university, as she hopes to pursue further education and continue her life in the university setting.",
+        "verdict": "excluded",
+        "evidence": null,
+        "confidence": null,
+        "reason": "This describes a private, personal circumstance that no public record could confirm or deny.",
+        "source_count": 0
+      },
+      {
+        "claim_id": "ea6e28e1-d94d-4cf2-b1e0-f88256b06de3",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana hopes to continue her life in the university setting.",
+        "source_excerpt": "Alishba loves academia and spending her days at the university, as she hopes to pursue further education and continue her life in the university setting.",
+        "verdict": "excluded",
+        "evidence": null,
+        "confidence": null,
+        "reason": "This describes a private, personal circumstance that no public record could confirm or deny.",
+        "source_count": 0
+      },
+      {
+        "claim_id": "cf3153e4-daf7-4ba9-8740-a1ceea6d7cd8",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana can be found baking in her spare time.",
+        "source_excerpt": "In her spare time, she can be found baking, knitting or reading a good book.",
+        "verdict": "supported",
+        "evidence": "In her spare time, she can be found baking, knitting or reading a good book.",
+        "confidence": 1,
+        "reason": "Sentence C1 explicitly states that in her spare time, she can be found baking.",
+        "source_count": 9
+      },
+      {
+        "claim_id": "38ebc2ae-7921-4989-a4e9-c1b7cc24962b",
+        "run_id": "fddb57fa-80e3-443a-bdba-427462f21544",
+        "claim_text": "Alishba Rana can be found knitting in her spare time.",
+        "source_excerpt": "In her spare time, she can be found baking, knitting or reading a good book.",
+        "verdict": "supported",
+        "evidence": "crochet, yarn addiction, crochet projects, yarn stash, crocheter problems, crochet community, handmade, crochet lover, crochet reels, fiber arts, crochet humor, yarn shopping, crochet inspiration | Arthive By Alishba",
+        "confidence": 1,
+        "reason": "Sentence A16 mentions 'Arthive By Alishba' and includes hashtags related to crochet and yarn, implying knitting or related fiber arts are a hobby. While not explicitly stating 'knitting', the context of yarn and crochet strongly suggests it as a spare time activity.",
+        "source_count": 2
+      }
+    ],
+    "shortlist_count": 13
+  },
+  "E3_referent_widening": {
+    "named": [
+      {
+        "claim_id": "181d6ebb-b4bd-4f81-9193-1ccdead6e706",
+        "run_id": "be72361c-0fd1-449c-a433-1c99d0c65e0e",
+        "claim_text": "An article on Fight Back! News' website does not mention an announcement from the University of Rochester on cutting ties with Israel.",
+        "source_excerpt": "One of the earliest posts sharing the claim was on the Facebook page of Fight Back! News, an online newspaper that describes itself as published by “ activists and organizers, opens new tab . ” The post, opens new tab links to an article, opens new tab on the group’s website that does not mention an announcement from the university on cutting ties with Israel.",
+        "verdict": "contradicted",
+        "evidence": "As of April 24, the administration of University of Rochester has announced that UR will move forward with an academic boycott from all ties to Israel.",
+        "confidence": 1,
+        "reason": "Source A explicitly states that the University of Rochester administration announced it would move forward with an academic boycott from all ties to Israel, which contradicts the claim that an article on Fight Back! News' website does not mention an announcement from the University of Rochester on cutting ties with Israel.",
+        "source_count": 3
+      }
+    ]
+  }
+}

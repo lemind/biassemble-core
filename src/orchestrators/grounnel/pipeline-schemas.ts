@@ -48,6 +48,25 @@ export const VerifyRawResultReasonFirstSchema = z.object({
 });
 export const VerifyRawResponseReasonFirstSchema = z.object({ results: z.array(VerifyRawResultReasonFirstSchema) });
 
+// spec 014 T018 — experiment-only, NOT wired into production. Option 2 from plan.md's kill
+// criterion: name the fact the claim asserts BEFORE committing to a verdict. Same instrument as
+// T21's `working` field, pointed at STEP 1 selection rather than attribution.
+export const VerifyRawResultPredicateFirstSchema = z.object({
+  id: z.string(),
+  // Required and first — Gemini generates in schema order, so a later field cannot shape the verdict.
+  assertedPredicate: z.string(),
+  selectedSentence: z.string(),
+  verdict: GrounnelVerdictEnum,
+  reason: z.string().nullable().optional().transform((v) => v ?? null),
+  confidence: z.number().min(0).max(1),
+  evidenceCitations: z
+    .array(z.object({ source: z.string(), n: z.number().int() }))
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+});
+export const VerifyRawResponsePredicateFirstSchema = z.object({ results: z.array(VerifyRawResultPredicateFirstSchema) });
+
 // D025/T035 — batched "does reason support verdict?" classifier response.
 export const ConsistencyCheckResultSchema = z.object({ id: z.string(), consistent: z.boolean() });
 export const ConsistencyCheckResponseSchema = z.object({ results: z.array(ConsistencyCheckResultSchema) });

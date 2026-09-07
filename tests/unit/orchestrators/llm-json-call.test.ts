@@ -3,6 +3,7 @@ import { z } from "zod";
 import { callLlmForJson, type LlmCallCompletionInfo } from "../../../src/orchestrators/llm-json-call.js";
 import { MockProvider } from "../../mocks/mock-provider.js";
 import { RateLimitError } from "../../../src/providers/gemini.js";
+import { TimeoutError } from "../../../src/providers/types.js";
 import type { Provider } from "../../../src/providers/types.js";
 
 const Schema = z.object({ value: z.string() });
@@ -111,6 +112,58 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
     ).rejects.toThrow(RateLimitError);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ status: "error", failureType: "provider_error" });
+  });
+
+  it("does not retry a TimeoutError — the next attempt has the same budget and fails identically", async () => {
+    let callCount = 0;
+    const timingOutProvider: Provider = {
+      mode: "mock",
+      completeJson: async () => {
+        callCount++;
+        throw new TimeoutError("This operation was aborted");
+      },
+    };
+    const calls: LlmCallCompletionInfo[] = [];
+    await expect(
+      callLlmForJson({
+        provider: timingOutProvider,
+        system: "test",
+        user: "go",
+        schema: Schema,
+        expectedKeys: ["value"],
+        attempts: 3,
+        module: "test",
+        operation: "timeout",
+        onComplete: (info) => calls.push(info),
+      })
+    ).rejects.toThrow(TimeoutError);
+    // 3 attempts were offered; only 1 was spent. Live: 4 of 4 failures burned 3 x 30s each.
+    expect(callCount).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ status: "timeout", failureType: "timeout" });
+  });
+
+  it("forwards a per-call timeoutMs to the provider — it was dropped before, so no caller could set one", async () => {
+    let seen: unknown;
+    const capturing: Provider = {
+      mode: "mock",
+      completeJson: async (req: { options?: { timeoutMs?: number } }) => {
+        seen = req.options?.timeoutMs;
+        return { result: { value: "ok" } } as never;
+      },
+    };
+    await callLlmForJson({
+      provider: capturing,
+      system: "test",
+      user: "go",
+      schema: Schema,
+      expectedKeys: ["value"],
+      attempts: 1,
+      timeoutMs: 60_000,
+      module: "test",
+      operation: "timeoutMs",
+    });
+    expect(seen).toBe(60_000);
   });
 
   it("reviewed finding: tags an isValid() rejection as failureType 'schema_validation', distinct from a genuine parse failure ('parse_error')", async () => {

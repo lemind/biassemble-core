@@ -4,6 +4,7 @@ import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
 import { buildPassageSentences, buildPassageSentencesMulti, resolveEvidenceFromCitations, type PassageSentence } from "./passage-sentences.js";
+import { clearInputShingleCache, isInputDuplicate } from "./input-duplicate.js";
 import { composeUserFacingReason, evidenceMatchesPassage, rewriteUngroundedAffirmativeReason, type InstanceAttribution } from "./gates.js";
 import { runGateChain, type Diagnostic } from "./pipeline-gate-chain.js";
 import {
@@ -12,17 +13,21 @@ import {
   hasValidEvidence,
   toClaimSources,
   passageLabelForIndex,
+  MAX_LABELLED_PASSAGES,
   originatingContradictionGate,
-  PROTECTED_CONTRADICTION_GATES,
+  contradictionIsProtected,
   logReconciliationDowngrade,
   attachCitationUrls,
+  combinedOf,
+  normalizeUrlKey,
   type PipelineClaimInput,
   type ResolvedEvidence,
   type ResolvedWithPassage,
+  type ScoredSource,
   type Verdict,
 } from "./pipeline-helpers.js";
 import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, InstanceAttributionResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
-import { extractInstanceSelector } from "../../lib/instance-selector.js";
+import { stripInstanceSelector, extractInstanceSelector } from "../../lib/instance-selector.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { RateLimitError } from "../../providers/gemini.js";
 import { env } from "../../lib/env.js";
@@ -56,7 +61,7 @@ const SEARCH_CONCURRENCY = 20;
 /** VERIFY responses are intermittently unparseable, matches audit's own retry count (D018 §5.10). */
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
-const CONFIDENCE_THRESHOLD = 0.6;
+export const CONFIDENCE_THRESHOLD = 0.6;
 // D030 §3i Mode B — checkRetryContradiction's downgrade targets, keyed by the retry's own verdict.
 // One table, not parallel ternaries, so target/reason-code can't drift apart if a verdict is added.
 // `contradicted` reverts to "no evidence" (unsupported); `supported`/`partially_supported` revert to
@@ -66,17 +71,25 @@ const RETRY_DOWNGRADE: Partial<Record<Verdict, { target: Verdict; reason: GateRe
   supported: { target: "unverifiable", reason: "retry_affirmation_invalidated" },
   partially_supported: { target: "unverifiable", reason: "retry_affirmation_invalidated" },
 };
-// D026 §11 (T049) — Phase 1 multi-passage evidence, fixed cap; §13 (T053) built the escalation this deferred.
-const MAX_VERIFY_PASSAGES = 3;
 // Verdicts applyInstanceAttributionGate can actually move — no gate ahead of it lifts `unverifiable`, so checking those claims buys nothing (spec 013 T21).
 const ATTRIBUTION_ACTIONABLE_VERDICTS: ReadonlySet<Verdict> = new Set<Verdict>(["supported", "partially_supported", "unsupported"]);
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
 // gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
-const ESCALATION_TIERS = [5, 8];
+// spec 017 T017 — these are now TARGETS of usable pages, not attempt counts, and the base pass
+// already asks for 5, so the ladder moves up to stay meaningful.
+const ESCALATION_TIERS = [8, 11];
+// spec 017 T033 — derived, not asserted: must leave room for the widest tier's fetches so a page
+// VERIFY read is never dropped before the next tier, and so the pool cannot outgrow the A-Z codec.
+const MAX_CARRIED_SOURCES = MAX_LABELLED_PASSAGES - Math.max(...ESCALATION_TIERS);
+// spec 017 T036 — implicit_negation's precision guard stays at the window it was tuned against
+// (D022 §4, "trades recall for precision by design"), independent of how much VERIFY now reads.
+const NEGATION_GATE_PASSAGES = 3;
 
 // D032 §5/T7 — states both that evidence is missing AND that this isn't a falsehood finding (SC-2).
 const NO_EVIDENCE_REASON =
   "No relevant source found for this claim. This is not a finding that the claim is false — it means no supporting or refuting evidence was located.";
+const INPUT_DUPLICATE_ONLY_REASON =
+  "The only sources found for this claim were copies of the text you submitted, so they cannot corroborate it. This is not a finding that the claim is false.";
 const TAVILY_RATE_LIMITED_REASON = "This claim could not be checked right now — our search provider's rate limit was reached. Try again later.";
 
 /** Per-claim loop: search -> gate #4 -> VERIFY (batched) -> gates #1/#2 -> store (D019 §1, T010). No-evidence claims skip VERIFY (cost saving, §4.1). Gemini/Tavily rate limits get distinct messages. */
@@ -96,16 +109,21 @@ export class GrounnelPipelineService {
   /** Spec 013 T22 — exposes resolveAllEvidence (search + rerank, no VERIFY call) for the fixture-generation
    * step of the verdict/reason field-order A/B: snapshots the exact {claim, subjectEntity, passages} VERIFY
    * would receive, without running VERIFY itself, so the fixture is reusable across both schema orders. */
-  async resolveEvidenceForClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<ResolvedEvidence[]> {
-    return this.resolveAllEvidence(auditId, claims, searchEngine);
+  async resolveEvidenceForClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string): Promise<ResolvedEvidence[]> {
+    return this.resolveAllEvidence(auditId, claims, searchEngine, inputText);
   }
 
-  async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow"): Promise<void> {
+  /** inputText (spec 015 G1) — the document under test, so retrieval handing back a copy of it can
+   * be refused. Optional: omitted means the check is skipped, never that it fails closed. */
+  async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string): Promise<void> {
     try {
       // D026 §14/§15 — set before the verify loop to avoid a "done" poll race; stays inside this try so a Redis failure still hits the catch below.
       await this.grounnelStore.setEscalating(auditId, true);
+      // spec 017 T017 — run-scoped: a page that failed for one claim has failed for the run. Lives
+      // here, not in the provider, so it dies with the run instead of leaking across runs.
+      const failedUrlKeys = new Set<string>();
       try {
-        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine);
+        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine, inputText, failedUrlKeys);
 
         const noEvidence = resolved.filter((r) => !hasPassage(r));
         await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
@@ -137,12 +155,16 @@ export class GrounnelPipelineService {
         // D026 §13 — skip escalation entirely if the primary pass already hit a rate limit.
         if (!rateLimitedMidRun) {
           const escalationT0 = Date.now();
-          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds);
+          // spec 017 — seed the carry from the base pass: CSS/B lost its deciding page HERE, not between escalation tiers.
+          const carriedByClaimId = new Map(resolved.filter((r) => r.rankedPool?.length).map((r) => [r.claim.id, r.rankedPool!]));
+          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText, carriedByClaimId, failedUrlKeys);
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
       } finally {
         // D026 §15 — must clear on every path or the run sticks at "verifying" forever.
         await this.grounnelStore.setEscalating(auditId, false);
+        // The G1 cache holds this document's whole shingle set; nothing else evicts it.
+        clearInputShingleCache();
       }
     } catch (err) {
       // Otherwise status never reaches "failed" on an uncaught error — stuck at its prior status forever.
@@ -159,7 +181,12 @@ export class GrounnelPipelineService {
     auditId: string,
     claims: PipelineClaimInput[],
     searchEngine: "defaultFlow" | "tavily",
-    protectedContradictionClaimIds: Set<string>
+    protectedContradictionClaimIds: Set<string>,
+    // G1 threads into escalation too — the wider tier pool is exactly where a syndicated copy surfaces.
+    inputText?: string,
+    // spec 017 — seeded from the base pass; each tier ranks over it and replaces it with its own pool.
+    carriedByClaimId: Map<string, ScoredSource[]> = new Map(),
+    failedUrlKeys?: Set<string>
   ): Promise<void> {
     const byId = new Map(claims.map((c) => [c.id, c]));
     let pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
@@ -178,7 +205,9 @@ export class GrounnelPipelineService {
       let tavilyRateLimitedThisTier = false;
       for (let i = 0; i < pending.length; i += SEARCH_CONCURRENCY) {
         const chunk = pending.slice(i, i + SEARCH_CONCURRENCY);
-        const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, tier)));
+        const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, tier, inputText, carriedByClaimId.get(claim.id), failedUrlKeys)));
+        // spec 017 — a tier that resolved nothing keeps the prior pool rather than clearing it.
+        for (const r of chunkResolved) if (r.rankedPool?.length) carriedByClaimId.set(r.claim.id, r.rankedPool);
         reResolved.push(...chunkResolved);
         if (chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"))) {
           tavilyRateLimitedThisTier = true;
@@ -220,6 +249,8 @@ export class GrounnelPipelineService {
     if (!status) return [];
     return status.claims
       .filter(
+        // `supported` is the ONLY verdict excluded here — any downgrade moves a claim across this
+        // boundary and buys it a second retrieval pass (D030 §3m Addendum 8). Narrow it with care.
         (c) =>
           c.status === "done" &&
           (c.verdict === "unsupported" || c.verdict === "unverifiable" || c.verdict === "contradicted" || c.verdict === "partially_supported") &&
@@ -248,7 +279,7 @@ export class GrounnelPipelineService {
     if (contradicted.length === 0) return;
 
     // D030 §3d — a reason_ordinal contradiction is grounded in VERIFY's own textual mismatch; excluded from the classifier call entirely, not just from acting on it.
-    const protectedClaims = contradicted.filter((c) => PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? [])?.gate ?? ""));
+    const protectedClaims = contradicted.filter((c) => contradictionIsProtected(gateEventsByClaimId.get(c.id) ?? []));
     for (const c of protectedClaims) protectedContradictionClaimIds.add(c.id);
     const nowContradicted = contradicted.filter((c) => !protectedClaims.some((p) => p.id === c.id));
     if (nowContradicted.length === 0) return;
@@ -325,12 +356,14 @@ export class GrounnelPipelineService {
   private async resolveAllEvidence(
     auditId: string,
     claims: PipelineClaimInput[],
-    searchEngine: "defaultFlow" | "tavily"
+    searchEngine: "defaultFlow" | "tavily",
+    inputText?: string,
+    failedUrlKeys?: Set<string>
   ): Promise<ResolvedEvidence[]> {
     const resolved: ResolvedEvidence[] = [];
     for (let i = 0; i < claims.length; i += SEARCH_CONCURRENCY) {
       const chunk = claims.slice(i, i + SEARCH_CONCURRENCY);
-      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine)));
+      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, undefined, inputText, undefined, failedUrlKeys)));
       resolved.push(...chunkResolved);
 
       const tavilyRateLimited = chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"));
@@ -355,7 +388,12 @@ export class GrounnelPipelineService {
     claim: PipelineClaimInput,
     searchEngine: "defaultFlow" | "tavily",
     // D026 §13 — escalation-only; omitted on the normal pass (HybridSearchProvider defaults it).
-    maxCandidates?: number
+    maxCandidates?: number,
+    inputText?: string,
+    // spec 017 — the prior tier's capped pool; every tier ranks over new ∪ carried, never new alone.
+    carried?: ScoredSource[],
+    // spec 017 T017 — run-scoped set of pages already known unusable.
+    failedUrlKeys?: Set<string>
   ): Promise<ResolvedEvidence> {
     // context (D023 §6) attributes grounnel_search_calls rows to this run/claim; D026 §8 — full claim sentence, not a keyword rewrite (that's Tavily-only, buildSearchQuery/T046).
     const sources = await this.searchProvider.search(claim.text, {
@@ -363,6 +401,7 @@ export class GrounnelPipelineService {
       claimId: claim.id,
       searchFlow: searchEngine,
       maxCandidates,
+      failedUrlKeys,
     });
     for (const s of sources) {
       if (s.status !== "ok") {
@@ -374,39 +413,106 @@ export class GrounnelPipelineService {
       }
     }
 
-    const okSources = sources.filter((s) => s.status === "ok" && s.text);
-    if (okSources.length === 0) {
+    let okSources = sources.filter((s) => s.status === "ok" && s.text);
+    // spec 017 — a URL refused here is refused outright: the carried copy of it must not be
+    // resurrected, because the refusal describes that page's CURRENT content.
+    const refusedKeys = new Set<string>();
+    let everyNewSourceWasDuplicate = false;
+
+    // G1 (spec 015 T002) — drop a retrieved page that is substantially a copy of the document under
+    // test: a syndicated wire republication or an essay-mill mirror corroborates nothing, it IS the
+    // claim. Runs before rerank so the duplicate costs neither a rerank nor a VERIFY slot.
+    if (inputText?.trim()) {
+      const kept = okSources.filter((s) => !isInputDuplicate(s.text!, inputText));
+      everyNewSourceWasDuplicate = kept.length === 0 && okSources.length > 0;
+      if (kept.length !== okSources.length) {
+        const dropped = okSources.filter((s) => !kept.includes(s));
+        for (const s of dropped) refusedKeys.add(normalizeUrlKey(s.url));
+        logger.info(
+          { module: MODULE, operation: "resolveEvidence", claimId: claim.id, dropped: dropped.map((s) => s.url) },
+          "Refused source(s) that reproduce the input document (G1 input-duplicate)"
+        );
+        okSources = kept;
+      }
+    }
+
+    // spec 017 T005 — new ∪ carried, deduped by normalized URL, newer wins. Carried pages skip the
+    // duplicate check; the body they carry is the body that already passed it (plan.md § Design).
+    const pool: ScoredSource[] = [];
+    const seen = new Set<string>();
+    // Review finding — dedup NEW against itself too: fetchCandidate returns the post-redirect url,
+    // so two discovery candidates can resolve to one page and eat two of the three VERIFY slots.
+    okSources.forEach((source, i) => {
+      const key = normalizeUrlKey(source.url);
+      if (seen.has(key)) return;
+      seen.add(key);
+      // Index over the raw fetch order, not the deduped one — the score is this page's discovery rank.
+      pool.push({ source, lexicalScore: 100 * (1 - i / okSources.length) });
+    });
+    const newSourceCount = pool.length;
+    for (const c of carried ?? []) {
+      const key = normalizeUrlKey(c.source.url);
+      if (seen.has(key) || refusedKeys.has(key)) continue;
+      seen.add(key);
+      pool.push(c);
+    }
+
+    if (pool.length === 0) {
+      if (everyNewSourceWasDuplicate) return { claim, passages: [], sources, allSourcesWereInputDuplicates: true };
       logger.info({ module: MODULE, operation: "resolveEvidence", claimId: claim.id }, "No source resolved to usable text — no evidence found");
       return { claim, passages: [], sources };
     }
 
-    // D026 §6/§11/§18 — pools up to MAX_VERIFY_PASSAGES relevant sources, not just the first; rerankPassages falls back to gate #4 on error.
-    const relevantSources = (await this.rerankPassages(auditId, claim, okSources)).slice(0, MAX_VERIFY_PASSAGES);
-    if (relevantSources.length === 0) {
-      logger.info(
-        { module: MODULE, operation: "resolveEvidence", claimId: claim.id, checkedUrls: okSources.map((s) => s.url) },
-        "No already-fetched source passed gate #4's relevance filter"
-      );
-      return { claim, passages: [], sources };
+    // Review finding — a tier that found nothing new must stay the no-op it was before the carry.
+    // Re-verifying identical evidence burns quota and lets a good verdict flip on LLM nondeterminism.
+    if (newSourceCount === 0) {
+      logger.info({ module: MODULE, operation: "resolveEvidence", claimId: claim.id, carried: pool.length }, "Tier found no new usable source — keeping the prior tier's result");
+      return { claim, passages: [], sources, rankedPool: carried };
     }
 
-    return { claim, passages: relevantSources, sources };
+    // Review finding — a carried page can be cited, so it must appear in this claim's own source
+    // list. One entry per URL, `ok` winning: a re-fetch that failed must not mask the carried copy.
+    const byKey = new Map<string, SearchPassage>();
+    for (const s of [...sources, ...pool.map((p) => p.source)]) {
+      const prev = byKey.get(normalizeUrlKey(s.url));
+      if (!prev || (prev.status !== "ok" && s.status === "ok")) byKey.set(normalizeUrlKey(s.url), s);
+    }
+    const allSources = [...byKey.values()];
+
+    // D026 §6/§18 — every relevant source, rank-ordered; rerankPassages falls back to gate #4 on error.
+    const ranked = await this.rerankPassages(auditId, claim, pool);
+    const rankedPool = ranked.slice(0, MAX_CARRIED_SOURCES);
+    const relevantSources = ranked.slice(0, MAX_LABELLED_PASSAGES).map((r) => r.source);
+    if (relevantSources.length === 0) {
+      logger.info(
+        { module: MODULE, operation: "resolveEvidence", claimId: claim.id, checkedUrls: pool.map((p) => p.source.url) },
+        "No already-fetched source passed gate #4's relevance filter"
+      );
+      return { claim, passages: [], sources: allSources, rankedPool };
+    }
+
+    return { claim, passages: relevantSources, sources: allSources, rankedPool };
   }
 
   /** D026 §18 — LLM scores "is this candidate actually about the claim" (lexical presence can't); averaged with lexical rank. Fails open to gate #4 alone on error. */
-  private async rerankPassages(auditId: string, claim: PipelineClaimInput, sources: SearchPassage[]): Promise<SearchPassage[]> {
-    // g17 — hasSubjectEntity joins isPassageRelevant only on this degraded path, not as a hard gate ahead of the LLM call (see the rerank prompt's SUBJECT ENTITY line).
-    if (sources.length <= 1) {
-      return sources.filter((s) => isPassageRelevant(claim.text, s.text!) && hasSubjectEntity(claim.subjectEntity, s.text!));
+  private async rerankPassages(auditId: string, claim: PipelineClaimInput, pool: ScoredSource[]): Promise<ScoredSource[]> {
+    // spec 017 T004 — keyed off the UNION, not the new-fetch count: 1 new + 7 carried is a pool of 8
+    // and must be ranked. Keying it off new sources alone made the carry a silent no-op.
+    // g17 — hasSubjectEntity joins isPassageRelevant only on this degraded path (spec 017 T039: the
+    // LLM path orders without excluding, because a low score marks refuting evidence too).
+    if (pool.length <= 1) {
+      return this.degradedRank(claim, pool);
     }
 
-    const labeled = sources.map((s, i) => ({ label: String.fromCharCode(65 + i), source: s }));
     try {
+      // Inside the try on purpose: passageLabelForIndex throws, and every other failure here
+      // degrades to degradedRank rather than aborting the claim (review finding).
+      const labeled = pool.slice(0, MAX_LABELLED_PASSAGES).map((p, i) => ({ label: passageLabelForIndex(i), scored: p }));
       // D026 §20 — select by relevance (VERIFY's own sentence scoring), not a blind character prefix (captured nav chrome on long pages).
-      const candidates = labeled.map(({ label, source }) => ({
+      const candidates = labeled.map(({ label, scored }) => ({
         id: label,
-        title: source.title,
-        excerpt: buildPassageSentences(claim.text, source.text ?? "")
+        title: scored.source.title,
+        excerpt: buildPassageSentences(claim.text, scored.source.text ?? "")
           .map((s) => s.text)
           .join(" "),
       }));
@@ -429,34 +535,50 @@ export class GrounnelPipelineService {
       );
       const llmScoreByLabel = new Map(parsed.results.map((r) => [r.id, r.score]));
 
-      const scored = labeled.map(({ label, source }, i) => {
-        const lexicalScore = 100 * (1 - i / labeled.length);
+      const scored = labeled.map(({ label, scored: s }) => {
+        // spec 017 — the pool's own frozen score, not the index: a carried page's rank belongs to the
+        // pool that FOUND it. Recomputing positionally would sink every carried page to ~0.
+        const lexicalScore = s.lexicalScore;
         // Missing answer for this label (a short/malformed LLM response) falls back to the lexical
         // score alone for just this candidate — fail-open per-candidate, not per-call.
         const llmScore = llmScoreByLabel.get(label) ?? lexicalScore;
-        return { source, lexicalScore, llmScore, combined: (lexicalScore + llmScore) / 2 };
+        return { source: s.source, lexicalScore, llmScore, combined: (lexicalScore + llmScore) / 2 };
       });
       const ranked = scored.sort((a, b) => b.combined - a.combined);
-      // D026 §19 — "selected" mirrors resolveEvidence's own MAX_VERIFY_PASSAGES slice.
+      // spec 017 T039 — the ranker ORDERS, it never excludes. A relevance score cannot gate a
+      // fact-checker: refuting pages contradict the claim's framing, so they score low by design.
+      // D026 §19 — mirrors resolveEvidence's own slice, which is what VERIFY reads.
       this.rerankDecisionStore.recordRerankDecisions(
         auditId,
         claim.id,
-        ranked.map((r, i) => ({ url: r.source.url, lexicalScore: r.lexicalScore, llmScore: r.llmScore, combinedScore: r.combined, selected: i < MAX_VERIFY_PASSAGES }))
+        ranked.map((r, i) => ({ url: r.source.url, lexicalScore: r.lexicalScore, llmScore: r.llmScore, combinedScore: r.combined, selected: i < MAX_LABELLED_PASSAGES }))
       );
-      return ranked.map((s) => s.source);
+      return ranked.map((r) => ({ source: r.source, lexicalScore: r.lexicalScore, llmScore: r.llmScore }));
     } catch (err) {
       // A RateLimitError here doesn't stop other in-flight claims (unlike other call sites) — acceptable, fail-open still degrades correctly; tagged so it's observable.
       logger.warn(
         { module: MODULE, operation: "rerankPassages", auditId, claimId: claim.id, rateLimited: err instanceof RateLimitError, err },
         "Passage reranking failed — falling back to lexical order + gate #4's relevance filter"
       );
-      return sources.filter((s) => isPassageRelevant(claim.text, s.text!) && hasSubjectEntity(claim.subjectEntity, s.text!));
+      return this.degradedRank(claim, pool);
     }
+  }
+
+  /** Both no-LLM rerank paths. Sorted by combinedOf, not pool order: carried entries are appended
+   *  last, so insertion order would deny them a VERIFY slot exactly when the ranker is down. */
+  private degradedRank(claim: PipelineClaimInput, pool: ScoredSource[]): ScoredSource[] {
+    return pool
+      .filter((p) => isPassageRelevant(claim.text, p.source.text!) && hasSubjectEntity(claim.subjectEntity, p.source.text!))
+      .sort((a, b) => combinedOf(b) - combinedOf(a));
   }
 
   private async writeNoEvidence(auditId: string, r: ResolvedEvidence): Promise<void> {
     const rateLimited = r.sources.some((s) => s.status === "rate_limited");
-    const reason = rateLimited ? TAVILY_RATE_LIMITED_REASON : NO_EVIDENCE_REASON;
+    const reason = rateLimited
+      ? TAVILY_RATE_LIMITED_REASON
+      : r.allSourcesWereInputDuplicates
+        ? INPUT_DUPLICATE_ONLY_REASON
+        : NO_EVIDENCE_REASON;
     const sources = toClaimSources(r.sources);
     await this.grounnelStore.writeClaimResult(auditId, r.claim.id, {
       status: "done",
@@ -522,7 +644,9 @@ export class GrounnelPipelineService {
     // Excludes verbatim-quote fields from the injection-marker scan (a scraped page's own boilerplate false-positived it once).
     quotedFields: string[] = [],
     // D026 §19 — only set by a genuinely single-claim caller; batched calls pass undefined.
-    claimId?: string
+    claimId?: string,
+    // spec 014 T021 — VERIFY only: the rendered pairs, so this call can be replayed later.
+    inputPayload?: unknown
   ): Promise<T> {
     return callLlmForJson({
       provider: this.provider,
@@ -544,6 +668,7 @@ export class GrounnelPipelineService {
         provider: this.provider.mode,
         model: env.GEMINI_MODEL,
         promptVersion,
+        inputPayload,
       }),
     });
   }
@@ -551,7 +676,7 @@ export class GrounnelPipelineService {
   /** Shared by runBatch's primary call and retryVerifyClaim's single-claim call — reviewed finding: these two were near-duplicated inline before, risking drift if the call shape ever changes. */
   private async callVerify(
     auditId: string,
-    // D026 §6 — no source_url (model doesn't need it). D026 §11 — up to MAX_VERIFY_PASSAGES texts, rank-ordered.
+    // D026 §6 — no source_url (model doesn't need it). D026 §11 — the whole ranked pool, rank-ordered.
     pairs: Array<{ id: string; claim: string; subjectEntity: string; passages: Array<{ text: string }> }>,
     operation: string,
     callType: "primary" | "consistency_retry" | "fill_in",
@@ -584,7 +709,9 @@ export class GrounnelPipelineService {
     // No quotedFields needed — the raw response only ever contains citations, not scraped text.
     // D026 §19 — a single-claim call attributes claimId; a batch stays undefined.
     const claimId = pairs.length === 1 ? pairs[0]!.id : undefined;
-    const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion, [], claimId);
+    // renderedPairs, not the whole prompt: the prompt is reconstructible from promptVersion, the
+    // bundle is not (spec 014 T014 — grounnel_search_pages cannot rebuild the {source, n} numbering).
+    const raw = await this.callGrounnelJson(auditId, system, user, VerifyRawResponseSchema, operation, callType, verifyVersion, [], claimId, renderedPairs);
     return {
       results: raw.results.map((r) => {
         const resolved = resolveEvidenceFromCitations(r.evidenceCitations, sentencesByClaim.get(r.id) ?? {});
@@ -612,7 +739,7 @@ export class GrounnelPipelineService {
       "Diagnostics:",
       diagnosticsText,
       "",
-      "Treat the passage_sentences given below as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with those sentences. If contradicted, evidence_citations must cite real {source, n} pairs from the passage_sentences given for this pair; otherwise evidence_citations must be null.",
+      "Treat the passage_sentences given below as the only source of truth. Resolve every diagnostic listed above. Replace your previous answer entirely unless it remains fully consistent with those sentences. supported, partially_supported and contradicted must all cite real {source, n} pairs from the passage_sentences given for this pair; only unsupported may set evidence_citations to null.",
       "",
       "Return the JSON now.",
     ].join("\n");
@@ -681,8 +808,9 @@ export class GrounnelPipelineService {
     items: Array<{ id: string; claim: string; passages: string[] }>
   ): Promise<Map<string, InstanceAttribution>> {
     if (items.length === 0) return new Map();
-    // `fact` is the claim itself — production has no separate asserted-value field; see t21-results.md for the fixtures' shape.
-    const checks = items.map((i) => ({ id: i.id, claim: i.claim, fact: i.claim, passages: i.passages }));
+    // FACT must not contain the member the CLAIM selects, or it answers the gate's own question and
+    // forces `absent` — measured, D030 §3m Addendum 12. No selector => unchanged.
+    const checks = items.map((i) => ({ id: i.id, claim: i.claim, fact: stripInstanceSelector(i.claim), passages: i.passages }));
     const system = this.prompts.render("grounnel-instance-attribution", { instance_checks: JSON.stringify(checks) });
     const claimId = items.length === 1 ? items[0]!.id : undefined;
     try {
@@ -753,8 +881,21 @@ export class GrounnelPipelineService {
       "Retry landed on a least-scrutinized verdict — logged reconciliation-quality signals"
     );
 
+    // D030 §3d — a protected contradiction is immune to reconciliation on BOTH paths.
+    // reconcileContradictedVerdicts already filters these out; this path computed the same
+    // originating gate and only LOGGED it, downgrading anyway. Simulated over 141 persisted
+    // trails: 8 verdicts restored, 0 new false accusations.
+    const origin = originatingContradictionGate(currentPassGateEvents);
+    if (!consistent && contradictionIsProtected(currentPassGateEvents)) {
+      logger.info(
+        { module: MODULE, operation: "checkRetryContradiction", auditId, claimId: item.claim.id, gate: origin?.gate },
+        "Retry reconciliation blocked — the contradiction came from a protected gate (D030 §3d)"
+      );
+      return chain;
+    }
+
     if (!consistent) {
-      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, chain.verdict, downgrade.target, originatingContradictionGate(currentPassGateEvents));
+      logReconciliationDowngrade("checkRetryContradiction", auditId, item.claim.id, chain.verdict, downgrade.target, origin);
     }
 
     const gateEvent: GateEventInput = {
@@ -823,7 +964,20 @@ export class GrounnelPipelineService {
       ),
       this.checkInstanceAttribution(
         auditId,
-        attributionCandidates.map((k) => ({ id: k.result.id, claim: byId.get(k.result.id)!.claim.text, passages: byId.get(k.result.id)!.passages.map((p) => p.text!) }))
+        attributionCandidates.map((k) => {
+          const item = byId.get(k.result.id)!;
+          // The SAME bounded evidence VERIFY judged on, not whole pages: buildPassageSentencesMulti is
+          // pure and reads the same claim/passages, so this is VERIFY's exact slice (D030 §3m Addendum 10).
+          const bySource = buildPassageSentencesMulti(
+            item.claim.text,
+            item.passages.map((p, i) => ({ label: passageLabelForIndex(i), text: p.text! }))
+          );
+          return {
+            id: k.result.id,
+            claim: item.claim.text,
+            passages: Object.values(bySource).map((sentences) => sentences.map((s) => s.text).join(" ")),
+          };
+        })
       ),
     ]);
 
@@ -839,6 +993,9 @@ export class GrounnelPipelineService {
         // D026 §11 — gate #1's backstop runs on the joined text of every pooled passage; evidence
         // is already grounded per-source by construction, this just answers "is it real text."
         const passageText = item.passages.map((p) => p.text!).join("\n\n");
+        // spec 017 T036 — implicit_negation is the ONLY gate that upgrades to `contradicted`, and its
+        // condition 3 was calibrated against this many passages. It must not widen with T031.
+        const negationPassageText = item.passages.slice(0, NEGATION_GATE_PASSAGES).map((p) => p.text!).join("\n\n");
 
         const firstPass = runGateChain({
           verdict: initialVerdict,
@@ -846,6 +1003,7 @@ export class GrounnelPipelineService {
           evidence: result.evidence,
           claimText: item.claim.text,
           passageText,
+          negationPassageText,
           subjectEntity: item.claim.subjectEntity,
           reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
           instanceAttribution: attributionMap.get(result.id) ?? null,
@@ -877,6 +1035,7 @@ export class GrounnelPipelineService {
               evidence: retried.evidence,
               claimText: item.claim.text,
               passageText,
+              negationPassageText,
               subjectEntity: item.claim.subjectEntity,
               reasonSupportsVerdict: null,
               // Reused, not re-called: this answer depends only on claim + passages, neither of which a retry changes.

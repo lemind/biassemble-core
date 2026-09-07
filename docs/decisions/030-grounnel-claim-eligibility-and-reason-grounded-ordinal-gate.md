@@ -1375,7 +1375,7 @@ behind it. The honest options are to **disable the gate outright** — a one-lin
 is measurable and whose direction is safe — or to leave it exactly as-is and stop spending on it.
 Writing an eighth lexical heuristic is neither. This is a product decision and is left open.
 
-### Addendum 6 (2026-08-31) — DECISION: `subject_entity` is disabled
+### Addendum 6 (2026-08-31) — DECISION: `subject_entity` is disabled — SUPERSEDED by Addendum 7 (2026-09-03)
 
 **§3m's retention decision is withdrawn.** It was made when M1 was believed rare-but-real; T28 Step 1
 measured **0 confirmed M1 across 320 firings**, and the three apparent exceptions were
@@ -1470,3 +1470,812 @@ distinguish a private assertion from an attributed quote) and an explicit `certa
 (replacing an uncalibrated raw confidence float); reordered it to run after, not ahead of, the
 existing regex filter (cost optimization, no correctness change); and clarified that `personal` is
 not synonymous with non-checkable.
+
+---
+
+## §4 Addendum — VERIFY's two known failure modes, and why neither is being fixed (2026-09-02)
+
+Spec 014's investigation closed with two reproducible defects, five refuted fix candidates, and a
+decision to stop. This records the holes so they are not rediscovered, and the fix that is designed
+but deliberately unshipped.
+
+### Hole 1 — multi-source aggregation manufactures a contradiction
+
+Claim: *"The Pentagon has not issued an official finding on the Minab strike."* (true)
+
+| Bundle | Verdict |
+|---|---|
+| source A alone ("remains under review") | `supported` |
+| source B alone (Senate release, same shape) | `partially_supported` |
+| source C alone ("the incident is under investigation") | `unsupported` |
+| **A + B + C** | **`contradicted` 3/3** |
+| A + B + C + off-topic distractors | `contradicted` 3/3 |
+
+**Every source is labelled correctly alone.** The contradiction exists only in the combination, and
+C's own reason inverts: neutral in isolation, *"which contradicts the claim"* alongside A and B.
+Adding *supporting* evidence flipped the verdict against the claim. Frozen as golden case
+`g30-pentagon-no-finding-aggregation`.
+
+### Hole 2 — a reporting claim is answered on the object-fact
+
+Claim: *"Social media posts **claimed** the University of Rochester announced it will cut academic
+ties with Israel."* (true — a claim about what posts said)
+
+Sources A and B each return `contradicted` **alone**, citing *"administrators in fact made no
+commitment…"*. Isolation therefore does not help. Under an experimental schema forcing the model to
+name the predicate before the verdict, `assertedPredicate` is **correct and identical** on all three
+sources — the divergence is entirely in which sentence gets selected. **VERIFY names the right
+predicate and then labels against a sentence that does not address it.** Frozen as
+`g31-reporting-claim-object-fact`.
+
+### Hole 3 — wrong entity sharing a proper-noun token
+
+`alishabakitchen.com` accepted as evidence about a person named Alishba. `sameEntity` compares
+proper-noun tokens and they share one. Refuted work (spec 013 T30); `subject_entity` stays disabled. **[Superseded by Addendum 7 — re-enabled 2026-09-03.]**
+
+### The designed, measured, UNSHIPPED fix for Hole 1
+
+Second-stage isolation, gated hard:
+
+1. Run VERIFY normally, batched.
+2. If the verdict is not `contradicted`, stop.
+3. If the claim carries no negation cue, stop.
+4. Otherwise verify each pooled source separately and apply the **unlock merge**: if **no** isolated
+   source is `contradicted`, release to the strongest non-accusation those sources already gave; if
+   **any** isolated source is `contradicted`, keep the bundle verdict unchanged.
+
+**The merge is downgrade-only by construction — it can release a false accusation but never create
+one.** That property is the whole safety argument, and it was arrived at by discarding an earlier
+"any `contradicted` wins" rule which two independent reviews correctly identified as unsafe: on
+Hole 2 both isolated sources return `contradicted`, so that rule would have *ratified* a false
+accusation instead of fixing one.
+
+Scored on collected data at zero API cost: Hole 1 goes `contradicted` → `supported` (fixed);
+Hole 2 is correctly skipped at step 3 and left unchanged.
+
+**Cost, measured against production history:** 10 of 1,032 `contradicted` claims carry a negation
+cue — **1.0% of contradicted, 0.122% of all claims**, or roughly **30 extra VERIFY calls across the
+project's entire history**.
+
+**Why it is not shipped.** The cost is negligible and the fix is correct, but it is still a second
+VERIFY stage — new architecture for a defect measured at ~10 rows in 8,106 claims, in a week that
+already shipped two deterministic gates (G1, G2). It is one commit away and fully specified above.
+**Reopening trigger:** the `contradicted` ∩ negation-cue rate rising materially above 1.0% of
+contradicted, or a user-reported false accusation of this shape.
+
+### Refuted this cycle — do not re-propose without new evidence
+
+| Candidate | Why it died |
+|---|---|
+| US1 — escalation may retract a contradiction | would release ~38 correct contradictions to free 1 false one |
+| E1 — collapse duplicate claims | 2 exact duplicates in 8,106; looser predicates ~93% false-positive |
+| E2 — caption/bio detector | 12 rows corpus-wide, 7 already excluded by eligibility; real population 2 |
+| G1 span-level | no threshold band; cannot separate "source copies input" from "input quotes source" |
+| VERIFY Blocks A and B | control failed the same screen; Block A targets a polarity error that does not exist |
+| `reason-first` schema | moved zero rows |
+| `predicate-first` schema | **raised false accusations 25%** (12→15 cells) while aggregate accuracy improved |
+
+**Method note worth keeping: judge on false-accusation count, not aggregate accuracy.**
+`predicate-first` passed a 4-row screen and looked like a strict improvement; on the full 19-fixture
+set it was a Cardinal Rule regression. A narrow screen is not evidence of safety.
+
+
+---
+
+### Addendum 7 (2026-09-03) — Addendum 6 is REVERTED: the gate's value was its side effect
+
+**Addendum 6's measurements were correct and its conclusion was wrong.** It judged the gate on the
+verdict the gate itself writes. That verdict *is* worthless — `supported → unverifiable`, wrong ~75%
+of the time, 0 confirmed catches in 320 firings. But the downgrade also nulls `evidence` and leaves
+the claim unresolved, and *that* is what drove the escalation tiers into a second retrieval pass.
+The second pass is where the right answer came from. Disabling the gate removed the second pass.
+
+**How this was found.** g17 was the only golden case to regress after 08-31. `scripts/eval-drift.ts`
+diffs one case across two dates over everything the `grounnel_*` tables record; for g17's
+`"first flight covered 852 feet"` claim, 2026-08-28 → 2026-09-03:
+
+| Signal | 08-28 | 09-03 |
+| --- | --- | --- |
+| `subject_entity` overrides | 36/164 (22%) | gate absent |
+| `retry_decision` fired | 14/34 (41%) | 0 |
+| `retry_reconciliation` fired | 11/12 (92%) | 0 |
+| `consistency_check` / `consistency_retry` calls | 12 / 11 | 0 / 0 |
+| sources reaching VERIFY, per run | 5.88 | 2.33 |
+| verdict | contradicted 15, supported 1, unverifiable 2 | **supported 3/3** |
+
+Within 08-27/08-28 alone, runs where the gate overrode averaged **7.75** selected sources against
+**3.36** where it did not — the escalation is caused by the downgrade, not correlated with it.
+
+**The suite-wide control.** Across the 8 cases with scoreable `false` claims on both dates, g17 is
+the only one the gate fired on at any meaningful rate (22%; next highest 3%), the only one that lost
+evidence volume (16.2 → 11.3 per run), and the only one whose detection rate fell (0.83 → 0.00).
+Every other case held or improved. One-for-one, so this is not a general loss of the retry path.
+
+**What was changed:** the call site is restored at its original position — after `year`, *before*
+the spec-015 G2 affirmation floor. Placing it after G2 was tried first and is wrong: G2 demotes
+`supported`/`partially_supported` to `unsupported` and nulls evidence whenever the evidence is not
+verbatim in the passage, and `applySubjectEntityGate` only acts on `supported`/`partially_supported`
+with non-null evidence — so downstream of G2 it never sees hallucinated-evidence-about-another-entity,
+the class it exists to catch, and the surviving population is exactly the well-grounded one where its
+false-trigger rate is worst. Before G2 the ordering is safe in both directions: `subject_entity` only
+downgrades (to `unverifiable`), on which G2 is a no-op, so G2 remains genuinely last and a real floor.
+
+**What this does NOT claim.** The gate is still wrong ~75% of the time on its own verdict, and this
+revert re-imposes Addendum 6's measured cost: ~25–30 suppressed true claims per 1000. It buys back
+g17's detection with a mechanism nobody designed. **The correct fix is to trigger the retry on thin
+evidence directly** — if an affirmative verdict rests on fewer than N sources, escalate — and then
+disable `subject_entity` again on its own merits. This revert is a stopgap that should not outlive
+that work.
+
+**Precisely which second pass.** Not the D025 §2 retry — `applySubjectEntityGate` pushes no
+diagnostic, so `needsRetry` stays false. It is D026 §13 escalation: `findUnresolvedClaims`
+([pipeline.service.ts](../../src/orchestrators/grounnel/pipeline.service.ts)) admits
+`unsupported | unverifiable | contradicted | partially_supported` and excludes only `supported`, so
+the downgrade moves the claim across that one boundary and `escalateUnresolved` re-retrieves at
+`ESCALATION_TIERS = [5, 8]`. That filter is the actual load-bearing line and now carries a comment
+saying so.
+
+**Known costs this revert re-imposes, measured on the days the gate was live (08-27/08-28):**
+
+| Cost | Measured |
+| --- | --- |
+| `kind:"true"` golden claims scored incorrect | 7% (08-27), 5% (08-28), vs **0%** with the gate off |
+| `supported → unverifiable` overrides | 183 across the two days; ~93% recovered before scoring |
+| Escalation vetoes a better tier result | nulled evidence ⇒ `citations = []` ⇒ `rejectReplacement` keeps the weaker prior **and** `protectedContradictionClaimIds` excludes the claim from the next tier |
+| Public `grounded_pct` | falsely-downgraded claims move from `grounded_n` to `unclear_n`, lowering the headline score for identical input |
+| Escalation budget | non-productive tiers for pronoun-referent evidence: the gate is a pure function of `(claimText, subjectEntity, evidence)`, so a wider pool that yields the same best sentence re-fires it identically |
+
+**Reopening trigger:** once an explicit thin-evidence retry trigger ships, re-run
+`scripts/eval-drift.ts` on g17 with the gate off. If detection holds without it, disable the gate
+permanently and delete this addendum's stopgap.
+
+**Method note.** Addendum 6 measured the gate in isolation and never asked what else consumed its
+output. A gate is not only its verdict; it is also every downstream trigger that reads the state it
+leaves behind. Measure the removal, not just the component.
+
+---
+
+### Addendum 8 (2026-09-03) — Addendum 7 refuted by live run; §3f's retrieval diagnosis is now false
+
+**Addendum 7's revert is reverted.** A full golden run at `repeats 2` (672 calls, 28/28 cases, 0
+vacuous) with `subject_entity` live: **g17 detection 0.00, unchanged.** The gate is back off.
+
+Every step of Addendum 7's mechanism fired exactly as predicted — and the outcome was still wrong:
+
+| Predicted step | Observed |
+| --- | --- |
+| gate downgrades `supported` | 11/13 overrides, `supported → unverifiable` |
+| downgrade triggers escalation | sources/run 2.33 → **6.75** |
+| escalation re-verifies | `consistency_check` 3, `consistency_retry` 3, `instance_attribution` 5 |
+| second pass yields `contradicted` | **never** — `escalation_replacement` went `unverifiable → unverifiable` ×5, `→ supported` ×1 |
+
+**The flaw is structural and should have been caught by reading the gate.** `applySubjectEntityGate`
+only ever writes `unverifiable`. Detection requires `contradicted`. The gate cannot raise detection
+by construction, whatever it does to retrieval volume. The disconfirming evidence was already in
+Addendum 7's own data: on 08-27/28, runs *with* an override reached `contradicted` 8/12 (0.67) vs
+10/13 (0.77) without — the gate co-occurred with **worse** detection, and that was explained away as
+confounding rather than treated as the refutation it was.
+
+**Cost of the experiment:** 1 true claim in 40 (g22), not the 3–7% feared. 0 false accusations.
+27/28 cases green. g24 passed at N=2 — noise, not a fix.
+
+**§3f is now factually wrong, and this is the finding worth keeping.** §3f (2026-08-22) concluded
+"root cause is retrieval, not the ordinal gate — even a perfect `longest ≠ first` detector would
+still need the refuting sentence to reach VERIFY first, which it currently cannot." `input_payload`
+(spec 014 T021) makes that testable for the first time, and it is false. In today's run the refuting
+sentence reached VERIFY in **every** payload for the claim, verbatim:
+
+> "At noon on December 17, 1903, Wilbur piloted the **fourth and longest** flight of the day,
+> covering 852 feet in 59 seconds."
+> "The **fourth and last** flight, by Wilbur, took 59 seconds to cover 852 feet (260 m)."
+
+VERIFY read those and returned `supported` for "The first flight covered 852 feet", in all 18 calls.
+**Retrieval is solved. The defect is VERIFY's reading of evidence it was given.**
+
+**What this changes about §3e.** §3e's rejection of superlatives stands and is not reopened — but it
+is now also *unnecessary* for g17. The evidence sentences say **"fourth"**, a plain ordinal already
+in `ORDINAL_WORDS`. No vocabulary widening is required. What is missing is that
+`applyReasonOrdinalGate` compares the claim's ordinal against VERIFY's **reason** — free prose the
+model authors, and which §3f already observed often omits any selector word. It never compares
+against the **cited evidence sentence**, which is retrieved text and contains the plain ordinal.
+
+**Proposed next step (NOT implemented, needs the adversarial validation `d6e9738` skipped):** an
+evidence-side ordinal check — claim ordinal vs. ordinal in the cited sentence, same anchor-overlap
+and negation machinery `applyReasonOrdinalGate` already uses, no new vocabulary. Note §3d makes this
+gate's contradictions immune to reconciliation, so a false positive here has no safety net; validate
+on the frozen corpus before wiring, and prefer withholding `supported` over asserting `contradicted`.
+
+---
+
+### Addendum 9 (2026-09-03) — the detection gate fails on significance, not on a raw threshold
+
+**The suite was reporting noise as regression.** `g17` measures 28/44 = 0.64 detection and `g24`
+21/32 = 0.66, against a 0.80 floor. A 0.64 process trips a raw 0.80 threshold ~60% of the time at
+N=5, and *more* often as N grows: P(pass) is 40% at N=5 and 10% at N=20. A gate that gets less
+likely to pass the more evidence you give it is not measuring the pipeline.
+
+**Proof there was no regression behind the red**, three independent ways:
+
+1. 2026-09-01, one binary (`57e9e78`), no deploy between: 16:27 GREEN (28 runs, repeats 1) →
+   17:23 GREEN (28 runs, repeats 1) → 19:12 RED (56 runs, repeats 2). Only N changed.
+2. Re-enabling `subject_entity` (672 calls, Addendum 8) moved g17 detection 0.00 → 0.00.
+3. Per-case before/after across the 09-02 batch: no case significantly worse (g17 z = −1.67,
+   g24 z = −0.81). Three cases crossed |z| > 1.96; none survive Bonferroni across 28 tests.
+
+**The rule.** The floor stays 0.80. Detection fails only when the observation is statistically
+incompatible with being *at* the floor: one-sided exact binomial, `P(X ≤ k | n, floor) < 0.05`, and
+only when `n ≥ MIN_VERDICT_REPETITIONS = 5`. Below that the test has no power, so it is skipped
+rather than run and ignored. Simulated over all eval history: **binding reds 23 → 5**, every one of
+the 18 removed is small-N noise, every real collapse (0/5, 4/14, 4/15) still red.
+
+Same rate, different N — the behaviour to preserve:
+
+| observation | p | verdict |
+| --- | --- | --- |
+| 08-26 g17 2/5 = 0.40 | 0.058 | green — cannot distinguish from 0.80 |
+| 09-03 g17 4/10 = 0.40 | 0.006 | RED — now it can |
+
+**Gated per false claim, not on the summed rate.** Summing hides one claim at 0/5 behind two at 5/5,
+and separate claims do not share a rate. No golden case has more than one `false` claim today, so
+this is currently a no-op — it closes the hole before a second one is added.
+
+**Binding-ness is a property of the test that ran, not of the run length.** `verdictIsBinding`
+requires `runs.length ≥ 5` **and** no `false` claim observed fewer than 5 times. Without the second
+condition a case with 6 repetitions whose claim EXTRACT produced only 3 times reported
+`detectionRate: 0` as a *binding pass* — the vacuous-green family §3k exists to stop, reintroduced.
+
+**Failures aggregate per case, never suite-wide.** `bindingPassed` = no false accusation, no case
+that both had the observations and failed, no incomplete case. An earlier draft used
+`cases.every(c => c.verdictIsBinding)` as a precondition for failing at all, so one infrastructure
+casualty disarmed the gate for all 27 other cases.
+
+**Unchanged, deliberately:** `no_false_accusation` is hard at any N; the N=1 `minCorrectRate` path
+(a binomial test on n=1 has no power at any alpha, so significance is not the available fix there);
+the `matched === 0` vacuous guard; every floor value in the golden set. **No golden-set edit — this
+does not make the suite green.** g17 remains red at 4/10, p=0.006, correctly.
+
+**No Bonferroni on the detection gate.** 28 cases at α=0.05 yields ~1 spurious below-floor per full
+suite. That is the right trade while the headline that matters is false accusations = 0; correcting
+it would make a genuine collapse harder to call, which is the wrong direction for this gate.
+
+**One scorer, not four.** `scripts/eval-last-green.ts` now calls `evaluateGrounnelRun` instead of
+reimplementing it, and `scripts/s014-t022-score-golden-run.ts` (a second hand-synced copy, stale
+against this rule) is deleted. A hand-synced copy previously reported 2026-08-31 as green when 27 of
+28 cases had produced no scoreable claim at all. `scripts/eval-grounnel.ts` now exits on
+`bindingPassed`, so the CLI and the Inngest job cannot disagree about what a failure is.
+
+**Detection floors for `g17` and `g24` set to 0.70 (2026-09-03).** With the significance rule in
+place the floor no longer has to sit far below the measured rate — the test absorbs the noise, so
+the floor can stay near capability and keep its power. Chosen against measured true rates (g17 0.636,
+g24 0.656) by the trade that actually matters:
+
+| floor | P(false red) n=10 | P(catching a real collapse to 0.30) n=10 |
+| --- | --- | --- |
+| 0.80 (was) | 28% | 95% |
+| **0.70 (now)** | **11%** | **85%** |
+| 0.65 | 3% | 65% |
+| 0.60 | 1% | 38% |
+| 0.40 | 0% | 15% |
+
+0.40 was the right answer under the old raw-threshold rule and is the wrong one now: it would buy a
+few points of quiet at the cost of two thirds of the gate's ability to see a genuine collapse.
+0.70 keeps 85% power for a 1-in-9 false red, against 28% before.
+
+**This does NOT make the suite green.** g17 today is 4/10 = 0.40, p=0.047 against the 0.70 floor —
+still red, and by a coin's width (alpha is 0.05). Two historical days move to green (08-27, 08-28);
+09-03 does not. `minCorrectRate` is unchanged at 1.0 for both cases; only `detectionFloor` moved.
+The product target remains 0.80 and is recorded here, not in the pass bar.
+
+**Reopening trigger:** if a genuine decay from 0.80 to ~0.70 is suspected, the alpha and floor are
+one-line constants — but check the tracked per-case rates first: they are reported with their N on
+every run precisely so a downward trend is visible before the gate fires.
+
+---
+
+### Addendum 10 (2026-09-04) — `instance_attribution` judged evidence VERIFY never saw, at ~8× the cost
+
+**Symptom.** Gemini prepay credits ran out on 2026-09-04. Prices did not change — same
+`gemini-2.5-flash-lite` every week since August. Two multipliers stacked over Sept 1–3: calls/day
+1,329 → 2,400 (eight golden-suite passes in three days, 81% of all calls), *and* tokens per call
+3,150 → 4,300. This addendum is the second multiplier.
+
+**`verify/instance_attribution` was 3.8% of September calls and 42% of all tokens.**
+
+| | value |
+| --- | --- |
+| calls (September) | 250 |
+| avg input | **63,915 tokens** |
+| max input | **808,498 tokens** (one call) |
+| min input | 1,334 tokens |
+
+On the same 125 runs, reading the *same* passages: `verify/primary` averaged **8,545** input tokens,
+`instance_attribution` **69,051** — **8.1×**. One production run makes it concrete: an ordinary
+article, 36 claims, largest page 14,612 chars; its 9 VERIFY calls cost 93,375 tokens and every other
+call together ~215,000 — and one attribution call cost **808,498**, roughly 4× the whole rest of the run.
+
+**Cause.** `callVerify` runs its passages through `buildPassageSentencesMulti` (`MAX_SENTENCES = 20`,
+claim-relevant selection). The attribution call site passed `p.text!` — raw full page text — for
+every candidate in the batch, `JSON.stringify`'d into one prompt. Claims from one article share
+sources, so the same page was serialised once per claim. `claimId` is only set when
+`items.length === 1`, which is why the giant calls carry `claim_id = NULL`: null marks the batched,
+expensive ones.
+
+**The real defect is not cost.** Attribution could see evidence VERIFY was never shown and then force
+`contradicted` over a verdict formed without that text. A gate that overrides a verdict must judge
+the evidence the verdict was formed on.
+
+**Fix.** Build attribution's passages with `buildPassageSentencesMulti` and flatten each source to a
+string, keeping the `passages: string[]` contract v2.0.0 requires (its citation check compares
+against `passages.join("\n\n")`; passing `Record<label, PassageSentence[]>` would break the prompt).
+The function is **pure** and both call sites read `claim.text`/`passages` from the same `byId`
+objects, so this is VERIFY's exact slice — not a second, differently-selected 20.
+
+**This is a cost fix with a detection risk, not a free win.** The gate maps
+`different → contradicted`, `conflict → unverifiable`, `same`/`absent` → no-op. If the trim drops a
+carrying sentence, `different` degrades to `absent` and the gate stops accusing — a missed detection,
+never a false accusation, and §3d makes a wrong `contradicted` here unrecoverable, so less text is
+the conservative direction. But **g17 is this gate**: 33 of 40 `contradicted` overrides and 15 of 15
+`unverifiable` ones in all eval history come from it, against a case already at 0.636 vs a 0.70 floor.
+
+Evidence the risk is small for that case specifically: the `input_payload` captured on 2026-09-03
+shows VERIFY's 20-sentence bundle already contains *"Wilbur piloted the fourth and longest flight of
+the day, covering 852 feet"* verbatim in **every** payload. The carrying sentence is inside the trim.
+
+**Blast radius:** 193 September answers — `same` 122, `absent` 50, `different` 12, `conflict` 9. Only
+**21 of 193 (11%)** move a verdict at all.
+
+**Expected:** attribution drops ~8×, from 42% of tokens to ~5% — **~37% off the total bill**,
+production included, independent of eval volume.
+
+**Not verifiable offline:** whether trimming changes an answer. `grounnel_search_pages.excerpt` is
+truncated (avg 2,049 chars, max 15,044), so the historical payload cannot be reconstructed.
+
+**Validation when credits return** — g17 at `--repeats 5` (~60 calls), recording three outcomes
+separately: unchanged (ideal); `different`/`conflict` → `absent`/`same` (a lost catch, the number
+that matters); and `same`/`absent` → `different`/`conflict`, which is **impossible if trimming only
+removes text** and therefore indicates an implementation bug. Quote tokens, not call counts.
+
+**Deliberately not in this change:** deduping pages shared across claims in a batch. It is the rest
+of the saving and it changes how `passages` key per claim — a separate diff, after this one is
+measured. `{ claim, fact: claim }` duplication left alone: noise, not cost, and the schema requires it.
+
+**Do not** reach for `ORDINAL_WORDS` widening or re-enabling `subject_entity` to replace any catch
+this loses — both are closed (Addenda 6–8).
+
+### Addendum 11 (2026-09-04) — the trim is EXONERATED: the payload was never the problem
+
+Addendum 10's trim was suspected of costing g17 its catches (the gate fired 0/39 against a 6–17%
+historical rate). The controlled experiment (`eval-attribution-trim`, retrieve once, five trims on
+the same passages, 3 repeats) **refutes that hypothesis**.
+
+| trim | avg input tokens | verdict-moving | answers |
+|---|---|---|---|
+| `full` (whole pages) | 14,142 | **0/3** | absent, absent, absent |
+| `s20-claim` (shipped) | 1,067 | 0/3 | absent, absent, absent |
+| `s20-anyselector` | 1,067 | 0/3 | absent, absent, absent |
+| `s40-claim` | 1,067 | 0/3 | absent, absent, absent |
+| `s60-claim` | 1,067 | 0/3 | absent, absent, absent |
+
+Three findings, each closing a door:
+
+**1. The refuting evidence is present in the trimmed payload — four times over.** Offline replay of
+`buildPassageSentences` on the retrieved Wright_Flyer page (783 sentences → 5 kept) shows all four
+`852`-carrying sentences survive the trim, every one attributing 852 feet to the *fourth* flight
+("The fourth and last flight, by Wilbur, took 59 seconds to cover 852 feet"). The model reads them
+and answers `absent`. **This is a prompt/model failure, not an evidence-availability failure.**
+
+**2. Raising the sentence cap is a no-op.** `s20`/`s40`/`s60` are byte-identical because the cap was
+never binding: `ranked` slices `matching` (sentences with `score > 0`), and only 5 sentences score
+at all. Anyone proposing "send more sentences" as a fix should be shown this row.
+
+**3. The `anySelectorTrim` hypothesis is dead.** It was built on the theory that the claim-selector
+rescue evicts the sentence naming a *different* member. It cannot: those sentences are already kept
+on their own key-term score, so the rescue never runs and the variant is identical to `s20-claim`.
+
+**Decision: KEEP the Addendum 10 trim (`2c28cf8`).** It is 13× cheaper than whole pages and loses
+nothing measurable — `full` and `s20-claim` produce the same answer on the same passages. The cost
+saving stands on its own; the quality objection that motivated this experiment does not survive it.
+
+**Caveat, stated because it bounds the claim:** today's `full` retrieved 14,142 tokens against the
+63,915 historical average, so this run does not reproduce the historical `24 different + 9 conflict`
+baseline. The experiment proves the *trim* is not the cause.
+
+**What the cause IS — the model's persisted `working` names it.** On all three `full` repeats the
+model wrote: *"The passages state that the last flight was 852 feet, not the first … They attribute
+852 feet to the longest flight, which was the last flight. Therefore, the attribution is absent."*
+It located the fact, identified the member as "the last flight, by Wilbur", and ruled out the
+claim's member — which is the prompt's own definition of `different` ("explicitly attributes the
+FACT to a different, IDENTIFIED member"). It answered `absent` anyway. **On that evidence, the model
+collapsed "not the claim's member" into `absent` rather than `different`.**
+
+**Narrowed 2026-09-04 by the prompt experiment — do not read the above as the general cause.** Four
+prompt blocks (control, `different-branch`, `decision-table`, `guarded-different`) all returned
+`absent` 0/3 on the target, and the model's `working` shows why: *that* run's retrieval returned
+evidence attributing 852 ft only by RANKING — "the record flight", "the longest" — on which `absent`
+is the CORRECT answer under the prompt's own superlative rule and D030 §3e. The prompt was behaving
+as designed, so the run cannot convict it.
+
+**The variable that actually moved across all three experiments is retrieval.** Whether search
+returns a sentence identifying the 852 ft flight by POSITION ("fourth"/"last") or only by RANKING
+("longest"/"record") decides the answer before any prompt or trim gets a vote — and it differed run
+to run on the same fixture. g17's detection rate is therefore dominated by retrieval variance, not
+by the payload or the scaffold.
+
+**Consequence for method:** an experiment that retrieves live cannot isolate a prompt effect here.
+`eval-attribution-prompt` now PINS its passages, with the two evidence shapes as separate fixtures
+(ordinal-identified = the target; ranking-only = a control where `absent` is right). One earlier
+"control failure" (`different-branch` moving `t-genuinely-absent` 3/3) was a bad fixture, not a bad
+block: "the first tower" is not a member of a repeated set, so the model's `different` was
+defensible. That fixture is replaced.
+
+**Do not** re-litigate this with a bigger cap, a new rescue rule, or whole pages. All three are
+measured above.
+
+### Addendum 12 (2026-09-04) — FIXED: `fact` must not contain the member the claim selects
+
+`checkInstanceAttribution` sent `fact: i.claim`. The prompt asks *"which member do the passages
+attribute the FACT to"*, so a FACT reading "**the first** flight covered 852 feet" answered that
+question itself, and `absent` was literally correct. Four prompt blocks could not fix it because
+they all sit downstream of the malformed input. The inline comment ("production has no separate
+asserted-value field") documented the bug as a constraint.
+
+**Fix:** `stripInstanceSelector` (same module, same `SELECTOR_RE_G`, gated on
+`extractInstanceSelector`) removes the selector word. No selector ⇒ `fact === claim` byte-for-byte,
+so the gate can never change a claim it already abstains on. Unit-tested invariant.
+
+| evidence | `fact = claim` (old) | `fact` stripped (new) |
+|---|---|---|
+| ordinal, FALSE claim | absent 6/6 | **different 3/3** |
+| ordinal, TRUE claim | same | same 3/3 |
+| ranking-only | absent | absent 3/3 |
+| no member named | absent | absent 3/3 |
+
+Both strip forms agree (bare predicate "covered 852 feet" and the shipped "The flight covered 852
+feet."), so the result is not an artifact of one phrasing.
+
+**Golden set, N=5, 28/28 cases, scored post-deploy only: FALSE ACCUSATIONS 0, binding failures 0.**
+g17 3/5 binding-pass against its 0.70 floor (was 1/5, p=0.031); g24 5/5. Note g24 *does* strip
+(selector `first`, anchor `computer mouse`) — it is in scope, not insulated, and it held.
+
+**Method note:** `eval-last-green.ts` aggregates by calendar DAY and reported this run RED — g17 at
+N=19, pooling pre-strip runs with post-strip ones. Always window by deploy timestamp when scoring a
+run that spans a deploy.
+
+**Do not** revisit the trim (Addendum 11), the sentence cap, `ORDINAL_WORDS` (§3e), or
+`subject_entity` (Addenda 6–8) to move this gate. All measured, all refuted.
+
+### Addendum 13 (2026-09-04) — why screen-then-escalate beats a flat N=5 pass
+
+Written retroactively: `eval-grounnel-run.ts` cited "Addendum 13" for its budget constants and no
+such addendum existed, so the calculation was unverifiable (review finding). The figure quoted in
+that comment, 8.7%, was also wrong — it is 7.8% transposed, and 7.8% is a different quantity.
+
+Take a case whose true detection rate has fallen to 0.6 against a `detectionFloor` of 0.8. Compare
+two ways to spend the same number of calls:
+
+| | P(the regression is flagged) |
+|---|---|
+| one flat N=5 pass — fails when <= 3 of 5 are caught | **0.663** |
+| five N=1 screens — each fails when its single run misses | **0.922** |
+
+(0.078 is the remaining case: all five screens pass. That is the number the old comment garbled.)
+
+Screens win because `minCorrectRate: 1.0` makes one miss conclusive, while the N=5 pass has to clear
+a rate floor and tolerates one miss by design. Hence `SCREEN_REPEATS = 1`, `ESCALATION_REPEATS = 5`.
+
+`MAX_ESCALATED_CASES = 8` is a cost bound, not a power one: 8 escalations plus the 28-case screen is
+168 case-runs against the 140 a flat N=5 pass costs, so escalating much past 8 is strictly worse than
+the thing it replaces — and simultaneous failures at that scale are one cause, not N regressions.
+
+
+### Addendum 14 (2026-09-04) — floors set from measurement; g17's minCorrectRate is inert
+
+Post-fix observations (28-case screen + the N=5 pass, strip deployed): only two claims sit below
+100%. They need opposite treatment, because the two floors govern different things.
+
+| case | kind | observed | change |
+|---|---|---|---|
+| g17 | `false` | 4/6 = 0.67 | **none** |
+| g22 | `true` | 5/6 = 0.83 | `minCorrectRate` 1.0 → **0.6** |
+
+**g17: nothing to set.** Its only claim is `false`, so `minCorrectRate` never applies — at N=1 a miss
+scores 0.00 and fails any positive floor, and at N>1 the floor covers non-`false` claims only. The
+field is inert; `detectionFloor` 0.7 is what governs. Lowering that floor would make the gate
+*weaker*, not more honest: at N=5 the significance test rejects k≤1 at 0.7 but only k≤0 at 0.6.
+
+**g22: 1.0 was the wrong claim about a stochastic case.** A `true`-claim case at 1.0 is not
+rate-shaped, so a screen miss is final and un-escalatable — it would hard-fail the suite on roughly
+1 run in 6. At 0.6 it escalates instead and is judged over 5 fresh runs. Floor chosen for noise, not
+aspiration: with a true rate near 0.83, a 0.6 floor passes a healthy case 97% of the time, where 0.8
+passes only 80% — one red in five runs, all of them wrong.
+
+**Evidence is thin: 6 observations.** These are provisional and should be re-derived once the screen
+has accumulated passes; the screen-failure rate per case across runs is the measurement, not any
+single pass.
+
+### Addendum 15 (2026-09-04) — detection fails on the plain rate again; Addendum 9 is SUPERSEDED
+
+Addendum 9 replaced `rate < floor` with a one-sided binomial test to stop noise-driven false reds.
+It overshot. At N=5 the test can only reject 0/5 and 1/5, so a floor of 0.7 enforced roughly 0.2 —
+g17 detected 2/5 (40%) and the suite reported green. A floor that does not mean its own number is
+worse than a noisy one.
+
+**Rule now: `rate < detectionFloor`, plainly.** `binomCdf`/`DETECTION_ALPHA` deleted, not left dead.
+Variance is absorbed by setting the floor BELOW measured capability, not by weakening the comparison
+— the floor is a "broken below this" line, never an aspiration.
+
+Post-fix detection over 12 observations per case, and how often each floor false-reds a healthy case
+at N=5:
+
+| case | observed | floor 0.6 | floor 0.7 | decision |
+|---|---|---|---|---|
+| g03, g04, g05, g09, g12, g14 | 7/7 = 1.00 | 0% | 0% | keep 0.8 |
+| g24 | 10/12 = 0.83 | 4% | **20%** | 0.7 → **0.6** (calibration) |
+| g17 | **6/12 = 0.50** | 50% | 74% | **left at 0.7 — it will fail** |
+
+g24 was a calibration error: capability 0.83 against a 0.7 floor false-reds one run in five.
+
+**g17 is not a calibration error — it detects half the time.** Lowering its floor to make it green
+would be moving the number to fit the result, which is the one thing this ADR keeps refusing to do
+(§3e, Addenda 6-8). It stays at 0.7 and fails honestly until the underlying case is fixed. A
+permanently-red g17 is a true statement about the product, not a broken gate.
+
+### Addendum 16 (2026-09-05) — seven prompt variants refuted; g17 is a product gap, not a prompt gap
+
+g17 detects 50% (6/12). Its misses are `supported`, not `unverifiable` — the pipeline affirms a
+false claim rather than abstaining. VERIFY receives ordinal-identified evidence in 45 of 46 real
+payloads, so this is not an evidence-availability failure.
+
+**Attribution prompt — 6 variants, all refuted.** Four answer-list wordings (Addendum 11), then a
+member-comparison scaffold with `fact` correctly stripped: byte-identical to control. The stage
+contributes 1 catch in 12 in production. Stop screening it.
+
+**VERIFY prompt — 2 variants, real persisted payloads, 36 calls.**
+
+| variant | false claim | g22 control |
+|---|---|---|
+| control | `supported` 6/6 — reproduces production | held |
+| selector-conflict (mismatch ⇒ CONFLICT) | `supported` 6/6 — no effect | held |
+| selector-partial (mismatch ⇒ PARTIAL) | `partially_supported` 6/6 | held |
+
+The stronger rule did nothing, the weaker one moved everything. VERIFY carries a heavy anti-CONFLICT
+prior (TEMPORAL SCOPE, NUMERIC, QUALIFIED RANK, ATTRIBUTION STRENGTH all route away from CONFLICT,
+under "false positives are worse"). An appended paragraph asking for CONFLICT gets outvoted — do not
+retry that shape.
+
+**Two hypotheses were backwards.** The trim was exonerated (Addendum 11). The "first+852 distractor"
+was the *disambiguator*: removing it flipped `different` → `absent`.
+
+**Method lesson.** The same payload gave `absent` 3/3 and `different` 3/3 in two runs an hour apart.
+Attribution output is unstable at temperature 0, so N=3 screens cannot characterise it — P(3/3 either
+way) = 25% at a true 50%. Arm A survives only because 6/6 has p=1.6% under that null. Size screens
+against the process rate, not the budget.
+
+**Closed by measurement, do not re-propose:** passage trimming, sentence caps, `ORDINAL_WORDS`,
+`subject_entity`, attribution answer-list wordings, attribution scaffold, VERIFY selector-as-CONFLICT.
+
+### Addendum 17 (2026-09-05) — g17's catch depends on regex-matching VERIFY's prose; 4.7.0 REVERTED
+
+VERIFY 4.7.0 (INSTANCE SELECTOR block, screened 6/6 in isolation) took g17 detection from 6/12 to
+**0/6** in the pipeline. Reverted (`5391652`).
+
+`grounnel_gate_events` names the mechanism. All six pre-4.7.0 catches came from **`reason_ordinal`**,
+which fired 6× before and **0× after**. The block never changed a verdict — it changed how VERIFY
+*words its reason*, and the deterministic gate's pattern stopped matching.
+
+| `reason_ordinal` | VERIFY's reason | count |
+|---|---|---|
+| FIRED | "the **fourth** and final flight covered 852 feet" | 6 |
+| missed | "the **longest** flight covered 852 feet" | 6 |
+
+g17's 50% is entirely **whether VERIFY writes "fourth" or "longest"** — same evidence, same verdict
+logic, different prose. Superlatives are excluded from `ORDINAL_WORDS` by §3e.
+
+**The structural finding, which outlives this case:** detection here depends on a deterministic gate
+regex-matching an LLM's free-text reason. Any VERIFY prompt edit — for any unrelated purpose — can
+silently break it. Screening a prompt change against VERIFY in isolation predicts nothing; it must be
+screened end-to-end through the gate chain.
+
+**No clean lever remains.** Widening `ORDINAL_WORDS` to superlatives is closed (§3e, and this is the
+unrecoverable-FP gate); the evidence-side ordinal gate is refuted (§3i — 25 catches vs 8 unrecoverable
+FAs). The only untried option is a narrow nudge asking VERIFY to name the member by position in its
+reason — but that is another VERIFY prompt edit, and this addendum is what those cost.
+
+### Addendum 18 (2026-09-05) — §3d protection was applied on one reconciliation path, not both
+
+`reconcileContradictedVerdicts` filters `PROTECTED_CONTRADICTION_GATES` before the classifier call.
+`checkRetryContradiction` computed the same originating gate, **logged it, and downgraded anyway** —
+so a `reason_ordinal` contradiction was immune on one route and destroyed on the other.
+
+Census over every persisted gate trail (141 protected contradictions, zero API cost):
+
+| | |
+|---|---|
+| a retry path undid the catch | 11 (8%) |
+| still ended `contradicted` anyway | 3 |
+| would change to `contradicted` with the guard | **8** |
+| of those, claim NOT ground-truth false | **0** |
+
+All 11 leaks are g17 or its sibling claim from the same text — no other case exercises this path, and
+no leak ever rescued a true claim from an unrecoverable contradiction.
+
+**Fix:** the guard now mirrors line 260 — a protected origin returns the chain unchanged. Regression
+test verified to fail without it.
+
+**This is not the g17 fix.** It restores ~4 leaked catches; expect roughly 50% → 60-70%, not the 0.7
+floor. It is worth shipping because §3d says these contradictions are immune and on this path they
+were not — a spec violation independent of g17.
+
+### Addendum 19 — the §3d guard measured: leak closed, detection unchanged
+
+Deployed `a76558d`, ran g17 at N=5 (run `01M1R8TR9WFT5ENTH0RSJ67HPD`, ~60 calls).
+
+| | baseline | with guard |
+|---|---|---|
+| target claim `contradicted` | 1/5 | 1/5 |
+| false accusations | 0 | 0 |
+| retry path undoing a protected `contradicted` | 1 | **0** |
+
+The prediction stated before the run (2-3/5) was falsified. The guard closes the leak it was written
+for and mints nothing, so it stays — but it is not a detection fix, and Addendum 18's estimate of
+~4 restored catches was wrong at this sample size.
+
+**Why detection did not move.** Three protected contradictions were minted across the 5 runs, but only
+one landed on the scored claim:
+
+| run | "the first flight covered 852 feet" (scored) | "the first flight lasted 59 seconds" (unscored) |
+|---|---|---|
+| 1 | supported | `contradicted` — `instance_attribution` |
+| 2 | `contradicted` — `reason_ordinal` | supported |
+| 3 | supported | unverifiable |
+| 4 | supported | unverifiable |
+| 5 | supported | `contradicted` — `reason_ordinal` |
+
+Both claims are false by the same error: 59 s and 852 ft both belong to the *fourth* flight. All three
+catches are correct. The golden set scores only the 852 ft claim, so two of them score as zero.
+
+**The finding.** The gate fires on whichever sibling VERIFY happens to write ordinal prose for, and
+which one that is varies run to run. This is Addendum 17's fragility confirmed at claim level rather
+than inferred: detection is conditional on free-text wording, so no gate-side or reconciliation-side
+change can raise the rate. The remaining option is the structured `member` field in the VERIFY schema
+(§3m, open) — matching a field instead of prose. No further gate or reconciliation work on this case.
+
+### Addendum 20 — the input cannot move it either: 27/27 `supported`
+
+Prompt held fixed at v4.6.0, nothing spliced; the INPUT varied. Nine pinned fixtures built from real
+persisted payloads, 3 repeats (run `01M1RDPYCJB40X8Y03DYD3SQ2G`, 27 calls).
+
+| fixture | lever | expect | result |
+|---|---|---|---|
+| f0-baseline | reproduction check | contradicted | `supported` 3/3 — screen valid |
+| f1-subject-member | `subject_entity` = "the first flight of December 17, 1903" | contradicted | `supported` 3/3 |
+| f2-no-title-crumbs | drop heading/worksheet lines | contradicted | `supported` 3/3 |
+| f3-drop-other-member | delete the only "fourth … 852" sentence | unsupported | `supported` 3/3 |
+| c1–c5 | five true-claim controls | supported | `supported` 3/3, all held |
+
+**The mechanism, demonstrated.** Identical payload, claims differing only in the ordinal:
+
+- f0 (claim says *first*) → "Multiple sentences across A, B, and C state that **the first** flight covered 852 feet."
+- c1 (claim says *fourth*) → "The passage states that **the fourth** flight covered 852 feet."
+
+VERIFY copies the claim's member into its reason and reports it as what the passage says. It is not
+performing member identification at all — a STEP 1 failure, not the STEP 2 misapplication Addendum 19
+assumed. f0 additionally cites `C:2` ("The fourth flight lasted 59 seconds and went 852 feet!") as
+*support* for the first-flight claim.
+
+**f3 closes the door on containment.** With the member sentence deleted, the model dropped C from its
+citations and stayed `supported` on A:2/A:3/B:3 — sentences stating 852 with no member named. The
+fusion never depended on the member sentence, so neither sentence removal nor a deterministic
+cited-selector filter can reach it.
+
+**Cost: none.** All five controls held. The predicted new-miss from a narrow `subject_entity` (c3) did
+not occur — because the narrow entity changed nothing in either direction: the model reads "the first
+flight of 17 Dec 1903" and "the fourth and final flight of 17 Dec 1903" as the same entity.
+
+**Combined with Addenda 11–17: 8 prompt levers and 3 input levers refuted, 11 total.** No lever on
+either side of the call has moved this case. Do not spend further calls on g17 without a materially
+new mechanism.
+
+### Addendum 21 — g17 marked known-fragile; floors set to 0
+
+Eleven levers refuted (Addenda 11–20). Stopping work on this case and setting the gate to assert only
+what the pipeline actually delivers here.
+
+| | |
+|---|---|
+| measured detection, last two pinned N=5 runs | 1/5, 1/5 = **0.20** |
+| pooled 3 days, 51 observations, mixed code states | 16/51 = 0.31 |
+| false accusations, every run | **0** |
+
+`minCorrectRate` 1.0 → 0 and `detectionFloor` 0.7 → 0. Not a number we can meet otherwise: a 0.4 floor
+fails today, and a 0.2 floor still flakes 33% of the time (P(0 catches in 5) = 0.8^5) — the file's own
+rule is to set the floor BELOW measured capability, and below 0.20 is 0. `minCorrectRate` had to move
+too: the screen phase runs each case once, so one miss is 0/1 and fails before escalation scores it.
+
+**What the case still enforces.** `no_false_accusation` is a separate violation rule independent of
+both floors, so g17 goes red the moment it calls a true claim false — the property that has held in
+every run. Detection is still recorded per run; it is no longer gated.
+
+Revisit only with a materially new mechanism, not another prompt or payload variation.
+
+### Addendum 22 — review: the eval gate could not fail, and g17 enforced nothing
+
+High-effort review of the branch. Two findings invalidate claims made in Addenda 19–21.
+
+**The suite could not fail in its default mode.** Moving the throw from `!summary.passed` to
+`!summary.bindingPassed` (Addendum 13's screen mode) made quality failures unreportable:
+`bindingFailures` counts only cases where `verdictIsBinding`, which required `runs >= 5`, and the
+screen runs every case once. The ~19 cases with `minCorrectRate: 1.0` and no `false` claim are never
+escalated either, so they could never become binding. `pnpm eval:grounnel` exited 0 with every case
+failing, provided nothing landed `contradicted`. Three reviewers reproduced it independently.
+
+The first fix made those cases binding at N=1. **Review rejected it**: that predicate is the exact
+complement of `rateShaped`, so the 19 cases it made binding are precisely the ones escalation refuses
+to re-run — one stochastic draw would hard-fail the suite with no confirming observation, on cases
+D026 already documents as flaky (g11 found its claim in 2 of 5 attempts; g08 drops a claim entirely).
+
+Shipped instead: **every** screen failure escalates, and binding still requires the repetitions.
+`rateShaped` is gone. Confirmation costs 5 runs only when something already failed, and the
+`MAX_ESCALATED_CASES` cap plus the systemic-failure throw still bound the spend.
+
+**Detection was ungated at N=2..4.** The per-claim loop skipped any claim below
+`MIN_VERDICT_REPETITIONS`, and the pooled check it replaced had applied at every `runs.length > 1`.
+A deliberate 3-repeat measurement of a fully collapsed detector reported green. Now enforced at every
+observation count; `verdictIsBinding` alone marks those results non-confirmatory.
+
+**Addendum 21 was wrong about what g17 still enforces.** `no_false_accusation` is guarded by
+`expected.kind !== "false"` — it protects TRUE claims from being called false. g17 listed only a
+`false` claim, so with both floors at 0 nothing could fire and the case was a permanent green.
+Fixed by listing the text's true claim ("four flights") alongside the false one: the floors stay 0,
+detection stays ungated, and an accusation against the true claim now fails the case.
+
+**Also fixed.** `underObservedFalseClaim` scanned only produced claims, so a `false` claim EXTRACT
+never produced still reported a binding pass — now scanned over the spec. `stripInstanceSelector` now
+requires a determiner before the ordinal and rejects of-phrases and a closed list of compound heads:
+without those, "Tesla took first place", "First Republic Bank", "the third of March", "in the first
+quarter" and "the second world war" stripped into different assertions, each able to mint an
+unrecoverable `contradicted` via the protected `instance_attribution` gate. Review caught two
+regressions in the first attempt — possessive determiners ("SpaceX's fourth launch") stopped
+stripping at all, and the predicate guard let "This was their first win" through because it matched
+only `the`. 23 pinned cases now cover both directions. `isInputDuplicate` re-shingled the whole
+input per source per claim (measured 37x on the retrieval path). Addendum 13 was written; its 8.7%
+figure was a transposed 7.8% and the real number is 66%.
+
+### Addendum 23 (2026-09-07) — prod incident: EXTRACT timeouts, and why retries made it worse
+
+**Symptom.** `POST /api/grounnel/extract` returned 502 after 90s for one 13.7KB document, four times.
+Traced by matching the browser's `x-vercel-id` (`zbsmt-1788760593942-62611dae96fe`) to the core log.
+
+**Not a regression.** Every knob involved predates the incident by weeks: `AI_TIMEOUT_MS` 2026-05-25,
+`EXTRACT_ATTEMPTS`/`MAX_CLAIMS` 2026-08-06, EXTRACT prompt 2026-08-22. The *same article* ran `done`
+six times between 08-26 and 09-01 at 13,797-13,815 chars.
+
+**What actually changed is Gemini's tail latency.** EXTRACT call latency on real traffic:
+
+| period | calls | p50 | p95 | max | >25s |
+|---|---|---|---|---|---|
+| 08-17 → 09-01 | 944 | ~500ms | 0.6-3.5s | 17.4s | **0** |
+| 09-02 | 333 | 562ms | 735ms | **29.3s** | 1 |
+| 09-07 | 164 | 494ms | **30,002ms** | 30,013ms | **12** |
+
+p50 is unchanged at 494ms — this is a tail problem, not a slowdown. A p95 pinned at 30,002ms is our
+own abort, not Gemini's latency. 09-02 gave five days of warning that nothing was watching.
+
+**Three defects, all fixed here.**
+
+1. *The per-call timeout override was unreachable.* `gemini.ts` has honoured `options.timeoutMs`
+   since 2026-05-26, but `llm-json-call.ts` hardcoded `options: { temperature: 0 }`, so no caller
+   could ever set one. A dead capability — which is why there was no knob to widen EXTRACT alone.
+2. *One global budget for unlike work.* EXTRACT emits up to `MAX_CLAIMS` claims each with a verbatim
+   `source_excerpt`; VERIFY emits one line. Both had 30s. EXTRACT now takes `EXTRACT_TIMEOUT_MS`
+   (60s) — 3x the 19.2s measured on a 13.7KB document.
+3. *Retrying a timeout cannot work.* The next attempt has the same budget and fails identically;
+   measured, 4 of 4 failures burned 3 x 30s. `TimeoutError` now fails fast like `RateLimitError`.
+   Worst case drops from 90s to 60s while succeeding on the workload that was failing.
+
+**Trade accepted:** a genuinely transient timeout is no longer retried. The evidence says these are
+deterministic (4/4 at the same size), and the pipeline's own degrade/escalation paths already cover a
+lost claim — but this is a real behaviour change for every stage, not just EXTRACT.
+
+**Not fixed, deliberately.** `/extract` is still synchronous, so a user can still wait 60s; making it
+202-then-poll like the rest of Grounnel is the structural fix. Nothing alerts on latency headroom.

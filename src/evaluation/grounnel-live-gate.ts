@@ -38,6 +38,9 @@ export interface Violation {
  * reachable rates are 0/.2/.4/.6/.8/1, so this means "at least 4 of 5". Revise after Stage 2. */
 export const DETECTION_RATE_INITIAL_FLOOR = 0.8;
 
+/** Repetitions required before a result may fail the suite. Below this, a run is indicative only. */
+export const MIN_VERDICT_REPETITIONS = 5;
+
 /** Per-expected-claim outcome across N repetitions — the distribution, not a collapsed boolean. */
 export interface ClaimOutcome {
   match: string;
@@ -53,6 +56,9 @@ export interface ClaimOutcome {
 
 export interface LiveEvalResult {
   ok: boolean;
+  /** Whether `ok` may be read as a verdict: enough repetitions AND enough observations of whatever
+   * was actually tested. See D030 §3m Addendum 9. */
+  verdictIsBinding: boolean;
   /** How many repetitions of the same input were scored. */
   runs: number;
   /** Hard gate: zero `contradicted` observations on any non-`false` kind, across every repetition. */
@@ -100,6 +106,8 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
   let correct = 0;
   let detectionObservations = 0;
   let detectionCorrect = 0;
+  let nonDetectionObservations = 0;
+  let nonDetectionCorrect = 0;
 
   for (const expected of spec.claims) {
     const found = runs.map((r) => findClaim(r, expected.match));
@@ -136,6 +144,11 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
     if (expected.kind === "false") {
       detectionObservations += outcome.observations;
       detectionCorrect += outcome.correct;
+    } else {
+      // Kept apart so minCorrectRate and detectionFloor cannot fight: g17 is 1.0 AND 0.7, and
+      // pooling them would fail it on any missed detection, contradicting its own floor.
+      nonDetectionObservations += outcome.observations;
+      nonDetectionCorrect += outcome.correct;
     }
   }
 
@@ -152,25 +165,52 @@ export function evaluateGrounnelRun(runs: GrounnelRun[], spec: LiveEvalSpec): Li
       detail: `no expected claim was produced in any of the ${runs.length} repetition(s) — nothing was scored`,
     });
   } else if (runs.length === 1) {
-    // N=1 keeps the original all-kinds floor. At N>1 only the two gates the protocol actually
-    // defines apply: safety (hard, above) and detection (soft) — a `true` claim landing
-    // `unsupported` in 1 of 5 runs is a recorded miss, not a deploy blocker, and must not be
-    // laundered into a pass/fail bit.
+    // The SCREEN. One run, all kinds pooled: a missed detection here is the signal that triggers
+    // escalation, so `false` claims must count at N=1 even though detectionFloor governs at N>=5.
     if (correctRate < spec.minCorrectRate) {
       violations.push({
         rule: "below_correct_rate",
         detail: `${correct}/${matched} = ${correctRate.toFixed(2)} below floor ${spec.minCorrectRate}`,
       });
     }
-  } else if (detectionRate !== null) {
-    const floor = spec.detectionFloor ?? DETECTION_RATE_INITIAL_FLOOR;
-    if (detectionRate < floor) {
+  } else {
+    // The floor applies at EVERY N, over non-`false` claims. It used to apply only at N=1, so a
+    // case wrong in 5 of 5 runs reported ok — the floor was deleted, not relaxed. A case that
+    // genuinely flakes says so by LOWERING its own minCorrectRate; the gate never opts out.
+    const ndRate = nonDetectionObservations === 0 ? null : nonDetectionCorrect / nonDetectionObservations;
+    if (ndRate !== null && ndRate < spec.minCorrectRate) {
       violations.push({
-        rule: "below_detection_rate",
-        detail: `${detectionCorrect}/${detectionObservations} = ${detectionRate.toFixed(2)} below provisional floor ${floor}`,
+        rule: "below_correct_rate",
+        detail: `${nonDetectionCorrect}/${nonDetectionObservations} = ${ndRate.toFixed(2)} below floor ${spec.minCorrectRate}`,
       });
+    }
+    // Detection is gated PER false claim, not on the summed rate: summing hides one claim at 0/5
+    // behind two at 5/5, and separate claims do not share a rate. D030 §3m Addendum 9.
+    const floor = spec.detectionFloor ?? DETECTION_RATE_INITIAL_FLOOR;
+    for (const c of claims) {
+      // Enforced at EVERY observation count. Skipping below MIN_VERDICT_REPETITIONS left N=2..4
+      // with no detection gate at all; `verdictIsBinding` already marks those as non-confirmatory.
+      if (c.kind !== "false" || c.observations === 0) continue;
+      // Plain rate against the floor. A significance test at N=5 could only ever reject 0/5 and
+      // 1/5, so a floor of 0.7 actually enforced ~0.2 — the floor must mean what it says. Set the
+      // floor BELOW measured capability so ordinary variance does not trip it (D030 §3m Addendum 15).
+      const rate = c.correct / c.observations;
+      if (rate < floor) {
+        violations.push({
+          rule: "below_detection_rate",
+          detail: `"${c.match.slice(0, 60)}": ${c.correct}/${c.observations} = ${rate.toFixed(2)} below floor ${floor}`,
+        });
+      }
     }
   }
 
-  return { ok: violations.length === 0, runs: runs.length, safetyOk, correctRate, detectionRate, correct, matched, claims, violations };
+  // Binding means the test that matters actually had the observations to run. A false claim EXTRACT
+  // produced in only 4 of 6 repetitions leaves detection untested, and untested is not a pass.
+  // Scanned over spec.claims, not `claims`: one EXTRACT never produced is absent from the latter.
+  const underObservedFalseClaim = spec.claims.some(
+    (e) => e.kind === "false" && (claims.find((c) => c.match === e.match)?.observations ?? 0) < MIN_VERDICT_REPETITIONS
+  );
+  const verdictIsBinding = runs.length >= MIN_VERDICT_REPETITIONS && !underObservedFalseClaim;
+
+  return { ok: violations.length === 0, verdictIsBinding, runs: runs.length, safetyOk, correctRate, detectionRate, correct, matched, claims, violations };
 }

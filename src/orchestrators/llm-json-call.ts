@@ -35,6 +35,8 @@ export interface LlmJsonCallOptions<T> {
    * quoted as evidence) false-positived an entire batch before this existed. */
   quotedFields?: string[];
   attempts: number;
+  /** Per-call override of AI_TIMEOUT_MS. EXTRACT needs far longer than a one-line VERIFY (D030 §3m). */
+  timeoutMs?: number;
   module: string;
   operation: string;
   /** Extra post-repair check (e.g. a required array field must not be null) — throws to trigger a retry. */
@@ -45,7 +47,7 @@ export interface LlmJsonCallOptions<T> {
 
 /** Retry + injection-guard + repair skeleton, shared by audit and Grounnel EXTRACT/VERIFY. Cost recording is opt-in via `onComplete` (D023 §4), not built in — see that file's own doc comment for why. */
 export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise<T> {
-  const { provider, system, user, schema, expectedKeys, quotedFields, attempts, module, operation, isValid, onComplete } = options;
+  const { provider, system, user, schema, expectedKeys, quotedFields, attempts, timeoutMs, module, operation, isValid, onComplete } = options;
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -58,12 +60,23 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
     try {
       // Reviewed finding (2026-08-09) — schema is already mandatory here, so every caller gets
       // Gemini's structural output constraint for free, not just callers that opt in.
-      const response = await provider.completeJson<unknown>({ system, user, responseSchema: schema, options: { temperature: 0 } });
+      const response = await provider.completeJson<unknown>({ system, user, responseSchema: schema, options: { temperature: 0, ...(timeoutMs ? { timeoutMs } : {}) } });
       raw = response.result;
       inputTokens = response.usage?.inputTokens ?? null;
       outputTokens = response.usage?.outputTokens ?? null;
       totalTokens = response.usage?.totalTokens ?? null;
     } catch (err) {
+      // A timeout means the work did not fit the budget; the next attempt has the same budget and
+      // fails the same way. Measured: 4 of 4 user failures burned 3 x 30s before erroring (D030 §3m).
+      if (err instanceof TimeoutError) {
+        onComplete?.({
+          raw: null, parsedOutput: null, startedAt, endedAt: new Date(), durationMs: Date.now() - t0,
+          inputTokens, outputTokens, totalTokens,
+          status: "timeout", failureType: "timeout", errorMessage: err.message,
+        });
+        logger.warn({ module, operation, attempt, timeoutMs, err }, "provider call timed out — not retrying, the budget is the same");
+        throw err;
+      }
       if (err instanceof RateLimitError) {
         // Reviewed finding: this used to skip onComplete entirely — a rate-limited attempt
         // produced zero grounnel_llm_calls row, unlike every other failure path here.
