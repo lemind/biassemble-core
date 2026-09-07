@@ -15,6 +15,11 @@ const GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/mo
 const MAX_CANDIDATES = 5;
 // Bounds the cost of chasing that target: at most this many attempts per usable page wanted.
 const FETCH_ATTEMPT_BUDGET_MULTIPLIER = 2;
+// spec 017 T029 — a bare-domain title means Gemini could not read the page either; such candidates
+// fetch OK 0.1% of the time (measured, n=4820). See tasks.md T029 for the table.
+const BARE_DOMAIN_TITLE_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i;
+/** discoverUrls' own fallback title when Gemini omits one — carries no fetchability signal. */
+const GROUNDING_REDIRECT_HOST = "vertexaisearch.cloud.google.com";
 // D026 §6 — Tavily's results are already fetched with text (T031), free to retain more than
 // MAX_CANDIDATES, which still gates DIY's real per-URL network fetches.
 const FALLBACK_RETAINED_CANDIDATES = 8;
@@ -149,6 +154,24 @@ function extractTitleFromHtml(html: string): string | null {
   return decoded.length > 0 ? decoded : null;
 }
 
+/** spec 017 T029 — try bare-domain-titled candidates LAST, never drop them. Stable, so discovery order survives within each group. */
+export function orderByFetchability<T extends { title: string }>(candidates: T[]): T[] {
+  // discoverUrls falls back to domainOf(redirect uri) when Gemini omits a title, which also looks
+  // bare — demoting those would apply Gemini's signal to candidates it says nothing about.
+  const isBare = (t: string): boolean => {
+    const title = t.trim();
+    // An empty title is the same "Gemini could not read it" signal as a bare domain — without this
+    // it fails the regex and sorts FIRST, inverting the whole point (review finding).
+    if (title.length === 0) return true;
+    return title !== GROUNDING_REDIRECT_HOST && BARE_DOMAIN_TITLE_RE.test(title);
+  };
+  // Partition, not a comparator: the predicate runs n times instead of n log n, and stays stable.
+  const bare: T[] = [];
+  const rich: T[] = [];
+  for (const c of candidates) (isBare(c.title) ? bare : rich).push(c);
+  return [...rich, ...bare];
+}
+
 /** D021 — Gemini's google_search for URL discovery only, never content/verdicts (D019 §3 still applies). DIY-fetches top candidates; falls back to `fallback` only when every DIY attempt fails. */
 export class HybridSearchProvider implements SearchProvider {
   constructor(
@@ -163,7 +186,7 @@ export class HybridSearchProvider implements SearchProvider {
       return this.runFallback(query, context);
     }
 
-    const candidates = await this.discoverUrls(query);
+    const candidates = orderByFetchability(await this.discoverUrls(query));
     // D026 §13 — escalation-only override of MAX_CANDIDATES; a fresh discoverUrls() call above,
     // so a higher tier may surface different/more candidates than a prior tier's discovery did
     // (live search isn't deterministic — same reason every other variance in this pipeline exists).

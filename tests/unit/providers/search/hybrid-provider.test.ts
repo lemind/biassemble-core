@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { HybridSearchProvider } from "../../../../src/providers/search/hybrid-provider.js";
+import { HybridSearchProvider, orderByFetchability } from "../../../../src/providers/search/hybrid-provider.js";
 import type { SearchProvider, SearchPassage } from "../../../../src/providers/search/search-provider.js";
 import { logger } from "../../../../src/observability/logger.js";
 import { NoopGrounnelSearchCallStore } from "../../../mocks/noop-grounnel-search-call-store.js";
@@ -830,5 +830,30 @@ describe("HybridSearchProvider (T008, D021)", () => {
 
     expect(defaultRetention).toHaveLength(8);
     expect(widenedRetention).toHaveLength(10);
+  });
+});
+
+describe("orderByFetchability (spec 017 T029)", () => {
+  const t = (title: string) => ({ title, url: `https://x/${title}` });
+
+  it("moves bare-domain-titled candidates last without dropping any", () => {
+    const ordered = orderByFetchability([t("britannica.com"), t("History of CSS - Wikipedia"), t("quora.com"), t("Who invented CSS? | Space")]);
+    expect(ordered.map((c) => c.title)).toEqual([
+      "History of CSS - Wikipedia",
+      "Who invented CSS? | Space",
+      "britannica.com",
+      "quora.com",
+    ]);
+  });
+
+  it("is stable, so discovery rank still orders candidates within each group", () => {
+    const ordered = orderByFetchability([t("first.com"), t("A real title"), t("second.com"), t("Another real title")]);
+    expect(ordered.map((c) => c.title)).toEqual(["A real title", "Another real title", "first.com", "second.com"]);
+  });
+
+  it("treats a titled page on a domain-like name as rich, not bare", () => {
+    // "Space.com: who invented X" has a dot but also spaces — a real title, must not be demoted.
+    const ordered = orderByFetchability([t("britannica.com"), t("Space.com: who invented the telescope")]);
+    expect(ordered[0]!.title).toBe("Space.com: who invented the telescope");
   });
 });
