@@ -254,16 +254,16 @@ claim picked up a spurious second entity. That was the cancel condition, so it d
 **Carry into T016**: `subject_entity` is `""` on all six (feature 013 T31 disabled it), so
 `normalizeSubjectEntities` drops the empty head and `subjectEntities` is the **only** entity signal
 slot allocation would have. T016 cannot fall back to `subject_entity` for the guaranteed slot.
-- [x] T014 [W2] **CLOSED — SUPERSEDED by T017** (one search per entity); Branch retrieval: one search per listed entity, pooled into the claim's single pool.
+- [x] T014 [W2] **CLOSED FOR NOW — superseded by T017** (one search per entity); Branch retrieval: one search per listed entity, pooled into the claim's single pool.
   Only multi-entity claims branch (~4–6 of 44 on the test article, ≈ +10% retrieval)
-- [x] T015 [W2] **CLOSED — SUPERSEDED by T017** (rerank prompt loosening); Rerank prompt: one sentence — a page about **any** listed entity scores high. Keep the
+- [x] T015 [W2] **CLOSED FOR NOW — superseded by T017** (rerank prompt loosening); Rerank prompt: one sentence — a page about **any** listed entity scores high. Keep the
   DIFFERENT-real-entity line for entities NOT listed; that is what fixed Nauru/Vatican
-- [x] T016 [W2] **CLOSED — SUPERSEDED by T017** (per-entity slot reservation); Slot allocation: at most one guaranteed slot per listed entity **when a candidate for
+- [x] T016 [W2] **CLOSED FOR NOW — superseded by T017** (per-entity slot reservation); Slot allocation: at most one guaranteed slot per listed entity **when a candidate for
   it exists**, remainder by blended score. Window size unchanged, so the FA surface does not grow.
   No candidate for entity 2 ⇒ all slots to entity 1, which is honest rather than a fake guarantee
-- [x] T021 [W2] **CLOSED — SUPERSEDED by T017** (the eval that would have gated them); Deployed, 3 repeats. **Gate: FA = 0.**
+- [x] T021 [W2] **CLOSED FOR NOW — superseded by T017** (the eval that would have gated them); Deployed, 3 repeats. **Gate: FA = 0.**
 
-**T014–T016/T021 — CLOSED AS SUPERSEDED (2026-09-07, user's call).** T013 unblocked them, but the
+**T014–T016/T021 — CLOSED FOR NOW (2026-09-07, user's call). Not refuted — unnecessary today.** T013 unblocked them, but the
 funnel fix appears to have already solved what they target. On run `6d48ebdb` all **6 of 6**
 multi-entity claims are already correct without any branched search:
 
@@ -285,6 +285,9 @@ The original diagnosis was wrong about the mechanism: the query was never the pr
 from the whole claim, so it already contains both terms). The **budget** was. At 4.1 usable pages one
 topic crowded the other out of a 3-slot window; at 7.7 both fit. T017 fixed the cause, and branched
 search was aimed at the symptom.
+
+**Reopen if** a comparison claim fails with only one side's evidence retrieved, or if the usable-pages
+budget drops back toward 4. The design in T014–T016 stands as written; only its necessity lapsed.
 Building branched search would add ~10% retrieval and fresh FA surface for **zero measured gain** —
 the same trap as T018's URL drop, T025 and T026, all of which measurement cancelled after the design
 was already written. Not marked done: this is a recommendation, not a decision.
