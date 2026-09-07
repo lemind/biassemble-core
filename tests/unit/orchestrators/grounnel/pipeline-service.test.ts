@@ -375,13 +375,14 @@ describe("GrounnelPipelineService (T010)", () => {
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
-    // Nauru's page — ranked worst lexically (4th) — is promoted to label "A" by its semantic score,
-    // and spec 017 T034's relevance filter drops the off-topic Vatican pages outright: the ranker
-    // now EXCLUDES as well as orders, matching the degraded path.
+    // Nauru's page — ranked worst lexically (4th) — is promoted to label "A" by its semantic score.
+    // spec 017 T039: the off-topic Vatican pages are OUTRANKED, not excluded. A low rerank score
+    // cannot gate a fact-checker — refuting pages score low too (the g05 Statue of Liberty case).
     const sentPayload = JSON.parse(capturedSystem.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)![1]!);
-    const pooledText = JSON.stringify(sentPayload[0].passage_sentences);
-    expect(pooledText).toContain("resident population of approximately 12,000");
-    expect(pooledText).not.toContain("Swiss Guard");
+    const labels = Object.keys(sentPayload[0].passage_sentences);
+    expect(labels[0]).toBe("A");
+    expect(JSON.stringify(sentPayload[0].passage_sentences.A)).toContain("resident population of approximately 12,000");
+    expect(labels).toEqual(["A", "B", "C", "D"]);
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
@@ -496,10 +497,9 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(nauru.selected).toBe(true);
     expect(vatican3.lexicalScore).toBeCloseTo(50); // 100 * (1 - 2/4)
     expect(vatican3.llmScore).toBe(5);
-    // spec 017 T034 — the off-topic Vatican pages fail the relevance filter, so "selected" stays
-    // informative: it means "VERIFY actually read this", not "a row exists".
-    expect(vatican3.selected).toBe(false);
-    expect(decisions.filter((d) => d.selected)).toHaveLength(1);
+    // spec 017 T039 — the scores decide ORDER, not membership: VERIFY reads all four.
+    expect(vatican3.selected).toBe(true);
+    expect(decisions.filter((d) => d.selected)).toHaveLength(4);
   });
 
   it("D026 §19: attributes claimId to single-claim LLM calls (rerank, retry) but leaves it unset for a genuinely batched VERIFY call", async () => {

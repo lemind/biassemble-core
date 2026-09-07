@@ -81,9 +81,6 @@ const ESCALATION_TIERS = [8, 11];
 // spec 017 T033 — derived, not asserted: must leave room for the widest tier's fetches so a page
 // VERIFY read is never dropped before the next tier, and so the pool cannot outgrow the A-Z codec.
 const MAX_CARRIED_SOURCES = MAX_LABELLED_PASSAGES - Math.max(...ESCALATION_TIERS);
-// spec 017 T034 — the reranker's own score is the exclusion signal. A lexical proxy here vetoed
-// pages the model scored 90-95 (D026 §18 exists because lexical relevance judges aboutness badly).
-const RERANK_RELEVANCE_FLOOR = 20;
 // spec 017 T036 — implicit_negation's precision guard stays at the window it was tuned against
 // (D022 §4, "trades recall for precision by design"), independent of how much VERIFY now reads.
 const NEGATION_GATE_PASSAGES = 3;
@@ -501,8 +498,8 @@ export class GrounnelPipelineService {
   private async rerankPassages(auditId: string, claim: PipelineClaimInput, pool: ScoredSource[]): Promise<ScoredSource[]> {
     // spec 017 T004 — keyed off the UNION, not the new-fetch count: 1 new + 7 carried is a pool of 8
     // and must be ranked. Keying it off new sources alone made the carry a silent no-op.
-    // g17 — still not a gate AHEAD of the LLM call (every candidate is scored); spec 017 T034 applies
-    // the same filter to the ranked result, so both paths exclude alike.
+    // g17 — hasSubjectEntity joins isPassageRelevant only on this degraded path (spec 017 T039: the
+    // LLM path orders without excluding, because a low score marks refuting evidence too).
     if (pool.length <= 1) {
       return this.degradedRank(claim, pool);
     }
@@ -548,17 +545,15 @@ export class GrounnelPipelineService {
         return { source: s.source, lexicalScore, llmScore, combined: (lexicalScore + llmScore) / 2 };
       });
       const ranked = scored.sort((a, b) => b.combined - a.combined);
-      // spec 017 T034 — the ranker EXCLUDES as well as orders, matching degradedRank's intent but
-      // keyed on its own score: a lexical proxy here dropped pages the model scored 90-95.
-      const kept = ranked.filter((r) => r.llmScore >= RERANK_RELEVANCE_FLOOR);
-      const keptSet = new Set(kept);
-      // D026 §19 — "selected" is what VERIFY actually reads, so it stays informative under T031.
+      // spec 017 T039 — the ranker ORDERS, it never excludes. A relevance score cannot gate a
+      // fact-checker: refuting pages contradict the claim's framing, so they score low by design.
+      // D026 §19 — mirrors resolveEvidence's own slice, which is what VERIFY reads.
       this.rerankDecisionStore.recordRerankDecisions(
         auditId,
         claim.id,
-        ranked.map((r) => ({ url: r.source.url, lexicalScore: r.lexicalScore, llmScore: r.llmScore, combinedScore: r.combined, selected: keptSet.has(r) }))
+        ranked.map((r, i) => ({ url: r.source.url, lexicalScore: r.lexicalScore, llmScore: r.llmScore, combinedScore: r.combined, selected: i < MAX_LABELLED_PASSAGES }))
       );
-      return kept.map((r) => ({ source: r.source, lexicalScore: r.lexicalScore, llmScore: r.llmScore }));
+      return ranked.map((r) => ({ source: r.source, lexicalScore: r.lexicalScore, llmScore: r.llmScore }));
     } catch (err) {
       // A RateLimitError here doesn't stop other in-flight claims (unlike other call sites) — acceptable, fail-open still degrades correctly; tagged so it's observable.
       logger.warn(

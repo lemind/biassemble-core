@@ -798,6 +798,43 @@ The score floor also resolves the empty-pool concern for free: `kept` is empty o
 candidate scored < 20, in which case `NO_EVIDENCE_REASON` ("no relevant source found") is accurate,
 which it was not under the lexical version.
 
+## Phase 13: the reranker orders, it never excludes [W7]
+
+- [x] T039 [W7] **Revert T034 and T037.** No relevance filter on the rerank success path. A relevance
+  score cannot gate a fact-checker, and neither proxy for it worked
+- [ ] T040 [W7] Re-run golden + article deployed. **Gate: FA = 0, and g05/g12/g24 back to detecting**
+
+**T039 EVIDENCE (2026-09-07)** — golden run `01M1YEVKJ4ZMKJD10RNBN2VVC0` FAILED: 34/45 correct,
+**FA = 0**, three cases confirmed lost at N=5 — `g05-statue-of-liberty`, `g12-bukowski-death-year`,
+`g24-mouse-superlative`. All three: `rerank rows: 13, selected: 0`, no gate events, no VERIFY call.
+
+The floor deleted every candidate. Scores for "The Statue of Liberty was a gift from **Canada**":
+
+```
+lex=100 llm=10  en.wikipedia.org/wiki/Statue_of_Liberty
+lex= 80 llm=10  nps.gov/stli/learn/historyculture/the-french-connection
+lex= 75 llm=10  francechannel.tv/.../HOW-...
+              ... all 13 candidates scored llm=10
+```
+
+Those are the correct refuting sources. The rerank prompt scores a page about a DIFFERENT entity low
+(the g17/Nauru fix); the claim asserts a *Canadian* gift and every page describes a *French* one, so
+the reranker reads them as off-entity. **Refuting evidence contradicts the claim's framing by
+definition, so it always scores low** — a relevance score therefore deletes exactly the evidence that
+produces a detection, and only ever on false claims.
+
+Both attempts failed in opposite directions, which is what makes this conclusive:
+
+| attempt | signal | deleted |
+|---|---|---|
+| T034 | lexical key terms | pages scored **90–95** (`sri.com` on the mouse claim) |
+| T037 | `llmScore >= 20` | pages scored **10 that ARE the refutation** (g05, g12) |
+
+The original T034 finding — the fail-open path filters while the healthy path does not — stands, but
+the resolution is the reverse of what was applied: `degradedRank` is the anomaly, not the LLM path.
+Left as-is because it is the harmless direction (a rare error path being stricter) and FA measured 0
+in every run, filter or none.
+
 ## Explicitly out of scope
 
 - **Discovery quality.** 3 of the 5 unstable claims failed because the deciding page was never
