@@ -2240,3 +2240,42 @@ stripping at all, and the predicate guard let "This was their first win" through
 only `the`. 23 pinned cases now cover both directions. `isInputDuplicate` re-shingled the whole
 input per source per claim (measured 37x on the retrieval path). Addendum 13 was written; its 8.7%
 figure was a transposed 7.8% and the real number is 66%.
+
+### Addendum 23 (2026-09-07) — prod incident: EXTRACT timeouts, and why retries made it worse
+
+**Symptom.** `POST /api/grounnel/extract` returned 502 after 90s for one 13.7KB document, four times.
+Traced by matching the browser's `x-vercel-id` (`zbsmt-1788760593942-62611dae96fe`) to the core log.
+
+**Not a regression.** Every knob involved predates the incident by weeks: `AI_TIMEOUT_MS` 2026-05-25,
+`EXTRACT_ATTEMPTS`/`MAX_CLAIMS` 2026-08-06, EXTRACT prompt 2026-08-22. The *same article* ran `done`
+six times between 08-26 and 09-01 at 13,797-13,815 chars.
+
+**What actually changed is Gemini's tail latency.** EXTRACT call latency on real traffic:
+
+| period | calls | p50 | p95 | max | >25s |
+|---|---|---|---|---|---|
+| 08-17 → 09-01 | 944 | ~500ms | 0.6-3.5s | 17.4s | **0** |
+| 09-02 | 333 | 562ms | 735ms | **29.3s** | 1 |
+| 09-07 | 164 | 494ms | **30,002ms** | 30,013ms | **12** |
+
+p50 is unchanged at 494ms — this is a tail problem, not a slowdown. A p95 pinned at 30,002ms is our
+own abort, not Gemini's latency. 09-02 gave five days of warning that nothing was watching.
+
+**Three defects, all fixed here.**
+
+1. *The per-call timeout override was unreachable.* `gemini.ts` has honoured `options.timeoutMs`
+   since 2026-05-26, but `llm-json-call.ts` hardcoded `options: { temperature: 0 }`, so no caller
+   could ever set one. A dead capability — which is why there was no knob to widen EXTRACT alone.
+2. *One global budget for unlike work.* EXTRACT emits up to `MAX_CLAIMS` claims each with a verbatim
+   `source_excerpt`; VERIFY emits one line. Both had 30s. EXTRACT now takes `EXTRACT_TIMEOUT_MS`
+   (60s) — 3x the 19.2s measured on a 13.7KB document.
+3. *Retrying a timeout cannot work.* The next attempt has the same budget and fails identically;
+   measured, 4 of 4 failures burned 3 x 30s. `TimeoutError` now fails fast like `RateLimitError`.
+   Worst case drops from 90s to 60s while succeeding on the workload that was failing.
+
+**Trade accepted:** a genuinely transient timeout is no longer retried. The evidence says these are
+deterministic (4/4 at the same size), and the pipeline's own degrade/escalation paths already cover a
+lost claim — but this is a real behaviour change for every stage, not just EXTRACT.
+
+**Not fixed, deliberately.** `/extract` is still synchronous, so a user can still wait 60s; making it
+202-then-poll like the rest of Grounnel is the structural fix. Nothing alerts on latency headroom.
