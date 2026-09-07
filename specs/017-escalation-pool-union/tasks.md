@@ -291,39 +291,52 @@ only 3 that ever returned usable text.** Where the other slots went:
 strictly cheaper than raising the cap: it costs no extra fetch latency and frees slots for URLs
 discovery already found and never tried.
 
-- [ ] ~~T017 [W3] Run-scoped blocked-domain memo keyed by URL~~ — **NOT IMPLEMENTABLE AS WRITTEN**
-- [ ] ~~T018 [W3] Drop `vertexaisearch.cloud.google.com/grounding-api-redirect/*`~~ — **WRONG, would
-  break retrieval entirely**
+- [x] T017 [W3] Fetch in waves until the TARGET of usable pages is met, with a run-scoped memo of
+  already-failed pages checked the moment a redirect resolves — replaces the URL-keyed memo, which
+  was impossible (see below)
+- [x] ~~T018 [W3] Drop `vertexaisearch.cloud.google.com/grounding-api-redirect/*`~~ — **CANCELLED,
+  it would have broken retrieval entirely**
 
-**BLOCKED (2026-09-07)** — both tasks rest on a misreading of the telemetry. Established from
-`hybrid-provider.ts`, not inference:
+**WHY THE ORIGINAL TASKS WERE IMPOSSIBLE (2026-09-07)** — from `hybrid-provider.ts` and telemetry:
 
-1. `discoverUrls` returns Gemini grounding chunks whose `web.uri` is **always** a
-   `vertexaisearch.cloud.google.com/grounding-api-redirect/<opaque token>` URL. It is not a stub
-   alongside real URLs — it is the raw form of **every** candidate.
-2. `fetchCandidate` calls `fetch(candidate.url, { redirect: "follow" })`, so the redirect resolves
-   **inside** the request. The real URL is only known from `response.url`, i.e. after the network
-   call has already happened.
-3. `blocked`/`paywalled` returns record `finalUrl` (post-redirect), which is why telemetry shows
-   `britannica.com` and `study.com`. `not_attempted` rows record the raw candidate URL, which is why
-   they show `vertexaisearch`. Same page, two different recorded forms.
+`discoverUrls` returns Gemini grounding chunks whose `web.uri` is **always** an opaque
+`vertexaisearch.cloud.google.com/grounding-api-redirect/<token>` URL — the raw form of *every*
+candidate, not a stub subset. `fetchCandidate` uses `redirect: "follow"`, so the real page is only
+known from `response.url`, after the request. Confirmed across all history:
 
-**So T018 would drop 100% of candidates**, not a noise subset.
+| status | vertexaisearch | total |
+|---|---|---|
+| `not_attempted` | **33,712** | 33,730 (99.9%) |
+| `ok` | 0 | 37,704 |
+| `blocked` | 0 | 8,659 |
 
-**And T017 cannot match**: the memo holds `study.com`, but a re-discovered candidate presents as an
-opaque redirect token that differs per discovery call. Matching it requires fetching it — the exact
-cost the memo was meant to avoid.
+So T018 would have discarded 100% of candidates, and a URL-keyed memo can never match a
+re-discovered page, because the token differs per discovery call.
 
-The earlier claim that "7 of 18 slots on Roman/B were spent re-failing on blocked domains" is still
-true as an observation; what is false is that a URL-keyed memo can prevent it.
+**WHAT SHIPPED INSTEAD.** The measured defect was never the memo — it was the funnel: 86,220
+candidates discovered, **33,730 (39%) never fetched at all**, and 28% of the 52,490 fetched failed,
+so VERIFY routinely saw 1–2 pages while usable URLs sat untried.
 
-**Viable alternative, deliberately NOT implemented here — needs a decision.** Restructure
-`HybridSearchProvider.search` to fetch candidates until it has `fetchCap` **successes** rather than
-making exactly `fetchCap` attempts, checking the memo against `response.url` after headers arrive but
-before the body is read. That fixes the real defect measured on run `db91384b` — 45.8% of discovered
-URLs never fetched while 31% of the fetched ones fail — but it changes the provider's fetch loop and
-its concurrency shape, which is outside this spec.
-- [ ] T019 [W3] BLOCKED on the T017/T018 decision — re-measure the funnel on a fresh run. Expect usable-pages-per-claim up with **no**
+- `MAX_CANDIDATES` 3 → **5, and its meaning changed from "attempts" to "usable pages wanted"**.
+  `ESCALATION_TIERS` [5, 8] → **[8, 11]** to stay above the new base.
+- `HybridSearchProvider.search` fetches in **parallel waves sized to the shortfall** until the target
+  is met, bounded by `FETCH_ATTEMPT_BUDGET_MULTIPLIER` (2) attempts per page wanted.
+- A run-scoped `failedUrlKeys` set lives in `pipeline.service.ts` (dies with the run) and is threaded
+  through `SearchProvider.search`. `fetchCandidate` checks it **the instant the redirect resolves**,
+  before reading the body — the earliest point the real page is knowable.
+- `MAX_VERIFY_PASSAGES` stays **3**: more pages to rank, same amount of text in front of VERIFY, so
+  the false-accusation surface does not grow.
+
+Cost: up to 10 fetch attempts per claim-pass instead of 3, i.e. roughly one extra parallel wave
+(~0.5–1s) on claims whose first wave falls short. No LLM calls added.
+
+**Known gap, not fixed here:** `statusFromHttpStatus` maps 403 → `blocked` and *everything else* →
+`unreachable`, so an HTTP 429 is indistinguishable from a dead host and the attempt budget is the
+only backstop against a rate-limited domain. A guard keyed on `rate_limited` was written, found to be
+dead code (only the Tavily fallback ever emits that status, and it returns before the wave loop), and
+removed. Mapping 429 properly means touching the `SourceStatus` enum — a separate change.
+
+- [ ] T019 [W3] Re-measure the funnel on a fresh run (needs a deploy). Expect usable-pages-per-claim up with **no**
   change to `MAX_CANDIDATES`. Only if that is still short: `MAX_CANDIDATES` 3 → 5 and
   `ESCALATION_TIERS` [5, 8] → [8, 11]
 - [ ] T020 [W3] Deployed, 3 repeats. **Gate: FA = 0.** Quote wall-time separately: T017/T018 should

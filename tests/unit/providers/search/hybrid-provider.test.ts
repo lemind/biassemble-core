@@ -134,7 +134,7 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(fetchedUrls).toEqual(discovered.slice(0, 5).map((d) => d.uri));
   });
 
-  it("D026 §13: omitting context.maxCandidates keeps the default cap of 3", async () => {
+  it("spec 017 T017: omitting context.maxCandidates targets the default 5 USABLE pages", async () => {
     const fallback = new StubFallback([]);
     const fetchedUrls: string[] = [];
     const discovered = Array.from({ length: 7 }, (_, i) => ({ uri: `https://example${i}.com/page`, title: `Page ${i}` }));
@@ -150,7 +150,74 @@ describe("HybridSearchProvider (T008, D021)", () => {
     const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
     await provider.search("Bukowski attended Los Angeles City College.");
 
-    expect(fetchedUrls).toHaveLength(3);
+    // Every candidate here succeeds, so 5 attempts reach the target of 5 usable and it stops.
+    expect(fetchedUrls).toHaveLength(5);
+  });
+
+  it("spec 017 T017: keeps fetching past failures until the target of usable pages is met", async () => {
+    const fallback = new StubFallback([]);
+    const fetchedUrls: string[] = [];
+    const discovered = Array.from({ length: 9 }, (_, i) => ({ uri: `https://example${i}.com/page`, title: `Page ${i}` }));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) return Promise.resolve(geminiGroundingResponse(discovered));
+      fetchedUrls.push(url);
+      // The real shape: the first wave is mostly blocked. Pre-T017 the run kept the survivors and
+      // handed VERIFY one page; now it goes back for more.
+      const blocked = ["example0", "example1", "example3"].some((b) => url.includes(b));
+      if (blocked) return Promise.resolve({ ok: false, status: 403, url, text: async () => "" });
+      return Promise.resolve({ ok: true, status: 200, url, text: async () => `<html><body>${LONG_TEXT}</body></html>` });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    expect(results.filter((r) => r.status === "ok")).toHaveLength(5);
+    expect(fetchedUrls.length).toBeGreaterThan(5);
+  });
+
+  // Also the 429 case: statusFromHttpStatus maps everything but 403 to `unreachable`, so a
+  // rate-limited host is indistinguishable from a dead one and the budget is the only backstop.
+  it("spec 017 T017: stops at the attempt budget rather than fetching every candidate when nothing works", async () => {
+    const fallback = new StubFallback([]);
+    const fetchedUrls: string[] = [];
+    const discovered = Array.from({ length: 30 }, (_, i) => ({ uri: `https://example${i}.com/page`, title: `Page ${i}` }));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) return Promise.resolve(geminiGroundingResponse(discovered));
+      fetchedUrls.push(url);
+      return Promise.resolve({ ok: false, status: 403, url, text: async () => "" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    // 5 usable wanted x FETCH_ATTEMPT_BUDGET_MULTIPLIER (2) — never all 30.
+    expect(fetchedUrls).toHaveLength(10);
+  });
+
+  it("spec 017 T017: abandons a page that already failed earlier in the run, before downloading its body", async () => {
+    const fallback = new StubFallback([]);
+    let bodyReads = 0;
+    const discovered = [{ uri: "https://redirect-a.example", title: "A" }, { uri: "https://redirect-b.example", title: "B" }];
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) return Promise.resolve(geminiGroundingResponse(discovered));
+      // Both opaque discovery URLs resolve to the SAME real page — the grounding-redirect shape.
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        url: "https://blocked-site.example/article",
+        text: async () => { bodyReads++; return `<html><body>${LONG_TEXT}</body></html>`; },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const failedUrlKeys = new Set<string>(["blocked-site.example/article"]);
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("some claim", { runId: "r1", claimId: "c1", failedUrlKeys });
+
+    expect(bodyReads).toBe(0);
+    expect(results.every((r) => r.status !== "ok")).toBe(true);
   });
 
   it("reviewed finding (D026 §10, T048): ranks DIY candidates by relevance to the claim, not just Gemini's discovery order — the real Napoleon variance", async () => {
@@ -634,6 +701,8 @@ describe("HybridSearchProvider (T008, D021)", () => {
             { uri: "https://three.example", title: "Three" },
             { uri: "https://four.example", title: "Four" },
             { uri: "https://five.example", title: "Five" },
+            { uri: "https://six.example", title: "Six" },
+            { uri: "https://seven.example", title: "Seven" },
           ])
         );
       }
@@ -642,17 +711,17 @@ describe("HybridSearchProvider (T008, D021)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const searchCallStore = new FakeGrounnelSearchCallStore();
-    // Default MAX_CANDIDATES is 3 — discovery returned 5, so 2 should be logged as not_attempted
-    // without ever being fetched (the real T053 trigger gap, now made queryable).
+    // Target is 5 usable and all 5 succeed in one wave, so the loop never reaches candidates 6-7:
+    // those stay visible as not_attempted (the T053 trigger gap, still queryable after T017).
     const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, searchCallStore);
     await provider.search("some claim", { runId: "r1", claimId: "c1" });
 
     const notAttempted = searchCallStore.calls.filter((c) => c.status === "not_attempted");
     expect(notAttempted).toHaveLength(2);
-    expect(notAttempted.map((c) => c.url).sort()).toEqual(["https://five.example", "https://four.example"]);
+    expect(notAttempted.map((c) => c.url).sort()).toEqual(["https://seven.example", "https://six.example"]);
     expect(notAttempted.every((c) => c.durationMs === 0 && c.excerpt === undefined)).toBe(true);
-    // The first 3 (fetchCap) were genuinely attempted, not also logged as not_attempted.
-    expect(searchCallStore.calls.filter((c) => c.status === "ok")).toHaveLength(3);
+    // The 5 the loop needed were genuinely attempted, not also logged as not_attempted.
+    expect(searchCallStore.calls.filter((c) => c.status === "ok")).toHaveLength(5);
   });
 
   it("D026 §19: stores the cleaned excerpt actually extracted for a successful DIY fetch, not for a failed one", async () => {

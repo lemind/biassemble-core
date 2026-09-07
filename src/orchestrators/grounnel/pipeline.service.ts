@@ -79,7 +79,9 @@ const MAX_CARRIED_SOURCES = 8;
 const ATTRIBUTION_ACTIONABLE_VERDICTS: ReadonlySet<Verdict> = new Set<Verdict>(["supported", "partially_supported", "unsupported"]);
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
 // gets re-tried against a wider DIY candidate pool, one tier at a time, bounded at 2 escalations.
-const ESCALATION_TIERS = [5, 8];
+// spec 017 T017 — these are now TARGETS of usable pages, not attempt counts, and the base pass
+// already asks for 5, so the ladder moves up to stay meaningful.
+const ESCALATION_TIERS = [8, 11];
 
 // D032 §5/T7 — states both that evidence is missing AND that this isn't a falsehood finding (SC-2).
 const NO_EVIDENCE_REASON =
@@ -115,8 +117,11 @@ export class GrounnelPipelineService {
     try {
       // D026 §14/§15 — set before the verify loop to avoid a "done" poll race; stays inside this try so a Redis failure still hits the catch below.
       await this.grounnelStore.setEscalating(auditId, true);
+      // spec 017 T017 — run-scoped: a page that failed for one claim has failed for the run. Lives
+      // here, not in the provider, so it dies with the run instead of leaking across runs.
+      const failedUrlKeys = new Set<string>();
       try {
-        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine, inputText);
+        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine, inputText, failedUrlKeys);
 
         const noEvidence = resolved.filter((r) => !hasPassage(r));
         await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
@@ -150,7 +155,7 @@ export class GrounnelPipelineService {
           const escalationT0 = Date.now();
           // spec 017 — seed the carry from the base pass: CSS/B lost its deciding page HERE, not between escalation tiers.
           const carriedByClaimId = new Map(resolved.filter((r) => r.rankedPool?.length).map((r) => [r.claim.id, r.rankedPool!]));
-          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText, carriedByClaimId);
+          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText, carriedByClaimId, failedUrlKeys);
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
       } finally {
@@ -178,7 +183,8 @@ export class GrounnelPipelineService {
     // G1 threads into escalation too — the wider tier pool is exactly where a syndicated copy surfaces.
     inputText?: string,
     // spec 017 — seeded from the base pass; each tier ranks over it and replaces it with its own pool.
-    carriedByClaimId: Map<string, ScoredSource[]> = new Map()
+    carriedByClaimId: Map<string, ScoredSource[]> = new Map(),
+    failedUrlKeys?: Set<string>
   ): Promise<void> {
     const byId = new Map(claims.map((c) => [c.id, c]));
     let pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
@@ -197,7 +203,7 @@ export class GrounnelPipelineService {
       let tavilyRateLimitedThisTier = false;
       for (let i = 0; i < pending.length; i += SEARCH_CONCURRENCY) {
         const chunk = pending.slice(i, i + SEARCH_CONCURRENCY);
-        const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, tier, inputText, carriedByClaimId.get(claim.id))));
+        const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, tier, inputText, carriedByClaimId.get(claim.id), failedUrlKeys)));
         // spec 017 — a tier that resolved nothing keeps the prior pool rather than clearing it.
         for (const r of chunkResolved) if (r.rankedPool?.length) carriedByClaimId.set(r.claim.id, r.rankedPool);
         reResolved.push(...chunkResolved);
@@ -349,12 +355,13 @@ export class GrounnelPipelineService {
     auditId: string,
     claims: PipelineClaimInput[],
     searchEngine: "defaultFlow" | "tavily",
-    inputText?: string
+    inputText?: string,
+    failedUrlKeys?: Set<string>
   ): Promise<ResolvedEvidence[]> {
     const resolved: ResolvedEvidence[] = [];
     for (let i = 0; i < claims.length; i += SEARCH_CONCURRENCY) {
       const chunk = claims.slice(i, i + SEARCH_CONCURRENCY);
-      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, undefined, inputText)));
+      const chunkResolved = await Promise.all(chunk.map((claim) => this.resolveEvidence(auditId, claim, searchEngine, undefined, inputText, undefined, failedUrlKeys)));
       resolved.push(...chunkResolved);
 
       const tavilyRateLimited = chunkResolved.some((r) => r.sources.some((s) => s.status === "rate_limited"));
@@ -382,7 +389,9 @@ export class GrounnelPipelineService {
     maxCandidates?: number,
     inputText?: string,
     // spec 017 — the prior tier's capped pool; every tier ranks over new ∪ carried, never new alone.
-    carried?: ScoredSource[]
+    carried?: ScoredSource[],
+    // spec 017 T017 — run-scoped set of pages already known unusable.
+    failedUrlKeys?: Set<string>
   ): Promise<ResolvedEvidence> {
     // context (D023 §6) attributes grounnel_search_calls rows to this run/claim; D026 §8 — full claim sentence, not a keyword rewrite (that's Tavily-only, buildSearchQuery/T046).
     const sources = await this.searchProvider.search(claim.text, {
@@ -390,6 +399,7 @@ export class GrounnelPipelineService {
       claimId: claim.id,
       searchFlow: searchEngine,
       maxCandidates,
+      failedUrlKeys,
     });
     for (const s of sources) {
       if (s.status !== "ok") {

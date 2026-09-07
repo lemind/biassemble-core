@@ -25,8 +25,12 @@ export interface SearchProvider {
    * demand (POST /extract's `searchEngine` param) instead of gambling on which URLs a live
    * grounding search happens to return.
    */
-  /** `maxCandidates` (D026 §13) — how many DIY discovery candidates to actually fetch; only
+  /** `maxCandidates` (D026 §13, semantics changed by spec 017 T017) — how many USABLE pages to
+   * fetch toward, not how many attempts to make; only
    * `HybridSearchProvider` reads it, escalation-only (default MAX_CANDIDATES when omitted). Tavily's
    * fallback already retains FALLBACK_RETAINED_CANDIDATES (8) regardless, so it ignores this field. */
-  search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily"; maxCandidates?: number }): Promise<SearchPassage[]>;
+  /** `failedUrlKeys` (spec 017 T017) — run-scoped set of pages already known unusable; only
+   *  `HybridSearchProvider` reads it, and only after a redirect resolves. Optional and mutated in
+   *  place: the provider adds every new failure it sees. */
+  search(query: string, context?: { runId: string; claimId: string; searchFlow?: "defaultFlow" | "tavily"; maxCandidates?: number; failedUrlKeys?: Set<string> }): Promise<SearchPassage[]>;
 }

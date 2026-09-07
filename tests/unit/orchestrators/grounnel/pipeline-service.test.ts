@@ -1307,7 +1307,7 @@ describe("GrounnelPipelineService (T010)", () => {
         searchCalls.push(context?.maxCandidates);
         // Real shape: the base 3-candidate pool never surfaces the one page that states the fact;
         // a wider pool (tier 5+) does — no code path here cares about the exact number past 3.
-        if ((context?.maxCandidates ?? 3) <= 3) {
+        if ((context?.maxCandidates ?? 3) <= 5) {
           return [webSource({ status: "unreachable", text: null })];
         }
         return [webSource({ text: passageText })];
@@ -1326,8 +1326,8 @@ describe("GrounnelPipelineService (T010)", () => {
     const claim = status!.claims.find((c) => c.id === claimId)!;
     expect(claim.verdict).toBe("supported");
     expect(claim.evidence).toBe("The blue whale is the largest animal ever to have lived on Earth.");
-    // Base pass (no maxCandidates), then tier 5 finds it — tier 8 never needed.
-    expect(searchCalls).toEqual([undefined, 5]);
+    // Base pass (no maxCandidates), then tier 8 finds it — tier 11 never needed (spec 017 T017 ladder).
+    expect(searchCalls).toEqual([undefined, 8]);
     // D026 §14 — escalation finished cleanly, so the run-level flag is back to false and the
     // aggregate status correctly reads "done", not stuck reporting "verifying".
     expect(status!.status).toBe("done");
@@ -1378,7 +1378,7 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(claim.verdict).toBe("supported");
     expect(claim.evidence).toBe("Mount Kilimanjaro's summit, Uhuru Peak, sits at 5,895 meters above sea level.");
     // Base pass (no maxCandidates), then tier 5 finds the precise figure — tier 8 never needed.
-    expect(searchCalls).toEqual([undefined, 5]);
+    expect(searchCalls).toEqual([undefined, 8]);
   });
 
   it("D026 §17: downgrades an escalation round's flip AWAY from a correct 'contradicted' verdict when the reason-consistency check says the new answer doesn't hold up", async () => {
@@ -1392,9 +1392,9 @@ describe("GrounnelPipelineService (T010)", () => {
     const search: SearchProvider = {
       async search(_query, context) {
         const cap = context?.maxCandidates ?? 3;
-        if (cap <= 3) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
-        if (cap === 5) return [webSource({ text: noisyPassage })]; // tier 5: noisier, off-topic page
-        return [webSource({ status: "unreachable", text: null })]; // tier 8: nothing further, never needed
+        if (cap <= 5) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
+        if (cap === 8) return [webSource({ text: noisyPassage })]; // tier 5: noisier, off-topic page
+        return [webSource({ status: "unreachable", text: null })]; // tier 11: nothing further, never needed
       },
     };
 
@@ -1456,7 +1456,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const search: SearchProvider = {
       async search(_query, context) {
-        if ((context?.maxCandidates ?? 3) <= 3) {
+        if ((context?.maxCandidates ?? 3) <= 5) {
           return [webSource({ status: "unreachable", text: null })]; // base pass: no evidence, triggers escalation
         }
         throw new Error("search provider exploded mid-escalation");
@@ -1485,7 +1485,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const search: SearchProvider = {
       async search(_query, context) {
-        if ((context?.maxCandidates ?? 3) <= 3) {
+        if ((context?.maxCandidates ?? 3) <= 5) {
           return [webSource({ status: "unreachable", text: null })];
         }
         return [webSource({ text: passageText })];
@@ -2557,15 +2557,15 @@ describe("GrounnelPipelineService (T010)", () => {
     const search: SearchProvider = {
       async search(_query, context) {
         const cap = context?.maxCandidates ?? 3;
-        if (cap <= 3) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
-        if (cap === 5) return [webSource({ text: irrelevantPassage })]; // tier 5: real page, nothing to cite for this fact
-        return [webSource({ status: "unreachable", text: null })]; // tier 8: nothing further, never needed
+        if (cap <= 5) return [webSource({ text: contradictingPassage })]; // base pool: correct, grounded contradiction
+        if (cap === 8) return [webSource({ text: irrelevantPassage })]; // tier 8: real page, nothing to cite for this fact
+        return [webSource({ status: "unreachable", text: null })]; // tier 11: nothing further, never needed
       },
     };
 
     provider.setResponseFn("You are a verification engine", (request) => {
       const ids = idsFromRequest(request);
-      const wide = provider.getCallCount() > 1; // first call is the base pool; only tier 5 calls VERIFY again
+      const wide = provider.getCallCount() > 1; // first call is the base pool; only tier 8 calls VERIFY again
       return {
         results: ids.map((id) => ({
           id,
@@ -2583,7 +2583,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     const status = await store.getStatus(auditId);
     const claim = status!.claims.find((c) => c.id === claimId)!;
-    // The core assertion: tier 5's evidence-empty "unsupported" must NOT overwrite the base pool's grounded "contradicted".
+    // The core assertion: tier 8's evidence-empty "unsupported" must NOT overwrite the base pool's grounded "contradicted".
     expect(claim.verdict).toBe("contradicted");
     expect(claim.evidence).toBe("Heinrich Muller actually died on March 9, 1994, according to public records.");
 
