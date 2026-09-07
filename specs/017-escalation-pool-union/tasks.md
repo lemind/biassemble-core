@@ -232,9 +232,26 @@ claims; it deletes half the evidence for comparative ones. That line was never w
   more than one checkable thing. Empty/absent ⇒ today's behaviour exactly, reading `subject_entity`
   — EXTRACT prompt v1.6.0 → v1.7.0, `normalizeSubjectEntities` returns `[]` below two distinct
   entities so single-subject claims keep today's path byte-for-byte; 5 unit tests, suite 1308
-- [ ] T013 [W2] Screen EXTRACT alone on the 9 planted claims plus a slice of true comparatives,
+- [x] T013 [W2] Screen EXTRACT alone on the 9 planted claims plus a slice of true comparatives,
   BEFORE wiring anything downstream — junk second entities pull wrong pages, worse than no change.
-  This task can cancel T014–T016
+  This task can cancel T014–T016 — **PASSED, T014–T016 unblocked**
+
+**T013 RESULTS (2026-09-07)** — run `6d48ebdb`, via `scripts/s017-t013-extract-screen.ts` (reads
+`grounnel_llm_calls.parsed_output`, since `subjectEntities` is in-memory only and never persisted).
+
+**6 of 47 claims (12.8%) carry ≥2 entities**, against the plan's predicted ~4–6 of 44 (~10%):
+
+```
+CSS | Internet        Apple | Bill Gates      Microsoft | iPhone
+Ethereum | Elon Musk  SQL | NoSQL            GraphQL | REST
+```
+
+Every one is a genuine two-subject claim — no junk entities, no over-splitting, and no single-subject
+claim picked up a spurious second entity. That was the cancel condition, so it does not fire.
+
+**Carry into T016**: `subject_entity` is `""` on all six (feature 013 T31 disabled it), so
+`normalizeSubjectEntities` drops the empty head and `subjectEntities` is the **only** entity signal
+slot allocation would have. T016 cannot fall back to `subject_entity` for the guaranteed slot.
 - [ ] T014 [W2] Branch retrieval: one search per listed entity, pooled into the claim's single pool.
   Only multi-entity claims branch (~4–6 of 44 on the test article, ≈ +10% retrieval)
 - [ ] T015 [W2] Rerank prompt: one sentence — a page about **any** listed entity scores high. Keep the
@@ -336,12 +353,64 @@ only backstop against a rate-limited domain. A guard keyed on `rate_limited` was
 dead code (only the Tavily fallback ever emits that status, and it returns before the wave loop), and
 removed. Mapping 429 properly means touching the `SourceStatus` enum — a separate change.
 
-- [ ] T019 [W3] Re-measure the funnel on a fresh run (needs a deploy). Expect usable-pages-per-claim up with **no**
+- [x] T019 [W3] Re-measure the funnel on a fresh run (needs a deploy). Expect usable-pages-per-claim up with **no**
   change to `MAX_CANDIDATES`. Only if that is still short: `MAX_CANDIDATES` 3 → 5 and
-  `ESCALATION_TIERS` [5, 8] → [8, 11]
-- [ ] T020 [W3] Deployed, 3 repeats. **Gate: FA = 0.** Quote wall-time separately: T017/T018 should
+  `ESCALATION_TIERS` [5, 8] → [8, 11] — measured on `6d48ebdb`, never-fetched 45% → **6%**,
+  usable pages/claim 4.10 → **7.04**; the cap raise shipped inside T017, so this run measures both
+
+**T019 RESULTS (2026-09-07)** — run `6d48ebdb` vs the four pre-T017 baselines, via
+`scripts/s017-t019-funnel.ts`. The 39%-never-fetched funnel defect is closed.
+
+| run | attempts | ok | ok/claim | discovered | NEVER fetched |
+|---|---|---|---|---|---|
+| **6d48ebdb** (T017/T018) | 458 | 317 | **7.04** | 493 | **31 (6%)** |
+| db91384b | 234 | 161 | 3.93 | 431 | 197 (46%) |
+| b36be9ab | 258 | 175 | 4.27 | 453 | 195 (43%) |
+| f603014b | 245 | 168 | 4.10 | 443 | 198 (45%) |
+| 6760307f | 245 | 168 | 4.10 | 446 | 201 (45%) |
+
+Block rate is **flat at 24% of attempts** (110/458 vs 58/245), so the doubled fetch volume is not
+just hitting more walls. Memo skips (T018) fired **4** times — live, but a small effect next to the
+wave loop; the memo is run-scoped and most blocked domains recur across runs, not within one.
+
+**Measurement note — `not_attempted` is two different things.** The pre-existing instrumentation at
+`hybrid-provider.ts:231` records every candidate left unfetched after the loop as `not_attempted`;
+T018's memo skip now writes the same status. They separate on `duration_ms`: a memo skip resolved a
+redirect first (`> 0`), a never-attempted candidate did nothing (`= 0`). Conflating them makes the
+funnel look unchanged — the baselines' `memoskip = 0` is what confirms the discriminator.
+- [x] T020 [W3] Deployed, 3 repeats. **Gate: FA = 0.** Quote wall-time separately: T017/T018 should
   *reduce* it (fewer doomed fetches); a cap raise would increase it for every claim, including the
-  ~70% that already resolve on the first pass
+  ~70% that already resolve on the first pass — **gate PASSED (FA = 0)**; wall-time went **up**, see below
+
+**T020 RESULTS (2026-09-07)** — golden run `01M1Y6KRGP1JF8FMDDJDWMQRPC`, article run `6d48ebdb`.
+
+Run in **screen+escalate** mode (28 × 1, auto-escalating 5 runs per failing case), not flat 3-repeat:
+28 × 3 priced at ~1008 Gemini calls, about a full day's quota. Screen mode covers every case and
+deep-dives only where risk appears, for ~336. Consequence: `verdictIsBinding: false` — this is a
+clean **screen**, not a 3-repeat verdict, and T021 should re-price before assuming otherwise.
+
+| | golden set | article `6d48ebdb` |
+|---|---|---|
+| **false accusations** | **0** | **0** |
+| correct | 32 / 33 (97%) | 10 / 10 contradictions factually false |
+| detection | — | **9 / 9 planted** (baselines: 8, 6, 8, 5) |
+| binding failures | 0 | — |
+
+All 10 article contradictions are genuinely false, including one the article states as reported
+speech it then debunks ("The documentary also mentioned that the Wright brothers' fourth flight was
+120 feet long"). Flagging it is correct — the sentence asserts a falsehood — but it is the tenth
+contradiction against nine planted claims, so **count contradictions against ground truth, never
+against the planted total**, or this reads as an FA that it is not.
+
+**Wall-time went the wrong way: 137–145s → 178s (+25%).** The task predicted T017/T018 would *reduce*
+it. They did not, because the cap raise ships inside T017: attempts went 245 → 458. The prediction
+held for the memo and the wave loop in isolation; the cap dominates them. This is the cost of
+usable-pages 4.10 → 7.04 and is worth it at FA = 0, but it should not be recorded as a win.
+
+**Only miss: `g17-wright-brothers-ordinal`** — "first flight covered 852 feet" (false) returned
+`supported`, detection 0. Under-detection, the safe direction, and no FA. Not established as a
+regression: the pre-union golden run's output is past Inngest's retention window and could not be
+diffed. g17 is the long-standing ordinal-gate weak case (D030), not new surface from this change.
 
 **Hard ordering**: T017 ∥ T018 → T019 → T020. The cap raise in T019 is **conditional** — it only
 happens if freeing the wasted slots does not already supply enough pages.
@@ -453,8 +522,14 @@ what a later tier sees. Re-run it before deciding.
 - [x] T027 [W5] Re-run the escalation-transition census on post-union runs — how many contradictions
   does a later tier create vs destroy now? Decide the freeze question on the new number, not the old
   — **still no freeze**: 12 created vs 1 destroyed post-union
-- [ ] T028 [W5] Deployed, 3 repeats. **Gate: FA = 0.** T026 makes contradictions harder to remove, so
-  watch the false-accusation side specifically — that is the direction it pushes
+- [x] T028 [W5] Deployed, 3 repeats. **Gate: FA = 0.** T026 makes contradictions harder to remove, so
+  watch the false-accusation side specifically — that is the direction it pushes — **moot, folded
+  into T020**
+
+**T028 (2026-09-07)** — the premise died with the T026 revert. `contradictionIsProtected` is now
+byte-identical to the pre-017 origin-gate-only rule, so nothing makes contradictions harder to remove
+and there is no gate-chain-specific surface left to verify. The FA = 0 gate it asked for is the one
+T020 ran and passed. Closed as verified-by-T020, not as work performed.
 
 **Hard ordering**: T026 ∥ T027 → T028. T027 can cancel any freeze work outright.
 
@@ -566,6 +641,142 @@ or provider-contract surface, and no change to how many passages VERIFY sees.
 
 U2 is not optional — T009 is the only check that proves the change did what it claims, and it is
 independent of the noisy detection metric.
+
+## Phase 9: Stop paying for pages that cannot be fetched [W6]
+
+- [x] T029 [W6] Order discovered candidates so bare-domain-titled ones are tried LAST — deprioritize,
+  never drop. `orderByFetchability` in `hybrid-provider.ts`, 3 unit tests, suite 1320 / 85 files
+- [ ] T030 [W6] Deployed re-measure on the 44-claim article. **Gate: FA = 0.** Expect wall-time back
+  toward the pre-T017 140s and failed fetches per run down from 141; usable pages/claim must NOT drop
+
+**T029 RATIONALE (2026-09-07)** — replaces the persistent blocked-domain memo that was planned here.
+
+The memo was the wrong shape. Discovery returns opaque `vertexaisearch…/grounding-api-redirect/`
+tokens, so a domain is only knowable **after** the redirect resolves — by which point the 403 has
+already been paid for. A domain blocklist could not have saved the request it existed to save.
+
+Gemini's own grounding `title` is the signal, and it arrives at discovery time. It titles a chunk
+with a bare domain (`"fandom.com"`) only when it could not read the page itself. Measured over 4,820
+candidates from 3 days of runs:
+
+| status | bare-domain title | rich title | % bare |
+|---|---|---|---|
+| ok | 4 | 3673 | **0.1%** |
+| blocked | 704 | 0 | **100%** |
+| unreachable | 272 | 0 | **100%** |
+| paywalled | 48 | 119 | 28.7% |
+
+1024 of 1028 bare-titled candidates failed — **99.6% precision**, and it catches `unreachable` too,
+which a blocklist keyed on 403s never would. It is not our own `domainOf(uri)` fallback: that would
+yield `vertexaisearch.cloud.google.com`, so the bare domain is Gemini's.
+
+**Deprioritized, not dropped** — a stable sort, so discovery rank still orders each group and the
+wave loop still reaches these candidates when the good ones run out. That makes the 0.1% false-negative
+rate cost nothing, and needs no Redis, no TTL, and nothing blocked "forever".
+
+## Phase 10: VERIFY reads the whole pool [W7] — supersedes T010/T011
+
+- [x] T031 [W7] Remove `MAX_VERIFY_PASSAGES`. VERIFY reads every ranked passage, bounded only by
+  `MAX_LABELLED_PASSAGES = 26` (the A–Z label codec ceiling, not a quality choice). Suite 1320 / 85
+- [ ] T032 [W7] Deployed re-measure, article + golden. **Gate: FA = 0 — revert if it moves at all.**
+  Quote VERIFY input tokens and wall-time separately
+
+**T031 RATIONALE (2026-09-07)** — we ranked ~12 pages and showed VERIFY 3. The other 9 were fetched,
+ranked, and thrown away, and a new page could displace the deciding one out of the window. That is
+the mechanism behind the Amazon regression: not a *worse* pool (the union made it a superset), but a
+**fixed window over a growing pool**.
+
+The tail is evidence, not noise — measured on `6d48ebdb`:
+
+| | n | mean llm score | score < 20 |
+|---|---|---|---|
+| rank 1–3 (already read) | 198 | 84.0 | 2% |
+| **rank 4+ (newly read)** | **157** | **71.4** | **13%** |
+
+157 pages per run at mean relevance 71 were being discarded. Pool size is modest — median **5**,
+p90 9, max 13 — so this is ~+80% VERIFY input at the median, and every pool observed sits well under
+the 26-label ceiling. Each passage stays capped at `MAX_SENTENCES = 20`, so payload grows linearly.
+
+**This is the largest false-accusation surface increase in the spec, and it is deliberate.** The old
+3-slice was doing double duty: ranking *and* excluding. Only ranking survives. The Nauru/Vatican
+regression test (a real 2026-08-10 incident) changed meaning accordingly — the off-topic pages are
+now **outranked rather than excluded**, and its assertion was rewritten to that, not softened away.
+Remaining protection is rerank order + `subject_entity` threading + the D030 gate chain.
+
+**Open recommendation, NOT implemented** (user's call): a relevance floor that drops candidates the
+reranker itself scored < 20. It would cut 13% of the newly-read tail — the Vatican/Swiss-Guard shape
+— while keeping 87% of the evidence this change unlocks. Deliberately not added: it reintroduces a
+cap by another name, and the ask was that VERIFY read everything.
+
+## Phase 11: T031 review fallout [W7]
+
+- [x] T033 [W7] `MAX_CARRIED_SOURCES` 8 → **15**. Removing the window made the carry cap *smaller*
+  than what VERIFY reads, so pages VERIFY had already read were dropped before the next tier — the
+  exact defect this spec exists to remove, reintroduced from the other side. 15 + the top tier's 11
+  fetches = 26, exactly the label ceiling
+- [x] T034 [W7] Apply `degradedRank`'s relevance filter to the rerank success path. The `slice(0, 3)`
+  was silently the only relevance *filter* on the healthy path; without it the fail-open path was
+  **stricter** than the healthy one, and a ranker-rejected page could become a user-facing citation
+- [x] T035 [W7] Review cleanups: label the rerank prompt via `passageLabelForIndex` (a bare
+  `String.fromCharCode(65 + i)` past index 25 emits `[` and silently degrades every candidate to
+  lexical-only scoring); exclude the grounding-redirect host from T029's signal; re-key the T009
+  churn gate off carry-eligible rank; two over-long comments; stale `8 + 8 = 16` arithmetic
+
+**REVIEW RESULTS (2026-09-07)** — `/code-review medium`, 10 findings, all applied. Suite 1320 / 85.
+
+The headline was an invariant inversion. Before T031: window 3 ⊂ carry 8, so everything VERIFY read
+was carried. After: window ≤19 ⊃ carry 8. **7 of 66 rerank passes** on `6d48ebdb` had pools > 8, so
+it fired immediately. Caught pre-deploy — production was still on the old window throughout.
+
+T034 is the one that changed a safety story back. The Nauru/Vatican regression test (a real
+2026-08-10 incident) had to be weakened under T031, because off-topic pages were merely *outranked*
+rather than excluded. With the filter restored to parity, its original assertions — no "Swiss Guard"
+text in front of VERIFY, `selected = false` for the off-topic page — **pass again unmodified**.
+
+`selected` is informative again as a side effect: it now means "VERIFY actually read this", not "a
+row exists". That is what the T009 gate needs, and it is why `slice(0, 26)` is no longer dead code —
+at carry 15 the maximum pool is exactly 26, so the label ceiling is now the real operative bound.
+
+## Phase 12: high-effort review fallout [W7]
+
+- [x] T036 [W7] `implicit_negation` reads its own bounded slice (`NEGATION_GATE_PASSAGES = 3`), not
+  every pooled body. **This was a live false-accusation hole opened by T031**, in the one gate that
+  upgrades to `contradicted`; 2 tests on `runGateChain`
+- [x] T037 [W7] T034's filter re-keyed from the lexical predicate to `llmScore >= 20`. The lexical
+  version dropped 14 pages the ranker scored 70–95 and **zero** it scored < 20 — the two mechanisms
+  were near-opposites
+- [x] T038 [W7] `MAX_CARRIED_SOURCES` derived from `MAX_LABELLED_PASSAGES - max(ESCALATION_TIERS)`;
+  the ceiling moved to `pipeline-helpers.ts` where the codec lives; the churn gate imports it rather
+  than transcribing it; `passageLabelForIndex` moved inside the fail-open `try`; empty-title
+  inversion in `orderByFetchability`; dead re-sort and no-op slice removed
+
+**T036 — the one that mattered.** `applyImplicitNegationGate` is the only gate that upgrades
+`unsupported` → `contradicted`. Its condition 3 (`some(term => passageLower.includes(term))`) is a
+precision guard whose docstring says it "trades recall for precision by design" — and that precision
+came entirely from `passageText` being 3 passages. T031 silently made it ~24 full page bodies, which
+makes the check near-vacuous: any pooled page containing "1903" or "wright" satisfies it and the
+claim ships as `contradicted`.
+
+When T031 was written its rationale listed the remaining protections as "rerank order +
+`subject_entity` threading + the D030 gate chain". It was spending the precision of a gate *inside*
+that chain. Gate #1's `evidenceMatchesPassage` genuinely needs the full corpus, so the two were split
+rather than narrowed together.
+
+**T037 — measured on run `6d48ebdb`, 355 ranked candidates:**
+
+| mechanism | dropped | of which llm ≥70 | of which llm <20 |
+|---|---|---|---|
+| lexical filter (T034 as first written) | 29 (8.2%) | **14** | 0 |
+| `llmScore >= 20` (shipped) | 24 (6.8%) | **0** | 24 |
+
+`extractKeyTerms("Historical computer mice were connected to computers by cables.")` returns
+`['historical']` alone, so relevance reduced to whether a page contains that literal word —
+dropping `sri.com` (95) and `darpa.mil` (90) on the mouse claim. D026 §18 introduced the LLM reranker
+*because* lexical matching judges aboutness badly; the first version of T034 inverted that.
+
+The score floor also resolves the empty-pool concern for free: `kept` is empty only when every
+candidate scored < 20, in which case `NO_EVIDENCE_REASON` ("no relevant source found") is accurate,
+which it was not under the lexical version.
 
 ## Explicitly out of scope
 
