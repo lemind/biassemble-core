@@ -1,5 +1,5 @@
 ---
-description: "Task list for escalation pool union — U1 carry the pool, U2 verify it stopped discarding"
+description: "Task list for escalation pool union and the evidence-window work that followed — U1/U2 carry the pool, W1 widen the VERIFY window, W2 multi-entity rerank, W3 fetch ladder"
 ---
 
 # Tasks: Escalation Pool Union
@@ -16,7 +16,8 @@ Phase 1 satisfies this.
 
 ## Format: `[ID] [P?] [Story] Description`
 
-- **[Story]**: `[U1]` carry the pool, `[U2]` prove it stopped discarding.
+- **[Story]**: `[U1]` carry the pool, `[U2]` prove it stopped discarding, `[W1]` widen the
+  VERIFY window (parked), `[W2]` multi-topic claims, `[W3]` fetch ladder, `[W4]` absence vs refutation, `[W5]` gate-chain verdict stability.
 
 ---
 
@@ -156,13 +157,296 @@ Round 2 also re-confirmed clean: `lexicalScore` over raw fetch order, `combinedO
 
 ## Phase 3: Prove it stopped discarding [U2]
 
-- [ ] T008 [U2] Deployed: golden set + the 44-claim article, **3 repeats**, via Inngest (Gemini is
+- [x] T008 [U2] Deployed: golden set + the 44-claim article, **3 repeats**, via Inngest (Gemini is
   geo-blocked locally). **Gate: FA = 0.** Detection on the 9 planted claims is secondary
-- [ ] T009 [U2] Re-run T001's churn query against the new runs — *transitions dropping an
+- [x] T009 [U2] Re-run T001's churn query against the new runs — *transitions dropping an
   already-selected URL* must be **0** by construction. This is the acceptance check for the change,
   independent of detection
 
+**RESULTS (2026-09-07)** — deployed build, golden run `01M1XVCQ4BE2XNWGNDHW5GDQWJ`, article runs
+`b36be9ab` (N1) and `db91384b` (N2). Both gates pass.
+
+| gate | target | result |
+|---|---|---|
+| golden-set false accusations | 0 | **0** |
+| golden-set failing cases | 0 | **0 of 28** |
+| golden-set binding failures | 0 | **0** (`bindingPassed: true`, 33/33 correct) |
+| T009 already-selected URLs dropped | 0 | **0** in both runs (baseline 50) |
+
+Churn, per run: N1 19 transitions / 1 dropping / 0 selected; N2 15 / 0 / 0. Baseline was 50 / 35 / 50.
+Multi-tier claim-runs fell 32 → 13 → 10, so fewer claims escalate at all. `g17-wright-brothers-ordinal`
+correctRate 0.5 → 1 and `g24-mouse-superlative` 0.8 → 1 while needing 1 run instead of 5 escalated.
+
+**Detection on the article did NOT improve, as predicted.** Pre-change mean 77.8% (88.9 / 55.6 / 88.9),
+post-change 72.2% (66.7 / 77.8) — flat, inside noise at n=2. CSS went 2/3 → **2/2**, the one claim this
+change was scoped to. The other four unstable claims fail on pages discovery never returned.
+
+One blemish, not a gate failure: N2 marked *"AI would eliminate most programming jobs within five
+years"* `contradicted` — a prediction, so not refutable, and `unsupported` in the four prior runs.
+Traced: the citing page (`computing.louisiana.edu`) was **freshly discovered at tier 2**, never
+carried, so the union did not cause it. It does not appear on the golden set. Worth watching as the
+residual FA vector review finding #5 named; not grounds for revert under the pre-registered gate.
+
 **Hard ordering**: T008 before T009 (T009 reads T008's runs). T007 before T008.
+
+---
+
+## Phase 4: Widen the VERIFY window [W1] — PARKED
+
+`MAX_VERIFY_PASSAGES` 3 → 5. **Parked 2026-09-07 on evidence, not shipped.**
+
+The original case was "6 of 10 misses had a page at rank 4–5". That count was built by asking only
+*where pages ranked*, never whether the top 3 **already contained the answer**. Re-checked per miss,
+it does: Roman/B had the refuting sentence in slot 1, Mouse/B in slot 1, Roman/N1 in slot 3.
+
+**3 → 5 clearly fixes 1 of 10 (Vikings/N2, rank 5), maybe 2 (CSS/B).** It is also the change most
+likely to manufacture a false accusation — more text in front of VERIFY is more chances to read a
+spurious conflict — at +67% VERIFY input per call. Weakest case on the board; revisit only if
+Phase 7's measurement comes back small.
+
+- [ ] T010 [W1] PARKED — `MAX_VERIFY_PASSAGES` 3 → 5, only if Phase 7 does not supersede it
+- [ ] T011 [W1] PARKED — deployed, 3 repeats, gate FA = 0
+
+---
+
+## Phase 5: Multi-topic claims [W2]
+
+A claim can be about **several things at once**: "CSS before the Internet" (two), "Apple founded by
+Bill Gates" (two), "X larger than Y and Z" (three). The pipeline assumes exactly one.
+
+**The search query is the root, not the ranker.** Today the query is the whole claim text, so
+`"CSS was invented before the Internet"` returns CSS-history pages; Internet-date pages appeared in
+only 2 of 5 runs, by luck. Re-ranking cannot promote a page discovery never fetched — so branch the
+*search*, not just the scoring.
+
+Measured, every run without exception: the reranker scores CSS pages **90–95** and Internet pages
+**10–20**, because the prompt (v1.1.0, 2026-08-21, added for the Nauru/Vatican lexical false
+positive) says a candidate "about a DIFFERENT real entity must score low". Correct for one-subject
+claims; it deletes half the evidence for comparative ones. That line was never weighed against them.
+
+**One VERIFY request, not one per field.** To judge "CSS before the Internet" the model must hold
+1996 and 1969 side by side. Split across two calls, neither can compare, and both correctly answer
+"cannot tell".
+
+- [ ] T012 [W2] EXTRACT: optional `subject_entities: string[]` (≤4), emitted only when the claim names
+  more than one checkable thing. Empty/absent ⇒ today's behaviour exactly, reading `subject_entity`
+- [ ] T013 [W2] Screen EXTRACT alone on the 9 planted claims plus a slice of true comparatives,
+  BEFORE wiring anything downstream — junk second entities pull wrong pages, worse than no change.
+  This task can cancel T014–T016
+- [ ] T014 [W2] Branch retrieval: one search per listed entity, pooled into the claim's single pool.
+  Only multi-entity claims branch (~4–6 of 44 on the test article, ≈ +10% retrieval)
+- [ ] T015 [W2] Rerank prompt: one sentence — a page about **any** listed entity scores high. Keep the
+  DIFFERENT-real-entity line for entities NOT listed; that is what fixed Nauru/Vatican
+- [ ] T016 [W2] Slot allocation: at most one guaranteed slot per listed entity **when a candidate for
+  it exists**, remainder by blended score. Window size unchanged, so the FA surface does not grow.
+  No candidate for entity 2 ⇒ all slots to entity 1, which is honest rather than a fake guarantee
+- [ ] T021 [W2] Deployed, 3 repeats. **Gate: FA = 0.**
+
+**Hard ordering**: T012 → T013 → T014 → T015 → T016 → T021.
+
+---
+
+## Phase 6: Fetch ladder [W3]
+
+The other 4 of the 10 misses (Roman/B, Roman/N1, Vikings/B, Vikings/C) had a final-tier pool of
+**≤3 pages**. No window size fixes those — the pages were never fetched.
+
+**Discovery is not the bottleneck.** Measured on run `db91384b`: 430 URLs discovered, but
+**197 (45.8%) were never fetched at all** because `MAX_CANDIDATES` caps the base tier at 3, and of the
+233 actually attempted only 160 (68.7%) returned usable text — 57 blocked, 9 unreachable, 7 paywalled.
+Roman/B is typical: 18 URLs discovered, 4 never attempted, 8 blocked, 6 usable.
+
+So the base tier reliably yields ~2 usable pages out of ~10 found.
+
+### Free the wasted slots before buying more
+
+Roman/B, broken down candidate by candidate: **18 fetch-attempt rows, but only 11 distinct URLs, and
+only 3 that ever returned usable text.** Where the other slots went:
+
+| waste | count | why |
+|---|---|---|
+| repeat attempts at domains already known blocked | 7 | `study.com` attempted and blocked 3×, `britannica.com` 3× across passes — the block is a property of the domain, not the attempt |
+| `vertexaisearch.cloud.google.com/grounding-api-redirect/…` stubs | 4 | Gemini grounding redirect placeholders, not pages, counted as discovered candidates (and duplicated) |
+| genuinely usable | 3 | `mpm.edu`, `romecabs.com`, `wikipedia/Roman_Empire` |
+
+**7 of 18 slots were spent re-failing on domains we had already watched fail.** Doing this first is
+strictly cheaper than raising the cap: it costs no extra fetch latency and frees slots for URLs
+discovery already found and never tried.
+
+- [ ] ~~T017 [W3] Run-scoped blocked-domain memo keyed by URL~~ — **NOT IMPLEMENTABLE AS WRITTEN**
+- [ ] ~~T018 [W3] Drop `vertexaisearch.cloud.google.com/grounding-api-redirect/*`~~ — **WRONG, would
+  break retrieval entirely**
+
+**BLOCKED (2026-09-07)** — both tasks rest on a misreading of the telemetry. Established from
+`hybrid-provider.ts`, not inference:
+
+1. `discoverUrls` returns Gemini grounding chunks whose `web.uri` is **always** a
+   `vertexaisearch.cloud.google.com/grounding-api-redirect/<opaque token>` URL. It is not a stub
+   alongside real URLs — it is the raw form of **every** candidate.
+2. `fetchCandidate` calls `fetch(candidate.url, { redirect: "follow" })`, so the redirect resolves
+   **inside** the request. The real URL is only known from `response.url`, i.e. after the network
+   call has already happened.
+3. `blocked`/`paywalled` returns record `finalUrl` (post-redirect), which is why telemetry shows
+   `britannica.com` and `study.com`. `not_attempted` rows record the raw candidate URL, which is why
+   they show `vertexaisearch`. Same page, two different recorded forms.
+
+**So T018 would drop 100% of candidates**, not a noise subset.
+
+**And T017 cannot match**: the memo holds `study.com`, but a re-discovered candidate presents as an
+opaque redirect token that differs per discovery call. Matching it requires fetching it — the exact
+cost the memo was meant to avoid.
+
+The earlier claim that "7 of 18 slots on Roman/B were spent re-failing on blocked domains" is still
+true as an observation; what is false is that a URL-keyed memo can prevent it.
+
+**Viable alternative, deliberately NOT implemented here — needs a decision.** Restructure
+`HybridSearchProvider.search` to fetch candidates until it has `fetchCap` **successes** rather than
+making exactly `fetchCap` attempts, checking the memo against `response.url` after headers arrive but
+before the body is read. That fixes the real defect measured on run `db91384b` — 45.8% of discovered
+URLs never fetched while 31% of the fetched ones fail — but it changes the provider's fetch loop and
+its concurrency shape, which is outside this spec.
+- [ ] T019 [W3] BLOCKED on the T017/T018 decision — re-measure the funnel on a fresh run. Expect usable-pages-per-claim up with **no**
+  change to `MAX_CANDIDATES`. Only if that is still short: `MAX_CANDIDATES` 3 → 5 and
+  `ESCALATION_TIERS` [5, 8] → [8, 11]
+- [ ] T020 [W3] Deployed, 3 repeats. **Gate: FA = 0.** Quote wall-time separately: T017/T018 should
+  *reduce* it (fewer doomed fetches); a cap raise would increase it for every claim, including the
+  ~70% that already resolve on the first pass
+
+**Hard ordering**: T017 ∥ T018 → T019 → T020. The cap raise in T019 is **conditional** — it only
+happens if freeing the wasted slots does not already supply enough pages.
+
+### Measurement note — which table marks a tier
+
+`grounnel_rerank_decisions` is written in ONE batch per rerank call, so rows inside a tier share a
+timestamp to 0.0s and tiers sit minutes apart: clustering it by a >5s gap recovers tiers exactly.
+`grounnel_search_calls` spreads over real fetch latency (1.8–4.3s per cluster on Roman/B) and a
+>5s gap **over-splits** it — 5 apparent clusters where there were 2 rerank passes. Cluster
+`grounnel_rerank_decisions` for anything tier-shaped; `grounnel_search_calls` only for totals.
+
+---
+
+## Phase 7: Absence vs refutation [W4] — MEASURED, CANCELLED
+
+**Looked like the biggest bucket — 5 of the 10 misses. Measured at ~1% of the population; cancelled.** VERIFY collapses "the sources say the opposite" into
+"the sources say nothing", answering `unsupported` where `contradicted` is correct.
+
+| miss | what it read | what it answered |
+|---|---|---|
+| Mouse/B | slot 1: *"A **wired** computer mouse with two buttons"* | *"**None of** the provided sentences state that the first computer mouse was wireless."* |
+| Roman/B | slot 1: *"From its **founding in 625 BC**…"* (article titled *The Roman Empire: A Brief History*) | *"…but **none mention** its origin in Greece."* |
+| Roman/N1 | slot 3: *"founded when Augustus proclaimed himself first emperor **of Rome**"* | *"…none of the passages mention Greece"* |
+| Mouse/N2 | same pages as Mouse/B | *"it does not state whether the very first computer mouse…"* |
+| Vikings/N2 | 3 Viking pages | *"**None of** the provided sentences mention Vikings discovering Australia."* |
+
+**No gate can catch this.** `applyCounterfactIgnoredGate` fires only when the model's *reason*
+contradicts its *verdict*; here reason ("none of the sentences state X") and verdict (`unsupported`)
+agree perfectly. The chain can only catch a contradiction the model expressed and failed to act on —
+this one it never noticed. The gap is upstream of every gate.
+
+**Do not write the prompt fix first.** Pushing VERIFY toward `contradicted` is precisely the
+direction that manufactures false accusations, and FA has held at 0 across 176 verdicts. A model told
+to treat "the sources say something different" as refutation will contradict *true* claims wherever a
+source uses different wording, units, or a different instance.
+
+- [x] T022 [W4] From telemetry, pull every `unsupported` verdict whose reason matches the absence
+  shape and count them as a share of all `unsupported`
+- [x] T023 [W4] Of those, how many read passages that actually contain a refutation?
+- [x] T024 [W4] The inverse: how many **correct** `unsupported` verdicts would a stricter rule
+  wrongly flip?
+- [x] ~~T025 [W4] Draft the VERIFY prompt change~~ — **CANCELLED by T024.**
+
+**RESULTS (2026-09-07)** — `scripts/s017-t022-absence-vs-refutation.ts`, zero API, whole telemetry
+history (10,589 persisted verdicts).
+
+| | count | share of `unsupported` |
+|---|---|---|
+| `unsupported` with a reason | 655 | — |
+| absence-shaped reason | 470 | 71.8% |
+| absence **+ a clause describing what the sources DO say** (the refutation signature) | **46** | **7.0%** |
+| of a manual read of 18 of those 46, genuine "refutation reported as absence" | **~2** | **~0.8%** |
+
+**The 5-of-10 rate on the test article is not the population rate — it is ~1%.** That article's
+claims are crisp factual inversions (wireless/wired, Rome/Greece) where refutation is unambiguous.
+Real claims are mostly *more specific than the sources*, and there absence is the correct answer.
+
+**T024 is the kill.** The 46 contrast cases are dominated by VERIFY being correctly careful, and a
+stricter rule would convert that care into false accusations:
+
+- *"Mount Everest stands at 8,849 meters"* — sources say **8,848.86 m**. A rule that reads "the
+  source says something different" as refutation contradicts a **true** claim. Cardinal Rule violation.
+- *"The Emu War campaign was declared a total failure within days"* — sources confirm the failure but
+  say nothing about timing. Same trap.
+- *"Nauru is the world's smallest island nation by population"* — sources give the population but not
+  the superlative.
+
+Genuine cases found: *"Apple's market cap surpassed $3.5 trillion in 2024"* (sources say $3.2T) and
+*"Svalbard breached by floodwater in 2087"* (sources say 2017). Both are **numeric/date** mismatches,
+already the territory of the `numeric` and `year` gates — not a prompt problem.
+
+**Do not touch the VERIFY prompt for this.** Upside ~1% of `unsupported`; downside is manufacturing
+false accusations on true claims, against an FA count that has held at 0 across 176 verdicts. If the
+two genuine cases matter, they belong in the existing numeric/year gate family, deterministically —
+not in a prompt asking the model to lean toward `contradicted`.
+
+**Hard ordering**: T022 → T023 → T024 → ~~T025~~.
+
+---
+
+## Phase 8: Verdict stability in the gate chain [W5]
+
+Two things this investigation surfaced that are gate-chain, not retrieval, and were previously logged
+as out of scope. Both are now in scope because the per-miss taxonomy below shows they cover misses no
+retrieval change can reach.
+
+**Wright/A — a correct contradiction destroyed by its own retry.** The trail was
+`instance_attribution[supported→unverifiable]` → `retry_decision[unverifiable→contradicted]` →
+`retry_reconciliation[contradicted→unsupported: retry_contradiction_invalidated]`. The verdict was
+right and the evidence was there — the app's own reason says *"Source B states the fourth flight was
+852 feet long"*. D030 §3d immunises `reason_ordinal` and `instance_attribution` contradictions from
+reconciliation, but this route passed through `unverifiable` first, so the protection never attached.
+Runs B, C, N1 and N2 all reached the same claim via `reason_ordinal_mismatch` and held.
+
+**`contradicted` re-escalates and can be overwritten.** `findUnresolvedClaims` excludes only
+`supported`, so a claim we correctly caught goes back out for more pages and a later tier can flip
+it. That is deliberate (D030 §3m Addendum 8 — "any downgrade moves a claim across this boundary and
+buys it a second retrieval pass") and the 14-day census refused a blanket freeze: 716 transitions,
+163 created a contradiction, 10 destroyed one. But that census predates the pool union, which changed
+what a later tier sees. Re-run it before deciding.
+
+- [ ] T026 [W5] Extend D030 §3d protection to a contradiction that reached `contradicted` **via** an
+  `instance_attribution` or `reason_ordinal` gate at any point in the chain, not only as the
+  immediately-preceding gate. Unit-test the Wright/A trail specifically
+- [ ] T027 [W5] Re-run the escalation-transition census on post-union runs — how many contradictions
+  does a later tier create vs destroy now? Decide the freeze question on the new number, not the old
+- [ ] T028 [W5] Deployed, 3 repeats. **Gate: FA = 0.** T026 makes contradictions harder to remove, so
+  watch the false-accusation side specifically — that is the direction it pushes
+
+**Hard ordering**: T026 ∥ T027 → T028. T027 can cancel any freeze work outright.
+
+---
+
+## Reference: what the 10 misses actually were
+
+Built 2026-09-07 by reading, per miss, the pages VERIFY was actually shown. **Recorded because the
+cause was mis-attributed twice** — first "retrieval" for Roman/B, then "rank 4–5" for six of them,
+both wrong. Do not re-derive from rank position alone; check whether the top 3 already held the answer.
+
+| miss | real cause | fixed by |
+|---|---|---|
+| Roman/B | answer in **slot 1** (`mpm.edu`, *"founding in 625 BC"*), VERIFY read it and said "none mention Greece" | nothing planned |
+| Roman/N1 | answer in **slot 3** (`rome.net`, *"first emperor **of Rome**"*) | nothing planned |
+| Mouse/B | answer in **slot 1** (Wikipedia, *"A **wired** computer mouse"*) | nothing planned |
+| Mouse/N2 | same pages as Mouse/B | nothing planned |
+| CSS/B | app's own reason names both dates; explicit Internet-date pages at r4/r5 | Phase 5 |
+| Wright/A | had the 852 ft fact; **gate chain** downgraded it | **Phase 8 / T026** |
+| Vikings/B | pool was 3, all Viking *exhibition* pages | Phase 6 |
+| Vikings/C | same | Phase 6 |
+| Vikings/N1 | right page (`britannica/did-the-vikings-discover…`) at **rank 9** | nothing planned |
+| Vikings/N2 | right page at **rank 5** | Phase 4 (parked) |
+
+**Four of ten are VERIFY reading the answer and not drawing the inference** — and Phase 7 measured
+that class at ~1% of the population, with a fix that would manufacture false accusations. So those
+four are, for now, accepted as unfixed.
 
 ## Implementation strategy
 
@@ -179,7 +463,7 @@ independent of the noisy detection metric.
 - **Multi-entity `subject_entity` / rerank prompt** — the CSS-class fix, next change set. This one is
   its prerequisite.
 - **`MAX_VERIFY_PASSAGES`** — later, and only after this lands.
-- **Wright `retry_reconciliation`** — D030, separate change set.
+- ~~**Wright `retry_reconciliation`**~~ — moved IN scope, Phase 8 / T026.
 - **Skipping the re-fetch of a URL already held** — would widen the `SearchProvider` contract.
 - **The `String.fromCharCode(65 + i)` overflow at >26 candidates** — latent; the cap of 8 keeps the
   union at ≤16.
