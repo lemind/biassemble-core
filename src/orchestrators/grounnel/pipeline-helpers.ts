@@ -63,7 +63,7 @@ export function normalizeUrlKey(url: string): string {
 
 export interface ResolvedEvidence {
   claim: PipelineClaimInput;
-  // D026 §11 — up to MAX_VERIFY_PASSAGES ranked sources; array order is rank order, which
+  // D026 §11 — the ranked sources VERIFY reads; array order is rank order, which
   // callVerify's label assignment depends on being meaningful.
   passages: SearchPassage[];
   sources: SearchPassage[];
@@ -106,10 +106,13 @@ export function buildGeminiRateLimitMessage(err: RateLimitError): string {
   return "We're being rate-limited right now. Please try again in a few minutes.";
 }
 
+/** The A-Z codec's own ceiling — owned here, where the codec lives, not copied by its callers. */
+export const MAX_LABELLED_PASSAGES = 26;
+
 // D027 §2 — callVerify's citation label codec ("A"-"Z" over `passages`, rank order); single-letter
-// only, coupled by convention to MAX_VERIFY_PASSAGES staying ≤ 26 (guarded below, not just assumed).
+// only. Callers must slice first; this throws rather than trusting them (spec 017 T031).
 export function passageLabelForIndex(i: number): string {
-  if (i >= 26) throw new Error(`passageLabelForIndex: index ${i} exceeds the single-letter A-Z label scheme`);
+  if (i >= MAX_LABELLED_PASSAGES) throw new Error(`passageLabelForIndex: index ${i} exceeds the single-letter A-Z label scheme`);
   return String.fromCharCode(65 + i);
 }
 export function passageIndexForLabel(label: string): number {

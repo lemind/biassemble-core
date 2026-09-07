@@ -31,6 +31,9 @@ export interface GateChainInput {
   evidence: string | null;
   claimText: string;
   passageText: string;
+  // spec 017 T036 — implicit_negation's condition 3 is a precision guard calibrated when VERIFY read
+  // 3 passages; T031 widened that to ~24, which would make a `some(includes)` over it near-vacuous.
+  negationPassageText: string;
   subjectEntity: string;
   // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
   reasonSupportsVerdict: boolean | null;
@@ -62,7 +65,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
     verdict,
     reason: input.reason,
     claimText: input.claimText,
-    passageText: input.passageText,
+    passageText: input.negationPassageText,
   });
   gateEvents.push({ gate: "implicit_negation", verdictBefore: verdict, verdictAfter: implicitNegation.verdict, overridden: implicitNegation.overridden, reason: implicitNegation.reason });
   verdict = implicitNegation.verdict;

@@ -394,7 +394,7 @@ export const grounnelLlmCalls = grounnel.table("grounnel_llm_calls", {
   parsedOutput: jsonb("parsed_output"),
   // spec 014 T021 — the exact rendered input for stage='verify', so a failure is replayable. Nothing
   // else persists it: a live false accusation was permanently unreconstructible without this.
-  // Batch-level (the call is the replay unit), bounded by MAX_VERIFY_PASSAGES x MAX_SENTENCES.
+  // Batch-level (the call is the replay unit), bounded by pool size x MAX_SENTENCES.
   inputPayload: jsonb("input_payload"),
   status: text("status", { enum: ["success", "timeout", "error"] }).notNull(),
   failureType: text("failure_type", { enum: ["schema_validation", "parse_error", "provider_error", "timeout", "other"] }),
@@ -483,7 +483,7 @@ export const grounnelRerankDecisions = grounnel.table("grounnel_rerank_decisions
   lexicalScore: doublePrecision("lexical_score").notNull(),
   llmScore: doublePrecision("llm_score").notNull(),
   combinedScore: doublePrecision("combined_score").notNull(),
-  // Whether this candidate survived resolveEvidence's MAX_VERIFY_PASSAGES slice, i.e. whether
+  // Whether this candidate survived resolveEvidence's slice, i.e. whether
   // VERIFY actually saw it — the whole point of this table is answering "was it even considered."
   selected: boolean("selected").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

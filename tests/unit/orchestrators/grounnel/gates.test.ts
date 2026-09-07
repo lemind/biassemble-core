@@ -1,6 +1,7 @@
 import { contradictionIsProtected, type Verdict } from "../../../../src/orchestrators/grounnel/pipeline-helpers.js";
 import type { GateEventInput } from "../../../../src/persistence/grounnel-gate-event-store.js";
 import { describe, it, expect } from "vitest";
+import { runGateChain } from "../../../../src/orchestrators/grounnel/pipeline-gate-chain.js";
 import {
   applyAffirmationEvidenceGate,
   applyClaimReasonOverlapGate,
@@ -1913,5 +1914,44 @@ describe("spec 017 T026 — REVERTED: only the gate that PRODUCED the contradict
   it("returns false when nothing ever produced a contradiction", () => {
     expect(contradictionIsProtected([ev("numeric", "supported", "unsupported")])).toBe(false);
     expect(contradictionIsProtected([])).toBe(false);
+  });
+});
+
+describe("implicit_negation window (spec 017 T036)", () => {
+  // This is the only gate that UPGRADES to `contradicted`, i.e. the only one that manufactures an
+  // accusation. Condition 3's precision comes from a NARROW passage corpus; T031 widened what VERIFY
+  // reads to ~24 pages, so the gate reads its own bounded slice instead (Cardinal Rule).
+  const base = {
+    verdict: "unsupported" as const,
+    reason: "The first powered flight was at Kill Devil Hills, not Kitty Hawk.",
+    evidence: null,
+    claimText: "The Wright brothers' 1903 Flyer made the first powered flight at Kitty Hawk.",
+    subjectEntity: "",
+    reasonSupportsVerdict: null,
+    instanceAttribution: null,
+  };
+
+  // Asserted on the gate's own event, not the chain verdict: with evidence null, gate #1 correctly
+  // reverts any upgrade, which would mask what this gate decided.
+  const negationVerdict = (input: { passageText: string; negationPassageText: string }): string =>
+    runGateChain({ ...base, ...input }).gateEvents.find((e) => e.gate === "implicit_negation")!.verdictAfter;
+
+  it("does not upgrade when the second entity appears only outside the negation window", () => {
+    expect(
+      negationVerdict({
+        // The wide corpus gate #1 uses DOES contain "1903" — that must not feed condition 3.
+        passageText: "Some unrelated page.\n\nAnother page mentioning 1903 and the Wright brothers.",
+        negationPassageText: "Some unrelated page about coastal geography.",
+      })
+    ).toBe("unsupported");
+  });
+
+  it("still upgrades when the second entity is inside the negation window", () => {
+    expect(
+      negationVerdict({
+        passageText: "Some unrelated page about coastal geography.",
+        negationPassageText: "The 1903 Flyer lifted off from the sands below Kill Devil Hills.",
+      })
+    ).toBe("contradicted");
   });
 });

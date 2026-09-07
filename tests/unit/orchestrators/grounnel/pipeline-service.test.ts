@@ -375,9 +375,9 @@ describe("GrounnelPipelineService (T010)", () => {
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: claimText }]);
 
-    // Nauru's page — ranked worst lexically (4th) — was pulled into the top MAX_VERIFY_PASSAGES (3)
-    // pool by its semantic score, and the worst-scoring irrelevant page (Vatican's Swiss Guard one)
-    // was the one excluded by the slice, not Nauru's.
+    // Nauru's page — ranked worst lexically (4th) — is promoted to label "A" by its semantic score,
+    // and spec 017 T034's relevance filter drops the off-topic Vatican pages outright: the ranker
+    // now EXCLUDES as well as orders, matching the degraded path.
     const sentPayload = JSON.parse(capturedSystem.match(/CLAIM_PASSAGE_PAIRS: (\[.*\])/s)![1]!);
     const pooledText = JSON.stringify(sentPayload[0].passage_sentences);
     expect(pooledText).toContain("resident population of approximately 12,000");
@@ -496,8 +496,10 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(nauru.selected).toBe(true);
     expect(vatican3.lexicalScore).toBeCloseTo(50); // 100 * (1 - 2/4)
     expect(vatican3.llmScore).toBe(5);
-    expect(vatican3.selected).toBe(false); // excluded by the MAX_VERIFY_PASSAGES=3 slice
-    expect(decisions.filter((d) => d.selected)).toHaveLength(3);
+    // spec 017 T034 — the off-topic Vatican pages fail the relevance filter, so "selected" stays
+    // informative: it means "VERIFY actually read this", not "a row exists".
+    expect(vatican3.selected).toBe(false);
+    expect(decisions.filter((d) => d.selected)).toHaveLength(1);
   });
 
   it("D026 §19: attributes claimId to single-claim LLM calls (rerank, retry) but leaves it unset for a genuinely batched VERIFY call", async () => {
@@ -2976,16 +2978,16 @@ describe("spec 017 — escalation pool union", () => {
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
 
-    // 10 base pages > the cap of 8. Discovery order is deliberately the inverse of relevance:
-    // page-0 ranks first (lexical 100) but scores 10; page-9 ranks last but scores 95.
-    const base = Array.from({ length: 10 }, (_, i) => webSource({ url: `https://p${i}.example`, title: `Page ${i}`, text: i % 2 === 0 ? cssText : netText }));
+    // 20 base pages > the cap of 15. Discovery order is deliberately the inverse of relevance:
+    // page-0 ranks first (lexical 100) but scores 10; page-19 ranks last but scores 95.
+    const base = Array.from({ length: 20 }, (_, i) => webSource({ url: `https://p${i}.example`, title: `Page ${i}`, text: i % 2 === 0 ? cssText : netText }));
     const search: SearchProvider = {
       async search(_query, context) {
         if (context?.maxCandidates === undefined) return base;
         return [webSource({ url: "https://new.example", title: "Fresh", text: cssText })];
       },
     };
-    const pools = captureRerankPools((t) => (t === "Page 0" ? 10 : t === "Page 9" ? 95 : 50));
+    const pools = captureRerankPools((t) => (t === "Page 0" ? 10 : t === "Page 19" ? 95 : 50));
 
     let first = true;
     provider.setResponseFn("You are a verification engine", (request) => {
@@ -2998,10 +3000,10 @@ describe("spec 017 — escalation pool union", () => {
     const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
     await service.run(auditId, [{ id: claimId, text: CLAIM }]);
 
-    // 8 carried + 1 new. Page 9 (lex 10, llm 95 -> 52.5) survives; Page 0 (lex 100, llm 10 -> 55)
-    // also survives here, but the pool is capped, so the weakest middle pages are what fell off.
-    expect(pools[1]!.length).toBe(9);
-    expect(pools[1]).toContain("Page 9");
+    // 15 carried + 1 new. Page 19 (lex 5, llm 95 -> 50) survives on relevance despite ranking last
+    // in discovery; the weakest middle pages (llm 50, low lexical) are what fell off.
+    expect(pools[1]!.length).toBe(16);
+    expect(pools[1]).toContain("Page 19");
     expect(pools[1]).toContain("Fresh");
   });
 

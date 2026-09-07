@@ -13,6 +13,7 @@ import {
   hasValidEvidence,
   toClaimSources,
   passageLabelForIndex,
+  MAX_LABELLED_PASSAGES,
   originatingContradictionGate,
   contradictionIsProtected,
   logReconciliationDowngrade,
@@ -70,11 +71,6 @@ const RETRY_DOWNGRADE: Partial<Record<Verdict, { target: Verdict; reason: GateRe
   supported: { target: "unverifiable", reason: "retry_affirmation_invalidated" },
   partially_supported: { target: "unverifiable", reason: "retry_affirmation_invalidated" },
 };
-// D026 §11 (T049) — Phase 1 multi-passage evidence, fixed cap; §13 (T053) built the escalation this deferred.
-const MAX_VERIFY_PASSAGES = 3;
-// spec 017 — page text is uncapped, so an unbounded carry would hold every article a claim touched.
-// 8 + the top tier's 8 fetches = 16, which keeps rerank's String.fromCharCode(65 + i) inside A-Z.
-const MAX_CARRIED_SOURCES = 8;
 // Verdicts applyInstanceAttributionGate can actually move — no gate ahead of it lifts `unverifiable`, so checking those claims buys nothing (spec 013 T21).
 const ATTRIBUTION_ACTIONABLE_VERDICTS: ReadonlySet<Verdict> = new Set<Verdict>(["supported", "partially_supported", "unsupported"]);
 // D026 §13 — a claim still unsupported/unverifiable (or zero evidence) after the normal pipeline
@@ -82,6 +78,15 @@ const ATTRIBUTION_ACTIONABLE_VERDICTS: ReadonlySet<Verdict> = new Set<Verdict>([
 // spec 017 T017 — these are now TARGETS of usable pages, not attempt counts, and the base pass
 // already asks for 5, so the ladder moves up to stay meaningful.
 const ESCALATION_TIERS = [8, 11];
+// spec 017 T033 — derived, not asserted: must leave room for the widest tier's fetches so a page
+// VERIFY read is never dropped before the next tier, and so the pool cannot outgrow the A-Z codec.
+const MAX_CARRIED_SOURCES = MAX_LABELLED_PASSAGES - Math.max(...ESCALATION_TIERS);
+// spec 017 T034 — the reranker's own score is the exclusion signal. A lexical proxy here vetoed
+// pages the model scored 90-95 (D026 §18 exists because lexical relevance judges aboutness badly).
+const RERANK_RELEVANCE_FLOOR = 20;
+// spec 017 T036 — implicit_negation's precision guard stays at the window it was tuned against
+// (D022 §4, "trades recall for precision by design"), independent of how much VERIFY now reads.
+const NEGATION_GATE_PASSAGES = 3;
 
 // D032 §5/T7 — states both that evidence is missing AND that this isn't a falsehood finding (SC-2).
 const NO_EVIDENCE_REASON =
@@ -477,10 +482,10 @@ export class GrounnelPipelineService {
     }
     const allSources = [...byKey.values()];
 
-    // D026 §6/§11/§18 — pools up to MAX_VERIFY_PASSAGES relevant sources, not just the first; rerankPassages falls back to gate #4 on error.
+    // D026 §6/§18 — every relevant source, rank-ordered; rerankPassages falls back to gate #4 on error.
     const ranked = await this.rerankPassages(auditId, claim, pool);
-    const rankedPool = [...ranked].sort((a, b) => combinedOf(b) - combinedOf(a)).slice(0, MAX_CARRIED_SOURCES);
-    const relevantSources = ranked.slice(0, MAX_VERIFY_PASSAGES).map((r) => r.source);
+    const rankedPool = ranked.slice(0, MAX_CARRIED_SOURCES);
+    const relevantSources = ranked.slice(0, MAX_LABELLED_PASSAGES).map((r) => r.source);
     if (relevantSources.length === 0) {
       logger.info(
         { module: MODULE, operation: "resolveEvidence", claimId: claim.id, checkedUrls: pool.map((p) => p.source.url) },
@@ -496,13 +501,16 @@ export class GrounnelPipelineService {
   private async rerankPassages(auditId: string, claim: PipelineClaimInput, pool: ScoredSource[]): Promise<ScoredSource[]> {
     // spec 017 T004 — keyed off the UNION, not the new-fetch count: 1 new + 7 carried is a pool of 8
     // and must be ranked. Keying it off new sources alone made the carry a silent no-op.
-    // g17 — hasSubjectEntity joins isPassageRelevant only on this degraded path, not as a hard gate ahead of the LLM call (see the rerank prompt's SUBJECT ENTITY line).
+    // g17 — still not a gate AHEAD of the LLM call (every candidate is scored); spec 017 T034 applies
+    // the same filter to the ranked result, so both paths exclude alike.
     if (pool.length <= 1) {
       return this.degradedRank(claim, pool);
     }
 
-    const labeled = pool.map((p, i) => ({ label: String.fromCharCode(65 + i), scored: p }));
     try {
+      // Inside the try on purpose: passageLabelForIndex throws, and every other failure here
+      // degrades to degradedRank rather than aborting the claim (review finding).
+      const labeled = pool.slice(0, MAX_LABELLED_PASSAGES).map((p, i) => ({ label: passageLabelForIndex(i), scored: p }));
       // D026 §20 — select by relevance (VERIFY's own sentence scoring), not a blind character prefix (captured nav chrome on long pages).
       const candidates = labeled.map(({ label, scored }) => ({
         id: label,
@@ -540,13 +548,17 @@ export class GrounnelPipelineService {
         return { source: s.source, lexicalScore, llmScore, combined: (lexicalScore + llmScore) / 2 };
       });
       const ranked = scored.sort((a, b) => b.combined - a.combined);
-      // D026 §19 — "selected" mirrors resolveEvidence's own MAX_VERIFY_PASSAGES slice.
+      // spec 017 T034 — the ranker EXCLUDES as well as orders, matching degradedRank's intent but
+      // keyed on its own score: a lexical proxy here dropped pages the model scored 90-95.
+      const kept = ranked.filter((r) => r.llmScore >= RERANK_RELEVANCE_FLOOR);
+      const keptSet = new Set(kept);
+      // D026 §19 — "selected" is what VERIFY actually reads, so it stays informative under T031.
       this.rerankDecisionStore.recordRerankDecisions(
         auditId,
         claim.id,
-        ranked.map((r, i) => ({ url: r.source.url, lexicalScore: r.lexicalScore, llmScore: r.llmScore, combinedScore: r.combined, selected: i < MAX_VERIFY_PASSAGES }))
+        ranked.map((r) => ({ url: r.source.url, lexicalScore: r.lexicalScore, llmScore: r.llmScore, combinedScore: r.combined, selected: keptSet.has(r) }))
       );
-      return ranked.map((r) => ({ source: r.source, lexicalScore: r.lexicalScore, llmScore: r.llmScore }));
+      return kept.map((r) => ({ source: r.source, lexicalScore: r.lexicalScore, llmScore: r.llmScore }));
     } catch (err) {
       // A RateLimitError here doesn't stop other in-flight claims (unlike other call sites) — acceptable, fail-open still degrades correctly; tagged so it's observable.
       logger.warn(
@@ -669,7 +681,7 @@ export class GrounnelPipelineService {
   /** Shared by runBatch's primary call and retryVerifyClaim's single-claim call — reviewed finding: these two were near-duplicated inline before, risking drift if the call shape ever changes. */
   private async callVerify(
     auditId: string,
-    // D026 §6 — no source_url (model doesn't need it). D026 §11 — up to MAX_VERIFY_PASSAGES texts, rank-ordered.
+    // D026 §6 — no source_url (model doesn't need it). D026 §11 — the whole ranked pool, rank-ordered.
     pairs: Array<{ id: string; claim: string; subjectEntity: string; passages: Array<{ text: string }> }>,
     operation: string,
     callType: "primary" | "consistency_retry" | "fill_in",
@@ -986,6 +998,9 @@ export class GrounnelPipelineService {
         // D026 §11 — gate #1's backstop runs on the joined text of every pooled passage; evidence
         // is already grounded per-source by construction, this just answers "is it real text."
         const passageText = item.passages.map((p) => p.text!).join("\n\n");
+        // spec 017 T036 — implicit_negation is the ONLY gate that upgrades to `contradicted`, and its
+        // condition 3 was calibrated against this many passages. It must not widen with T031.
+        const negationPassageText = item.passages.slice(0, NEGATION_GATE_PASSAGES).map((p) => p.text!).join("\n\n");
 
         const firstPass = runGateChain({
           verdict: initialVerdict,
@@ -993,6 +1008,7 @@ export class GrounnelPipelineService {
           evidence: result.evidence,
           claimText: item.claim.text,
           passageText,
+          negationPassageText,
           subjectEntity: item.claim.subjectEntity,
           reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
           instanceAttribution: attributionMap.get(result.id) ?? null,
@@ -1024,6 +1040,7 @@ export class GrounnelPipelineService {
               evidence: retried.evidence,
               claimText: item.claim.text,
               passageText,
+              negationPassageText,
               subjectEntity: item.claim.subjectEntity,
               reasonSupportsVerdict: null,
               // Reused, not re-called: this answer depends only on claim + passages, neither of which a retry changes.
