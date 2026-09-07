@@ -437,12 +437,33 @@ what a later tier sees. Re-run it before deciding.
   — new `contradictionIsProtected` in `pipeline-helpers.ts` replaces the
   `PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(...))` test at all three call
   sites; 5 unit tests incl. the Wright/A trail; suite 1313
-- [ ] T027 [W5] Re-run the escalation-transition census on post-union runs — how many contradictions
+- [x] T027 [W5] Re-run the escalation-transition census on post-union runs — how many contradictions
   does a later tier create vs destroy now? Decide the freeze question on the new number, not the old
+  — **still no freeze**: 12 created vs 1 destroyed post-union
 - [ ] T028 [W5] Deployed, 3 repeats. **Gate: FA = 0.** T026 makes contradictions harder to remove, so
   watch the false-accusation side specifically — that is the direction it pushes
 
 **Hard ordering**: T026 ∥ T027 → T028. T027 can cancel any freeze work outright.
+
+**T027 RESULTS (2026-09-07)** — `scripts/s017-t027-escalation-census.ts`, read-only, counted from
+`escalation_replacement` gate events.
+
+| | transitions | claims | contradictions created | destroyed | ratio |
+|---|---|---|---|---|---|
+| pre-union (all history) | 2,421 | 1,432 | 176 | 10 | 17.6 : 1 |
+| post-union (this build) | 72 | 44 | **12** | **1** | **12 : 1** |
+
+**Decision: still no blanket freeze.** The ratio improved (17.6 → 12) but a freeze would save 1 and
+cost 12. Sample is small — 72 transitions across 2 runs — so re-take it once more runs exist.
+
+**The one destroyed contradiction post-union is `Amazon began by selling electronics`** — the N1
+regression, previously written off as a one-run outlier. It was not noise: an escalation tier
+overwrote a correct `contradicted`. That is now a known, measured failure mode with a name.
+
+Gap this exposes: `guardEscalatedContradictionReversals` only re-checks flips to `supported` /
+`partially_supported`. Amazon went `contradicted → unsupported`, which the guard does not cover, so
+nothing looked at it. Widening that guard is a candidate follow-up — but it pushes toward keeping
+contradictions, so it needs the same FA measurement T026 got, not an assumption.
 
 **T026 RESULTS (2026-09-07)** — typecheck clean, suite 1313 passed / 85 files.
 
