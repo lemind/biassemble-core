@@ -204,8 +204,10 @@ likely to manufacture a false accusation — more text in front of VERIFY is mor
 spurious conflict — at +67% VERIFY input per call. Weakest case on the board; revisit only if
 Phase 7's measurement comes back small.
 
-- [ ] T010 [W1] PARKED — `MAX_VERIFY_PASSAGES` 3 → 5, only if Phase 7 does not supersede it
-- [ ] T011 [W1] PARKED — deployed, 3 repeats, gate FA = 0
+- [x] T010 [W1] ~~PARKED — `MAX_VERIFY_PASSAGES` 3 → 5~~ **SUPERSEDED by T031**, which removed the
+  constant entirely rather than raising it. There is no 3 and no 5 to choose between any more
+- [x] T011 [W1] ~~deployed, 3 repeats, gate FA = 0~~ **SUPERSEDED** — T032 is this gate, for the
+  whole-pool change that replaced the 3 → 5 question
 
 ---
 
@@ -260,6 +262,24 @@ slot allocation would have. T016 cannot fall back to `subject_entity` for the gu
   it exists**, remainder by blended score. Window size unchanged, so the FA surface does not grow.
   No candidate for entity 2 ⇒ all slots to entity 1, which is honest rather than a fake guarantee
 - [ ] T021 [W2] Deployed, 3 repeats. **Gate: FA = 0.**
+
+**T014–T016/T021 — RECOMMEND PARKING, user's call (2026-09-07).** T013 unblocked them, but the
+funnel fix appears to have already solved what they target. On run `6d48ebdb` all **6 of 6**
+multi-entity claims are already correct without any branched search:
+
+| claim | verdict | truth |
+|---|---|---|
+| CSS invented before the Internet | CONTRADICTED | ✓ false |
+| Apple founded by Bill Gates | CONTRADICTED | ✓ false |
+| Microsoft did not create the iPhone | SUPPORTED | ✓ true |
+| Ethereum not created by Elon Musk | SUPPORTED | ✓ true |
+| SQL more useful than NoSQL | EXCLUDED | ✓ opinion |
+| GraphQL better than REST | EXCLUDED | ✓ opinion |
+
+CSS/Internet was the motivating case for the whole phase and it now passes on retrieval alone.
+Building branched search would add ~10% retrieval and fresh FA surface for **zero measured gain** —
+the same trap as T018's URL drop, T025 and T026, all of which measurement cancelled after the design
+was already written. Not marked done: this is a recommendation, not a decision.
 
 **Hard ordering**: T012 → T013 → T014 → T015 → T016 → T021.
 
