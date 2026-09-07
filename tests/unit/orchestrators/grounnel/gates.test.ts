@@ -1879,18 +1879,21 @@ describe("applyAffirmationEvidenceGate (spec 015 G2)", () => {
   });
 });
 
-describe("spec 017 T026 — contradiction protection follows the whole chain (D030 §3d widened)", () => {
+describe("spec 017 T026 — REVERTED: only the gate that PRODUCED the contradiction protects it", () => {
   const ev = (gate: string, verdictBefore: Verdict, verdictAfter: Verdict, overridden = true) =>
     ({ gate, verdictBefore, verdictAfter, overridden, reason: null }) as GateEventInput;
 
-  it("protects the Wright/A trail, where instance_attribution fired BEFORE the gate that produced the contradiction", () => {
-    // The real 2026-09-07 trail: the verdict was correct and the evidence was there, but the
-    // origin gate read as `retry_decision`, so D030 §3d's protection never attached.
+  it("does NOT protect the Wright/A trail — an earlier protected gate cannot confer immunity", () => {
+    // Wright/A is real and the verdict there was correct, but its trail is byte-identical in shape
+    // AND reason code (instance_attribution_conflict) to a numeric false accusation downstream of
+    // an "I can't tell" abstention. With no way to tell them apart, protecting is the unsafe side:
+    // protectedContradictionClaimIds also blocks escalation, so a wrong verdict would ship with
+    // neither reconciliation nor a second retrieval pass. Reverted on review.
     const trail = [
       ev("instance_attribution", "supported", "unverifiable"),
       ev("retry_decision", "unverifiable", "contradicted"),
     ];
-    expect(contradictionIsProtected(trail)).toBe(true);
+    expect(contradictionIsProtected(trail)).toBe(false);
   });
 
   it("still protects the original shape — the protected gate IS the originating one", () => {
@@ -1902,14 +1905,9 @@ describe("spec 017 T026 — contradiction protection follows the whole chain (D0
     expect(contradictionIsProtected(trail)).toBe(false);
   });
 
-  it("does not protect when the protected gate fired AFTER the contradiction — it cannot have caused it", () => {
-    const trail = [
-      ev("retry_decision", "unsupported", "contradicted"),
-      ev("instance_attribution", "contradicted", "contradicted", false),
-      ev("instance_attribution", "contradicted", "unverifiable"),
-    ];
-    // The only overridden protected gate sits after the origin index, so it is not counted.
-    expect(contradictionIsProtected(trail.slice(0, 2))).toBe(false);
+  it("does not protect when a protected gate fired AFTER the contradiction either", () => {
+    const trail = [ev("retry_decision", "unsupported", "contradicted"), ev("instance_attribution", "contradicted", "unverifiable")];
+    expect(contradictionIsProtected(trail)).toBe(false);
   });
 
   it("returns false when nothing ever produced a contradiction", () => {

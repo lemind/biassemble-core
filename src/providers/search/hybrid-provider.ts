@@ -204,14 +204,17 @@ export class HybridSearchProvider implements SearchProvider {
               callType: "diy_fetch",
               url: result.url,
               resultCount: 1,
-              status: result.status,
+              // Review finding — a memo skip is NOT a fresh 403. Recording it as one would inflate
+              // the blocked rate in the very census used to judge whether this change worked.
+              status: result.memoSkipped ? "not_attempted" : result.status,
               durationMs: Date.now() - t0,
               excerpt,
             });
           }
-          // spec 017 T017 — a failure belongs to the page, not the attempt: remember it so a later
-          // tier abandons it as soon as the redirect resolves, before downloading the body.
-          if (context?.failedUrlKeys && result.status !== "ok" && result.status !== "rate_limited") {
+          // spec 017 T017 (review finding) — memoize ONLY permanent failures. `unreachable` is a
+          // mixed bag: 404, 429, 5xx and timeouts all land there, and a timeout keeps the opaque
+          // redirect url, which could never match anyway. Losing a good page costs more than a refetch.
+          if (context?.failedUrlKeys && (result.status === "blocked" || result.status === "paywalled")) {
             context.failedUrlKeys.add(normalizeUrlKey(result.url));
           }
           return result;
@@ -406,7 +409,7 @@ export class HybridSearchProvider implements SearchProvider {
       // point the real page is known. Bail before downloading a body already known to be unusable.
       if (failedUrlKeys?.has(normalizeUrlKey(resolvedUrl))) {
         logger.info({ module: MODULE, operation: "fetchCandidate", url: resolvedUrl }, "Skipping a page that already failed earlier in this run");
-        return { url: resolvedUrl, title: candidate.title, domain: domainOf(resolvedUrl), status: "blocked", text: null };
+        return { url: resolvedUrl, title: candidate.title, domain: domainOf(resolvedUrl), status: "blocked", text: null, memoSkipped: true };
       }
       const html = await response.text();
       const text = extractTextFromHtml(html);

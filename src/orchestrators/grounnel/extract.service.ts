@@ -49,9 +49,9 @@ const ExtractResponseSchema = z.object({
   // .default("") — a missing/malformed excerpt must not drop the whole claim via repair.ts's
   // salvageArrays (D028 §4); empty string reads as no-excerpt below. subject_entity (g17) follows
   // the same convention — "" just means EXTRACT found no distinguishing entity for this claim.
-  // subject_entities (spec 017 T012) — same .default convention: absent/malformed reads as "this
-  // claim is about one thing", which is today's behaviour via subject_entity.
-  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default(""), subject_entity: z.string().default(""), subject_entities: z.array(z.string()).default([]) })),
+  // subject_entities (spec 017 T012) — .catch, not .default: .default only covers an ABSENT field,
+  // and a comma-joined string (the usual list malformation) would drop the claim via salvageArrays.
+  claims: z.array(z.object({ claim: z.string(), source_excerpt: z.string().default(""), subject_entity: z.string().default(""), subject_entities: z.array(z.string()).catch([]) })),
   truncated: z.boolean(),
 });
 

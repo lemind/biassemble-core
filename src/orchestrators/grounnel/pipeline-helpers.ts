@@ -127,21 +127,12 @@ export function originatingContradictionGate(gateEvents: GateEventInput[]): { ga
 }
 
 /**
- * Whether this contradiction is immune to reconciliation (D030 §3d, widened by spec 017 T026).
- * A protected gate counts when it fired anywhere BEFORE the contradiction, not only as the gate
- * that produced it — Wright/A lost a correct verdict because instance_attribution moved it off
- * `supported` first and retry_decision got the credit.
+ * Whether this contradiction is immune to reconciliation (D030 §3d). Only the gate that PRODUCED
+ * the contradiction counts. Spec 017 T026 tried widening this to any protected gate firing earlier
+ * in the chain, to rescue Wright/A; reverted on review — see tasks.md Phase 8.
  */
 export function contradictionIsProtected(gateEvents: GateEventInput[]): boolean {
-  let originIndex = -1;
-  for (let i = gateEvents.length - 1; i >= 0; i--) {
-    const e = gateEvents[i]!;
-    if (e.overridden && e.verdictAfter === "contradicted") { originIndex = i; break; }
-  }
-  if (originIndex === -1) return false;
-  if (PROTECTED_CONTRADICTION_GATES.has(gateEvents[originIndex]!.gate)) return true;
-  // Strictly earlier only: a protected gate firing AFTER the contradiction did not help produce it.
-  return gateEvents.slice(0, originIndex).some((e) => e.overridden && PROTECTED_CONTRADICTION_GATES.has(e.gate));
+  return PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEvents)?.gate ?? "");
 }
 
 // Shared by all 3 reconciliation-downgrade sites (tasks.md backlog) — one aggregatable log stream; verdictBefore varies by site.

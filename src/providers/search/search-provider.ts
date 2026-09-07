@@ -13,6 +13,9 @@ export interface SearchPassage {
   status: SourceStatus;
   /** null whenever status !== "ok" — a failed fetch has no usable text. */
   text: string | null;
+  /** Spec 017 T017 — set when this page was abandoned because it already failed earlier in the run,
+   *  so telemetry can tell a skip apart from a fresh 403. Never persisted to ClaimSource. */
+  memoSkipped?: boolean;
   /** Which path produced this passage — lets an API consumer tell DIY vs Tavily apart without querying grounnel_search_calls. Optional: only HybridSearchProvider stamps it. */
   retrievalMethod?: "diy_fetch" | "tavily_fallback";
 }
@@ -28,7 +31,8 @@ export interface SearchProvider {
   /** `maxCandidates` (D026 §13, semantics changed by spec 017 T017) — how many USABLE pages to
    * fetch toward, not how many attempts to make; only
    * `HybridSearchProvider` reads it, escalation-only (default MAX_CANDIDATES when omitted). Tavily's
-   * fallback already retains FALLBACK_RETAINED_CANDIDATES (8) regardless, so it ignores this field. */
+   * fallback reads it too (`maxCandidates ?? FALLBACK_RETAINED_CANDIDATES`), contrary to what this
+   * comment claimed before D026 §22 changed the code without changing the sentence. */
   /** `failedUrlKeys` (spec 017 T017) — run-scoped set of pages already known unusable; only
    *  `HybridSearchProvider` reads it, and only after a redirect resolves. Optional and mutated in
    *  place: the provider adds every new failure it sees. */

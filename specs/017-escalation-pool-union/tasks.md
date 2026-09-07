@@ -444,9 +444,9 @@ buys it a second retrieval pass") and the 14-day census refused a blanket freeze
 163 created a contradiction, 10 destroyed one. But that census predates the pool union, which changed
 what a later tier sees. Re-run it before deciding.
 
-- [x] T026 [W5] Extend D030 §3d protection to a contradiction that reached `contradicted` **via** an
-  `instance_attribution` or `reason_ordinal` gate at any point in the chain, not only as the
-  immediately-preceding gate. Unit-test the Wright/A trail specifically
+- [x] ~~T026 [W5] Extend D030 §3d protection to a contradiction that reached `contradicted` **via** an
+  `instance_attribution` or `reason_ordinal` gate at any point in the chain~~ — **IMPLEMENTED, THEN
+  REVERTED ON REVIEW.** Wright/A cannot be rescued this way without immunising false accusations
   — new `contradictionIsProtected` in `pipeline-helpers.ts` replaces the
   `PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(...))` test at all three call
   sites; 5 unit tests incl. the Wright/A trail; suite 1313
@@ -457,6 +457,35 @@ what a later tier sees. Re-run it before deciding.
   watch the false-accusation side specifically — that is the direction it pushes
 
 **Hard ordering**: T026 ∥ T027 → T028. T027 can cancel any freeze work outright.
+
+**T026 REVERTED (2026-09-07, `/code-review medium`)** — shipped, reviewed, reverted the same day.
+`contradictionIsProtected` now does exactly what the old inline check did: only the gate that
+PRODUCED the contradiction protects it.
+
+The widening's *entire* net effect was one class, because `reason_ordinal` and `instance_attribution`
+already emit `contradicted` themselves and are therefore caught by the origin check. The only new
+firing shape is: a protected gate **downgrades** to `unverifiable`, and a later, unrelated gate
+produces the contradiction.
+
+That shape is Wright/A. It is **also** this:
+
+| | Wright/A (want to protect) | numeric false accusation (must not protect) |
+|---|---|---|
+| gate 1 | `instance_attribution[supported→unverifiable]` | `instance_attribution[supported→unverifiable]` |
+| reason | `instance_attribution_conflict` | `instance_attribution_conflict` |
+| gate 2 | `retry_decision[→contradicted]` | `numeric[→contradicted]` |
+
+**Identical shape, identical reason code — there is no discriminator.** And
+`instance_attribution_conflict` is by its own docstring an abstention ("disagreeing sources are not a
+falsehood finding, Cardinal Rule"), so the rule would let "I can't tell" confer immunity.
+
+Worse, `protectedContradictionClaimIds` also excludes a claim from `findUnresolvedClaims`, so a wrong
+contradiction would ship with **neither reconciliation nor a second retrieval pass**.
+
+The blast-radius simulation below still stands and is why this was not caught sooner: 7 of 398
+trails, all genuinely false claims, **zero retroactive benefit**. Narrow and benign in the data, wrong
+in mechanism — and with zero measured upside, the Cardinal Rule decides it. Wright/A stays unfixed;
+any future attempt needs a signal that distinguishes an abstention from a finding.
 
 **T027 RESULTS (2026-09-07)** — `scripts/s017-t027-escalation-census.ts`, read-only, counted from
 `escalation_replacement` gate events.

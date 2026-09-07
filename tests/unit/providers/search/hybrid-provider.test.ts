@@ -196,6 +196,24 @@ describe("HybridSearchProvider (T008, D021)", () => {
     expect(fetchedUrls).toHaveLength(10);
   });
 
+  it("spec 017 T017 (review): memoizes a 403 but NOT a transient failure — a 429 or timeout must stay refetchable", async () => {
+    const fallback = new StubFallback([]);
+    const discovered = [{ uri: "https://a.example", title: "A" }, { uri: "https://b.example", title: "B" }];
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) return Promise.resolve(geminiGroundingResponse(discovered));
+      if (url.includes("a.example")) return Promise.resolve({ ok: false, status: 403, url: "https://forbidden.example/x", text: async () => "" });
+      return Promise.resolve({ ok: false, status: 429, url: "https://ratelimited.example/y", text: async () => "" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const failedUrlKeys = new Set<string>();
+    const provider = new HybridSearchProvider("gemini-key", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    await provider.search("some claim", { runId: "r1", claimId: "c1", failedUrlKeys });
+
+    // 403 is a property of the page; 429 is a property of this moment and must not be remembered.
+    expect([...failedUrlKeys]).toEqual(["forbidden.example/x"]);
+  });
+
   it("spec 017 T017: abandons a page that already failed earlier in the run, before downloading its body", async () => {
     const fallback = new StubFallback([]);
     let bodyReads = 0;
