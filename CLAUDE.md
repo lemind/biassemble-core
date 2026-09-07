@@ -1,7 +1,14 @@
 <!-- SPECKIT START -->
-**Active plan**: feature 014 — VERIFY negated-claim polarity. A true claim was returned
-`contradicted` on live run `9a784003` (Cardinal Rule violation). Two increments: escalation may
-retract a contradiction (containment), then a VERIFY prompt fix (correctness).
+**Active plan**: feature 017 — escalation pool union. Escalation re-discovered from scratch each
+tier and discarded the prior pool: 50 already-selected pages thrown away across 50 tier transitions.
+U1 (carry the pool) is implemented and unit-green; U2 (deployed 3-repeat eval, gate **FA = 0**, plus
+a churn re-query that must read 0) is not run yet.
+
+- specs/017-escalation-pool-union/plan.md — implementation plan
+- specs/017-escalation-pool-union/tasks.md — task breakdown
+
+Prior: feature 014 — VERIFY negated-claim polarity. A true claim was returned `contradicted` on live
+run `9a784003` (Cardinal Rule violation).
 
 - specs/014-verify-negated-claim-polarity/plan.md — implementation plan
 - specs/014-verify-negated-claim-polarity/tasks.md — task breakdown

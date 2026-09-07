@@ -22,6 +22,42 @@ export interface PipelineClaimInput {
   subjectEntity: string;
 }
 
+/** A candidate plus the scores it carries between escalation tiers (spec 017 T003). */
+export interface ScoredSource {
+  source: SearchPassage;
+  /** Discovery-rank percentile in the pool that FOUND it — frozen, never recomputed (spec 017). */
+  lexicalScore: number;
+  /** Rerank score from the tier that ranked it; absent on the two paths that never call the LLM. */
+  llmScore?: number;
+}
+
+/** Mirrors rerankPassages' own average. Capping on lexical alone would keep lex=100/llm=20 noise over a lex=40/llm=95 page. */
+export function combinedOf(s: ScoredSource): number {
+  return s.llmScore === undefined ? s.lexicalScore : (s.lexicalScore + s.llmScore) / 2;
+}
+
+// Unambiguous tracking params only. Measured over 365 real retrieved URLs: content-bearing keys
+// dominate (id 148, page 121, doc_id 45) and the only tracker present is utm_source (14).
+const TRACKING_PARAM_RE = /^(?:utm_|fbclid$|gclid$|msclkid$|mc_[ce]id$|igshid$)/i;
+
+// Same page can arrive under http/https, a trailing slash, or a tracking param across tiers — one
+// key or the union double-counts and wastes a VERIFY slot (spec 017 T005, review finding).
+export function normalizeUrlKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.replace(/\/+$/, "");
+    // Re-encoded, not raw: searchParams DECODES, so `?a=1%26b=2` (one param) would otherwise
+    // produce the same key as `?a=1&b=2` (two) and silently drop a distinct page (review finding).
+    const params = [...u.searchParams.entries()].filter(([k]) => !TRACKING_PARAM_RE.test(k)).sort(([a], [b]) => a.localeCompare(b));
+    const query = params.length ? `?${params.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")}` : "";
+    // `www.` is the same equivalence class as the scheme and differs far more often across providers.
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    return `${host}${path}${query}`;
+  } catch {
+    return url.trim().toLowerCase().replace(/\/+$/, "");
+  }
+}
+
 export interface ResolvedEvidence {
   claim: PipelineClaimInput;
   // D026 §11 — up to MAX_VERIFY_PASSAGES ranked sources; array order is rank order, which
@@ -31,6 +67,8 @@ export interface ResolvedEvidence {
   // spec 015 G1 — set when every usable source was refused as a copy of the input document, so the
   // user-facing reason can say that instead of the generic "no source found" (which would be false).
   allSourcesWereInputDuplicates?: boolean;
+  // spec 017 — the capped ranked pool this tier considered, so the next tier can rank over it too.
+  rankedPool?: ScoredSource[];
 }
 
 export interface ResolvedWithPassage extends ResolvedEvidence {
