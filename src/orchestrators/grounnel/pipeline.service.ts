@@ -14,7 +14,7 @@ import {
   toClaimSources,
   passageLabelForIndex,
   originatingContradictionGate,
-  PROTECTED_CONTRADICTION_GATES,
+  contradictionIsProtected,
   logReconciliationDowngrade,
   attachCitationUrls,
   combinedOf,
@@ -271,7 +271,7 @@ export class GrounnelPipelineService {
     if (contradicted.length === 0) return;
 
     // D030 §3d — a reason_ordinal contradiction is grounded in VERIFY's own textual mismatch; excluded from the classifier call entirely, not just from acting on it.
-    const protectedClaims = contradicted.filter((c) => PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEventsByClaimId.get(c.id) ?? [])?.gate ?? ""));
+    const protectedClaims = contradicted.filter((c) => contradictionIsProtected(gateEventsByClaimId.get(c.id) ?? []));
     for (const c of protectedClaims) protectedContradictionClaimIds.add(c.id);
     const nowContradicted = contradicted.filter((c) => !protectedClaims.some((p) => p.id === c.id));
     if (nowContradicted.length === 0) return;
@@ -869,7 +869,7 @@ export class GrounnelPipelineService {
     // originating gate and only LOGGED it, downgrading anyway. Simulated over 141 persisted
     // trails: 8 verdicts restored, 0 new false accusations.
     const origin = originatingContradictionGate(currentPassGateEvents);
-    if (!consistent && PROTECTED_CONTRADICTION_GATES.has(origin?.gate ?? "")) {
+    if (!consistent && contradictionIsProtected(currentPassGateEvents)) {
       logger.info(
         { module: MODULE, operation: "checkRetryContradiction", auditId, claimId: item.claim.id, gate: origin?.gate },
         "Retry reconciliation blocked — the contradiction came from a protected gate (D030 §3d)"

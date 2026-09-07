@@ -14,7 +14,7 @@ import {
   applyYearGate,
   type InstanceAttribution,
 } from "./gates.js";
-import { originatingContradictionGate, PROTECTED_CONTRADICTION_GATES, type Verdict } from "./pipeline-helpers.js";
+import { contradictionIsProtected, type Verdict } from "./pipeline-helpers.js";
 import type { GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
 
@@ -126,7 +126,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
     claimText: input.claimText,
     verdict,
     evidence,
-    contradictionProtectedFromForceSupported: verdict === "contradicted" && PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(gateEvents)?.gate ?? ""),
+    contradictionProtectedFromForceSupported: verdict === "contradicted" && contradictionIsProtected(gateEvents),
   });
   gateEvents.push({ gate: "numeric", verdictBefore: verdict, verdictAfter: gate2.verdict, overridden: gate2.overridden, reason: gate2.reason });
   verdict = gate2.verdict;

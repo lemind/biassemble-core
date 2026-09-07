@@ -431,15 +431,45 @@ buys it a second retrieval pass") and the 14-day census refused a blanket freeze
 163 created a contradiction, 10 destroyed one. But that census predates the pool union, which changed
 what a later tier sees. Re-run it before deciding.
 
-- [ ] T026 [W5] Extend D030 §3d protection to a contradiction that reached `contradicted` **via** an
+- [x] T026 [W5] Extend D030 §3d protection to a contradiction that reached `contradicted` **via** an
   `instance_attribution` or `reason_ordinal` gate at any point in the chain, not only as the
   immediately-preceding gate. Unit-test the Wright/A trail specifically
+  — new `contradictionIsProtected` in `pipeline-helpers.ts` replaces the
+  `PROTECTED_CONTRADICTION_GATES.has(originatingContradictionGate(...))` test at all three call
+  sites; 5 unit tests incl. the Wright/A trail; suite 1313
 - [ ] T027 [W5] Re-run the escalation-transition census on post-union runs — how many contradictions
   does a later tier create vs destroy now? Decide the freeze question on the new number, not the old
 - [ ] T028 [W5] Deployed, 3 repeats. **Gate: FA = 0.** T026 makes contradictions harder to remove, so
   watch the false-accusation side specifically — that is the direction it pushes
 
 **Hard ordering**: T026 ∥ T027 → T028. T027 can cancel any freeze work outright.
+
+**T026 RESULTS (2026-09-07)** — typecheck clean, suite 1313 passed / 85 files.
+
+The rule now protects a contradiction when a protected gate fired (`overridden`) *strictly before*
+the gate that produced it. Strictly before matters: a protected gate firing after the contradiction
+cannot have caused it, and counting it would shield unrelated verdicts.
+
+**Blast radius simulated over the full history** (`scripts/s017-t026-protection-blast-radius.ts`,
+read-only; replays whole trails where production applies the rule per pass, so it is an upper bound):
+
+| | |
+|---|---|
+| claims with a gate trail | 10,279 |
+| trails containing a contradiction | 398 |
+| protected, old rule | 158 |
+| protected, new rule | 165 |
+| **newly protected** | **7 (1.76%)** |
+
+All 7 are genuinely FALSE claims — Wright fourth-flight-120ft (×4), first-mouse-wireless,
+"the first flight lasted 59 seconds" (×2). **No true claim is newly shielded anywhere in the
+history**, which answers the false-accusation question with data rather than argument.
+
+Caveat, stated plainly: all 7 already ended `contradicted`, so the *retroactive* benefit is **zero**.
+The value is prospective — preventing the Wright/A shape — and Wright/A's own trail is not in the
+newly-protected set because its final state was reached by a different path. The in-code note
+"simulated over 141 persisted trails: 8 verdicts restored, 0 new false accusations" describes an
+earlier change and does **not** cover this rule; the table above does.
 
 ---
 

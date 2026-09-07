@@ -1,3 +1,5 @@
+import { contradictionIsProtected, type Verdict } from "../../../../src/orchestrators/grounnel/pipeline-helpers.js";
+import type { GateEventInput } from "../../../../src/persistence/grounnel-gate-event-store.js";
 import { describe, it, expect } from "vitest";
 import {
   applyAffirmationEvidenceGate,
@@ -1874,5 +1876,44 @@ describe("applyAffirmationEvidenceGate (spec 015 G2)", () => {
   it.each(["contradicted", "unsupported", "unverifiable", "excluded"] as const)("does not fire on %s", (verdict) => {
     const r = applyAffirmationEvidenceGate({ verdict, evidence: null, passageText: PASSAGE });
     expect(r).toEqual({ verdict, evidence: null, overridden: false, reason: null });
+  });
+});
+
+describe("spec 017 T026 — contradiction protection follows the whole chain (D030 §3d widened)", () => {
+  const ev = (gate: string, verdictBefore: Verdict, verdictAfter: Verdict, overridden = true) =>
+    ({ gate, verdictBefore, verdictAfter, overridden, reason: null }) as GateEventInput;
+
+  it("protects the Wright/A trail, where instance_attribution fired BEFORE the gate that produced the contradiction", () => {
+    // The real 2026-09-07 trail: the verdict was correct and the evidence was there, but the
+    // origin gate read as `retry_decision`, so D030 §3d's protection never attached.
+    const trail = [
+      ev("instance_attribution", "supported", "unverifiable"),
+      ev("retry_decision", "unverifiable", "contradicted"),
+    ];
+    expect(contradictionIsProtected(trail)).toBe(true);
+  });
+
+  it("still protects the original shape — the protected gate IS the originating one", () => {
+    expect(contradictionIsProtected([ev("reason_ordinal", "unsupported", "contradicted")])).toBe(true);
+  });
+
+  it("does not protect a contradiction no protected gate contributed to", () => {
+    const trail = [ev("numeric", "supported", "unsupported"), ev("retry_decision", "unsupported", "contradicted")];
+    expect(contradictionIsProtected(trail)).toBe(false);
+  });
+
+  it("does not protect when the protected gate fired AFTER the contradiction — it cannot have caused it", () => {
+    const trail = [
+      ev("retry_decision", "unsupported", "contradicted"),
+      ev("instance_attribution", "contradicted", "contradicted", false),
+      ev("instance_attribution", "contradicted", "unverifiable"),
+    ];
+    // The only overridden protected gate sits after the origin index, so it is not counted.
+    expect(contradictionIsProtected(trail.slice(0, 2))).toBe(false);
+  });
+
+  it("returns false when nothing ever produced a contradiction", () => {
+    expect(contradictionIsProtected([ev("numeric", "supported", "unsupported")])).toBe(false);
+    expect(contradictionIsProtected([])).toBe(false);
   });
 });
