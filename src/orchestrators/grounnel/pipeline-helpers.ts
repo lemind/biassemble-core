@@ -20,6 +20,9 @@ export interface PipelineClaimInput {
   sourceExcerpt: string | null;
   // g17 — EXTRACT's disambiguated name for who/what this claim is about, or "" when none applies.
   subjectEntity: string;
+  // spec 017 T012 — every entity a multi-topic claim is about, subjectEntity first. Empty (the
+  // common case) means one topic; consumers must fall back to subjectEntity unchanged.
+  subjectEntities?: string[];
 }
 
 /** A candidate plus the scores it carries between escalation tiers (spec 017 T003). */

@@ -228,8 +228,10 @@ claims; it deletes half the evidence for comparative ones. That line was never w
 1996 and 1969 side by side. Split across two calls, neither can compare, and both correctly answer
 "cannot tell".
 
-- [ ] T012 [W2] EXTRACT: optional `subject_entities: string[]` (≤4), emitted only when the claim names
+- [x] T012 [W2] EXTRACT: optional `subject_entities: string[]` (≤4), emitted only when the claim names
   more than one checkable thing. Empty/absent ⇒ today's behaviour exactly, reading `subject_entity`
+  — EXTRACT prompt v1.6.0 → v1.7.0, `normalizeSubjectEntities` returns `[]` below two distinct
+  entities so single-subject claims keep today's path byte-for-byte; 5 unit tests, suite 1308
 - [ ] T013 [W2] Screen EXTRACT alone on the 9 planted claims plus a slice of true comparatives,
   BEFORE wiring anything downstream — junk second entities pull wrong pages, worse than no change.
   This task can cancel T014–T016
@@ -243,6 +245,22 @@ claims; it deletes half the evidence for comparative ones. That line was never w
 - [ ] T021 [W2] Deployed, 3 repeats. **Gate: FA = 0.**
 
 **Hard ordering**: T012 → T013 → T014 → T015 → T016 → T021.
+
+**T012 RESULTS (2026-09-07)** — typecheck clean, full suite 1308 passed / 85 files.
+
+Nothing consumes `subjectEntities` yet, by design: T013 must screen EXTRACT alone before anything
+downstream reads it. **No migration is needed to do that** — EXTRACT's raw response is already
+persisted to `grounnel_llm_calls.parsed_output` for `stage='extract'`, so T013 reads the field from
+telemetry rather than from `grounnel_claims`.
+
+Design note: `subjectEntity` is always placed first and the cap counts it, so a model list of four
+plus a distinct `subject_entity` keeps only three of the model's own entries. The `>= 2` floor is
+what makes this backward-compatible — an EXTRACT response that echoes the subject back as a
+one-item list collapses to `[]` and changes nothing.
+
+Review fix applied: the prompt's second example was `"Apple was founded by Bill Gates"` — one of the
+planted FALSE claims from the test article. Replaced with a neutral `"Company A was founded by
+Person B"` so an EXTRACT example is not teaching the pattern off a falsehood.
 
 ---
 
