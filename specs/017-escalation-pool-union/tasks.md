@@ -666,8 +666,8 @@ independent of the noisy detection metric.
 
 - [x] T029 [W6] Order discovered candidates so bare-domain-titled ones are tried LAST — deprioritize,
   never drop. `orderByFetchability` in `hybrid-provider.ts`, 3 unit tests, suite 1320 / 85 files
-- [ ] T030 [W6] Deployed re-measure on the 44-claim article. **Gate: FA = 0.** Expect wall-time back
-  toward the pre-T017 140s and failed fetches per run down from 141; usable pages/claim must NOT drop
+- [x] T030 [W6] Deployed re-measure on the 44-claim article. **Gate: FA = 0** ✅. Wall-time
+  expectation **not met** — 248s → 313s, accepted (see T041)
 
 **T029 RATIONALE (2026-09-07)** — replaces the persistent blocked-domain memo that was planned here.
 
@@ -698,8 +698,8 @@ rate cost nothing, and needs no Redis, no TTL, and nothing blocked "forever".
 
 - [x] T031 [W7] Remove `MAX_VERIFY_PASSAGES`. VERIFY reads every ranked passage, bounded only by
   `MAX_LABELLED_PASSAGES = 26` (the A–Z label codec ceiling, not a quality choice). Suite 1320 / 85
-- [ ] T032 [W7] Deployed re-measure, article + golden. **Gate: FA = 0 — revert if it moves at all.**
-  Quote VERIFY input tokens and wall-time separately
+- [x] T032 [W7] Deployed re-measure, article + golden. **Gate: FA = 0** ✅ across both. Detection
+  held at 9/9 on the article; golden left one binding failure (g24), analysed under T040
 
 **T031 RATIONALE (2026-09-07)** — we ranked ~12 pages and showed VERIFY 3. The other 9 were fetched,
 ranked, and thrown away, and a new page could displace the deciding one out of the window. That is
@@ -857,6 +857,34 @@ The original T034 finding — the fail-open path filters while the healthy path 
 the resolution is the reverse of what was applied: `degradedRank` is the anomaly, not the LLM path.
 Left as-is because it is the harmless direction (a rare error path being stricter) and FA measured 0
 in every run, filter or none.
+
+## Phase 14: accepted as-is [W7]
+
+- [x] T041 [W7] **Decision (2026-09-07): keep T031 unchanged.** No cap at 5, no revert.
+
+T031 removed the fixed 3-passage window so VERIFY reads the whole ranked pool. It is live and
+working — VERIFY reads 5–10 passages where it read exactly 3.
+
+**It has no measured benefit and a measured cost**, and that is recorded here deliberately rather
+than quietly:
+
+| | pre-T031 `6d48ebdb` | post-T031 `bb62670f` |
+|---|---|---|
+| contradictions | 10 (identical list) | 10 |
+| planted detection | 9/9 | 9/9 |
+| FA | 0 | 0 |
+| wall-time | 248s | **313s** |
+| golden binding failures | none | g24 |
+
+Detection was already 9/9 before T031. The gain came from **T017** (never-fetched 45% → 8%, usable
+pages 4.10 → 7.73), which lifted the article off its 8/6/8/5 baselines. By the time T031 landed the
+top 3 passages already held the answer.
+
+Options weighed and declined: revert to a fixed window, or cap at 5. Kept as-is on the user's call.
+
+**Known accepted risk:** 313s against Vercel's 300s `maxDuration`. The run completes because internal
+work is ~250s, but the margin is ~17% and it shrinks as articles get longer. If runs start ending
+with claims unwritten, this is the first place to look — cap the window before anything else.
 
 ## Explicitly out of scope
 
