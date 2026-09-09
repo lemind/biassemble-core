@@ -38,7 +38,7 @@ const ASSESSMENT: SharedAssessment = {
   ],
 };
 
-function buildServer(assessments = new Map([[TOKEN, ASSESSMENT]])) {
+function buildServer(assessments = new Map([[TOKEN, ASSESSMENT]]), readLimit = 1000) {
   const server = Fastify();
   const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());
   const prompts = new PromptRegistry();
@@ -51,6 +51,7 @@ function buildServer(assessments = new Map([[TOKEN, ASSESSMENT]])) {
     grounnelStore,
     historyStore,
     rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    assessmentRateLimiter: new InMemoryRateLimiter(readLimit, 60_000),
   });
   return server;
 }
@@ -92,6 +93,21 @@ describe("GET /assessment/:token (spec 019)", () => {
     expect(unknown.statusCode).toBe(404);
     expect(malformed.statusCode).toBe(404);
     expect(unknown.body).toBe(malformed.body);
+  });
+
+  // T014 — the only route here reachable from the open internet, and a 47-claim run measured
+  // 159 KB of response, so an unlimited one is a free amplifier.
+  it("rate-limits reads on their own bucket, without touching the submission bucket", async () => {
+    const server = buildServer(new Map([[TOKEN, ASSESSMENT]]), 2);
+    expect((await server.inject({ method: "GET", url: `/assessment/${TOKEN}` })).statusCode).toBe(200);
+    expect((await server.inject({ method: "GET", url: `/assessment/${TOKEN}` })).statusCode).toBe(200);
+    expect((await server.inject({ method: "GET", url: `/assessment/${TOKEN}` })).statusCode).toBe(429);
+  });
+
+  it("counts a guessed token against the limit too, not only a real one", async () => {
+    const server = buildServer(new Map([[TOKEN, ASSESSMENT]]), 1);
+    expect((await server.inject({ method: "GET", url: "/assessment/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" })).statusCode).toBe(404);
+    expect((await server.inject({ method: "GET", url: `/assessment/${TOKEN}` })).statusCode).toBe(429);
   });
 
   it("marks the response noindex (FR-009, T009)", async () => {

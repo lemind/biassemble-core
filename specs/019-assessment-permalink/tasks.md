@@ -26,7 +26,7 @@ repo — see `biassemble/specs/004-grounnel-public-site/tasks.md`.
 - [x] T001 Add `share_token` to `grounnel_runs` in `src/db/schema.ts` — not null, unique index.
   **Not `run_id`**: that value already appears in logs, eval scripts, Redis keys and telemetry
   queries, so reusing it as the public address makes every one of those a disclosure (FR-002/FR-003).
-- [ ] T002 Drizzle migration for the column and index. Existing rows need a backfill — 236 production
+- [x] T002 Drizzle migration for the column and index. Existing rows need a backfill — 236 production
   runs and ~2,900 eval runs currently have none.
 
   **Written 2026-09-09, NOT APPLIED — needs explicit approval.**
@@ -35,6 +35,8 @@ repo — see `biassemble/specs/004-grounnel-public-site/tasks.md`.
   Three steps — nullable column, backfill, then `SET NOT NULL` + the unique index. Backfilled tokens
   are prefixed `legacy_` so a token minted at creation stays distinguishable from one invented
   afterwards. Nothing in this feature works until it runs.
+
+  **Applied 2026-09-09 with explicit approval.** 3,475 rows backfilled, all distinct, zero nulls.
 - [x] T003 Generate the token at run creation in `extract.service.ts`, alongside the existing
   `runId`. URL-safe random, **≥128 bits** — e.g. 16+ bytes from `crypto.randomBytes` base64url'd.
   (`crypto.randomUUID()` is v4 with ~122 bits of entropy, so it is not *guessable*; it is simply not
@@ -80,18 +82,36 @@ repo — see `biassemble/specs/004-grounnel-public-site/tasks.md`.
   gave the browser a way to *learn* it — the feature was unusable end to end. `ExtractResponseSchema`
   and `GrounnelExtractResult` both carry it now.
 
-- [ ] T014 **Added 2026-09-09 from review. Rate-limit `GET /assessment/:token`.** This is the first
+- [x] T014 **Added 2026-09-09 from review. Rate-limit `GET /assessment/:token`.** This is the first
   route on this service reachable from the open internet, and it has no limit at all: every hit is
   two Postgres queries on the shared Supabase pooler and returns the run's full submitted text,
   which is unbounded (see 018 FINDINGS). `/extract` and `/status` never needed one because
   `authHook` kept them behind the trusted proxy. A generous per-IP bucket is enough — this is
   read-only — but it should exist before DNS activation, alongside the site's T017.
 
+  **Done 2026-09-09.** `RedisRateLimiter` gained a `keyPrefix`, so submissions
+  (`ratelimit:extract`, 5/hour) and reads (`ratelimit:assessment`, 120/hour) never share a bucket —
+  a burst of page views must not lock someone out of running their own check. Checked *before* the
+  token shape test, so guessing costs the guesser too, and keyed on `request.ip`: unlike `/extract`
+  this is not called through the trusted proxy, so no forwarded-IP header is honoured.
+  The backend proxy passes 404 and 429 through rather than reporting core's `aiError` 502 — without
+  that a mistyped link read as an outage.
+
 ## Phase 4: Verify
 
-- [ ] T011 curl an assessment for a run older than the 7-day Redis TTL and confirm it renders in
+- [x] T011 curl an assessment for a run older than the 7-day Redis TTL and confirm it renders in
   full from Postgres (SC-001). Pick one of the August runs.
-- [ ] T012 Confirm a `run_id` used in the token position is refused (SC-003).
+
+  **Verified 2026-09-09** against the live database, real route, real store. The 2026-08-07 run
+  (33 days old, long past the Redis TTL) returned **200** with its text, claims and
+  `X-Robots-Tag: noindex`, and no `runId`/`sessionId` in the body (SC-006). The 47-claim run
+  `bb62670f` returned all 47 claims — no truncation (SC-004) — in a **159 KB** payload, which is
+  what motivated T014.
+- [x] T012 Confirm a `run_id` used in the token position is refused (SC-003).
+
+  **Verified 2026-09-09.** A `run_id`, an unknown well-formed token and a malformed string all
+  returned byte-identical `404 {"error":"not_found"}` — no oracle (FR-010). The same run's real
+  `share_token` returned 200, so the refusal is the token check, not a broken read path.
 
 ---
 

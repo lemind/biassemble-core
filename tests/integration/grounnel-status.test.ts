@@ -26,6 +26,7 @@ function buildServer(provider: Provider, searchProvider: SearchProvider) {
     grounnelStore,
     historyStore: new NoopGrounnelHistoryStore(),
     rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return { server, grounnelStore };
 }

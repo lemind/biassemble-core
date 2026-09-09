@@ -35,6 +35,7 @@ function buildServer(limit: number) {
     grounnelStore,
     historyStore: new NoopGrounnelHistoryStore(),
     rateLimiter: new InMemoryRateLimiter(limit, 60_000),
+    assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return server;
 }

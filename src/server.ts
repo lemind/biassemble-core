@@ -31,7 +31,7 @@ import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
 import { TavilySearchProvider } from "./providers/search/tavily-provider";
-import { RedisRateLimiter, UpstashRateLimitRedisClient, type RateLimiter } from "./lib/rate-limit";
+import { RedisRateLimiter, UpstashRateLimitRedisClient, RATE_LIMIT_READS_PER_IP_PER_HOUR, WINDOW_SECONDS, type RateLimiter } from "./lib/rate-limit";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -83,6 +83,7 @@ export function buildApp() {
         grounnelStore: RedisGrounnelStore;
         historyStore: DrizzleGrounnelHistoryStore;
         rateLimiter: RateLimiter;
+        assessmentRateLimiter: RateLimiter;
       }
     | undefined;
   if (env.TAVILY_API_KEY && upstashRedisConfig) {
@@ -107,6 +108,14 @@ export function buildApp() {
       // grounnelStore, unlike the old in-memory RateLimiter (buckets were per-process, so 5/hour
       // was only ever enforced per instance, not globally).
       rateLimiter: new RedisRateLimiter(new UpstashRateLimitRedisClient(redis)),
+      // Spec 019 T014 — its own key prefix and a far higher ceiling: reading a shared link is
+      // cheap next to running a check, and the two must not share a bucket.
+      assessmentRateLimiter: new RedisRateLimiter(
+        new UpstashRateLimitRedisClient(redis),
+        RATE_LIMIT_READS_PER_IP_PER_HOUR,
+        WINDOW_SECONDS,
+        "ratelimit:assessment"
+      ),
     };
   } else {
     logger.warn(

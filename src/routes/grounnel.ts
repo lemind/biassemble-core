@@ -42,6 +42,8 @@ export function registerGrounnelRoutes(
     grounnelStore: GrounnelStore;
     historyStore: GrounnelHistoryStore;
     rateLimiter: RateLimiter;
+    /** Separate bucket from `rateLimiter` — a burst of shared-link reads must not block a run. */
+    assessmentRateLimiter: RateLimiter;
   }
 ) {
   server.post("/extract", { preHandler: [authHook] }, async (request, reply) => {
@@ -130,6 +132,13 @@ export function registerGrounnelRoutes(
   // one assessment out. No list, no search, no filters.
   server.get("/assessment/:token", async (request, reply) => {
     const { token } = request.params as { token: string };
+
+    // T014 — the only route here reachable from the open internet. Checked before the shape test
+    // so a scraper guessing tokens is limited too, and keyed on request.ip: unlike /extract this
+    // is not called through the trusted proxy, so no forwarded-IP header is honoured here.
+    if (!(await services.assessmentRateLimiter.checkAndConsume(request.ip))) {
+      return reply.status(429).send({ error: "Too many requests — try again later." });
+    }
 
     // T008/FR-010 — a malformed token, an unknown one and a deleted run all return the SAME
     // response. Distinguishing them would make this endpoint an oracle for whether a run exists.
