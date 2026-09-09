@@ -133,10 +133,10 @@ export function registerGrounnelRoutes(
   server.get("/assessment/:token", async (request, reply) => {
     const { token } = request.params as { token: string };
 
-    // T014 — the only route here reachable from the open internet. Checked before the shape test
-    // so a scraper guessing tokens is limited too, and keyed on request.ip: unlike /extract this
-    // is not called through the trusted proxy, so no forwarded-IP header is honoured here.
-    if (!(await services.assessmentRateLimiter.checkAndConsume(request.ip))) {
+    // T014 — checked before the shape test so a scraper guessing tokens is limited too. Keyed on
+    // resolveClientIp, NOT request.ip: every real viewer arrives through the site's backend proxy,
+    // so request.ip is that proxy's egress IP and one busy reader would 429 every other visitor.
+    if (!(await services.assessmentRateLimiter.checkAndConsume(resolveClientIp(request)))) {
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 
