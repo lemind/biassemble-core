@@ -40,6 +40,9 @@ export type ExtractRequest = z.infer<typeof ExtractRequestSchema>;
 
 export const ExtractResponseSchema = z.object({
   id: z.string().uuid(),
+  // Spec 019 T013 — the run's public address, returned at submission because the token is minted
+  // at creation (FR-001). Without it the client has no way to learn the link it is meant to offer.
+  shareToken: z.string(),
 });
 
 export type ExtractResponse = z.infer<typeof ExtractResponseSchema>;
@@ -116,6 +119,35 @@ export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true, 
 });
 
 export type ClaimResult = z.infer<typeof ClaimResultSchema>;
+
+// ─── Shared assessment — GET /assessment/:token ──────────────
+
+// Spec 019 FR-009: a PUBLIC shape, designed as one rather than a dump of the row. It deliberately
+// carries no runId, no sessionId, no prompt versions and no telemetry — anyone with the link can
+// read this, and the link is meant to be passed around.
+export const SharedClaimSchema = z.object({
+  text: z.string(),
+  verdict: GrounnelVerdictEnum.nullable(),
+  evidence: z.string().nullable(),
+  confidence: z.number().min(0).max(1).nullable(),
+  reason: z.string().nullable(),
+  sources: z.array(ClaimSourceSchema),
+  sourceExcerpt: z.string().nullable(),
+});
+
+export type SharedClaim = z.infer<typeof SharedClaimSchema>;
+
+// FR-011 — a failed or still-running run renders what exists and says so, rather than looking
+// complete. The reader keys on `status`, which is a different state from a null verdict.
+export const SharedAssessmentSchema = z.object({
+  status: GrounnelStatusEnum,
+  text: z.string(),
+  claims: z.array(SharedClaimSchema),
+  createdAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+
+export type SharedAssessment = z.infer<typeof SharedAssessmentSchema>;
 
 // ─── Progress ─────────────────────────────────────────────────
 

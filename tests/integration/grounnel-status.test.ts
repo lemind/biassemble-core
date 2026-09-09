@@ -24,6 +24,7 @@ function buildServer(provider: Provider, searchProvider: SearchProvider) {
     extractService: new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore()),
     pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
     grounnelStore,
+    historyStore: new NoopGrounnelHistoryStore(),
     rateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return { server, grounnelStore };

@@ -308,6 +308,11 @@ export const grounnel = pgSchema("grounnel");
 // already used as the Redis hash key `audit:{id}` (D023 §3), not a second identity.
 export const grounnelRuns = grounnel.table("grounnel_runs", {
   runId: uuid("run_id").primaryKey(),
+  // The run's PUBLIC address (spec 019, FR-002/FR-003). Deliberately not runId: that value is in
+  // logs, eval scripts, Redis keys and telemetry queries, so reusing it would make every one of
+  // those a disclosure. Fresh entropy per run, stored — never derived from runId, since a hash of
+  // a known input is recoverable by anyone holding it.
+  shareToken: text("share_token").notNull(),
   // Nullable, not notNull — no code path supplies a sessionId until tasks.md T028
   // (biassemble/backend session reuse) ships. A notNull column would either block T024
   // entirely or force a fabricated placeholder UUID. Tighten once T028 ships and every
@@ -336,6 +341,7 @@ export const grounnelRuns = grounnel.table("grounnel_runs", {
   // (D023 §1) is `WHERE session_id = ? ORDER BY created_at DESC`, which a single-column
   // index on either field alone still forces a separate sort step for.
   index("grounnel_runs_session_created_idx").on(table.sessionId, table.createdAt),
+  uniqueIndex("grounnel_runs_share_token_idx").on(table.shareToken),
 ]);
 
 // One row per claim, durable copy of what Redis holds transiently (D023 §7 — additive, not a

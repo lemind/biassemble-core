@@ -33,6 +33,7 @@ function buildServer(limit: number) {
     extractService: new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore()),
     pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
     grounnelStore,
+    historyStore: new NoopGrounnelHistoryStore(),
     rateLimiter: new InMemoryRateLimiter(limit, 60_000),
   });
   return server;

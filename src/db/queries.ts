@@ -623,6 +623,7 @@ export async function getClaimPassagesByAudit(auditId: string) {
 
 export async function insertGrounnelRun(data: {
   runId: string;
+  shareToken: string;
   sessionId: string | null;
   text: string;
   source: "production" | "eval";
@@ -631,6 +632,40 @@ export async function insertGrounnelRun(data: {
 }) {
   const [row] = await db().insert(grounnelRuns).values(data).returning();
   return row;
+}
+
+// Spec 019 T004. The only production read of these tables — everything else here is write-only
+// history (D023 §7). Two queries, not a join: a join would fan the run's text out across every
+// claim row, and this text can be tens of kilobytes.
+export async function selectGrounnelRunByShareToken(shareToken: string) {
+  const [row] = await db()
+    .select({
+      runId: grounnelRuns.runId,
+      status: grounnelRuns.status,
+      text: grounnelRuns.text,
+      createdAt: grounnelRuns.createdAt,
+      completedAt: grounnelRuns.completedAt,
+    })
+    .from(grounnelRuns)
+    .where(eq(grounnelRuns.shareToken, shareToken))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function selectGrounnelClaimsByRunId(runId: string) {
+  return db()
+    .select({
+      claimText: grounnelClaims.claimText,
+      verdict: grounnelClaims.verdict,
+      evidence: grounnelClaims.evidence,
+      confidence: grounnelClaims.confidence,
+      reason: grounnelClaims.reason,
+      sources: grounnelClaims.sources,
+      sourceExcerpt: grounnelClaims.sourceExcerpt,
+    })
+    .from(grounnelClaims)
+    .where(eq(grounnelClaims.runId, runId))
+    .orderBy(grounnelClaims.createdAt);
 }
 
 export async function updateGrounnelRun(

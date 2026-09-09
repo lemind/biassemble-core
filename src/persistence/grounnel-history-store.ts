@@ -1,12 +1,19 @@
-import { insertGrounnelRun, updateGrounnelRun, insertGrounnelClaim } from "../db/queries.js";
+import {
+  insertGrounnelRun,
+  updateGrounnelRun,
+  insertGrounnelClaim,
+  selectGrounnelRunByShareToken,
+  selectGrounnelClaimsByRunId,
+} from "../db/queries.js";
 import { logger } from "../observability/logger.js";
-import type { ClaimSource } from "../contracts/grounnel.schemas.js";
+import type { ClaimSource, SharedAssessment } from "../contracts/grounnel.schemas.js";
 
 const MODULE = "grounnel-history-store";
 
 export interface GrounnelHistoryStore {
   createRun(data: {
     runId: string;
+    shareToken: string;
     sessionId: string | null;
     text: string;
     source: "production" | "eval";
@@ -38,12 +45,19 @@ export interface GrounnelHistoryStore {
     sources: ClaimSource[];
     status: "done" | "failed";
   }): Promise<void>;
+
+  /** Spec 019 T004 — the one read path. null when no run holds this token (FR-010). */
+  readAssessmentByToken(shareToken: string): Promise<SharedAssessment | null>;
 }
 
 /**
  * D023 §7 — Postgres history is best-effort analytics, Redis remains the source of truth. Every
- * method here catches and logs internally rather than throwing, so a caller never needs its own
+ * WRITE here catches and logs internally rather than throwing, so a caller never needs its own
  * try/catch to stay safe — matches executeAndRecordLlmCall's own pattern (llm-call-recorder.ts).
+ *
+ * `readAssessmentByToken` is the exception and deliberately throws: it is a real read serving a
+ * request, so swallowing a database error would return "no such assessment" for a link that
+ * exists. Spec 019 is the first thing to read these rows back.
  */
 export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
   async createRun(data: Parameters<GrounnelHistoryStore["createRun"]>[0]): Promise<void> {
@@ -68,5 +82,30 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
     } catch (err) {
       logger.warn({ module: MODULE, operation: "createClaim", claimId: data.claimId, err }, "Failed to write grounnel_claims row — Redis remains authoritative (D023 §7)");
     }
+  }
+
+  async readAssessmentByToken(shareToken: string): Promise<SharedAssessment | null> {
+    const run = await selectGrounnelRunByShareToken(shareToken);
+    if (!run) return null;
+
+    // A run that never reached its first claim, failed, or is still verifying returns what exists
+    // with its status attached (FR-011) — the reader shows the state rather than a partial result
+    // dressed up as a finished one.
+    const claims = await selectGrounnelClaimsByRunId(run.runId);
+    return {
+      status: run.status,
+      text: run.text,
+      createdAt: run.createdAt.toISOString(),
+      completedAt: run.completedAt?.toISOString() ?? null,
+      claims: claims.map((c) => ({
+        text: c.claimText,
+        verdict: c.verdict,
+        evidence: c.evidence,
+        confidence: c.confidence,
+        reason: c.reason,
+        sources: c.sources as ClaimSource[],
+        sourceExcerpt: c.sourceExcerpt,
+      })),
+    };
   }
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { generateShareToken } from "../../lib/share-token.js";
 import { z } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { callLlmForJson } from "../llm-json-call.js";
@@ -57,6 +58,8 @@ const ExtractResponseSchema = z.object({
 
 export interface GrounnelExtractResult {
   id: string;
+  /** The run's public address (spec 019 T013) — returned so the caller can offer the link at once. */
+  shareToken: string;
   // Non-opinion claims only (gate #3, D019 §2) — what the route (T012) hands to
   // GrounnelPipelineService.run() next.
   pendingClaims: PipelineClaimInput[];
@@ -76,9 +79,12 @@ export class GrounnelExtractService {
   async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null): Promise<GrounnelExtractResult> {
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
+    // Minted here, not at completion, so an in-flight run is already addressable (FR-001) and the
+    // caller can be handed its link before the result exists.
+    const shareToken = generateShareToken();
     // waitUntil, not void: fire-and-forget alone races the response — nothing guarantees this
     // resolves before reply.send(), and Vercel can freeze the container the instant it does.
-    waitUntil(this.historyStore.createRun({ runId, sessionId, text, source, maxClaims: MAX_CLAIMS, truncated: false }));
+    waitUntil(this.historyStore.createRun({ runId, shareToken, sessionId, text, source, maxClaims: MAX_CLAIMS, truncated: false }));
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
@@ -147,7 +153,7 @@ export class GrounnelExtractService {
     const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
     await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
-    return { id, pendingClaims };
+    return { id, shareToken, pendingClaims };
   }
 
   /**

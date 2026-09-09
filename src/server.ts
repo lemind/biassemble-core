@@ -81,6 +81,7 @@ export function buildApp() {
         extractService: GrounnelExtractService;
         pipelineService: GrounnelPipelineService;
         grounnelStore: RedisGrounnelStore;
+        historyStore: DrizzleGrounnelHistoryStore;
         rateLimiter: RateLimiter;
       }
     | undefined;
@@ -100,6 +101,8 @@ export function buildApp() {
       extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore),
       pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore),
       grounnelStore,
+      // Spec 019 — the shared-assessment route reads Postgres directly; Redis expires after 7 days.
+      historyStore,
       // D020 §4 fix — shared across every Lambda instance via the same Upstash connection as
       // grounnelStore, unlike the old in-memory RateLimiter (buckets were per-process, so 5/hour
       // was only ever enforced per instance, not globally).

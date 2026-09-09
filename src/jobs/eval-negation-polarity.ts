@@ -7,6 +7,7 @@
  * Trigger: event "eval/negation-polarity" (scripts/trigger-eval-negation-polarity.ts sends it)
  */
 import { randomUUID } from "node:crypto";
+import { generateShareToken } from "../lib/share-token.js";
 import { inngest } from "./client.js";
 import { insertBeforeAnchor } from "./prompt-splice.js";
 import { GeminiProvider } from "../providers/gemini.js";
@@ -206,7 +207,7 @@ export const evalNegationPolarityJob = inngest.createFunction(
     const experimentRunId = await step.run("create-experiment-run", async () => {
       const runId = randomUUID();
       await historyStore.createRun({
-        runId, sessionId: null,
+        runId, shareToken: generateShareToken(), sessionId: null,
         text: `[negation-polarity] ${variants.length} variants x ${fixtures.length} fixtures x ${repeats}`,
         source: "eval", maxClaims: fixtures.length, truncated: false,
       });
