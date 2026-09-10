@@ -30,8 +30,6 @@ export interface GrounnelSearchCallStore {
     runId: string;
     claimId: string;
     model: string;
-    /** false once the maxOutputTokens cap returned no candidates and we retried without it. */
-    capped: boolean;
     status: "success" | "error";
     inputTokens: number | null;
     outputTokens: number | null;
@@ -72,12 +70,12 @@ export class DrizzleGrounnelSearchCallStore implements GrounnelSearchCallStore {
   }
 
   recordDiscoveryCall(data: Parameters<GrounnelSearchCallStore["recordDiscoveryCall"]>[0]): void {
-    const { capped, model, ...rest } = data;
+    const { model, ...rest } = data;
     waitUntil(
       insertGrounnelLlmCall({
         ...rest,
         stage: "discovery",
-        callType: capped ? "url_discovery" : "url_discovery_uncapped",
+        callType: "url_discovery",
         provider: "gemini",
         model,
         promptVersion: "n/a",

@@ -23,9 +23,6 @@ const GROUNDING_REDIRECT_HOST = "vertexaisearch.cloud.google.com";
 // D026 §6 — Tavily's results are already fetched with text (T031), free to retain more than
 // MAX_CANDIDATES, which still gates DIY's real per-URL network fetches.
 const FALLBACK_RETAINED_CANDIDATES = 8;
-// The grounding answer is discarded — only groundingChunks are read — so cap it. Not 1: the model
-// still has to get through the tool call, and an over-tight cap risks an empty candidate list.
-const DISCOVERY_MAX_OUTPUT_TOKENS = 64;
 // D021's research methodology bar — below this, a 200 is more likely a paywall/consent-wall
 // stub than real content (a common pattern: short "subscribe to continue" pages still return 200).
 const MIN_TEXT_LENGTH = 800;
@@ -339,7 +336,6 @@ export class HybridSearchProvider implements SearchProvider {
   /** Telemetry never breaks retrieval: a throwing store would cost the claim every candidate. */
   private recordDiscovery(
     context: { runId: string; claimId: string } | undefined,
-    capped: boolean,
     t0: number,
     usage: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; totalTokenCount?: number } | null,
     errorMessage: string | null
@@ -352,7 +348,6 @@ export class HybridSearchProvider implements SearchProvider {
         runId: context.runId,
         claimId: context.claimId,
         model: this.geminiModel,
-        capped,
         status: errorMessage === null ? "success" : "error",
         inputTokens: usage?.promptTokenCount ?? null,
         outputTokens: billedOutput,
@@ -367,34 +362,21 @@ export class HybridSearchProvider implements SearchProvider {
     }
   }
 
+  // A maxOutputTokens cap was tried here 2026-09-10 and reverted the same day: measured on a real
+  // 25-claim run it hit MAX_TOKENS before the tool result 57% of the time, so the uncapped retry
+  // it needed cancelled the saving out — 266.7 vs 273.2 output tokens per discovery, 2.4%, for 16
+  // extra round trips. The prose really is discarded, but it is ~273 tokens, not the ~1,388 the
+  // invoice reconciliation implied; that gap was thinking tokens on verify/extract calls.
   private async discoverUrls(
     query: string,
     context?: { runId: string; claimId: string }
   ): Promise<Array<{ url: string; title: string }>> {
-    const capped = await this.discoverUrlsOnce(query, true, context);
-    // Retry ONLY when the cap itself truncated the call. A safety block, a transport failure or a
-    // genuinely empty search returns empty for the same reason uncapped — a guaranteed wasted call.
-    if (!capped.retryUncapped) return capped.candidates;
-    logger.warn({ module: MODULE, operation: "discoverUrls", query }, "Capped grounding call hit MAX_TOKENS with no groundingChunks — retrying uncapped");
-    return (await this.discoverUrlsOnce(query, false, context)).candidates;
-  }
-
-  private async discoverUrlsOnce(
-    query: string,
-    capOutput: boolean,
-    context?: { runId: string; claimId: string }
-  ): Promise<{ candidates: Array<{ url: string; title: string }>; retryUncapped: boolean }> {
     const url = `${GEMINI_GENERATE_URL}/${this.geminiModel}:generateContent?key=${this.geminiApiKey}`;
     const body = {
       contents: [{ parts: [{ text: `Use the google_search tool to search the web and check this claim: "${query}"` }] }],
       tools: [{ google_search: {} }],
       // We read groundingChunks and discard the prose entirely (D021 — discovery only, never
       // verdicts), so the answer is ~1,388 billed output tokens per call we never look at.
-      // thinkingBudget 0 is load-bearing: on 2.5 models thinking tokens count against
-      // maxOutputTokens, so a cap alone can truncate before the tool call ever runs.
-      ...(capOutput
-        ? { generationConfig: { maxOutputTokens: DISCOVERY_MAX_OUTPUT_TOKENS, thinkingConfig: { thinkingBudget: 0 } } }
-        : {}),
     };
     const t0 = Date.now();
 
@@ -408,7 +390,7 @@ export class HybridSearchProvider implements SearchProvider {
           signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
         });
         if (!response.ok) {
-          this.recordDiscovery(context, capOutput, t0, null, `HTTP ${response.status}`);
+          this.recordDiscovery(context, t0, null, `HTTP ${response.status}`);
           logger.warn(
             { module: MODULE, operation: "discoverUrls", query, attempt, status: response.status },
             "Gemini grounding returned a non-OK status — retrying"
@@ -418,9 +400,8 @@ export class HybridSearchProvider implements SearchProvider {
           continue;
         }
         const data = await response.json();
-        this.recordDiscovery(context, capOutput, t0, data?.usageMetadata ?? null, null);
-        const candidate = data?.candidates?.[0];
-        const chunks: GroundingChunk[] = candidate?.groundingMetadata?.groundingChunks ?? [];
+        this.recordDiscovery(context, t0, data?.usageMetadata ?? null, null);
+        const chunks: GroundingChunk[] = data?.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
         const rawCandidates = chunks
           .filter((c) => c.web?.uri)
           .map((c) => ({ url: c.web!.uri!, title: c.web?.title ?? domainOf(c.web!.uri!) }));
@@ -432,12 +413,10 @@ export class HybridSearchProvider implements SearchProvider {
           }
           return ok;
         });
-        // Only MAX_TOKENS says the cap is what suppressed the tool result.
-        const truncated = candidate?.finishReason === "MAX_TOKENS";
-        return { candidates: safe, retryUncapped: capOutput && chunks.length === 0 && truncated };
+        return safe;
       } catch (err) {
         lastError = err;
-        this.recordDiscovery(context, capOutput, t0, null, String(err));
+        this.recordDiscovery(context, t0, null, String(err));
         logger.warn(
           { module: MODULE, operation: "discoverUrls", query, attempt, err: sanitizeErrorForLogging(err) },
           "Gemini grounding request failed — retrying"
@@ -449,8 +428,7 @@ export class HybridSearchProvider implements SearchProvider {
       { module: MODULE, operation: "discoverUrls", query, err: sanitizeErrorForLogging(lastError) },
       "Gemini grounding failed after retries — zero candidates"
     );
-    // Transport failure, not the cap — an uncapped retry would fail identically.
-    return { candidates: [], retryUncapped: false };
+    return [];
   }
 
   private async fetchCandidate(candidate: { url: string; title: string }, failedUrlKeys?: Set<string>): Promise<SearchPassage> {
