@@ -637,19 +637,19 @@ export async function insertGrounnelRun(data: {
 // Spec 019 T004. The only production read of these tables — everything else here is write-only
 // history (D023 §7). Two queries, not a join: a join would fan the run's text out across every
 // claim row, and this text can be tens of kilobytes.
-/** Non-terminal runs whose container was reaped before they could write a terminal status. The
- *  WHERE clause is the whole safety: a live run is never older than the function's own ceiling. */
-export async function markStuckGrounnelRunsFailed(olderThanMinutes: number): Promise<string[]> {
+/** Non-terminal runs old enough that their container is certainly gone. The caller decides what
+ *  each one really was; this only finds them. */
+export async function selectStuckGrounnelRunIds(olderThanMinutes: number, limit: number): Promise<string[]> {
   const rows = await db()
-    .update(grounnelRuns)
-    .set({ status: "failed", completedAt: new Date() })
+    .select({ runId: grounnelRuns.runId })
+    .from(grounnelRuns)
     .where(
       and(
         inArray(grounnelRuns.status, ["extracting", "verifying"]),
         lt(grounnelRuns.createdAt, new Date(Date.now() - olderThanMinutes * 60_000))
       )
     )
-    .returning({ runId: grounnelRuns.runId });
+    .limit(limit);
   return rows.map((r) => r.runId);
 }
 

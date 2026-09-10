@@ -14,6 +14,7 @@ import { registerAuditRoutes, type AuditEnqueuer } from "./routes/audit";
 import { registerGrounnelRoutes } from "./routes/grounnel";
 import { inngest } from "./jobs/client";
 import { buildInngestFunctions } from "./jobs/inngest-functions";
+import { createReapStuckRunsJob } from "./jobs/reap-stuck-runs";
 import { createRagRetrieveJob } from "./jobs/rag-retrieve";
 import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
 import { DrizzleRunStore } from "./persistence/run-store";
@@ -167,7 +168,12 @@ export function buildApp() {
 
   server.register(inngestFastify, {
     client: inngest,
-    functions: buildInngestFunctions(ragRetrieveJob),
+    // Only when Grounnel is wired at all — the reaper needs both its stores (see the `grounnel`
+    // block above); without them there are no runs to settle.
+    functions: buildInngestFunctions(
+      ragRetrieveJob,
+      grounnel ? createReapStuckRunsJob(grounnel.grounnelStore, grounnel.historyStore) : undefined
+    ),
     options: {
       serveHost,
     },
