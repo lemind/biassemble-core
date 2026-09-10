@@ -362,11 +362,8 @@ export class HybridSearchProvider implements SearchProvider {
     }
   }
 
-  // A maxOutputTokens cap was tried here 2026-09-10 and reverted the same day: measured on a real
-  // 25-claim run it hit MAX_TOKENS before the tool result 57% of the time, so the uncapped retry
-  // it needed cancelled the saving out — 266.7 vs 273.2 output tokens per discovery, 2.4%, for 16
-  // extra round trips. The prose really is discarded, but it is ~273 tokens, not the ~1,388 the
-  // invoice reconciliation implied; that gap was thinking tokens on verify/extract calls.
+  // A maxOutputTokens cap was tried and reverted 2026-09-10: it hit MAX_TOKENS before the tool
+  // result 57% of the time, so the retries cancelled out the 2.4% saving. Spec 018 tasks.md.
   private async discoverUrls(
     query: string,
     context?: { runId: string; claimId: string }

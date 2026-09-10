@@ -89,9 +89,8 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
     const run = await selectGrounnelRunByShareToken(shareToken);
     if (!run) return null;
 
-    // A run that never reached its first claim, failed, or is still verifying returns what exists
-    // with its status attached (FR-011) — the reader shows the state rather than a partial result
-    // dressed up as a finished one.
+    // A run that failed, is still verifying, or never reached its first claim returns what exists
+    // with its status attached (FR-011) — the state, not a partial dressed up as finished.
     const claims = await selectGrounnelClaimsByRunId(run.runId);
     // Prefer the snapshot written at completion over counting the rows below: those rows are
     // best-effort, and a dropped one would silently shrink the reader's denominators.

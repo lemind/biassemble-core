@@ -1,17 +1,13 @@
-/**
- * Regenerates the site's landing-page worked example (site spec 004, T010a) from a real production
- * run. Emits a typed module — the site never queries this database. Run:
- *   npx tsx --env-file=.env scripts/gen-worked-example.ts
- */
+// Regenerates the site's landing-page worked example (site spec 004, T010a) from a real run.
+// Run: npx tsx --env-file=.env scripts/gen-worked-example.ts
 import { sql } from "drizzle-orm";
 import { writeFileSync } from "node:fs";
 import { getDb } from "../src/db/config.js";
 
 const RUN_ID = "bb62670f-1f82-49d4-8316-1c1265f5ddc1";
 const OUT = "../biassemble/frontend/src/data/workedExample.ts";
-// Two paragraphs of that run, chosen for one clean contradiction plus two supported claims with
-// reachable sources. Claims are kept only if their excerpt falls inside the slice, so highlight
-// offsets stay valid.
+// Two paragraphs with one clean contradiction and two supported claims. Claims whose excerpt
+// falls outside the slice are dropped, so highlight offsets stay valid.
 const KEEP_PARAGRAPH = (p: string) =>
   p.includes("Great Fire of London") || p.includes("Eiffel Tower looked smaller");
 

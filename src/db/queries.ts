@@ -634,9 +634,8 @@ export async function insertGrounnelRun(data: {
   return row;
 }
 
-// Spec 019 T004. The only production read of these tables — everything else here is write-only
-// history (D023 §7). Two queries, not a join: a join would fan the run's text out across every
-// claim row, and this text can be tens of kilobytes.
+// Spec 019 T004. Two queries, not a join: a join fans the run's text out across every claim
+// row, and that text can be tens of kilobytes.
 /** Non-terminal runs old enough that their container is certainly gone. The caller decides what
  *  each one really was; this only finds them. */
 export async function selectStuckGrounnelRunIds(olderThanMinutes: number, limit: number): Promise<string[]> {

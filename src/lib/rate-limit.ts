@@ -2,9 +2,8 @@ import type { Redis } from "@upstash/redis";
 
 // v10 §3c — placeholder, not yet confirmed (spec.md Assumption 5, Open Questions).
 export const RATE_LIMIT_PER_IP_PER_HOUR = 5;
-// Spec 019 T014 — reads are cheap next to a run, so this is deliberately generous: it exists to
-// stop a scraper walking the endpoint, not to ration people opening a link they were sent. One
-// page load is one request, and a 47-claim run measured 159 KB of response.
+// Spec 019 T014 — deliberately generous: it stops a scraper walking the endpoint, not people
+// opening a link they were sent. A 47-claim run measured 159 KB of response.
 export const RATE_LIMIT_READS_PER_IP_PER_HOUR = 120;
 const WINDOW_MS = 60 * 60 * 1000;
 export const WINDOW_SECONDS = WINDOW_MS / 1000;

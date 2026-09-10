@@ -127,22 +127,19 @@ export function registerGrounnelRoutes(
     return reply.status(200).send(status);
   });
 
-  // Spec 019 T007 — the ONE unauthenticated route on this service, deliberately outside authHook:
-  // a shared link must open with no credential (FR-004). Kept narrow on purpose — one token in,
-  // one assessment out. No list, no search, no filters.
+  // Spec 019 T007 — the ONE unauthenticated route, deliberately outside authHook: a shared link
+  // must open with no credential (FR-004). One token in, one assessment out.
   server.get("/assessment/:token", async (request, reply) => {
     const { token } = request.params as { token: string };
 
-    // T014 — checked before the shape test so a scraper guessing tokens is limited too. Keyed on
-    // resolveClientIp, NOT request.ip: every real viewer arrives through the site's backend proxy,
-    // so request.ip is that proxy's egress IP and one busy reader would 429 every other visitor.
+    // T014 — before the shape test, so token-guessing is limited too. Keyed on resolveClientIp,
+    // not request.ip: every viewer arrives via the site's proxy, which is one shared bucket.
     if (!(await services.assessmentRateLimiter.checkAndConsume(resolveClientIp(request)))) {
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 
-    // T008/FR-010 — a malformed token, an unknown one and a deleted run all return the SAME
-    // response. Distinguishing them would make this endpoint an oracle for whether a run exists.
-    // A run_id supplied here fails isShareTokenShape on length and never reaches the DB (FR-003).
+    // T008/FR-010 — malformed, unknown and deleted return the SAME response; separating them makes
+    // this an existence oracle. A runId fails isShareTokenShape on length (FR-003).
     if (!isShareTokenShape(token)) {
       return reply.status(404).send({ error: "not_found" });
     }

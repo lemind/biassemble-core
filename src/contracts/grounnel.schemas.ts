@@ -122,9 +122,8 @@ export type ClaimResult = z.infer<typeof ClaimResultSchema>;
 
 // ─── Shared assessment — GET /assessment/:token ──────────────
 
-// Spec 019 FR-009: a PUBLIC shape, designed as one rather than a dump of the row. It deliberately
-// carries no runId, no sessionId, no prompt versions and no telemetry — anyone with the link can
-// read this, and the link is meant to be passed around.
+// Spec 019 FR-009 — a PUBLIC shape: no runId, sessionId, prompt versions or telemetry. Anyone
+// holding the link can read this.
 export const SharedClaimSchema = z.object({
   text: z.string(),
   verdict: GrounnelVerdictEnum.nullable(),

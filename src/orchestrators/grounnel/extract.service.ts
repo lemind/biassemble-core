@@ -17,10 +17,8 @@ import type { PipelineClaimInput } from "./pipeline.service.js";
 const MODULE = "grounnel-extract-service";
 /** Matches audit's EXTRACT retry count (D018 §5.10) — a provider hiccup shouldn't hard-fail the whole run. */
 const EXTRACT_ATTEMPTS = 3;
-// Sized to the FUNCTION BUDGET, not to a guess. Vercel Hobby caps execution at 300s and cannot be
-// raised; measured 2026-09-10 on run 7eef58d1, throughput is ~6.5s/claim, so 100 claims needed
-// ~635s and the run was killed at 46. 40 leaves headroom. Raising this needs a bigger time budget
-// first (Pro's 800s, or splitting the pipeline across invocations), not just a bigger number.
+// Sized to the 300s Vercel Hobby function budget, not guessed: ~6.5s/claim measured on run
+// 7eef58d1 (2026-09-10). Raising it needs a bigger time budget first — spec 018 tasks.md.
 const MAX_CLAIMS = 40;
 // EXTRACT emits up to MAX_CLAIMS claims, each with a verbatim source_excerpt, so it is the slowest
 // call in the system: p50 494ms but 19.2s measured on a 13.7KB document. D030 §3m Addendum 23.

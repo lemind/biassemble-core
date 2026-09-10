@@ -187,10 +187,8 @@ export class GrounnelPipelineService {
       throw err;
     }
 
-    // Snapshot the AUTHORITATIVE counts from Redis alongside the status. grounnel_claims rows are
-    // best-effort, so a dropped one silently shrinks every denominator a reader computes from them.
-    // Inside its own try: a Redis blip here must not stop the "done" write below, or the run is
-    // stranded at "verifying" forever — updateRun swallows its own errors, this call did not.
+    // Authoritative counts from Redis: grounnel_claims rows are best-effort, so a dropped one
+    // shrinks every denominator. Own try — a Redis blip must not stop the "done" write below.
     let snapshot: Record<string, unknown> | undefined;
     try {
       const settled = await this.grounnelStore.getStatus(auditId);

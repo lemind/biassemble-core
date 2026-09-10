@@ -1,15 +1,5 @@
-/**
- * Settles Grounnel runs whose container was reaped before they could write a terminal status.
- *
- * A run lives inside `waitUntil` and dies when Vercel hits maxDuration. Redis still knows what
- * actually happened — `getStatus`'s self-heal (D029/D031) derives "done" or "failed" from the
- * claims themselves — but nothing ever wrote that back, so 195 runs sat non-terminal on
- * 2026-09-10, the oldest from 2026-08-10, each one a share link that spins forever.
- *
- * Redis is consulted per run, NOT assumed failed: a run that verified every claim and died only
- * on the final write is `done`, and marking it failed would hide a complete result behind
- * "this check stopped before it finished". Failed is the fallback for when Redis has expired.
- */
+// Settles Grounnel runs whose container died before it could write a terminal status. Redis
+// already knows the outcome (getStatus self-heals, D029/D031); this writes it back. Spec 018.
 import { inngest } from "./client.js";
 import type { GrounnelStore } from "../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
