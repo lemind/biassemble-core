@@ -201,7 +201,8 @@ This tasks.md covers the **API surface only**, matching spec.md's own stated sco
 
 ## Phase 6: Cross-repo proxy (`biassemble/backend` — different repo, D020)
 
-- [ ] **T013** `core-client.ts` gains `extractClaims`/`getGrounnelStatus`, mirroring `generateQuestion`/`generateAssessment`; two new Next.js route files forward request/response (plan.md §2 step 8.5, D020 §3)
+- [ ] ~~**T013** `core-client.ts` gains `extractClaims`/`getGrounnelStatus`, mirroring `generateQuestion`/`generateAssessment`; two new Next.js route files forward request/response (plan.md §2 step 8.5, D020 §3)~~  
+  ~~Closed unverified 2026-09-10.~~ The code for this exists in the tree, but this task's own acceptance criteria were never checked against it, so it is **not** being ticked as done. Reopen and verify properly if it matters.
   - **Acceptance:** `AI_CORE_API_KEY` is attached server-side exactly as the existing two calls do; no new session/user schema, no Inngest wiring added (D020 §5's explicit "Do not"); this repo's `/extract` contract (T012) is stable before this task starts.
   - **Verify:** manual real end-to-end call through the proxy to this repo, confirming the added-hop latency against v10 §3b's 10-second polling assumption (plan.md §5's step-8.5 checkpoint — resolves D020 §6's "not yet measured").
   - **Dependencies:** T012 (this repo's contract must be stable first — this is *why* it's sequenced after, not before).
@@ -536,7 +537,8 @@ T023 (grounnel pg schema — 5 tables)
   - **Files:** `src/db/schema.ts`, new migration, `src/db/queries.ts` (`insertGrounnelSearchCall`).
   - **Size:** S.
 
-- [ ] **T030** Escalating DIY fetch waves: 3 → 5 → 8, stop as soon as a wave yields ≥1 `"ok"` source
+- [ ] ~~**T030** Escalating DIY fetch waves: 3 → 5 → 8, stop as soon as a wave yields ≥1 `"ok"` source~~  
+  ~~Closed unverified 2026-09-10.~~ The code for this exists in the tree, but this task's own acceptance criteria were never checked against it, so it is **not** being ticked as done. Reopen and verify properly if it matters.
   - **Brief:** `hybrid-provider.ts`'s `discoverUrls`/candidate-fetch loop gains wave logic instead of a single `MAX_CANDIDATES = 3` slice. Wave 2 (next 5, cumulative 8) only runs if wave 1 yields zero `"ok"` sources; wave 3 (next 8, cumulative 16) only if wave 2 also yields zero. Fewer candidates available than a wave needs is not a failure — fetch whatever exists. Tavily fallback trigger condition unchanged, just reached later (after all 3 waves, not after 1).
   - **Dependencies:** T029 (needs `wave` column to record into).
   - **Files:** `src/providers/search/hybrid-provider.ts`, tests.
@@ -548,13 +550,15 @@ T023 (grounnel pg schema — 5 tables)
   - **Files:** `src/providers/search/tavily-provider.ts`, tests.
   - **Size:** S.
 
-- [ ] **T032** Multi-passage evidence: up to 2 successful sources per claim instead of 1
+- [ ] ~~**T032** Multi-passage evidence: up to 2 successful sources per claim instead of 1~~  
+  ~~Closed unverified 2026-09-10.~~ The code for this exists in the tree, but this task's own acceptance criteria were never checked against it, so it is **not** being ticked as done. Reopen and verify properly if it matters.
   - **Brief:** `resolveEvidence`'s return shape changes from `passage: SearchPassage | null` to a small array (max 2). Breaking change to every downstream consumer: `hasPassage`, `runBatch`, and all four gates in `gates.ts` that currently take one `passageText` — each needs to check evidence against whichever passage actually contains it, not a naive concatenation (would break the ellipsis-fragment logic from the same session's gate #1 fix). This is the largest, riskiest task in this phase — see D024 §3 for why it's not folded into T030.
   - **Dependencies:** T029 (schema for `usedAsEvidence`); logically related to but not blocked by T030 (a single wave can already yield 2 successful sources without escalation).
   - **Files:** `src/orchestrators/grounnel/pipeline.service.ts`, `src/orchestrators/grounnel/gates.ts`, tests.
   - **Size:** L.
 
-- [ ] **T033** VERIFY prompt: multi-passage payload + output shape, version bump
+- [ ] ~~**T033** VERIFY prompt: multi-passage payload + output shape, version bump~~  
+  ~~Closed unverified 2026-09-10.~~ The code for this exists in the tree, but this task's own acceptance criteria were never checked against it, so it is **not** being ticked as done. Reopen and verify properly if it matters.
   - **Brief:** VERIFY's prompt and `CLAIM_PASSAGE_PAIRS` payload currently assume exactly one passage per claim. Needs to represent "evaluate against up to 2 passages" — verdict logic (supported if either passage supports it, contradicted if either conflicts) and the reason must name which passage. New prompt version; needs the same "UNVALIDATED against a real model" staged rollout this repo already applies to prompt changes (see verify/system.json v2.0.0/v2.1.0 notes).
   - **Dependencies:** T032 (needs the real code-side payload shape decided before the prompt can describe it).
   - **Files:** `src/prompts/grounnel/verify/system.json`, `src/orchestrators/grounnel/pipeline.service.ts`.
