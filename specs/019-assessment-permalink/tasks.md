@@ -99,6 +99,15 @@ repo — see `biassemble/specs/004-grounnel-public-site/tasks.md`.
 
 ## Phase 4: Verify
 
+- [x] T015 **Added 2026-09-10 from review. Snapshot authoritative verdict counts onto the run at
+  completion**, into the existing `grounnel_runs.score` jsonb (never previously written, so no
+  migration). `grounnel_claims` rows are best-effort (D023 §7): a dropped insert does not lower a
+  reader's score, it removes the claim from every denominator — so the shared link read HIGHER
+  than the run its owner saw, and the shared link is the one that gets forwarded. `getStatus`
+  reads Redis, so the snapshot is the final semantic tally, not a row count. Returned as an
+  optional `counts` on `SharedAssessmentSchema`; runs that predate it have none and the site
+  shows no score for them rather than falling back to counting rows.
+
 - [x] T011 curl an assessment for a run older than the 7-day Redis TTL and confirm it renders in
   full from Postgres (SC-001). Pick one of the August runs.
 
