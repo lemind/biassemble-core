@@ -78,7 +78,9 @@ export class GeminiProvider implements Provider {
       const usageMetadata = response.usageMetadata;
       const usage: TokenUsage | undefined = usageMetadata ? {
         inputTokens: usageMetadata.promptTokenCount,
-        outputTokens: usageMetadata.candidatesTokenCount,
+        // thoughtsTokenCount bills at the OUTPUT rate and is excluded from candidatesTokenCount on
+        // 2.5 models — omitting it makes every row under-count against the invoice.
+        outputTokens: (usageMetadata.candidatesTokenCount ?? 0) + ((usageMetadata as { thoughtsTokenCount?: number }).thoughtsTokenCount ?? 0),
         totalTokens: usageMetadata.totalTokenCount,
       } : undefined;
 
