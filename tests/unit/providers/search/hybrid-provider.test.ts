@@ -26,6 +26,121 @@ class StubFallback implements SearchProvider {
   }
 }
 
+describe("discovery output cap (2026-09-10)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const bodyOf = (call: unknown[]) => JSON.parse((call[1] as { body: string }).body);
+
+  it("caps maxOutputTokens on the grounding call — the prose is discarded, only chunks are read", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/X", title: "X" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "<html><body>" + "x".repeat(2000) + "</body></html>" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    await provider.search("some claim");
+
+    const gemini = fetchMock.mock.calls.filter((c) => String(c[0]).includes("generativelanguage"));
+    expect(gemini).toHaveLength(1);
+    expect(bodyOf(gemini[0]).generationConfig.maxOutputTokens).toBe(64);
+  });
+
+  it("retries UNCAPPED when the cap suppressed groundingChunks entirely", async () => {
+    const fallback = new StubFallback([]);
+    let geminiCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        geminiCalls++;
+        // First (capped) call comes back with no chunks at all; the retry has them.
+        return Promise.resolve(
+          geminiCalls === 1
+            ? { ok: true, status: 200, json: async () => ({ candidates: [{}] }) }
+            : geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/X", title: "X" }])
+        );
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "<html><body>" + "x".repeat(2000) + "</body></html>" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    const results = await provider.search("some claim");
+
+    const gemini = fetchMock.mock.calls.filter((c) => String(c[0]).includes("generativelanguage"));
+    expect(gemini).toHaveLength(2);
+    expect(bodyOf(gemini[0]).generationConfig.maxOutputTokens).toBe(64);
+    expect(bodyOf(gemini[1]).generationConfig).toBeUndefined();
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it("does NOT retry when chunks arrived but were all filtered out — the retry would return the same URLs", async () => {
+    const fallback = new StubFallback([{ url: "https://tavily.example", title: "T", domain: "tavily.example", status: "ok", text: "y" }]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "http://127.0.0.1/admin", title: "loopback" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "x" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, new NoopGrounnelSearchCallStore());
+    await provider.search("some claim");
+
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("generativelanguage"))).toHaveLength(1);
+  });
+
+  it("records the discovery call's tokens — they were invisible and are 37% of the bill", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{ groundingMetadata: { groundingChunks: [{ web: { uri: "https://en.wikipedia.org/wiki/X", title: "X" } }] } }],
+            usageMetadata: { promptTokenCount: 707, candidatesTokenCount: 64, totalTokenCount: 771 },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "<html><body>" + "x".repeat(2000) + "</body></html>" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, store);
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    expect(store.discoveryCalls).toHaveLength(1);
+    expect(store.discoveryCalls[0]).toMatchObject({
+      runId: "r1", claimId: "c1", capped: true, inputTokens: 707, outputTokens: 64, totalTokens: 771,
+    });
+  });
+
+  it("telemetry failure never costs the claim its candidates", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/X", title: "X" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "<html><body>" + "x".repeat(2000) + "</body></html>" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const throwing = new NoopGrounnelSearchCallStore();
+    throwing.recordDiscoveryCall = () => { throw new Error("telemetry is down"); };
+
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, throwing);
+    const results = await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    expect(results.length).toBeGreaterThan(0);
+  });
+});
+
 describe("HybridSearchProvider (T008, D021)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

@@ -23,6 +23,9 @@ const GROUNDING_REDIRECT_HOST = "vertexaisearch.cloud.google.com";
 // D026 §6 — Tavily's results are already fetched with text (T031), free to retain more than
 // MAX_CANDIDATES, which still gates DIY's real per-URL network fetches.
 const FALLBACK_RETAINED_CANDIDATES = 8;
+// The grounding answer is discarded — only groundingChunks are read — so cap it. Not 1: the model
+// still has to get through the tool call, and an over-tight cap risks an empty candidate list.
+const DISCOVERY_MAX_OUTPUT_TOKENS = 64;
 // D021's research methodology bar — below this, a 200 is more likely a paywall/consent-wall
 // stub than real content (a common pattern: short "subscribe to continue" pages still return 200).
 const MIN_TEXT_LENGTH = 800;
@@ -186,7 +189,7 @@ export class HybridSearchProvider implements SearchProvider {
       return this.runFallback(query, context);
     }
 
-    const candidates = orderByFetchability(await this.discoverUrls(query));
+    const candidates = orderByFetchability(await this.discoverUrls(query, context));
     // D026 §13 — escalation-only override of MAX_CANDIDATES; a fresh discoverUrls() call above,
     // so a higher tier may surface different/more candidates than a prior tier's discovery did
     // (live search isn't deterministic — same reason every other variance in this pipeline exists).
@@ -333,12 +336,32 @@ export class HybridSearchProvider implements SearchProvider {
     return this.rankByRelevance(query, allResults).slice(0, context?.maxCandidates ?? FALLBACK_RETAINED_CANDIDATES);
   }
 
-  private async discoverUrls(query: string): Promise<Array<{ url: string; title: string }>> {
+  private async discoverUrls(
+    query: string,
+    context?: { runId: string; claimId: string }
+  ): Promise<Array<{ url: string; title: string }>> {
+    const capped = await this.discoverUrlsOnce(query, true, context);
+    // Retry only when the cap suppressed the tool result itself. Chunks that arrived and were then
+    // filtered as unsafe would come back identical, so an uncapped retry buys nothing.
+    if (capped.hadChunks) return capped.candidates;
+    logger.warn({ module: MODULE, operation: "discoverUrls", query }, "Capped grounding call returned no groundingChunks — retrying uncapped");
+    return (await this.discoverUrlsOnce(query, false, context)).candidates;
+  }
+
+  private async discoverUrlsOnce(
+    query: string,
+    capOutput: boolean,
+    context?: { runId: string; claimId: string }
+  ): Promise<{ candidates: Array<{ url: string; title: string }>; hadChunks: boolean }> {
     const url = `${GEMINI_GENERATE_URL}/${this.geminiModel}:generateContent?key=${this.geminiApiKey}`;
     const body = {
       contents: [{ parts: [{ text: `Use the google_search tool to search the web and check this claim: "${query}"` }] }],
       tools: [{ google_search: {} }],
+      // We read groundingChunks and discard the prose entirely (D021 — discovery only, never
+      // verdicts), so the answer is ~1,388 billed output tokens per call we never look at.
+      ...(capOutput ? { generationConfig: { maxOutputTokens: DISCOVERY_MAX_OUTPUT_TOKENS } } : {}),
     };
+    const t0 = Date.now();
 
     let lastError: unknown;
     for (let attempt = 1; attempt <= DISCOVERY_ATTEMPTS; attempt++) {
@@ -359,6 +382,29 @@ export class HybridSearchProvider implements SearchProvider {
           continue;
         }
         const data = await response.json();
+        // Telemetry never breaks retrieval: a throwing store would land inside this try and cost
+        // the claim every one of its candidates.
+        if (context) {
+          try {
+          const u = data?.usageMetadata;
+          this.searchCallStore.recordDiscoveryCall({
+            runId: context.runId,
+            claimId: context.claimId,
+            model: this.geminiModel,
+            capped: capOutput,
+            status: "success",
+            inputTokens: u?.promptTokenCount ?? null,
+            outputTokens: u?.candidatesTokenCount ?? null,
+            totalTokens: u?.totalTokenCount ?? null,
+            startedAt: new Date(t0),
+            endedAt: new Date(),
+            durationMs: Date.now() - t0,
+            errorMessage: null,
+          });
+          } catch (err) {
+            logger.warn({ module: MODULE, operation: "discoverUrls", err }, "Discovery telemetry failed — continuing");
+          }
+        }
         const chunks: GroundingChunk[] = data?.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
         const rawCandidates = chunks
           .filter((c) => c.web?.uri)
@@ -371,7 +417,7 @@ export class HybridSearchProvider implements SearchProvider {
           }
           return ok;
         });
-        return safe;
+        return { candidates: safe, hadChunks: chunks.length > 0 };
       } catch (err) {
         lastError = err;
         logger.warn(
@@ -385,7 +431,8 @@ export class HybridSearchProvider implements SearchProvider {
       { module: MODULE, operation: "discoverUrls", query, err: sanitizeErrorForLogging(lastError) },
       "Gemini grounding failed after retries — zero candidates"
     );
-    return [];
+    // hadChunks true: the failure is transport, not the cap, so do not burn an uncapped retry.
+    return { candidates: [], hadChunks: true };
   }
 
   private async fetchCandidate(candidate: { url: string; title: string }, failedUrlKeys?: Set<string>): Promise<SearchPassage> {

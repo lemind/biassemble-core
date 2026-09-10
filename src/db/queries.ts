@@ -713,8 +713,8 @@ export async function insertGrounnelClaim(data: {
 export async function insertGrounnelLlmCall(data: {
   runId: string;
   claimId?: string | null;
-  stage: "extract" | "verify";
-  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "instance_attribution" | "attribution_experiment";
+  stage: "extract" | "verify" | "discovery";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "instance_attribution" | "attribution_experiment" | "url_discovery" | "url_discovery_uncapped";
   provider: string;
   model: string;
   promptVersion: string;
