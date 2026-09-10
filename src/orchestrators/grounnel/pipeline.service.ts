@@ -62,6 +62,21 @@ const SEARCH_CONCURRENCY = 20;
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 export const CONFIDENCE_THRESHOLD = 0.6;
+
+/** Verdict tallies a shared reader cannot recompute: Score merges partially_supported with
+ *  unverifiable, and excludes `excluded` entirely. Written once, at completion. */
+export function countVerdicts(claims: { status: string; verdict: string | null }[]) {
+  const of = (v: string) => claims.filter((c) => c.status === "done" && c.verdict === v).length;
+  return {
+    supported: of("supported"),
+    partiallySupported: of("partially_supported"),
+    unsupported: of("unsupported"),
+    unverifiable: of("unverifiable"),
+    contradicted: of("contradicted"),
+    excluded: of("excluded"),
+    noVerdict: claims.filter((c) => c.status !== "done" || c.verdict === null).length,
+  };
+}
 // D030 §3i Mode B — checkRetryContradiction's downgrade targets, keyed by the retry's own verdict.
 // One table, not parallel ternaries, so target/reason-code can't drift apart if a verdict is added.
 // `contradicted` reverts to "no evidence" (unsupported); `supported`/`partially_supported` revert to
@@ -172,8 +187,15 @@ export class GrounnelPipelineService {
       throw err;
     }
 
+    // Snapshot the AUTHORITATIVE counts from Redis alongside the status. grounnel_claims rows are
+    // best-effort, so a dropped one silently shrinks every denominator a reader computes from them.
+    const settled = await this.grounnelStore.getStatus(auditId);
     // Best-effort (D023 §7) — Redis is already fully settled; Postgres just needs to catch up.
-    await this.historyStore.updateRun(auditId, { status: "done", completedAt: new Date() });
+    await this.historyStore.updateRun(auditId, {
+      status: "done",
+      completedAt: new Date(),
+      score: settled ? { ...settled.score, counts: countVerdicts(settled.claims) } : null,
+    });
   }
 
   /** D026 §13 — re-tries an unresolved claim against a wider DIY candidate pool; widens evidence only, no new verification logic. Bounded at 2 tiers. */

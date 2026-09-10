@@ -6,6 +6,7 @@ import {
   selectGrounnelClaimsByRunId,
 } from "../db/queries.js";
 import { logger } from "../observability/logger.js";
+import { SharedCountsSchema } from "../contracts/grounnel.schemas.js";
 import type { ClaimSource, SharedAssessment } from "../contracts/grounnel.schemas.js";
 
 const MODULE = "grounnel-history-store";
@@ -92,11 +93,17 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
     // with its status attached (FR-011) — the reader shows the state rather than a partial result
     // dressed up as a finished one.
     const claims = await selectGrounnelClaimsByRunId(run.runId);
+    // Prefer the snapshot written at completion over counting the rows below: those rows are
+    // best-effort, and a dropped one would silently shrink the reader's denominators.
+    const snapshot = (run.score as { counts?: unknown } | null)?.counts;
+    const counts = SharedCountsSchema.safeParse(snapshot);
+
     return {
       status: run.status,
       text: run.text,
       createdAt: run.createdAt.toISOString(),
       completedAt: run.completedAt?.toISOString() ?? null,
+      ...(counts.success ? { counts: counts.data } : {}),
       claims: claims.map((c) => ({
         text: c.claimText,
         verdict: c.verdict,

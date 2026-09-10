@@ -645,6 +645,8 @@ export async function selectGrounnelRunByShareToken(shareToken: string) {
       text: grounnelRuns.text,
       createdAt: grounnelRuns.createdAt,
       completedAt: grounnelRuns.completedAt,
+      // Authoritative verdict tallies snapshotted at completion — the claim rows are best-effort.
+      score: grounnelRuns.score,
     })
     .from(grounnelRuns)
     .where(eq(grounnelRuns.shareToken, shareToken))

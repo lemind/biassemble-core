@@ -139,12 +139,25 @@ export type SharedClaim = z.infer<typeof SharedClaimSchema>;
 
 // FR-011 — a failed or still-running run renders what exists and says so, rather than looking
 // complete. The reader keys on `status`, which is a different state from a null verdict.
+/** Authoritative verdict tallies, snapshotted from Redis at completion. Optional: runs that
+ *  finished before this existed have none, and a reader falls back to counting rows. */
+export const SharedCountsSchema = z.object({
+  supported: z.number().int().nonnegative(),
+  partiallySupported: z.number().int().nonnegative(),
+  unsupported: z.number().int().nonnegative(),
+  unverifiable: z.number().int().nonnegative(),
+  contradicted: z.number().int().nonnegative(),
+  excluded: z.number().int().nonnegative(),
+  noVerdict: z.number().int().nonnegative(),
+});
+
 export const SharedAssessmentSchema = z.object({
   status: GrounnelStatusEnum,
   text: z.string(),
   claims: z.array(SharedClaimSchema),
   createdAt: z.string(),
   completedAt: z.string().nullable(),
+  counts: SharedCountsSchema.optional(),
 });
 
 export type SharedAssessment = z.infer<typeof SharedAssessmentSchema>;
