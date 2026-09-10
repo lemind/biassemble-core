@@ -70,7 +70,7 @@ async function main() {
     SELECT l.created_at::date::text AS d, l.stage || '/' || l.call_type AS k,
            l.model || ' @ ' || l.prompt_version AS v
     FROM grounnel.grounnel_runs r JOIN grounnel.grounnel_llm_calls l ON l.run_id=r.run_id
-    WHERE ${scope} AND l.call_type IN ('primary','eligibility_check','passage_rerank')
+    WHERE ${scope} AND l.call_type IN ('primary','eligibility_check','passage_rerank','url_discovery','url_discovery_uncapped')
     GROUP BY 1,2,3`);
   diff("model + prompt version", ...split(cfg, "k", "v"));
 

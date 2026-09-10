@@ -189,12 +189,21 @@ export class GrounnelPipelineService {
 
     // Snapshot the AUTHORITATIVE counts from Redis alongside the status. grounnel_claims rows are
     // best-effort, so a dropped one silently shrinks every denominator a reader computes from them.
-    const settled = await this.grounnelStore.getStatus(auditId);
+    // Inside its own try: a Redis blip here must not stop the "done" write below, or the run is
+    // stranded at "verifying" forever — updateRun swallows its own errors, this call did not.
+    let snapshot: Record<string, unknown> | undefined;
+    try {
+      const settled = await this.grounnelStore.getStatus(auditId);
+      if (settled) snapshot = { ...settled.score, counts: countVerdicts(settled.claims) };
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "run", auditId, err }, "Could not snapshot counts — run still completes without them");
+    }
     // Best-effort (D023 §7) — Redis is already fully settled; Postgres just needs to catch up.
+    // `score` is OMITTED, never nulled: a blind overwrite would erase a snapshot we cannot rebuild.
     await this.historyStore.updateRun(auditId, {
       status: "done",
       completedAt: new Date(),
-      score: settled ? { ...settled.score, counts: countVerdicts(settled.claims) } : null,
+      ...(snapshot ? { score: snapshot } : {}),
     });
   }
 

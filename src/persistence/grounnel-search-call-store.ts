@@ -46,6 +46,16 @@ export interface GrounnelSearchCallStore {
 /** D023 §6 — closes the real gap this session found: Tavily-fallback usage previously had no durable tracking at all, only short-retention Vercel logs. */
 export class DrizzleGrounnelSearchCallStore implements GrounnelSearchCallStore {
   recordSearchCall(data: Parameters<GrounnelSearchCallStore["recordSearchCall"]>[0]): void {
+    try {
+      this.write(data);
+    } catch (err) {
+      // Telemetry must never reach the caller: one call site runs inside Promise.all, where a
+      // synchronous throw rejects the whole wave and costs the claim every candidate.
+      logger.warn({ module: MODULE, operation: "recordSearchCall", runId: data.runId, err }, "Search-call telemetry failed — continuing");
+    }
+  }
+
+  private write(data: Parameters<GrounnelSearchCallStore["recordSearchCall"]>[0]): void {
     const { excerpt, ...callData } = data;
     waitUntil(
       insertGrounnelSearchCall(callData).catch((err) => {
