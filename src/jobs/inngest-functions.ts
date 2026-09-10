@@ -10,12 +10,13 @@ import { evalNegationPolarityJob } from "./eval-negation-polarity";
 import { evalAttributionTrimJob } from "./eval-attribution-trim";
 import { evalAttributionPromptJob } from "./eval-attribution-prompt";
 import { auditRunJob } from "./audit-run";
+import { reapStuckRunsJob } from "./reap-stuck-runs";
 import type { createRagRetrieveJob } from "./rag-retrieve";
 
 // ragRetrieveJob is constructed in server.ts (needs ragClient + runStore injected)
 // and is undefined when RAG isn't configured for this environment — so the full
 // function list is assembled here rather than exported statically.
 export function buildInngestFunctions(ragRetrieveJob?: ReturnType<typeof createRagRetrieveJob>) {
-  const base = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob, evalDatasetRunJob, evalGrounnelRunJob, evalT27bPromptVariantsJob, evalNegationPolarityJob, evalAttributionTrimJob, evalAttributionPromptJob, auditRunJob];
+  const base = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob, evalDatasetRunJob, evalGrounnelRunJob, evalT27bPromptVariantsJob, evalNegationPolarityJob, evalAttributionTrimJob, evalAttributionPromptJob, auditRunJob, reapStuckRunsJob];
   return ragRetrieveJob ? [...base, ragRetrieveJob] : base;
 }
