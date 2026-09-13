@@ -48,3 +48,6 @@ api/evaluations/
 
 # Supabase CLI local link state (machine-specific, created by `supabase link`)
 supabase/.temp/
+
+# Ad-hoc query/debug scripts. Scratch by convention, never committed.
+scripts/_*
