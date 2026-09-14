@@ -361,6 +361,9 @@ export const grounnelClaims = grounnel.table("grounnel_claims", {
   confidence: doublePrecision("confidence"),
   reason: text("reason"),
   sources: jsonb("sources").notNull(), // ClaimSource[]
+  // ClaimCitation[] — VERIFY's quoted sentences. Nullable, not defaulted: rows written before this
+  // column existed never recorded them, and null says "unknown" where [] says "none were produced".
+  citations: jsonb("citations"),
   status: text("status", { enum: ["done", "failed"] }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [

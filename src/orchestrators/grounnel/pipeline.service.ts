@@ -325,7 +325,7 @@ export class GrounnelPipelineService {
         // D031 (review finding) — same incoherence class as the primary VERIFY write site; user-facing only, historyStore keeps raw.
         const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
         await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
-        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [], status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
@@ -369,7 +369,7 @@ export class GrounnelPipelineService {
         // D031 (review finding) — same incoherence class, and c.reason here most likely of all to be affirmative (was supported).
         const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
         await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
-        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [], status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore, verdictAfter: "unsupported", overridden: true, reason: "escalation_reversal_invalidated" },
         ]);
@@ -628,6 +628,7 @@ export class GrounnelPipelineService {
       confidence: null,
       reason,
       sources,
+      citations: [],
       status: "done",
     });
   }
@@ -655,6 +656,7 @@ export class GrounnelPipelineService {
           confidence: null,
           reason,
           sources,
+          citations: [],
           status: "failed",
         });
       })
@@ -1149,7 +1151,6 @@ export class GrounnelPipelineService {
         const userFacingReason = composeUserFacingReason(verdict, currentPassGateEvents, citations.length, reason);
         const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason: userFacingReason, sources, citations };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
-        // D027 §4 — deliberately no `citations` here: historyStore's Postgres row doesn't carry it (out of scope for this change).
         await this.historyStore.createClaim({
           claimId: item.claim.id,
           runId: auditId,
@@ -1160,6 +1161,9 @@ export class GrounnelPipelineService {
           confidence,
           reason,
           sources,
+          // The same citations written to Redis above — persisting them is what lets a shared link
+          // render the page the runner saw, instead of falling back to numbering raw sources.
+          citations,
           status: "done",
         });
         // Buffered until here, flushed only after the claim row above — grounnel_gate_events.claimId

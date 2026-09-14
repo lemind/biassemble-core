@@ -240,6 +240,7 @@ export class GrounnelExtractService {
       confidence: null,
       reason,
       sources: [],
+      citations: [],
       status: "done",
     });
   }

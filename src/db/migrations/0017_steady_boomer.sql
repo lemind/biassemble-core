@@ -1,0 +1,1 @@
+ALTER TABLE "grounnel"."grounnel_claims" ADD COLUMN "citations" jsonb;

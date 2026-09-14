@@ -131,6 +131,13 @@ export const SharedClaimSchema = z.object({
   confidence: z.number().min(0).max(1).nullable(),
   reason: z.string().nullable(),
   sources: z.array(ClaimSourceSchema),
+  // Empty for every run from before the column existed, and for any claim VERIFY never quoted —
+  // a reader falls back to numbering `sources`, so the page renders either way.
+  citations: z.array(ClaimCitationSchema).default([]),
+  // Whether verification itself errored, as distinct from a null verdict. Without it a reader has
+  // to guess, and guessed "failed" where the live page says "done" — a different highlight and a
+  // different reference numbering for the same claim.
+  status: z.enum(["done", "failed"]),
   sourceExcerpt: z.string().nullable(),
 });
 

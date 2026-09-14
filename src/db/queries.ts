@@ -678,6 +678,8 @@ export async function selectGrounnelClaimsByRunId(runId: string) {
       confidence: grounnelClaims.confidence,
       reason: grounnelClaims.reason,
       sources: grounnelClaims.sources,
+      citations: grounnelClaims.citations,
+      status: grounnelClaims.status,
       sourceExcerpt: grounnelClaims.sourceExcerpt,
     })
     .from(grounnelClaims)
@@ -709,6 +711,7 @@ export async function insertGrounnelClaim(data: {
   confidence: number | null;
   reason: string | null;
   sources: unknown;
+  citations: unknown;
   status: "done" | "failed";
 }) {
   // D026 §13 — escalation re-processes an already-written claim (upsert, not a fresh row): a plain
@@ -719,7 +722,7 @@ export async function insertGrounnelClaim(data: {
     .values(data)
     .onConflictDoUpdate({
       target: grounnelClaims.claimId,
-      set: { verdict: data.verdict, evidence: data.evidence, confidence: data.confidence, reason: data.reason, sources: data.sources, status: data.status },
+      set: { verdict: data.verdict, evidence: data.evidence, confidence: data.confidence, reason: data.reason, sources: data.sources, citations: data.citations, status: data.status },
     })
     .returning();
   return row;

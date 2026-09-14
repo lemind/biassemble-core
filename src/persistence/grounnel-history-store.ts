@@ -7,7 +7,7 @@ import {
 } from "../db/queries.js";
 import { logger } from "../observability/logger.js";
 import { SharedCountsSchema } from "../contracts/grounnel.schemas.js";
-import type { ClaimSource, SharedAssessment } from "../contracts/grounnel.schemas.js";
+import type { ClaimCitation, ClaimSource, SharedAssessment } from "../contracts/grounnel.schemas.js";
 
 const MODULE = "grounnel-history-store";
 
@@ -44,6 +44,8 @@ export interface GrounnelHistoryStore {
     confidence: number | null;
     reason: string | null;
     sources: ClaimSource[];
+    // VERIFY's quoted sentences — what makes a shared link render the same page the runner saw.
+    citations: ClaimCitation[];
     status: "done" | "failed";
   }): Promise<void>;
 
@@ -110,6 +112,10 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
         confidence: c.confidence,
         reason: c.reason,
         sources: c.sources as ClaimSource[],
+        // null on every row written before the column existed; [] keeps the contract's shape and
+        // lets the reader fall back to numbering sources instead.
+        citations: (c.citations ?? []) as ClaimCitation[],
+        status: c.status,
         sourceExcerpt: c.sourceExcerpt,
       })),
     };
