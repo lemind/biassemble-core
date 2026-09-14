@@ -5,6 +5,7 @@
  * Trigger: event "eval/t27b-prompt-variants" (scripts/trigger-eval-t27b.ts sends it)
  */
 import { randomUUID } from "node:crypto";
+import { generateShareToken } from "../lib/share-token.js";
 import { inngest } from "./client.js";
 import { GeminiProvider } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
@@ -166,6 +167,7 @@ export const evalT27bPromptVariantsJob = inngest.createFunction(
       const runId = randomUUID();
       await historyStore.createRun({
         runId,
+        shareToken: generateShareToken(),
         sessionId: null,
         text: `[t27b-prompt-variants] ${VARIANTS.length} variants x ${FIXTURES.length} fixtures x ${repeats}`,
         source: "eval",

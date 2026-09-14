@@ -186,7 +186,7 @@ export class HybridSearchProvider implements SearchProvider {
       return this.runFallback(query, context);
     }
 
-    const candidates = orderByFetchability(await this.discoverUrls(query));
+    const candidates = orderByFetchability(await this.discoverUrls(query, context));
     // D026 §13 — escalation-only override of MAX_CANDIDATES; a fresh discoverUrls() call above,
     // so a higher tier may surface different/more candidates than a prior tier's discovery did
     // (live search isn't deterministic — same reason every other variance in this pipeline exists).
@@ -333,12 +333,49 @@ export class HybridSearchProvider implements SearchProvider {
     return this.rankByRelevance(query, allResults).slice(0, context?.maxCandidates ?? FALLBACK_RETAINED_CANDIDATES);
   }
 
-  private async discoverUrls(query: string): Promise<Array<{ url: string; title: string }>> {
+  /** Telemetry never breaks retrieval: a throwing store would cost the claim every candidate. */
+  private recordDiscovery(
+    context: { runId: string; claimId: string } | undefined,
+    t0: number,
+    usage: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; totalTokenCount?: number } | null,
+    errorMessage: string | null
+  ): void {
+    if (!context) return;
+    try {
+      // thoughtsTokenCount bills at the OUTPUT rate and is excluded from candidatesTokenCount.
+      const billedOutput = usage ? (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0) : null;
+      this.searchCallStore.recordDiscoveryCall({
+        runId: context.runId,
+        claimId: context.claimId,
+        model: this.geminiModel,
+        status: errorMessage === null ? "success" : "error",
+        inputTokens: usage?.promptTokenCount ?? null,
+        outputTokens: billedOutput,
+        totalTokens: usage?.totalTokenCount ?? null,
+        startedAt: new Date(t0),
+        endedAt: new Date(),
+        durationMs: Date.now() - t0,
+        errorMessage,
+      });
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "recordDiscovery", err }, "Discovery telemetry failed — continuing");
+    }
+  }
+
+  // A maxOutputTokens cap was tried and reverted 2026-09-10: it hit MAX_TOKENS before the tool
+  // result 57% of the time, so the retries cancelled out the 2.4% saving. Spec 018 tasks.md.
+  private async discoverUrls(
+    query: string,
+    context?: { runId: string; claimId: string }
+  ): Promise<Array<{ url: string; title: string }>> {
     const url = `${GEMINI_GENERATE_URL}/${this.geminiModel}:generateContent?key=${this.geminiApiKey}`;
     const body = {
       contents: [{ parts: [{ text: `Use the google_search tool to search the web and check this claim: "${query}"` }] }],
       tools: [{ google_search: {} }],
+      // We read groundingChunks and discard the prose entirely (D021 — discovery only, never
+      // verdicts), so the answer is ~1,388 billed output tokens per call we never look at.
     };
+    const t0 = Date.now();
 
     let lastError: unknown;
     for (let attempt = 1; attempt <= DISCOVERY_ATTEMPTS; attempt++) {
@@ -350,6 +387,7 @@ export class HybridSearchProvider implements SearchProvider {
           signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
         });
         if (!response.ok) {
+          this.recordDiscovery(context, t0, null, `HTTP ${response.status}`);
           logger.warn(
             { module: MODULE, operation: "discoverUrls", query, attempt, status: response.status },
             "Gemini grounding returned a non-OK status — retrying"
@@ -359,6 +397,7 @@ export class HybridSearchProvider implements SearchProvider {
           continue;
         }
         const data = await response.json();
+        this.recordDiscovery(context, t0, data?.usageMetadata ?? null, null);
         const chunks: GroundingChunk[] = data?.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
         const rawCandidates = chunks
           .filter((c) => c.web?.uri)
@@ -374,6 +413,7 @@ export class HybridSearchProvider implements SearchProvider {
         return safe;
       } catch (err) {
         lastError = err;
+        this.recordDiscovery(context, t0, null, String(err));
         logger.warn(
           { module: MODULE, operation: "discoverUrls", query, attempt, err: sanitizeErrorForLogging(err) },
           "Gemini grounding request failed — retrying"

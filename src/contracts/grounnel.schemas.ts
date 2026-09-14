@@ -40,6 +40,9 @@ export type ExtractRequest = z.infer<typeof ExtractRequestSchema>;
 
 export const ExtractResponseSchema = z.object({
   id: z.string().uuid(),
+  // Spec 019 T013 — the run's public address, returned at submission because the token is minted
+  // at creation (FR-001). Without it the client has no way to learn the link it is meant to offer.
+  shareToken: z.string(),
 });
 
 export type ExtractResponse = z.infer<typeof ExtractResponseSchema>;
@@ -116,6 +119,54 @@ export const ClaimResultSchema = ClaimObjectSchema.omit({ id: true, text: true, 
 });
 
 export type ClaimResult = z.infer<typeof ClaimResultSchema>;
+
+// ─── Shared assessment — GET /assessment/:token ──────────────
+
+// Spec 019 FR-009 — a PUBLIC shape: no runId, sessionId, prompt versions or telemetry. Anyone
+// holding the link can read this.
+export const SharedClaimSchema = z.object({
+  text: z.string(),
+  verdict: GrounnelVerdictEnum.nullable(),
+  evidence: z.string().nullable(),
+  confidence: z.number().min(0).max(1).nullable(),
+  reason: z.string().nullable(),
+  sources: z.array(ClaimSourceSchema),
+  // Empty for every run from before the column existed, and for any claim VERIFY never quoted —
+  // a reader falls back to numbering `sources`, so the page renders either way.
+  citations: z.array(ClaimCitationSchema).default([]),
+  // Whether verification itself errored, as distinct from a null verdict. Without it a reader has
+  // to guess, and guessed "failed" where the live page says "done" — a different highlight and a
+  // different reference numbering for the same claim.
+  status: z.enum(["done", "failed"]),
+  sourceExcerpt: z.string().nullable(),
+});
+
+export type SharedClaim = z.infer<typeof SharedClaimSchema>;
+
+// FR-011 — a failed or still-running run renders what exists and says so, rather than looking
+// complete. The reader keys on `status`, which is a different state from a null verdict.
+/** Authoritative verdict tallies, snapshotted from Redis at completion. Optional: runs that
+ *  finished before this existed have none, and a reader falls back to counting rows. */
+export const SharedCountsSchema = z.object({
+  supported: z.number().int().nonnegative(),
+  partiallySupported: z.number().int().nonnegative(),
+  unsupported: z.number().int().nonnegative(),
+  unverifiable: z.number().int().nonnegative(),
+  contradicted: z.number().int().nonnegative(),
+  excluded: z.number().int().nonnegative(),
+  noVerdict: z.number().int().nonnegative(),
+});
+
+export const SharedAssessmentSchema = z.object({
+  status: GrounnelStatusEnum,
+  text: z.string(),
+  claims: z.array(SharedClaimSchema),
+  createdAt: z.string(),
+  completedAt: z.string().nullable(),
+  counts: SharedCountsSchema.optional(),
+});
+
+export type SharedAssessment = z.infer<typeof SharedAssessmentSchema>;
 
 // ─── Progress ─────────────────────────────────────────────────
 

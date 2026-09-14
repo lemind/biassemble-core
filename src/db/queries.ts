@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { getDb } from "./config";
 import {
   runs,
@@ -623,6 +623,7 @@ export async function getClaimPassagesByAudit(auditId: string) {
 
 export async function insertGrounnelRun(data: {
   runId: string;
+  shareToken: string;
   sessionId: string | null;
   text: string;
   source: "production" | "eval";
@@ -631,6 +632,59 @@ export async function insertGrounnelRun(data: {
 }) {
   const [row] = await db().insert(grounnelRuns).values(data).returning();
   return row;
+}
+
+// Spec 019 T004. Two queries, not a join: a join fans the run's text out across every claim
+// row, and that text can be tens of kilobytes.
+/** Non-terminal runs old enough that their container is certainly gone. The caller decides what
+ *  each one really was; this only finds them. */
+export async function selectStuckGrounnelRunIds(olderThanMinutes: number, limit: number): Promise<string[]> {
+  const rows = await db()
+    .select({ runId: grounnelRuns.runId })
+    .from(grounnelRuns)
+    .where(
+      and(
+        inArray(grounnelRuns.status, ["extracting", "verifying"]),
+        lt(grounnelRuns.createdAt, new Date(Date.now() - olderThanMinutes * 60_000))
+      )
+    )
+    .limit(limit);
+  return rows.map((r) => r.runId);
+}
+
+export async function selectGrounnelRunByShareToken(shareToken: string) {
+  const [row] = await db()
+    .select({
+      runId: grounnelRuns.runId,
+      status: grounnelRuns.status,
+      text: grounnelRuns.text,
+      createdAt: grounnelRuns.createdAt,
+      completedAt: grounnelRuns.completedAt,
+      // Authoritative verdict tallies snapshotted at completion — the claim rows are best-effort.
+      score: grounnelRuns.score,
+    })
+    .from(grounnelRuns)
+    .where(eq(grounnelRuns.shareToken, shareToken))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function selectGrounnelClaimsByRunId(runId: string) {
+  return db()
+    .select({
+      claimText: grounnelClaims.claimText,
+      verdict: grounnelClaims.verdict,
+      evidence: grounnelClaims.evidence,
+      confidence: grounnelClaims.confidence,
+      reason: grounnelClaims.reason,
+      sources: grounnelClaims.sources,
+      citations: grounnelClaims.citations,
+      status: grounnelClaims.status,
+      sourceExcerpt: grounnelClaims.sourceExcerpt,
+    })
+    .from(grounnelClaims)
+    .where(eq(grounnelClaims.runId, runId))
+    .orderBy(grounnelClaims.createdAt);
 }
 
 export async function updateGrounnelRun(
@@ -657,6 +711,7 @@ export async function insertGrounnelClaim(data: {
   confidence: number | null;
   reason: string | null;
   sources: unknown;
+  citations: unknown;
   status: "done" | "failed";
 }) {
   // D026 §13 — escalation re-processes an already-written claim (upsert, not a fresh row): a plain
@@ -667,7 +722,7 @@ export async function insertGrounnelClaim(data: {
     .values(data)
     .onConflictDoUpdate({
       target: grounnelClaims.claimId,
-      set: { verdict: data.verdict, evidence: data.evidence, confidence: data.confidence, reason: data.reason, sources: data.sources, status: data.status },
+      set: { verdict: data.verdict, evidence: data.evidence, confidence: data.confidence, reason: data.reason, sources: data.sources, citations: data.citations, status: data.status },
     })
     .returning();
   return row;
@@ -676,8 +731,8 @@ export async function insertGrounnelClaim(data: {
 export async function insertGrounnelLlmCall(data: {
   runId: string;
   claimId?: string | null;
-  stage: "extract" | "verify";
-  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "instance_attribution" | "attribution_experiment";
+  stage: "extract" | "verify" | "discovery";
+  callType: "primary" | "fallback" | "consistency_retry" | "consistency_check" | "fill_in" | "passage_rerank" | "eligibility_check" | "instance_attribution" | "attribution_experiment" | "url_discovery";
   provider: string;
   model: string;
   promptVersion: string;

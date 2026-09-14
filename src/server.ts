@@ -14,6 +14,7 @@ import { registerAuditRoutes, type AuditEnqueuer } from "./routes/audit";
 import { registerGrounnelRoutes } from "./routes/grounnel";
 import { inngest } from "./jobs/client";
 import { buildInngestFunctions } from "./jobs/inngest-functions";
+import { createReapStuckRunsJob } from "./jobs/reap-stuck-runs";
 import { createRagRetrieveJob } from "./jobs/rag-retrieve";
 import { DrizzleLlmCallStore } from "./persistence/llm-call-store";
 import { DrizzleRunStore } from "./persistence/run-store";
@@ -31,7 +32,7 @@ import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
 import { TavilySearchProvider } from "./providers/search/tavily-provider";
-import { RedisRateLimiter, UpstashRateLimitRedisClient, type RateLimiter } from "./lib/rate-limit";
+import { RedisRateLimiter, UpstashRateLimitRedisClient, RATE_LIMIT_READS_PER_IP_PER_HOUR, WINDOW_SECONDS, type RateLimiter } from "./lib/rate-limit";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -81,7 +82,9 @@ export function buildApp() {
         extractService: GrounnelExtractService;
         pipelineService: GrounnelPipelineService;
         grounnelStore: RedisGrounnelStore;
+        historyStore: DrizzleGrounnelHistoryStore;
         rateLimiter: RateLimiter;
+        assessmentRateLimiter: RateLimiter;
       }
     | undefined;
   if (env.TAVILY_API_KEY && upstashRedisConfig) {
@@ -100,10 +103,20 @@ export function buildApp() {
       extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore),
       pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore),
       grounnelStore,
+      // Spec 019 — the shared-assessment route reads Postgres directly; Redis expires after 7 days.
+      historyStore,
       // D020 §4 fix — shared across every Lambda instance via the same Upstash connection as
       // grounnelStore, unlike the old in-memory RateLimiter (buckets were per-process, so 5/hour
       // was only ever enforced per instance, not globally).
       rateLimiter: new RedisRateLimiter(new UpstashRateLimitRedisClient(redis)),
+      // Spec 019 T014 — its own key prefix and a far higher ceiling: reading a shared link is
+      // cheap next to running a check, and the two must not share a bucket.
+      assessmentRateLimiter: new RedisRateLimiter(
+        new UpstashRateLimitRedisClient(redis),
+        RATE_LIMIT_READS_PER_IP_PER_HOUR,
+        WINDOW_SECONDS,
+        "ratelimit:assessment"
+      ),
     };
   } else {
     logger.warn(
@@ -155,7 +168,12 @@ export function buildApp() {
 
   server.register(inngestFastify, {
     client: inngest,
-    functions: buildInngestFunctions(ragRetrieveJob),
+    // Only when Grounnel is wired at all — the reaper needs both its stores (see the `grounnel`
+    // block above); without them there are no runs to settle.
+    functions: buildInngestFunctions(
+      ragRetrieveJob,
+      grounnel ? createReapStuckRunsJob(grounnel.grounnelStore, grounnel.historyStore) : undefined
+    ),
     options: {
       serveHost,
     },

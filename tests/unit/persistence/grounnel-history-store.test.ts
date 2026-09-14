@@ -3,11 +3,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockInsertRun = vi.fn();
 const mockUpdateRun = vi.fn();
 const mockInsertClaim = vi.fn();
+const mockSelectRunByToken = vi.fn();
+const mockSelectClaims = vi.fn();
 
 vi.mock("../../../src/db/queries.js", () => ({
   insertGrounnelRun: (...args: unknown[]) => mockInsertRun(...args),
   updateGrounnelRun: (...args: unknown[]) => mockUpdateRun(...args),
   insertGrounnelClaim: (...args: unknown[]) => mockInsertClaim(...args),
+  selectGrounnelRunByShareToken: (...args: unknown[]) => mockSelectRunByToken(...args),
+  selectGrounnelClaimsByRunId: (...args: unknown[]) => mockSelectClaims(...args),
 }));
 
 const { DrizzleGrounnelHistoryStore } = await import("../../../src/persistence/grounnel-history-store.js");
@@ -17,6 +21,8 @@ describe("DrizzleGrounnelHistoryStore (T024) — D023 §7: best-effort, never th
     mockInsertRun.mockReset();
     mockUpdateRun.mockReset();
     mockInsertClaim.mockReset();
+    mockSelectRunByToken.mockReset();
+    mockSelectClaims.mockReset();
   });
 
   it("createRun calls insertGrounnelRun with the exact data given", async () => {
@@ -60,6 +66,7 @@ describe("DrizzleGrounnelHistoryStore (T024) — D023 §7: best-effort, never th
       confidence: 0.9,
       reason: "confirmed",
       sources: [],
+      citations: [{ source: "s1", sentence: 0, url: "https://a.example/x", text: "the sky appears blue" }],
       status: "done" as const,
     };
     await store.createClaim(data);
@@ -79,8 +86,54 @@ describe("DrizzleGrounnelHistoryStore (T024) — D023 §7: best-effort, never th
         confidence: null,
         reason: null,
         sources: [],
+        citations: [],
         status: "failed",
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+// The whole point of the column: a shared link must render the same page the runner saw, which
+// means the quoted sentences have to survive the round trip rather than being rebuilt from sources.
+describe("readAssessmentByToken — citations round-trip (shared link parity)", () => {
+  const run = {
+    runId: "r1",
+    status: "done" as const,
+    text: "The sky is blue.",
+    createdAt: new Date("2026-09-13T00:00:00Z"),
+    completedAt: new Date("2026-09-13T00:01:00Z"),
+    score: null,
+  };
+  const claimRow = {
+    claimText: "The sky is blue.",
+    verdict: "supported" as const,
+    evidence: "the sky appears blue",
+    confidence: 0.9,
+    reason: "confirmed",
+    sources: [],
+    citations: null as unknown,
+    sourceExcerpt: "The sky is blue.",
+  };
+
+  beforeEach(() => {
+    mockSelectRunByToken.mockReset();
+    mockSelectClaims.mockReset();
+  });
+
+  it("passes stored citations through untouched", async () => {
+    const citations = [{ source: "s1", sentence: 2, url: "https://a.example/x", text: "the sky appears blue" }];
+    mockSelectRunByToken.mockResolvedValue(run);
+    mockSelectClaims.mockResolvedValue([{ ...claimRow, citations }]);
+    const store = new DrizzleGrounnelHistoryStore();
+    const assessment = await store.readAssessmentByToken("tok");
+    expect(assessment?.claims[0]?.citations).toEqual(citations);
+  });
+
+  it("reports a pre-column row as [] rather than null, so the reader falls back to sources", async () => {
+    mockSelectRunByToken.mockResolvedValue(run);
+    mockSelectClaims.mockResolvedValue([claimRow]);
+    const store = new DrizzleGrounnelHistoryStore();
+    const assessment = await store.readAssessmentByToken("tok");
+    expect(assessment?.claims[0]?.citations).toEqual([]);
   });
 });

@@ -3,12 +3,14 @@ import { ZodError } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { ExtractRequestSchema } from "../contracts/grounnel.schemas.js";
 import { authHook } from "../lib/auth.js";
+import { isShareTokenShape } from "../lib/share-token.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 import { RateLimitError } from "../providers/gemini.js";
 import { buildGeminiRateLimitMessage, type GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import type { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import type { GrounnelStore } from "../persistence/grounnel-store.js";
+import type { GrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
 import type { RateLimiter } from "../lib/rate-limit.js";
 
 const MODULE = "routes-grounnel";
@@ -38,7 +40,10 @@ export function registerGrounnelRoutes(
     extractService: GrounnelExtractService;
     pipelineService: GrounnelPipelineService;
     grounnelStore: GrounnelStore;
+    historyStore: GrounnelHistoryStore;
     rateLimiter: RateLimiter;
+    /** Separate bucket from `rateLimiter` — a burst of shared-link reads must not block a run. */
+    assessmentRateLimiter: RateLimiter;
   }
 ) {
   server.post("/extract", { preHandler: [authHook] }, async (request, reply) => {
@@ -81,7 +86,7 @@ export function registerGrounnelRoutes(
       return reply.status(502).send({ error: "Extract failed" });
     }
 
-    reply.status(202).send({ id: extracted.id });
+    reply.status(202).send({ id: extracted.id, shareToken: extracted.shareToken });
 
     // No external queue (D020 §3) — eligibility classification + the pipeline both run here, after
     // the response is flushed. waitUntil (D016/assessment.service.ts's own established pattern), not
@@ -120,5 +125,39 @@ export function registerGrounnelRoutes(
     }
 
     return reply.status(200).send(status);
+  });
+
+  // Spec 019 T007 — the ONE unauthenticated route, deliberately outside authHook: a shared link
+  // must open with no credential (FR-004). One token in, one assessment out.
+  server.get("/assessment/:token", async (request, reply) => {
+    const { token } = request.params as { token: string };
+
+    // T014 — before the shape test, so token-guessing is limited too. Keyed on resolveClientIp,
+    // not request.ip: every viewer arrives via the site's proxy, which is one shared bucket.
+    if (!(await services.assessmentRateLimiter.checkAndConsume(resolveClientIp(request)))) {
+      return reply.status(429).send({ error: "Too many requests — try again later." });
+    }
+
+    // T008/FR-010 — malformed, unknown and deleted return the SAME response; separating them makes
+    // this an existence oracle. A runId fails isShareTokenShape on length (FR-003).
+    if (!isShareTokenShape(token)) {
+      return reply.status(404).send({ error: "not_found" });
+    }
+
+    let assessment: Awaited<ReturnType<GrounnelHistoryStore["readAssessmentByToken"]>>;
+    try {
+      assessment = await services.historyStore.readAssessmentByToken(token);
+    } catch (err) {
+      logger.error({ module: MODULE, operation: "GET /assessment/:token", err }, "Shared assessment read failed");
+      return reply.status(503).send({ error: "unavailable" });
+    }
+
+    if (!assessment) {
+      return reply.status(404).send({ error: "not_found" });
+    }
+
+    // T009 — these documents may name private individuals. Links are for passing between people,
+    // not for search results; robots.txt on the site is the other half of this.
+    return reply.status(200).header("X-Robots-Tag", "noindex").send(assessment);
   });
 }

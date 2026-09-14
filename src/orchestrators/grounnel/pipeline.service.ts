@@ -62,6 +62,21 @@ const SEARCH_CONCURRENCY = 20;
 const VERIFY_ATTEMPTS = 3;
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 export const CONFIDENCE_THRESHOLD = 0.6;
+
+/** Verdict tallies a shared reader cannot recompute: Score merges partially_supported with
+ *  unverifiable, and excludes `excluded` entirely. Written once, at completion. */
+export function countVerdicts(claims: { status: string; verdict: string | null }[]) {
+  const of = (v: string) => claims.filter((c) => c.status === "done" && c.verdict === v).length;
+  return {
+    supported: of("supported"),
+    partiallySupported: of("partially_supported"),
+    unsupported: of("unsupported"),
+    unverifiable: of("unverifiable"),
+    contradicted: of("contradicted"),
+    excluded: of("excluded"),
+    noVerdict: claims.filter((c) => c.status !== "done" || c.verdict === null).length,
+  };
+}
 // D030 §3i Mode B — checkRetryContradiction's downgrade targets, keyed by the retry's own verdict.
 // One table, not parallel ternaries, so target/reason-code can't drift apart if a verdict is added.
 // `contradicted` reverts to "no evidence" (unsupported); `supported`/`partially_supported` revert to
@@ -172,8 +187,22 @@ export class GrounnelPipelineService {
       throw err;
     }
 
+    // Authoritative counts from Redis: grounnel_claims rows are best-effort, so a dropped one
+    // shrinks every denominator. Own try — a Redis blip must not stop the "done" write below.
+    let snapshot: Record<string, unknown> | undefined;
+    try {
+      const settled = await this.grounnelStore.getStatus(auditId);
+      if (settled) snapshot = { ...settled.score, counts: countVerdicts(settled.claims) };
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "run", auditId, err }, "Could not snapshot counts — run still completes without them");
+    }
     // Best-effort (D023 §7) — Redis is already fully settled; Postgres just needs to catch up.
-    await this.historyStore.updateRun(auditId, { status: "done", completedAt: new Date() });
+    // `score` is OMITTED, never nulled: a blind overwrite would erase a snapshot we cannot rebuild.
+    await this.historyStore.updateRun(auditId, {
+      status: "done",
+      completedAt: new Date(),
+      ...(snapshot ? { score: snapshot } : {}),
+    });
   }
 
   /** D026 §13 — re-tries an unresolved claim against a wider DIY candidate pool; widens evidence only, no new verification logic. Bounded at 2 tiers. */
@@ -296,7 +325,7 @@ export class GrounnelPipelineService {
         // D031 (review finding) — same incoherence class as the primary VERIFY write site; user-facing only, historyStore keeps raw.
         const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
         await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
-        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [], status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore: "contradicted", verdictAfter: "unsupported", overridden: true, reason: "retry_contradiction_invalidated" },
         ]);
@@ -340,7 +369,7 @@ export class GrounnelPipelineService {
         // D031 (review finding) — same incoherence class, and c.reason here most likely of all to be affirmative (was supported).
         const userFacingReason = rewriteUngroundedAffirmativeReason("unsupported", 0, c.reason);
         await this.grounnelStore.writeClaimResult(auditId, c.id, { status: "done", verdict: "unsupported", evidence: null, confidence: c.confidence, reason: userFacingReason, sources: c.sources, citations: [] });
-        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, status: "done" });
+        await this.historyStore.createClaim({ claimId: c.id, runId: auditId, claimText: c.text, sourceExcerpt: null /* row exists, upsert keeps original */, verdict: "unsupported", evidence: null, confidence: c.confidence, reason: c.reason, sources: c.sources, citations: [], status: "done" });
         this.gateEventStore.recordGateEvents(auditId, c.id, [
           { gate: "retry_reconciliation", verdictBefore, verdictAfter: "unsupported", overridden: true, reason: "escalation_reversal_invalidated" },
         ]);
@@ -599,6 +628,7 @@ export class GrounnelPipelineService {
       confidence: null,
       reason,
       sources,
+      citations: [],
       status: "done",
     });
   }
@@ -626,6 +656,7 @@ export class GrounnelPipelineService {
           confidence: null,
           reason,
           sources,
+          citations: [],
           status: "failed",
         });
       })
@@ -1120,7 +1151,6 @@ export class GrounnelPipelineService {
         const userFacingReason = composeUserFacingReason(verdict, currentPassGateEvents, citations.length, reason);
         const result_: ClaimResult = { status: "done", verdict, evidence, confidence, reason: userFacingReason, sources, citations };
         await this.grounnelStore.writeClaimResult(auditId, item.claim.id, result_);
-        // D027 §4 — deliberately no `citations` here: historyStore's Postgres row doesn't carry it (out of scope for this change).
         await this.historyStore.createClaim({
           claimId: item.claim.id,
           runId: auditId,
@@ -1131,6 +1161,9 @@ export class GrounnelPipelineService {
           confidence,
           reason,
           sources,
+          // The same citations written to Redis above — persisting them is what lets a shared link
+          // render the page the runner saw, instead of falling back to numbering raw sources.
+          citations,
           status: "done",
         });
         // Buffered until here, flushed only after the claim row above — grounnel_gate_events.claimId

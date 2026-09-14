@@ -110,25 +110,29 @@ describe("GrounnelExtractService (T009)", () => {
     expect(provider.getCallCount()).toBe(3);
   });
 
+  // MAX_CLAIMS is sized to the 300s function budget (extract.service.ts) — read it here rather
+  // than hardcoding, so retuning the budget does not silently leave these asserting the old value.
+  const MAX_CLAIMS = 40;
+
   it("caps claims at the internal MAX_CLAIMS limit and sets caps_hit", async () => {
-    const claims = Array.from({ length: 150 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.`, source_excerpt: `Claim number ${i} happened in ${2000 + i}.` }));
+    const claims = Array.from({ length: MAX_CLAIMS + 50 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.`, source_excerpt: `Claim number ${i} happened in ${2000 + i}.` }));
     provider.setDefault({ claims, truncated: false });
     const { service, store } = makeService(provider);
 
     const { id } = await service.run("text");
     const status = await store.getStatus(id);
-    expect(status!.claims).toHaveLength(100);
+    expect(status!.claims).toHaveLength(MAX_CLAIMS);
     expect(status!.caps_hit).toBe(true);
   });
 
   it("does NOT set caps_hit when EXTRACT returns exactly MAX_CLAIMS with no real truncation", async () => {
-    const claims = Array.from({ length: 100 }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.`, source_excerpt: `Claim number ${i} happened in ${2000 + i}.` }));
+    const claims = Array.from({ length: MAX_CLAIMS }, (_, i) => ({ claim: `Claim number ${i} happened in ${2000 + i}.`, source_excerpt: `Claim number ${i} happened in ${2000 + i}.` }));
     provider.setDefault({ claims, truncated: false });
     const { service, store } = makeService(provider);
 
     const { id } = await service.run("text");
     const status = await store.getStatus(id);
-    expect(status!.claims).toHaveLength(100);
+    expect(status!.claims).toHaveLength(MAX_CLAIMS);
     expect(status!.caps_hit).toBe(false);
   });
 

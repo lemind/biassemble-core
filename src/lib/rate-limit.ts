@@ -2,7 +2,11 @@ import type { Redis } from "@upstash/redis";
 
 // v10 §3c — placeholder, not yet confirmed (spec.md Assumption 5, Open Questions).
 export const RATE_LIMIT_PER_IP_PER_HOUR = 5;
+// Spec 019 T014 — deliberately generous: it stops a scraper walking the endpoint, not people
+// opening a link they were sent. A 47-claim run measured 159 KB of response.
+export const RATE_LIMIT_READS_PER_IP_PER_HOUR = 120;
 const WINDOW_MS = 60 * 60 * 1000;
+export const WINDOW_SECONDS = WINDOW_MS / 1000;
 
 /** Fixed window, per IP: exactly RATE_LIMIT_PER_IP_PER_HOUR requests, window starts on that key's
  * first request and resets in full afterward — not sliding/token-bucket. D020 §4 (rate-limit fix). */
@@ -77,11 +81,14 @@ export class RedisRateLimiter implements RateLimiter {
   constructor(
     private readonly redis: RateLimitRedisClient,
     private readonly limit: number = RATE_LIMIT_PER_IP_PER_HOUR,
-    private readonly windowSeconds: number = WINDOW_MS / 1000
+    private readonly windowSeconds: number = WINDOW_MS / 1000,
+    // Parameterised so submissions and shared-assessment reads get separate buckets — sharing one
+    // would let a burst of page views lock a person out of running their own check.
+    private readonly keyPrefix: string = "ratelimit:extract"
   ) {}
 
   async checkAndConsume(ip: string): Promise<boolean> {
-    const count = await this.redis.incrWithWindow(`ratelimit:extract:${ip}`, this.windowSeconds);
+    const count = await this.redis.incrWithWindow(`${this.keyPrefix}:${ip}`, this.windowSeconds);
     return count <= this.limit;
   }
 }

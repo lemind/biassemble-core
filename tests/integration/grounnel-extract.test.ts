@@ -31,8 +31,10 @@ function buildServer(provider: Provider, searchProvider: SearchProvider = NEVER_
     extractService: new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore()),
     pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
     grounnelStore,
+    historyStore: new NoopGrounnelHistoryStore(),
     // High limit — this file exercises /extract's own contract, not rate limiting (T016's job).
     rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return server;
 }

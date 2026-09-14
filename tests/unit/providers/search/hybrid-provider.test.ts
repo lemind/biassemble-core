@@ -26,6 +26,73 @@ class StubFallback implements SearchProvider {
   }
 }
 
+describe("discovery telemetry (2026-09-10)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("counts thought tokens as billed output — they bill at the output rate", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{ groundingMetadata: { groundingChunks: [{ web: { uri: "https://en.wikipedia.org/wiki/X", title: "X" } }] } }],
+            usageMetadata: { promptTokenCount: 707, candidatesTokenCount: 64, thoughtsTokenCount: 500, totalTokenCount: 1271 },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "<html><body>" + "x".repeat(2000) + "</body></html>" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, store);
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    expect(store.discoveryCalls[0].outputTokens).toBe(564);
+  });
+
+  it("records a discovery call that FAILED — a rate-limited day must not look like fewer calls", async () => {
+    const fallback = new StubFallback([{ url: "https://tavily.example", title: "T", domain: "tavily.example", status: "ok", text: "y" }]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve({ ok: false, status: 429, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "x" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, store);
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    expect(store.discoveryCalls.length).toBeGreaterThan(0);
+    expect(store.discoveryCalls[0]).toMatchObject({ status: "error", errorMessage: "HTTP 429" });
+  });
+
+  it("telemetry failure never costs the claim its candidates", async () => {
+    const fallback = new StubFallback([]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return Promise.resolve(geminiGroundingResponse([{ uri: "https://en.wikipedia.org/wiki/X", title: "X" }]));
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "<html><body>" + "x".repeat(2000) + "</body></html>" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const throwing = new NoopGrounnelSearchCallStore();
+    throwing.recordDiscoveryCall = () => { throw new Error("telemetry is down"); };
+
+    const provider = new HybridSearchProvider("k", "gemini-2.5-flash-lite", fallback, throwing);
+    const results = await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    expect(results.length).toBeGreaterThan(0);
+  });
+});
+
 describe("HybridSearchProvider (T008, D021)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

@@ -5,6 +5,7 @@
  * Outcome and the refuted hypothesis are recorded in the ADR, not here.
  */
 import { randomUUID } from "node:crypto";
+import { generateShareToken } from "../lib/share-token.js";
 import { inngest } from "./client.js";
 import { GeminiProvider } from "../providers/gemini.js";
 import { PromptRegistry } from "../prompts/registry.js";
@@ -88,7 +89,7 @@ export const evalAttributionTrimJob = inngest.createFunction(
     const runId = await step.run("create-experiment-run", async () => {
       const id = randomUUID();
       await historyStore.createRun({
-        runId: id, sessionId: null,
+        runId: id, shareToken: generateShareToken(), sessionId: null,
         text: `[attribution-trim] ${trims.length} trims x ${repeats} on ${fixture.id}`,
         source: "eval", maxClaims: 1, truncated: false,
       });

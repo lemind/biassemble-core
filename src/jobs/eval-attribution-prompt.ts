@@ -5,6 +5,7 @@
  * Controls must not move: a `different` on a t-* fixture is a false accusation, not a win.
  */
 import { randomUUID } from "node:crypto";
+import { generateShareToken } from "../lib/share-token.js";
 import { inngest } from "./client.js";
 import { insertBeforeAnchor } from "./prompt-splice.js";
 import { GeminiProvider } from "../providers/gemini.js";
@@ -164,7 +165,7 @@ export const evalAttributionPromptJob = inngest.createFunction(
     const runId = await step.run("create-experiment-run", async () => {
       const id = randomUUID();
       await historyStore.createRun({
-        runId: id, sessionId: null,
+        runId: id, shareToken: generateShareToken(), sessionId: null,
         text: `[attribution-prompt] ${variants.length} variants x ${fixtures.length} fixtures x ${repeats}`,
         source: "eval", maxClaims: fixtures.length, truncated: false,
       });
