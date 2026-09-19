@@ -154,10 +154,13 @@ has none.
   already been handed a token addressing a row that does not exist, and it will 404 forever. Awaiting
   the insert before responding would fix it and put a database round-trip on the submission path.
   Not changed here.
-- **A shared claim has no id and no citations.** FR-009 keeps internal identifiers out, and
-  `grounnel_claims` has never had a citations column, so `SharedClaim` carries neither. The site's
-  T020 must therefore synthesise a key per claim, and a shared assessment shows no inline citation
-  numbers where a live run does. Same limitation the landing-page worked example already has.
+- **A shared claim has no id.** FR-009 keeps internal identifiers out, so the site's T020 must
+  synthesise a key per claim.
+- **Citations: resolved 2026-09-13, but not retroactively.** `grounnel_claims` gained a `citations`
+  column (migration 0017) and `SharedClaim` now carries it, so a shared link renders the same inline
+  reference numbers a live run does. Links created before that have NULL citations and always will —
+  the quotes were never recorded and cannot be recovered from `evidence`. Those fall back to
+  numbering the claim's sources, which is close but not the same page.
 
 ## Out of scope
 
