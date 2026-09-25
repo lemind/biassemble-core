@@ -5,10 +5,6 @@
 import { evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob } from "./eval-assessment";
 import { evalDatasetRunJob } from "./eval-run";
 import { evalGrounnelRunJob } from "./eval-grounnel-run";
-import { evalT27bPromptVariantsJob } from "./eval-t27b-prompt-variants";
-import { evalNegationPolarityJob } from "./eval-negation-polarity";
-import { evalAttributionTrimJob } from "./eval-attribution-trim";
-import { evalAttributionPromptJob } from "./eval-attribution-prompt";
 import { auditRunJob } from "./audit-run";
 import type { createReapStuckRunsJob } from "./reap-stuck-runs";
 import type { createRagRetrieveJob } from "./rag-retrieve";
@@ -20,7 +16,7 @@ export function buildInngestFunctions(
   ragRetrieveJob?: ReturnType<typeof createRagRetrieveJob>,
   reapStuckRunsJob?: ReturnType<typeof createReapStuckRunsJob>
 ) {
-  const base = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob, evalDatasetRunJob, evalGrounnelRunJob, evalT27bPromptVariantsJob, evalNegationPolarityJob, evalAttributionTrimJob, evalAttributionPromptJob, auditRunJob];
+  const base = [evalAssessmentJob, evalGoldenStoryJob, evalNoBiasStoryJob, evalDatasetRunJob, evalGrounnelRunJob, auditRunJob];
   const withRag = ragRetrieveJob ? [...base, ragRetrieveJob] : base;
   return reapStuckRunsJob ? [...withRag, reapStuckRunsJob] : withRag;
 }
