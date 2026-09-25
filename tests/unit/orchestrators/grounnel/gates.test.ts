@@ -3,6 +3,7 @@ import type { GateEventInput } from "../../../../src/persistence/grounnel-gate-e
 import { describe, it, expect } from "vitest";
 import { runGateChain } from "../../../../src/orchestrators/grounnel/pipeline-gate-chain.js";
 import {
+  applyAcronymPresenceGate,
   applyAffirmationEvidenceGate,
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
@@ -1953,5 +1954,56 @@ describe("implicit_negation window (spec 017 T036)", () => {
         negationPassageText: "The 1903 Flyer lifted off from the sands below Kill Devil Hills.",
       })
     ).toBe("contradicted");
+  });
+});
+
+describe("applyAcronymPresenceGate (spec 018 T001) — namesake evidence", () => {
+  // Real run fe3ddf20: VERIFY supported "BMNL" from Millennial Nail Bar pages; BMNL is in no passage.
+  const bmnlClaim = "BMNL connects talented nail technicians with clients looking for professional nail services in the comfort of their own homes.";
+  const mnbPassage = "MNB is an on-demand nail care service provider, that connects the customer to certified nail technicians in a fast and convenient way. Millennial Nail Bar | In-Home Nail Technicians";
+  const gate = (verdict: Verdict, claimText: string, passageText: string) => applyAcronymPresenceGate({ verdict, claimText, passageText });
+
+  it("downgrades a supported namesake to unsupported (the BMNL case)", () => {
+    expect(gate("supported", bmnlClaim, mnbPassage)).toEqual({ verdict: "unsupported", overridden: true, reason: "acronym_absent_from_passages" });
+  });
+
+  it("downgrades partially_supported too; leaves contradicted and non-affirmations alone", () => {
+    expect(gate("partially_supported", bmnlClaim, mnbPassage).verdict).toBe("unsupported");
+    for (const v of ["contradicted", "unsupported", "unverifiable", "excluded"] as Verdict[]) expect(gate(v, bmnlClaim, mnbPassage).overridden).toBe(false);
+  });
+
+  it("does not fire when the acronym is in a passage: any case, plural, possessive, hyphen, entity", () => {
+    expect(gate("supported", bmnlClaim, `${mnbPassage} About Bmnl.`).overridden).toBe(false);
+    expect(gate("supported", "NASA landed on the Moon in 1969.", "In 1969 NASA's Apollo 11 landed.").overridden).toBe(false);
+    expect(gate("supported", "The UNHCR helps refugees.", "Several UNHCRs offices help refugees.").overridden).toBe(false);
+    expect(gate("supported", "COVID19 spread in 2020.", "COVID-19 spread worldwide in 2020.").overridden).toBe(false);
+    expect(gate("supported", "AT&T sold DirecTV.", "AT&amp;T sold DirecTV.").overridden).toBe(false);
+  });
+
+  it("does not fire when a passage spells the acronym out, in any case", () => {
+    expect(gate("supported", "NASA landed on the Moon in 1969.", "The National Aeronautics and Space Administration landed Apollo 11.").overridden).toBe(false);
+    expect(gate("supported", "WWII ended in 1945.", "World War II ended in 1945.").overridden).toBe(false);
+    expect(gate("supported", "The OPEC cartel cut output.", "the organization of the petroleum exporting countries cut output.").overridden).toBe(false);
+  });
+
+  it("ignores roman numerals, acronyms under four characters and all-caps claims", () => {
+    expect(gate("supported", "Louis XIV ruled France.", "Louis the Fourteenth ruled France.").overridden).toBe(false);
+    expect(gate("supported", "The CEO of Apple is Tim Cook.", "Tim Cook is Apple's chief executive.").overridden).toBe(false);
+    expect(gate("supported", "THE EIFFEL TOWER IS IN PARIS", "The Eiffel Tower is in Paris.").overridden).toBe(false);
+  });
+
+  it("reads a Unicode-lettered word as one token, not a trailing acronym", () => {
+    expect(gate("supported", "ŠKODA builds cars.", "Skoda builds cars.").overridden).toBe(false);
+  });
+
+  it("the chain downgrades the BMNL case", () => {
+    const result = runGateChain({
+      verdict: "supported", reason: "The passage states that MNB connects customers to nail technicians.", evidence: mnbPassage.split(". ")[0],
+      claimText: bmnlClaim, passageText: mnbPassage, negationPassageText: mnbPassage, subjectEntity: "BMNL",
+      reasonSupportsVerdict: true, instanceAttribution: null,
+    });
+    expect(result.verdict).toBe("unsupported");
+    expect(result.gateEvents.some((e) => e.gate === "acronym_presence" && e.overridden)).toBe(true);
+    expect(composeUserFacingReason("unsupported", result.gateEvents, 0, "The passage states MNB connects technicians.")).toMatch(/different organisation/);
   });
 });

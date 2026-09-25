@@ -298,6 +298,9 @@ export function rewriteUngroundedAffirmativeReason(verdict: Verdict, citationsCo
   return UNGROUNDED_REASON_REPLACEMENT;
 }
 
+const ACRONYM_NAMESAKE_REASON =
+  "The sources found describe a different organisation with a similar name; none of them mention this claim's subject.";
+
 // D032 §3f/T6b — labels subject_entity's downgrade distinctly; gate behaviour unchanged (D030 §3l/§3m stand).
 const SUBJECT_ENTITY_DOWNGRADE_SUFFIX =
   " Evidence was found but could not be confirmed as being about this claim's specific subject — this is not a finding that no evidence exists.";
@@ -326,5 +329,7 @@ export function composeUserFacingReason(
   if (reason && gateEvents.some((e) => e.gate === "affirmation_evidence" && e.overridden)) {
     return UNGROUNDED_REASON_REPLACEMENT;
   }
+  // spec 018 T001 — VERIFY's reason describes the namesake; replace it rather than show it beside `unsupported`.
+  if (gateEvents.some((e) => e.gate === "acronym_presence" && e.overridden)) return ACRONYM_NAMESAKE_REASON;
   return rewriteUngroundedAffirmativeReason(verdict, citationsCount, reason);
 }

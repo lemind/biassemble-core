@@ -116,7 +116,8 @@ export type GateReason =
   | "claim_reason_no_overlap"
   | "escalation_reversal_invalidated"
   | "escalation_no_valid_evidence"
-  | "subject_entity_mismatch";
+  | "subject_entity_mismatch"
+  | "acronym_absent_from_passages";
 
 export interface LlmCallRecord {
   id: string;
