@@ -136,7 +136,7 @@ pnpm test
 ### Local Dev vs Vercel Deployment
 
 - **Local dev** (`pnpm dev`): runs `src/dev.ts` which starts a long-lived Fastify server on `localhost:3001` via `tsx --watch` (auto-restarts on file changes). Best for development.
-- **Vercel** (`pnpm deploy`): uses `api/index.ts` which exports the Fastify app as a serverless function. Each request is a cold-start Lambda with a 30s timeout. The `/v1/reflection/assessment` endpoint may hit this timeout on Vercel's free plan — consider upgrading to Pro (60s timeout) or running assessment as an async Inngest job for longer-running evaluations.
+- **Vercel** (`pnpm deploy`): `pnpm build` bundles `src/handler.ts` into `api/index.js`, which every route rewrites to. One function, 512 MB, `maxDuration` 300s — the Hobby ceiling, and unraisable. Work that cannot finish inside it runs as an Inngest job, not on the request.
 
 ### Vercel Logs
 

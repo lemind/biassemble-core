@@ -219,3 +219,72 @@ export function applyContradictionEvidenceGate(input: GateOneInput): GateOneResu
 export function applyAffirmationEvidenceGate(input: GateOneInput): GateOneResult {
   return evidenceFloorGate(input, ["supported", "partially_supported"]);
 }
+
+export interface AcronymPresenceInput {
+  verdict: Verdict;
+  claimText: string;
+  passageText: string;
+}
+
+export interface AcronymPresenceResult {
+  verdict: Verdict;
+  overridden: boolean;
+  reason: "acronym_absent_from_passages" | null;
+}
+
+// An all-caps token (hyphen/& allowed, optional plural "s"); Unicode-aware edges so "ŠKODA" isn't read as "KODA".
+const ACRONYM_RE = /(?<![\p{L}\p{N}])([A-Z][A-Z0-9&-]*[A-Z0-9])s?(?![\p{L}\p{N}])/gu;
+const ROMAN_NUMERAL_RE = /^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i;
+const EXPANSION_CONNECTORS = new Set(["of", "and", "for", "the", "de", "&"]);
+// 3-char acronyms (CEO, GDP, DNA, USD) are mostly common nouns a passage spells out or omits.
+const MIN_ACRONYM_LENGTH = 4;
+
+function normaliseAcronymText(text: string): string {
+  return text.replace(/&amp;/gi, "&").replace(/\s*&\s*/g, "&").replace(/-/g, "").toLowerCase();
+}
+
+export function claimAcronyms(claimText: string): string[] {
+  // An all-caps claim is shouting, not naming: every word would read as an acronym.
+  const letters = claimText.match(/[A-Za-z]/g) ?? [];
+  if ((claimText.match(/[A-Z]/g) ?? []).length > letters.length * 0.6) return [];
+  const found = [...claimText.matchAll(ACRONYM_RE)]
+    .map((m) => normaliseAcronymText(m[1]!))
+    .filter((t) => t.length >= MIN_ACRONYM_LENGTH && !ROMAN_NUMERAL_RE.test(t));
+  return [...new Set(found)];
+}
+
+/** Whether consecutive words spell the acronym by initials (or whole words, e.g. "II"), connectors skipped. */
+function isSpelledOut(acronym: string, words: string[]): boolean {
+  for (let i = 0; i < words.length; i++) {
+    if (words[i]![0] !== acronym[0]) continue;
+    let k = 0;
+    for (let j = i; j < words.length && k < acronym.length; j++) {
+      const w = words[j]!;
+      if (w.length > 1 && (ROMAN_NUMERAL_RE.test(w) || /^\d+$/.test(w)) && acronym.startsWith(w, k)) k += w.length;
+      else if (w[0] === acronym[k]) k += 1;
+      else if (!(k > 0 && EXPANSION_CONNECTORS.has(w))) break;
+    }
+    if (k === acronym.length) return true;
+  }
+  return false;
+}
+
+/** Spec 018 T001 — a supported claim's acronym appears in no passage, spelled or expanded: the
+ * evidence is about a namesake. Downgrade-only; `contradicted` is out of scope (Cardinal Rule). */
+export function applyAcronymPresenceGate(input: AcronymPresenceInput): AcronymPresenceResult {
+  const noop = { verdict: input.verdict, overridden: false, reason: null } as const;
+  if (input.verdict !== "supported" && input.verdict !== "partially_supported") return noop;
+  // No cited text means unresolved citations: the affirmation floor owns that case, not this gate.
+  if (!input.passageText.trim()) return noop;
+  const acronyms = claimAcronyms(input.claimText);
+  if (acronyms.length === 0) return noop;
+  const passage = normaliseAcronymText(input.passageText);
+  let words: string[] | null = null;
+  const isAbsent = (a: string) => {
+    if (new RegExp(`(^|[^a-z0-9])${escapeRegExp(a)}s?([^a-z0-9]|$)`).test(passage)) return false;
+    words ??= passage.split(/[^a-z0-9&]+/).filter(Boolean);
+    return !isSpelledOut(a, words);
+  };
+  if (!acronyms.some(isAbsent)) return noop;
+  return { verdict: "unsupported", overridden: true, reason: "acronym_absent_from_passages" };
+}
