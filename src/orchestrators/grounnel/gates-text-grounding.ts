@@ -274,6 +274,8 @@ function isSpelledOut(acronym: string, words: string[]): boolean {
 export function applyAcronymPresenceGate(input: AcronymPresenceInput): AcronymPresenceResult {
   const noop = { verdict: input.verdict, overridden: false, reason: null } as const;
   if (input.verdict !== "supported" && input.verdict !== "partially_supported") return noop;
+  // No cited text means unresolved citations: the affirmation floor owns that case, not this gate.
+  if (!input.passageText.trim()) return noop;
   const acronyms = claimAcronyms(input.claimText);
   if (acronyms.length === 0) return noop;
   const passage = normaliseAcronymText(input.passageText);

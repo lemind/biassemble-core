@@ -36,6 +36,8 @@ export interface GateChainInput {
   // 3 passages; T031 widened that to ~24, which would make a `some(includes)` over it near-vacuous.
   negationPassageText: string;
   subjectEntity: string;
+  // Spec 018 T001 — text of the pages VERIFY cited, not the whole pool; "" abstains.
+  citedPassageText: string;
   // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
   reasonSupportsVerdict: boolean | null;
   // Same threading, spec 013 T21 — the passage-grounded checker's answer for this claim, or null.
@@ -144,7 +146,7 @@ export function runGateChain(input: GateChainInput): GateChainResult {
   // `unverifiable`, so it cannot raise detection; the Addendum 7 re-enable is refuted. Call site skipped.
 
   // Acronym presence (spec 018 T001) — after numeric/year, which can force `supported`, so a namesake promotion is caught too.
-  const acronym = applyAcronymPresenceGate({ verdict, claimText: input.claimText, passageText: input.passageText });
+  const acronym = applyAcronymPresenceGate({ verdict, claimText: input.claimText, passageText: input.citedPassageText });
   gateEvents.push({ gate: "acronym_presence", verdictBefore: verdict, verdictAfter: acronym.verdict, overridden: acronym.overridden, reason: acronym.reason });
   verdict = acronym.verdict;
   if (acronym.overridden) evidence = null;

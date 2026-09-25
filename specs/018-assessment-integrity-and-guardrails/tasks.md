@@ -8,10 +8,11 @@ none of the passages VERIFY saw. Tier 1 answered `unverifiable` (correct); escal
   (4+ chars) appears in no passage, spelled or expanded in any case ("World War II" for WWII), is
   downgraded to `unsupported` with a namesake reason. Pure and downgrade-only. `contradicted` is out of
   scope (Cardinal Rule). It doesn't touch `sameEntity`/`subject_entity` (refuted, 013 T30).
-  Known limits: it checks the whole pooled text, not VERIFY's slice, so an acronym on any pooled page
-  suppresses it. 3-char and word-shaped acronyms (CEO, WHO) never fire.
-- [ ] **T002** Zero-cost simulation over every stored VERIFY answer before wiring: list every
-  firing, read each, and confirm none is a right-entity claim (the must-not-fire check, 015).
+  It checks only the pages VERIFY cited: live run `54f84737` escaped a whole-pool check because an
+  uncited "BMNL Lab" page was pooled. Known limit: 3-char and word-shaped acronyms (CEO, WHO) never fire.
+- [x] **T002** Simulation over stored VERIFY answers (sentence slices, so an upper bound): 97
+  affirmations with a 4+ char acronym; 5 firings, all BMNL namesakes, 0 on right-entity claims. The
+  cited-only check adds exactly one (run `54f84737`).
 - [x] **T003** Unit tests in `gates.test.ts`: the BMNL case fires; the expansion, roman numeral,
   shouting-caps and present-acronym cases do not.
 - [ ] **T004** Golden case `g30-namesake-acronym` (kind `silence`); deployed eval, that case only,

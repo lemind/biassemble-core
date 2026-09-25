@@ -25,6 +25,7 @@ import {
   type ResolvedWithPassage,
   type ScoredSource,
   type Verdict,
+  citedPassageText,
 } from "./pipeline-helpers.js";
 import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, InstanceAttributionResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
 import { stripInstanceSelector, extractInstanceSelector } from "../../lib/instance-selector.js";
@@ -1036,6 +1037,7 @@ export class GrounnelPipelineService {
           passageText,
           negationPassageText,
           subjectEntity: item.claim.subjectEntity,
+          citedPassageText: citedPassageText(citationsBeforeGates, item.passages),
           reasonSupportsVerdict: consistencyMap.get(result.id) ?? null,
           instanceAttribution: attributionMap.get(result.id) ?? null,
         });
@@ -1068,6 +1070,7 @@ export class GrounnelPipelineService {
               passageText,
               negationPassageText,
               subjectEntity: item.claim.subjectEntity,
+              citedPassageText: citedPassageText(retried.citations, item.passages),
               reasonSupportsVerdict: null,
               // Reused, not re-called: this answer depends only on claim + passages, neither of which a retry changes.
               instanceAttribution: attributionMap.get(result.id) ?? null,

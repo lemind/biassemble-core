@@ -149,6 +149,12 @@ export function logReconciliationDowngrade(operation: string, auditId: string, c
   );
 }
 
+/** Spec 018 T001 — full text of each page VERIFY cited, once per page; "" when nothing resolves. */
+export function citedPassageText(citations: ResolvedCitation[], passages: SearchPassage[]): string {
+  const labels = [...new Set(citations.map((c) => c.source))];
+  return labels.map((l) => passages[passageIndexForLabel(l)]?.text ?? "").filter(Boolean).join("\n\n");
+}
+
 // D027 §2 — out-of-range labels are dropped (logged), not thrown; see ADR §2 for why this is safe by construction today.
 export function attachCitationUrls(citations: ResolvedCitation[], passages: SearchPassage[]): ClaimCitation[] {
   const result: ClaimCitation[] = [];

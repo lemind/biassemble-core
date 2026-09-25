@@ -1,4 +1,4 @@
-import { contradictionIsProtected, type Verdict } from "../../../../src/orchestrators/grounnel/pipeline-helpers.js";
+import { citedPassageText, contradictionIsProtected, type Verdict } from "../../../../src/orchestrators/grounnel/pipeline-helpers.js";
 import type { GateEventInput } from "../../../../src/persistence/grounnel-gate-event-store.js";
 import { describe, it, expect } from "vitest";
 import { runGateChain } from "../../../../src/orchestrators/grounnel/pipeline-gate-chain.js";
@@ -1928,6 +1928,7 @@ describe("implicit_negation window (spec 017 T036)", () => {
     evidence: null,
     claimText: "The Wright brothers' 1903 Flyer made the first powered flight at Kitty Hawk.",
     subjectEntity: "",
+    citedPassageText: "",
     reasonSupportsVerdict: null,
     instanceAttribution: null,
   };
@@ -1992,6 +1993,17 @@ describe("applyAcronymPresenceGate (spec 018 T001) — namesake evidence", () =>
     expect(gate("supported", "THE EIFFEL TOWER IS IN PARIS", "The Eiffel Tower is in Paris.").overridden).toBe(false);
   });
 
+  it("citedPassageText joins each cited page once and skips labels with no page", () => {
+    const passages = [{ text: "page A" }, { text: "page B" }] as Parameters<typeof citedPassageText>[1];
+    const cite = (source: string) => ({ source, sentence: 1, text: "" });
+    expect(citedPassageText([cite("B"), cite("B"), cite("A"), cite("Z")], passages)).toBe("page B\n\npage A");
+    expect(citedPassageText([], passages)).toBe("");
+  });
+
+  it("abstains when no cited text resolved", () => {
+    expect(gate("supported", bmnlClaim, "  ").overridden).toBe(false);
+  });
+
   it("reads a Unicode-lettered word as one token, not a trailing acronym", () => {
     expect(gate("supported", "ŠKODA builds cars.", "Skoda builds cars.").overridden).toBe(false);
   });
@@ -1999,8 +2011,8 @@ describe("applyAcronymPresenceGate (spec 018 T001) — namesake evidence", () =>
   it("the chain downgrades the BMNL case", () => {
     const result = runGateChain({
       verdict: "supported", reason: "The passage states that MNB connects customers to nail technicians.", evidence: mnbPassage.split(". ")[0],
-      claimText: bmnlClaim, passageText: mnbPassage, negationPassageText: mnbPassage, subjectEntity: "BMNL",
-      reasonSupportsVerdict: true, instanceAttribution: null,
+      claimText: bmnlClaim, passageText: `${mnbPassage}\n\nResearch – BMNL Lab`, negationPassageText: mnbPassage, subjectEntity: "BMNL",
+      citedPassageText: mnbPassage, reasonSupportsVerdict: true, instanceAttribution: null,
     });
     expect(result.verdict).toBe("unsupported");
     expect(result.gateEvents.some((e) => e.gate === "acronym_presence" && e.overridden)).toBe(true);
