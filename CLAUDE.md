@@ -31,7 +31,7 @@ Prior plan (008-b2b, audit mode) remains at specs/008-b2b/ if still relevant to 
 
 ## Conventions
 
-**Commit messages**: one line, `feat|fix|chore|docs(T0XX): <short desc>`. `docs` may omit `(T0XX)` when the commit spans multiple tasks or isn't task-scoped (e.g. an ADR-only update). Never commit without explicit user request.
+**Commit messages**: one line, `feat|fix|chore|docs(018-T001): <short desc>` — task ID is spec number + task (IDs restart per spec). `docs` may omit it when the commit spans multiple tasks or isn't task-scoped (e.g. an ADR-only update). Never commit without explicit user request.
 
 **PR descriptions**: plain human language, no code identifiers, file paths, line numbers, or test/finding counts. Describe what changed for a person reading it, not what changed in the diff.
 

@@ -630,34 +630,8 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
   - **Files:** `frontend/src/components/grounnel/HighlightedArticle.tsx`; `backend/src/lib/ai/dev-mock-client.ts`; `backend/tests/unit/grounnel-contracts.test.ts`.
   - **Effort:** ~1 hour, as estimated. Frontend-only, no core deploy — not deployed, per standing instruction.
 
-- [x] **T24 — Measure and classify permanent `subject_entity` suppression cost** (D032 §12 Finding B) **DONE (2026-08-30)**
-  - **Background:** D032 §3f established that `unverifiable` conflates three states, one of which is
-    `subject_entity` downgrade (24.9% of all `unverifiable` claims). D030 §3m accepted this as a known
-    cost (~25–30 true claims per 1000 evaluations) but it was never quantified on real cases.
-  - **B0 result: `grounnel_claims.evidence` is nulled by design, every time.**
-    [pipeline-gate-chain.ts:143](../../src/orchestrators/grounnel/pipeline-gate-chain.ts#L143) —
-    `if (gate3.overridden) evidence = null`. Confirmed: 0/310 distinct single-pass firings retain
-    evidence in the persisted column. The 37% of rows that DO show non-null evidence are multi-pass
-    claims where a later retry/fill-in overwrote the null with an unrelated result — not the
-    evidence that caused the original firing. Hand-labeling the stored column directly was ruled out.
-  - **B1 (revised): reconstructed the actual VERIFY input from telemetry instead**, zero API cost —
-    `grounnel_rerank_decisions` (`selected=true`) ⋈ `grounnel_search_pages.excerpt`, same replay
-    technique already used elsewhere in this spec. 310 distinct claims found; 40-row deterministic
-    sample pulled (18 distinct claim/evidence templates — golden-set repeats).
-  - **B2 result: 75% false-trigger rate (30/40 raw, 14/18 by distinct template).** Evidence
-    genuinely confirmed the claim, suppressed on naming form alone — e.g. claim's subject
-    "Wright brothers' fourth flight" vs. evidence's "Wilbur"; "JWST" vs. the spelled-out telescope
-    name. 17.5% (7/40) were correct suppressions of a genuinely false claim (evidence about a
-    different specific instance, e.g. "first flight covered 852 feet" — true fact, wrong flight).
-    7.5% (3/40) uncertain (evidence never addressed the claim's subject at all).
-  - **B3 done — written into D030 §3m addendum**, with the comparison to D030's own 51%
-    aggregate-recovery figure (same concept, larger and more recent sample, same 2–3 claim families
-    D030 already named as the gate's weak spot — not a contradiction, a sharper measurement of it).
-  - **B4 — NOT decided, deliberately.** The measured rate is high enough that D030's own reopening
-    condition ("the gate shows up in a meaningful share of user-visible wrong verdicts") may be met,
-    but that is a product call, not a data call. Recorded in D030, not acted on here.
-  - **Files:** `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md` (§3m addendum). Scratch queries in `scratchpad/t24-b0.mjs`, `t24-b0b.mjs`, `t24-b0c.mjs`, `t24-b1.mjs` (untracked).
-  - **Cost:** Zero API calls — pure telemetry replay throughout.
+- [x] **T24 — Measure and classify permanent `subject_entity` suppression cost** **DONE (2026-08-30)**
+  - ~75% false triggers among firings (D030 §3l). Full entry: `git show ab8ff93:specs/013-grounnel-d032-remediation/tasks.md`.
 
 - [x] **T25 — Characterize contentless-claim eligibility response** (D032 §12 Finding C) **DONE (2026-08-31)**
   - **Finding (2026-08-30):** *"A person really did die in a particular year"* (referent-unresolvable) returns
@@ -729,41 +703,8 @@ predecessor. This is the step that killed 4/4 `subject_entity` fixes before they
     fixture plus a warning log when non-zero. `npx tsc --noEmit` clean, `npx vitest run` 1235/1235
     passing after the fix.
 
-- [x] **T26 — R2 reopened: `subject_entity` mechanism decomposition + 5th fix candidate simulated** **DONE (2026-08-30), STOPPED BY USER REQUEST**
-  - **Trigger:** T24's 75% false-trigger rate met D030 §3m's own reopening condition ("the gate shows
-    up in a meaningful share of user-visible wrong verdicts"). This is investigation, not
-    implementation — same "simulate before implementing" discipline D030 §3n established.
-  - **Root cause found:** `applySubjectEntityGate`'s `evidence` argument
-    ([pipeline.service.ts:836](../../src/orchestrators/grounnel/pipeline.service.ts#L836)) is
-    VERIFY's own narrowly cited sentence(s), not the full retrieved passage. The gate was comparing
-    "does VERIFY's one cited sentence repeat the claim's proper noun," not "is this evidence about
-    the claim's subject."
-  - **Simulation 1 (widen to full passage):** 306/310 (98.7%, corrected denominator — an earlier
-    per-template count double-counted multi-pass claims via join multiplicity, caught before being
-    reported) would never have fired under a full-passage comparison. True semantic-alias cases
-    (M1: "Wright brothers" ↔ "Wilbur" as genuinely different entities) are **~1%** of firings, not
-    the dominant mechanism originally assumed — "Wright" is present elsewhere in the same passage,
-    just not in the narrowly cited sentence.
-  - **But naive widening is unsafe:** confirmed directly — it also "recovers" genuinely false
-    wrong-instance claims (e.g. "the first flight lasted 59 seconds," true fact is about the fourth
-    flight) because the same article legitimately mentions both. Same failure shape as the
-    already-refuted Option A, different mechanism.
-  - **Simulation 2 — 5th candidate, refuted:** widen + reuse `instance-selector.ts` (D030 §3f) to
-    detect a conflicting sequence-selector ("fourth" vs. claim's "first") in the full passage.
-    Recovery dropped to 84/310 (27.1%) — worse than doing nothing — and wrongly overrode the
-    flagship TRUE claim 40/41 times. Cause: the anchor-window logic is calibrated for local,
-    clause-scoped comparison; at full-article scope it finds unrelated true ordinal mentions
-    ("first flight... fourth flight...") within the same historical narrative and treats them as a
-    conflict regardless of correctness.
-  - **Result: 5/5 fix candidates for `subject_entity` (4 from D030 + this one) refuted by simulation
-    before reaching code.** One untested direction noted, not attempted: scope the instance-check to
-    the specific sentence(s) sharing the claim's own numbers/dates, not the whole article. Stopped
-    here at user's explicit request — not attempted.
-  - **Disposition: unchanged, keep `subject_entity` as-is.** The investigation sharpened *why* no fix
-    has worked without producing one that survives simulation.
-  - **Files:** `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`
-    (§3m Addendum 2). Scratch scripts in `scratchpad/r2-*.mjs` (untracked).
-  - **Cost:** Zero API calls throughout — pure telemetry replay + offline simulation.
+- [x] **T26 — R2 reopened: `subject_entity` mechanism decomposition + 5th fix candidate** **DONE (2026-08-30)**
+  - Root cause: the gate read VERIFY's cited sentences, not the passage. Widening refuted (D030 §3m). Full entry: `git show ab8ff93:specs/013-grounnel-d032-remediation/tasks.md`.
 
 - [x] ~~**T13 — FIX-5: prediction exclusion policy**~~ **CLOSED WON'T-DO (2026-08-27)**
   - **Decision: do not reverse D030 §3b.** T4 measured **n=1 across 2,724 eligibility checks**, and
@@ -816,23 +757,8 @@ prompt surfaces subject to D030 §1 live re-verification, and bundling them make
 unattributable (the exact failure mode T22 already demonstrated).
 
 - [x] **T27a — Settle the `subject_entity` firing-count discrepancy** **DONE (2026-08-31)**
-  - **Why first:** this ADR carried four different counts (132, 159, 310, and a review's restatement
-    of 310) with no stated query definition. Both reviews independently refused to size any further
-    work until this was nailed down. Blocking, cheap, zero API cost.
-  - **Result:** all are the same query at different times, plus one different scope. For
-    `gate='subject_entity' AND overridden=true`, as of 2026-08-31: **664** total gate-event rows,
-    **314** `count(DISTINCT claim_id)`, **314** `count(DISTINCT (run_id, claim_id))` (identical — so
-    no cross-run dedup ambiguity), split **253 eval / 61 production**. 310 was the same
-    `DISTINCT claim_id` query on 2026-08-30; 132 was that query earlier in D030's history; 159 was
-    §3m's "full population, not just `g22`" scope. Recorded in D030 §3m Addendum 3 with the standing
-    rule that **a firing count must always be quoted with its query and date** — the bare number
-    moves with traffic.
-  - **Two consequences worth carrying:** (1) 664/314 = 2.1 firings per claim, because retry re-fires
-    the gate — confirmed end-to-end in `55e13495`, where the gate fired on 4 distinct claims but only
-    2 ended `unverifiable`; firing counts overstate user-visible damage ~2×, and a working fix should
-    also cut retry volume (cost, not just accuracy). (2) The corpus is 81% `eval`, so the 98.7%
-    widening figure and the 40/41 flagship refutation are rates over eval runs and must be labelled
-    as such.
+  - Same query at different dates plus one different scope (D030 §3m). Rule: quote a firing count with
+    its query and date. Full entry: `git show ab8ff93:specs/013-grounnel-d032-remediation/tasks.md`.
 
 - [x] **T27 — Finding C: `has_resolvable_referent` on the eligibility contract** (D032 §13) **DONE (2026-08-31), live-verified**
   - **Defect:** `"A person really did die in a particular year."` → `supported` against a real
@@ -932,114 +858,13 @@ unattributable (the exact failure mode T22 already demonstrated).
     positive and negative sets differ by a surface cue (article/number) measures the cue, not the
     semantics.
 
-- [x] **T28 — Finding B: is VERIFY citation-completeness even available as a fix?** (D030 §3m Addendum 3) **CLOSED — Step 2 REJECTED (2026-08-31), user-accepted**
-  - **STEP 1 RESULT (offline, zero API cost — `scripts/t28-passage-inventory.ts`).** 320 distinct
-    firings, 191 scorable (129 skipped: no stored passage, or claim carries no proper noun).
-    **Subject present in the full selected passage: 188/191 = 98.4%** — an independent confirmation
-    of T26's 98.7%, arrived at by a separate query. On the coarse number alone, citation-completeness
-    is available and Step 2 would be permitted.
-  - **Step 2 rejected anyway, on the hand-inspection the reviews required.** Two findings the lexical
-    rate conceals:
-    1. **"Subject present" frequently means scraped boilerplate, not evidence.** For *"Microsoft did
-       not create the iPhone"* the only place "Microsoft" appears is a date-picker widget
-       (`JAN 09 JAN 09 Choose another date OK January 31 1 2 3 …  Microsoft Apps on iOS`); for the
-       Wright claims it is a nav header repeated twice. A prompt instructing VERIFY to add a
-       subject-naming sentence would make it cite chrome. **The 98.4% counts the token, not usable
-       text** — precisely the "lexical overlap is an unsound identity test" caution, now confirmed on
-       real data rather than argued.
-    2. **True M1 is 0, not ~1%.** All 3 "no overlap" cases are `properNounWords` false positives on
-       sentence-initial common nouns — `Researchers`, `One` (from *"One product line revenue…"*), and
-       `Terminators` (an astronomy term). **The gate has zero confirmed genuine entity-mismatch
-       catches across 320 firings**, against a ~75% false-trigger rate (T24).
-  - **Disposition:** Step 2 not run. No VERIFY prompt change, no gate change. The citation-completeness
-    direction is closed — its ceiling is "cite boilerplate", and the behaviour it would protect has no
-    demonstrated instance. This is the 6th refuted direction for `subject_entity`.
-  - **Spun out:** the `properNounWords` defect is filed as T30 — it is the cheaper finding and it
-    affects `applyYearGate` too.
+- [x] **T28 — Finding B: is VERIFY citation-completeness even available as a fix?** **CLOSED — Step 2 REJECTED (2026-08-31)**
+  - The subject "present" in passages was scraped boilerplate (date pickers, nav); 0 confirmed catches
+    in 320 firings (D030 §3l/§3m). Full entry: `git show ab8ff93:specs/013-grounnel-d032-remediation/tasks.md`.
 
-  <details><summary>Original T28 plan (superseded by the Step 1 result above)</summary>
-
-  - **Gate code is frozen.** No sixth lexical patch, no full-passage widen, no instance-selector at
-    article scope, no threshold retune. 5 of 5 candidates already refuted by simulation.
-  - **What is measured vs. what is hypothesis.** Measured: M2 dominates firings (98.7%); the gate is
-    deterministic and its input moves (Germany fired 3× on the 30th, 0× on the 31st, same claim, same
-    article, different VERIFY citation). **Hypothesis, explicitly not established:** that a prompt can
-    reliably make VERIFY cite subject-bearing context. Falsifiable form: *if VERIFY consistently cites
-    sufficient subject-bearing context, the existing gate should stop producing M2 false suppressions
-    without weakening the gate.*
-  - **Step 1 — passage inventory (offline, zero API cost). Do this before drafting any prompt text.**
-    Over the queried firing set (state the query and date per T27a), determine whether the selected
-    passage contains a span that establishes the claim's subject at all. If it frequently does not,
-    **stop** — a prompt cannot cite what was never retrieved, and the problem is a retrieval one.
-  - **Do not conclude from a lexical rate.** `passage.includes("Germany")` is the same unsound
-    identity test the gate itself uses. Use it as a coarse filter only, then hand-inspect the
-    Germany/Wright cases (`German Third Reich` vs `Germany`; `Wilbur` vs `Wright Brothers`) before
-    declaring M2 addressable.
-  - **Step 2 — only if Step 1 is high: VERIFY-only A/B replay over the *same stored passages*,**
-    current prompt vs. current + a citation-completeness block. Score two things: do citations gain a
-    subject-bearing sentence, and does labelled-true → `contradicted` stay at **0** (the Cardinal Rule
-    gate, same pre-registered REVERT rule shape T22 used).
-  - **Prompt wording constraint, if Step 2 is reached.** Stored evidence is already a multi-sentence
-    `...`-joined concatenation that can still omit the subject (today's `"first flight covered
-    approximately 120 feet"` cited three sentences naming Orville, the Wright Flyer, and a Boeing
-    747). The block must instruct VERIFY to **add a subject-naming sentence from the source when it
-    has cited a fact-only sentence** — not to "cite more", which merely lengthens the same
-    subject-less bundle. Nor should it demand the subject appear in the cited sentence itself:
-    a heading, prior sentence, table context, or source title can legitimately establish it. The
-    requirement is that the evidence handed to VERIFY carry enough local context to establish the
-    subject/instance of the asserted fact.
-  - **Do not draft the citation paragraph into `verify/system.json` until Step 1's inventory exists.**
-  </details>
-
-- [ ] **T30 — `properNounWords` treats any capitalised word as a proper noun** — **DOWNGRADED to low priority (2026-08-31)**
-  - `PROPER_NOUN_RE` is `/\b[A-Z][a-zA-Z'-]+\b/g` and `SENTENCE_START_STOPWORDS` covers ~15 words plus
-    month names, so sentence-initial common nouns are read as names: `Researchers`, `One`, `Terminators`
-    all became a claim's "subject" in real firings.
-  - **Blast radius: two gates.** `sameEntity` is shared by `applySubjectEntityGate` and
-    `applyYearGate` (gates-shared.ts) — a bogus name on either side both causes false firings and, when
-    the bogus name happens to appear in the evidence, masks real ones.
-  - **Free to verify** — `gates.ts`-family pure functions, no LLM cost, the one area CLAUDE.md says to
-    keep exhaustively tested. Fix shape: require either a non-sentence-initial position or a
-    multi-token/known-entity signal before accepting a capitalised word as a name.
-  - **ATTEMPT 1 (2026-08-31) — written, REVERTED before commit. Two findings worth keeping.**
-    1. **The fix direction is not uniformly safe.** `sameEntity` is consumed in OPPOSITE senses:
-       `applySubjectEntityGate` suppresses when it returns false, `applyYearGate` **proceeds to force
-       `contradicted`** when it returns true. Dropping names makes `sameEntity` return true more
-       often — safe for the first, but it weakens the second's cross-entity guard and lets it force
-       `contradicted` more freely, the one Cardinal-Rule-unsafe direction. Any fix must be opt-in per
-       call site, never a blanket change to the shared helper.
-    2. **The corroboration rule tried ("a sentence-initial capital counts only if it recurs
-       mid-sentence") is wrong for this input shape.** The gate's anchor is `subjectEntity`, a bare
-       FRAGMENT ("Marwick", "the Wright brothers' fourth flight"), not prose — every token in a
-       fragment is sentence-initial, so the rule drops real names. Caught by two pre-existing g17
-       tests, not by reasoning. Reverted rather than patched with a second heuristic: that is exactly
-       how the v1.1.0 referent block was produced.
-  - **SIMULATED (2026-08-31), `scripts/t30-simulate-extractors.ts`, 191 scorable firings, zero API
-    cost. Both candidates refuted — nothing shipped.**
-
-    | Candidate | Would abstain on | Verdict |
-    | --- | --- | --- |
-    | A — keep a sentence-initial capital only if it recurs mid-sentence | 114 (59.7%) | Refuted: breaks on the bare-fragment `subjectEntity` anchor (attempt 1 above) |
-    | B — drop a capital that also appears lowercase in claim+evidence | 92 (48.2%) | Refuted: see below |
-
-    Candidate B correctly drops `Strawberries` ("Strawberries are not classified as true berries")
-    and `Services` — real instances of the bug. But it also drops **`Apple`** (across 8 Apple-earnings
-    claims) and **`Wright`**, because the fruit "apple" and the word "wright" occur lowercase
-    elsewhere in the retrieved passage. The rule is a coincidence heuristic, not an identity test:
-    whether a common noun happens to share a spelling with a company says nothing about whether the
-    claim names an entity. It would behave unpredictably on unseen text.
-  - **The result reframes the task.** Both candidates "work" only by making the gate abstain on
-    ~50–60% of its own firings. Combined with T28 Step 1 — **zero confirmed genuine catches across
-    320 firings**, against T24's ~75% false-trigger rate — every extractor fix is just a partial,
-    unprincipled disabling of a gate with no demonstrated benefit. That is candidate 7 refuted for
-    this gate.
-  - **RESOLVED by the T31 disable — the urgency is gone.** `subject_entity` (the consumer where a
-    bogus name caused a FALSE SUPPRESSION) is now disabled. The only remaining consumer is
-    `applyYearGate`, where the bug's effect is the **safe** direction: a bogus claim-side name makes
-    `sameEntity` return false, and the year gate then **abstains** rather than forcing `contradicted`.
-    So the defect now makes that gate slightly over-conservative, which costs recall, not safety.
-  - Keep open as a cleanup item. Do not write another extractor heuristic to chase it — two were
-    already refuted by simulation (above), and the payoff is now small.
+- [ ] **T30 — `properNounWords` treats any capitalised word as a proper noun** — low priority
+  - Two extractor fixes refuted by simulation (D030 §3m). `sameEntity` is shared with `applyYearGate`
+    in the opposite sense, so any fix must be opt-in per call site. Don't add another heuristic. Full entry: `git show ab8ff93:specs/013-grounnel-d032-remediation/tasks.md`.
 
 - [x] **T29 — Housekeeping: delete spent investigation scripts and closed experiment jobs** **DONE (2026-08-31)**
   - `_tmp-poll-run.ts`, `_tmp-poll-run2.ts`, `_tmp-find-runs.ts`, `_tmp-dump-claims.ts`,
@@ -1054,36 +879,9 @@ unattributable (the exact failure mode T22 already demonstrated).
   - Note: these remain registered in Inngest Cloud until archived there; deleting the code only stops
     them being served.
 
-- [x] **T31 — Disable the `subject_entity` gate** (D030 §3m Addendum 6) **DONE (2026-08-31), live-verified**
-  - **Decision:** §3m's retention was premised on rare-but-real M1 catches. T28 Step 1 measured
-    **0 confirmed M1 across 320 firings**; the 3 apparent exceptions were `properNounWords` false
-    positives. Against a ~75% false-trigger rate and 7 refuted fix candidates, the premise is gone.
-  - **Change:** call site skipped in `pipeline-gate-chain.ts`. Nothing deleted — the gate function,
-    its unit tests, and the `"subject_entity"` value in all 4 persistence unions remain, so the
-    historical corpus stays queryable and `git revert` restores it.
-  - **Deliberately NOT changed: `sameEntity` / `properNounWords`.** The helper is consumed in opposite
-    senses — `subject_entity` suppresses on false, `applyYearGate` **forces `contradicted` on true**.
-    Editing the shared extractor to help a disabled gate would weaken the year gate in the one
-    Cardinal-Rule-unsafe direction.
-  - **Live verification, run `fe2d821e` (44 claims) — all pre-registered bars met:**
-
-    | Bar | Required | Actual |
-    | --- | --- | --- |
-    | `subject_entity` gate events | 0 | **0** |
-    | True claims gaining `contradicted` | 0 | **0** — all 6 contradicted are adversarial false claims |
-    | The 3 Wright true claims | `supported` | **all 3 `supported`** |
-    | `unverifiable` in the run | observed | **0**, down from 3 |
-
-    Mix 31 supported / 6 contradicted / 4 unsupported / 3 excluded / 0 unverifiable. T27's exclusions
-    unchanged, so the two changes did not interact.
-  - **Recorded side effect:** T6b's user-facing suffix ("Evidence was found but could not be confirmed
-    as being about this claim's specific subject") can no longer appear — `composeUserFacingReason`'s
-    `subject_entity` branch is unreachable. Correct, but a visible copy change.
-  - **Reversal condition:** a confirmed genuine M1 in production. `git revert` the commit.
-  - **Known non-protection, for the record:** this gate never guarded "same surname, different person"
-    (claim *Charles Bukowski* vs evidence about another Bukowski) — a shared token makes `sameEntity`
-    pass, a gap documented in `gates-shared.ts` itself. Wrong-entity affirmation is guarded by VERIFY,
-    `instance_attribution` (T21) and `claim_reason_overlap`, all untouched.
+- [x] **T31 — Disable the `subject_entity` gate** (D030 §3m) **DONE (2026-08-31), live-verified**
+  - Call site skipped; function, tests and enum value kept. Run `fe2d821e` (44 claims): 0 gate
+    events, 0 true claims gaining `contradicted`, the 3 Wright claims back to `supported`. Full entry: `git show ab8ff93:specs/013-grounnel-d032-remediation/tasks.md`.
 
 - [x] **T32 — `grounnel_runs.status` stuck at `extracting` after all claims finalize** **ROOT-CAUSED + PARTIAL FIX (2026-08-31)**
   - **Cause: a `maxDuration` kill, not a dropped write.** `vercel.json` sets `maxDuration: 300`.

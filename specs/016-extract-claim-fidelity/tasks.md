@@ -251,6 +251,40 @@ real spend as well as fixing fidelity. Ship it alone.
 
 E2 second, in whatever shape T003 dictates. E3 last or never.
 
+## E4/E5 — reported on HN 2026-09-21, investigated, not fixed
+
+A sentence reading *"...the Great Fire of London happened in 1766 and destroyed most of the medieval
+city..."* rendered entirely green: the supported claim was only the second clause, but EXTRACT cited
+the whole sentence (**E4**), and the dedup rule collapsed the text's two dates into the corrected one
+so 1766 was never checked (**E5**). Same bug — the stray figure in the green span *is* the value
+EXTRACT dropped.
+
+**Measured, 2026-09-21, before any fix:**
+
+| | |
+|---|---|
+| Affirmative spans with a figure no claim in the run checked | **139 / 4,482 (3.1%)** |
+| Runs that trigger it | 19 — but only **3 distinct articles**, 17 of them our own `/about` worked example |
+
+Two real-world instances in 286 production runs. Not enough to justify the risk.
+
+**Two fixes were built and both reverted:**
+
+- *Trim the excerpt to the owning clause* — mis-attributes. `"Boeing reported a loss in 2024, but
+  Airbus was profitable in 2025"` hands a Boeing claim the Airbus clause. Also destroys excerpt
+  uniqueness (frontend `indexOf` lands elsewhere) and can strip the subject, excluding a claim at the
+  eligibility gate.
+- *Badge a span whose excerpt states an unchecked figure* — fires on 25.7% of spans for a 3.1%
+  problem, misses decimals (`1.6` vs `16`), and false-positives on `COVID-19`, ISO dates, footnotes.
+- *Prompt: extract both halves of a correction* — review found three routes to reporting an accurate
+  article as wrong (quoted-to-dispute claims, revised figures, rounding). Reverted unscreened.
+
+**If it recurs in organic traffic:** re-run the 3.1% measurement first. Any prompt fix must trigger
+only on explicit correction wording, and must be screened with equal-weight controls that must NOT
+split — recall-only screening is what ships false accusations. Fixing E5 also activates a latent
+frontend bug: both halves land on one sentence, and `matchClaimSpans` overlap resolution deletes one
+from the page while `countClaims` still scores it.
+
 ## Explicitly out of scope
 
 - **Boilerplate/SEO chrome accepted as VERIFY evidence** — spec 013 T28, retrieval side.

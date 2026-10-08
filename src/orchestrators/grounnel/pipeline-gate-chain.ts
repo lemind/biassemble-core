@@ -1,6 +1,7 @@
-// The 11-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 8) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
+// The 12-gate chain applied to one VERIFY result (subject_entity disabled, D030 §3m Addendum 8) — pure/sync/no I/O (D025 §2) so T034/T035's retry can re-run it. Extracted as a free function (D031 split, pure move — it never touched `this`).
 
 import {
+  applyAcronymPresenceGate,
   applyAffirmationEvidenceGate,
   applyClaimReasonOverlapGate,
   applyContradictionEvidenceGate,
@@ -35,6 +36,8 @@ export interface GateChainInput {
   // 3 passages; T031 widened that to ~24, which would make a `some(includes)` over it near-vacuous.
   negationPassageText: string;
   subjectEntity: string;
+  // Spec 018 T001 — text of the pages VERIFY cited, not the whole pool; "" abstains.
+  citedPassageText: string;
   // Threaded in so this function stays pure/sync/no I/O — see D025 §2 for what feeds this.
   reasonSupportsVerdict: boolean | null;
   // Same threading, spec 013 T21 — the passage-grounded checker's answer for this claim, or null.
@@ -141,6 +144,12 @@ export function runGateChain(input: GateChainInput): GateChainResult {
 
   // g17 subject_entity — DISABLED again 2026-09-03 (D030 §3m Addendum 8): the gate only ever writes
   // `unverifiable`, so it cannot raise detection; the Addendum 7 re-enable is refuted. Call site skipped.
+
+  // Acronym presence (spec 018 T001) — after numeric/year, which can force `supported`, so a namesake promotion is caught too.
+  const acronym = applyAcronymPresenceGate({ verdict, claimText: input.claimText, passageText: input.citedPassageText });
+  gateEvents.push({ gate: "acronym_presence", verdictBefore: verdict, verdictAfter: acronym.verdict, overridden: acronym.overridden, reason: acronym.reason });
+  verdict = acronym.verdict;
+  if (acronym.overridden) evidence = null;
 
   // Affirmation evidence floor (spec 015 G2) — LAST so it is a real floor: applyNumericGate and
   // applyYearGate can force `supported` after gate #1, and that promotion must also carry evidence.
