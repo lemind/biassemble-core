@@ -9,13 +9,13 @@
 
 A comparison is not part of this slice. Do not build a report script. Do not curl the public check
 and treat it as the reading: that route stores a production run. When the providers work, run the
-existing evaluation job once per provider and read it by hand. Qwen and DeepSeek stay off the form
-until that reading looks acceptable for that provider.
+existing evaluation job once per provider and read it by hand. That reading does not change the
+own-key list.
 
 ## Try a provider on the site
 
 - Run a check without an own key. The form has no provider control, and the result says "Checked
-  with Gemini".
-- Choose **Use my own key**. Gemini is listed. Qwen and DeepSeek are not, until the reading above.
+  with Gemini". The site can run Qwen or DeepSeek on its own keys, and that choice stays hidden.
+- Choose **Use my own key**, pick Gemini, Qwen, or DeepSeek, paste a key, and run.
 - A wrong key shows an error within 10 seconds, before the article is sent and before any claim is
   processed. The message names the problem. The check does not fall back to the site key.

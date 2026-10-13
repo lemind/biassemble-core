@@ -14,10 +14,11 @@ Body is unchanged.
 ## Rules
 
 1. No provider header and no key header → Gemini on the site key. Identical to today.
-2. On `POST /extract`: `gemini` without a key → site key. `deepseek` or `qwen` without a key →
-   `400 provider_requires_own_key`. Either of those with a key, while that provider is unlisted →
-   `400 provider_not_listed`. The later reading does not use this route. It uses the existing
-   evaluation job, which may call an unlisted provider with the deployment key.
+2. On `POST /extract`: no provider and no key → Gemini on the site key. `gemini` without a key →
+   site key. `deepseek` or `qwen` without a key → `400 provider_requires_own_key`, unless the hidden
+   site choice is that provider, in which case the site key for that provider is used. The hidden
+   choice is not a request header. It stays `gemini`. A visitor cannot set it. The later reading
+   does not use this route. It uses the existing evaluation job with the deployment key.
 3. A listed provider with a key is preflighted before the first claim and before the article is
    sent. DeepSeek: `GET /user/balance`. Gemini and Qwen: one tiny completion with a fixed prompt.
    The caller returns a category and a short message, never the raw body. Classification uses the

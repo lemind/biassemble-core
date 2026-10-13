@@ -34,8 +34,9 @@ drops it from Qwen and DeepSeek.
 | id | `gemini` | `deepseek` | `qwen` |
 | API model id | `gemini-2.5-flash-lite` | `deepseek-flash` | `qwen3.7-flash` |
 | endpoint | current Gemini API | `https://api.deepseek.com` | Singapore international |
-| offered on site key | yes (always; no picker) | **no** | **no** |
-| listed with own key now | yes | **no**, until the manual reading | **no**, until the manual reading |
+| offered on the visitor form with no own key | no | no | no |
+| site can run it on the site key | yes, and this is the hidden default | yes, hidden, because it is paid by the site | yes, hidden, because it is paid by the site |
+| selectable with own key | yes | yes | yes |
 | callable from the eval job | yes | yes, with the deployment key | yes, with the deployment key |
 | processed by | Google | DeepSeek (China) | Alibaba Cloud (Singapore) |
 | claim cap | 40 | from measurement | from measurement |

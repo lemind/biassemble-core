@@ -38,6 +38,9 @@
 - Review on 2026-10-13, written into the spec: errors are classified from status and error code;
   JSON-object prompts must contain the word JSON; the later reading is the existing evaluation job,
   not the public check; an invalid visitor key is rejected by a preflight that does not send the
-  article; pricing, when built, is per call. Qwen and DeepSeek stay off the form until that reading
-  looks acceptable. The $10 ceiling and the comparison-result shape are deferred. They are not
-  deliverables of this slice.
+  article; pricing, when built, is per call. The $10 ceiling and the comparison-result shape are
+  deferred. They are not deliverables of this slice.
+- Corrected the same day: an own-key user selects Gemini, Qwen, or DeepSeek. The site can also
+  select any of the three on its own keys. That choice is hidden because it is paid by the site,
+  and a visitor with no key still gets Gemini. The later reading does not remove a provider from
+  the own-key list.

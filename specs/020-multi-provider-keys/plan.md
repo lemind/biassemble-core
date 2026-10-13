@@ -14,11 +14,12 @@ error code: invalid key, no balance, rate limited, unavailable, and model access
 provider a per-run choice instead of a process-wide singleton, and record provider, model and key
 source on every run.
 
-The site default stays Gemini, with no picker. With an own key the user can select Gemini now.
-Qwen and DeepSeek stay off the form until a small manual reading of the existing evaluation job.
-This slice does not build a comparison script or a Stats section. The public check is not the
-reading path: it always stores a production run. The existing evaluation job already stores an
-evaluation run.
+A visitor with no own key sees no picker, and the check stays on Gemini. The site can also run
+Gemini, Qwen, or DeepSeek on its own keys. That choice is hidden for now, because those calls are
+paid by the site, and it stays on Gemini until it is changed. With an own key the user selects
+Gemini, Qwen, or DeepSeek. This slice does not build a comparison script or a Stats section. The
+public check is not the reading path: it always stores a production run. The existing evaluation
+job already stores an evaluation run.
 
 Web search does not change. URL discovery stays on Gemini's Google Search grounding with the site's
 key, for every provider and every key source. The gate chain stays too. A later reading measures
@@ -71,7 +72,8 @@ per claim (FR-012).
   The JSON word and example are appended on the DeepSeek or Qwen request when the shared prompt
   lacks them, so Gemini's prompt text stays as it is.
 - **Data location.** Qwen through the international (Singapore) endpoint only. For a visitor, Qwen
-  and DeepSeek are own-key only, and only after that provider is listed (FR-009, FR-010, FR-017).
+  and DeepSeek are selectable with an own key. The site can also run them on its own keys through a
+  hidden choice that stays on Gemini (FR-009). The visitor form does not show that choice (FR-008, FR-017).
   The later reading uses deployment keys inside the existing evaluation job. It does not call
   `POST /extract`. DeepSeek processes in China.
 - **Evals run deployed.** Gemini is region-blocked from the dev machine. The later reading is the
@@ -97,7 +99,7 @@ rules that govern this repo are in `CLAUDE.md`; the ones that bear here:
 | `gates.ts` kept exhaustive | Gate code stays as it is. It is not provider-proof: four reason-reading gates force `contradicted` from Gemini-tuned English. The later reading looks at their override counts (FR-006, FR-010) |
 | No AI attribution | All commits |
 
-Passes. Post-design re-check: the gate chain is not edited. The later reading uses `grounnel_gate_events` so a gate that stops matching is visible. That reading gates the form listing, not the build.
+Passes. Post-design re-check: the gate chain is not edited. The later reading uses `grounnel_gate_events` so a gate that stops matching is visible. That reading does not change the own-key list.
 
 ## Project Structure
 
@@ -129,7 +131,7 @@ src/
 │   ├── types.ts                 # shared ProviderError: invalid_key, no_balance, rate_limited, unavailable, model_access_denied
 │   ├── gemini.ts                # per-run model and optional key; getGenerativeModel uses that model
 │   ├── openai-compatible.ts     # NEW — DeepSeek and Qwen, JSON-object mode, per-provider max_tokens, code-aware errors
-│   ├── registry.ts              # NEW — ProviderOption table + resolveProvider(choice, key); Qwen and DeepSeek unlisted
+│   ├── registry.ts              # NEW — ProviderOption table + resolveProvider(choice, key); all three selectable with an own key
 │   └── pricing.ts               # LATER — not this slice. Interface below; a flat rate cannot implement it
 ├── orchestrators/grounnel/
 │   ├── extract.service.ts       # takes the per-run provider; model name from it, not env
@@ -155,7 +157,7 @@ src/
 
 ```text
 frontend/src/
-├── components/grounnel/ProviderPicker.tsx   # NEW — own-key only; lists a provider only when the registry says it is listed
+├── components/grounnel/ProviderPicker.tsx   # NEW — own-key only: Gemini, Qwen, DeepSeek. No site-paid picker
 └── lib/providerKey.ts                       # NEW — key in page memory only, not localStorage
 backend/src/
 ├── middleware.ts            # allow the two new request headers in CORS
@@ -281,23 +283,22 @@ Writing the columns on `grounnel_runs` alone does not show them.
 |---|---|---|
 | 1. Keys | one authenticated call for Gemini, DeepSeek, and Qwen | — |
 | 2. Provider plumbing | per-run provider, shared errors, JSON-object prompts, registry, migration 0018, eval job takes a provider | US2, US3 |
-| 3. Site path | no picker; site runs stay on Gemini; provider name on the result and share page | US2 |
-| 4. Own key | key field, preflight, page memory, notice. The form lists Gemini. Qwen and DeepSeek stay unlisted | US3 |
+| 3. Site path | no visitor picker; hidden site choice stays on Gemini; provider name on the result and share page | US2 |
+| 4. Own key | key field, preflight, page memory, notice. The form lists Gemini, Qwen, and DeepSeek | US3 |
 
 The hand reading is after this. It is not a phase and not a script. It uses the evaluation job
-from phase 2. A visitor never gets a provider choice. Qwen and DeepSeek are not on the own-key
-form until that reading looks acceptable for that provider. The public route rejects an unlisted
-provider. The evaluation job does not use that route, so the reading can run first.
+from phase 2. A visitor never gets the site's provider choice. That choice is hidden because it
+spends the site's money, and it stays on Gemini. An own-key user can select all three. The
+evaluation job does not use the public route.
 
 ## Risks
 
 - **Gates tuned on one model.** `reason_consistency`, `implicit_negation`, `reason_year` and
   `reason_ordinal` force `contradicted` from closed English phrases tuned on Gemini. A model that
   phrases the same reason differently makes those gates go quiet, false accusations fall, and a
-  false-accusation-only gate would pass it. The later reading looks at the override counts before
-  that provider is listed. Per-case rates do not show this on their own, and g17's detection floor
-  of 0 would hide `reason_ordinal`. Listing the provider before that reading is the risk this
-  decision refuses.
+  false-accusation-only gate would pass it. The later reading looks at the override counts. It does
+  not take a provider off the own-key list. Per-case rates do not show this on their own, and g17's
+  detection floor of 0 would hide `reason_ordinal`.
 - **Time limit.** A slower provider may not fit 40 claims in 300 s; the cap comes from measurement.
 - **Own-key runs consume the site's free search allowance** (1,500 grounded requests a day). FR-018
   keeps them inside the run limits.

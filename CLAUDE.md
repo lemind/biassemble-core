@@ -1,10 +1,9 @@
 <!-- SPECKIT START -->
 **Active plan**: feature 020 — three providers (Gemini, DeepSeek, Qwen) and bring-your-own key.
-Spec, plan, and tasks written. The site default stays Gemini, with no picker. An own key selects
-Gemini now. Qwen and DeepSeek stay off the form until a small manual reading of the existing
-evaluation job. That job already marks evaluation runs. The public check is production and is not
-the reading path. No comparison feature in this slice. Decisions:
-`docs/decisions/033-multi-provider-keys.md`.
+Spec, plan, and tasks written. A visitor with no own key stays on Gemini, with no picker. The site
+can also run Gemini, Qwen, or DeepSeek on its own keys, and that choice is hidden because it is
+paid by the site. An own key selects Gemini, Qwen, or DeepSeek. No comparison feature in this
+slice. Decisions: `docs/decisions/033-multi-provider-keys.md`.
 
 - specs/020-multi-provider-keys/spec.md — feature specification
 - specs/020-multi-provider-keys/plan.md — implementation plan

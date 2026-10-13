@@ -6,19 +6,18 @@
 
 **Status**: Draft
 
-**Input**: Grounnel runs every check on Gemini today. Add DeepSeek and Qwen. The default stays
-Gemini. A user without their own key does not choose a provider. A user with their own key selects
-Gemini, and Qwen or DeepSeek only after a small manual check of that provider. No comparison
-feature in this slice.
+**Input**: Grounnel runs every check on Gemini today. Add DeepSeek and Qwen. A visitor who does not
+bring a key sees no choice, and the check stays on Gemini. The site can also run Gemini, Qwen, or
+DeepSeek on its own keys. That choice is hidden for now, because those calls are paid by the site.
+A user with their own key selects Gemini, Qwen, or DeepSeek. No comparison feature in this slice.
 
 ## Order of work
 
-Build the two providers and own-key first. The site account stays on Gemini, with no picker.
-Qwen and DeepSeek can run on the evaluation job as soon as the plumbing works. They stay off the
-public form until a small manual check of that provider looks acceptable. That check is not new
-software. It uses the evaluation job the project already has, which marks those runs so they are
-not production. The public check is not that path: a public check is always a production run.
-The operator reads the results by hand. The Stats page is unchanged in this slice.
+Build the two providers and own-key first. The visitor form has no site picker, and a check with
+no own key stays on Gemini. The hidden site choice can select Gemini, Qwen, or DeepSeek and stays
+on Gemini until it is changed. It is not shown, because it spends the site's money. An own-key
+user can select all three. The later reading uses the evaluation job the project already has. It
+does not decide who is listed. The Stats page is unchanged in this slice.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -30,8 +29,8 @@ Stats section in this slice. Those runs are marked as evaluation, the same way t
 runs are, so they do not count as production.
 
 **Why this priority**: It is last, and it is not a feature to build. The bars in FR-010 are what
-the operator looks at then. They do not block building the providers. They do block listing that
-provider on the public form.
+the operator looks at then. They do not block building the providers, and they do not block the
+own-key list.
 
 ---
 
@@ -40,8 +39,8 @@ provider on the public form.
 A visitor who does not enter their own key sees no provider choice. The check runs on Gemini. The
 result and its share link say that Gemini produced it.
 
-**Why this priority**: The default does not change. DeepSeek and Qwen are the two providers being
-added, and a visitor reaches them only with an own key.
+**Why this priority**: A visitor still gets Gemini. The site can run Qwen or DeepSeek on its own
+keys, and that choice stays hidden because it costs the site money.
 
 **Independent Test**: Run a check without entering a key. It completes on Gemini, and the form
 shows no provider picker.
@@ -83,8 +82,7 @@ invalid key and confirm a clear error.
    it, says Google still discovers web sources, and says anyone with the share link can open the
    result.
 5. **Given** a user who turns on own-key, **When** they look at the provider choice, **Then**
-   Gemini is selectable. Qwen is selectable only after its manual check. DeepSeek is selectable
-   only after its own manual check. A provider that has not had that check is absent from the form.
+   Gemini, Qwen, and DeepSeek are all selectable.
 
 ---
 
@@ -146,19 +144,19 @@ No Stats change now. A public comparison section waits until the hand comparison
 
 **Choice on the site's account**
 
-- **FR-008**: A user without their own key MUST NOT be offered a provider choice. The check MUST run
-  on Gemini.
-- **FR-009**: Qwen and DeepSeek MUST NOT run on the site's account for a visitor. They run on that
-  visitor's own key, and only after that provider is listed.
-- **FR-010**: Building a provider is not blocked by a comparison. Listing it on the form is. Qwen
-  and DeepSeek stay off the form, and the public check rejects them, until a small manual reading
-  of the existing evaluation job shows that provider's known gate-trigger cases still fire. Gemini
-  with an own key does not wait: it is the model those gates were tuned on. The reading looks for
-  zero false accusations on true claims, each known gate-trigger case still firing, known false
-  claims meeting the floor already on that case, an unresolved rate no higher than Gemini's on the
-  same pass, and output that still parses, finishes, and keeps citations. Those bars are not
-  software, and they are not a ship gate for the plumbing. There is no experimental label on the
-  form. A provider is either listed or absent.
+- **FR-008**: A visitor without their own key MUST NOT be offered a provider choice. Unless the
+  hidden site choice says otherwise, the check MUST run on Gemini.
+- **FR-009**: The site MUST be able to run Gemini, Qwen, or DeepSeek on the site's own keys. That
+  choice is hidden. It is not on the visitor form in this slice, because those calls are paid by
+  the site. It stays on Gemini until it is changed. A visitor cannot set it. Qwen or DeepSeek
+  without an own key and without that hidden choice is rejected.
+- **FR-010**: Not a ship gate, and not a gate on the own-key list. All three providers are
+  selectable with an own key. When the operator reads a provider by hand, it looks acceptable only
+  if it has zero false accusations on true claims, each known gate-trigger case still fires, known
+  false claims meet the floor already on that case, the unresolved rate is no higher than Gemini's
+  on the same pass, and the output still parses, finishes, and keeps citations. Those bars are not
+  software. They do not block adding the providers, and they do not take a provider off the
+  own-key list.
 - **FR-011**: The result page and the share link MUST show which provider produced the result.
 - **FR-012**: The existing limits (claims per run, runs per period) MUST apply to every provider. A
   provider that cannot finish 40 claims within the hosting time limit MUST get a lower claim limit
@@ -166,9 +164,8 @@ No Stats change now. A public comparison section waits until the hand comparison
 
 **Own key**
 
-- **FR-013**: A user who turns on own-key MUST be able to select every provider that is listed,
-  enter their own key for it, and run checks with it. Gemini is listed. Qwen and DeepSeek are
-  listed only under FR-010.
+- **FR-013**: A user who turns on own-key MUST be able to select Gemini, DeepSeek, or Qwen, enter
+  their own key for that provider, and run checks with it.
 - **FR-014**: An own key pays the selected model provider only. The browser sends it over HTTPS to
   Grounnel for that check. The server MAY hold it in memory only while it makes that provider's
   calls. It MUST NOT be persisted, logged, hashed, prefixed, put in telemetry or traces, or placed
@@ -225,8 +222,9 @@ No Stats change now. A public comparison section waits until the hand comparison
 - **SC-002**: Deferred operational limit, not a deliverable of this slice. The later reading —
   golden set at most twice plus the real texts, on three providers — costs no more than $10 in
   model charges. No report is generated to enforce it.
-- **SC-003**: The site account offers no provider choice and runs on Gemini. Qwen and DeepSeek run
-  only with an own key.
+- **SC-003**: A visitor sees no provider choice and the check runs on Gemini. An own-key user can
+  select Gemini, Qwen, or DeepSeek. The site can also select any of the three on its own keys, and
+  that control stays hidden.
 - **SC-004**: A user who does not change the provider completes a check in exactly the same steps as
   today.
 - **SC-005**: With a valid own key, a user goes from entering the key to a running check in one extra
@@ -250,8 +248,10 @@ No Stats change now. A public comparison section waits until the hand comparison
   authorization key. A visitor's Gemini key is not assumed to be one. The preflight accepts or
   rejects the key that was actually sent. A standard key that Google rejects is an authentication
   error, with a clear message, not a pipeline failure.
-- Qwen is used through its international (Singapore) region. For a visitor, the default is Gemini,
-  with no picker. DeepSeek and Qwen are own-key only. Gemini is also selectable with an own key.
+- Qwen is used through its international (Singapore) region. A visitor with no own key gets Gemini
+  and no picker. The site can select Gemini, Qwen, or DeepSeek on its own keys, and that choice is
+  hidden because it is paid by the site. With an own key, Gemini, Qwen, and DeepSeek are all
+  selectable.
 - Web search stays on the site's Gemini account for every provider and every key source. A user's
   own key pays only for model calls. Own-key does not keep the text inside the chosen provider.
 - There are no user accounts. The user types the key in the browser. For an own-key run the browser
@@ -271,5 +271,6 @@ No Stats change now. A public comparison section waits until the hand comparison
 - A full benchmark with many passes.
 - A comparison script, a generated report, or a Stats comparison section.
 - Using the public check as the later reading. That path is production.
-- Listing Qwen or DeepSeek on the form before that provider's manual check.
+- Showing the site's provider choice on the visitor form. That choice stays hidden because it is
+  paid by the site.
 - A flat price per provider. When cost is computed later, each call is priced from that call.

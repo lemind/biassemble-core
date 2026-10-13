@@ -4,16 +4,19 @@ Status: **decided, not implemented.** Spec: `specs/020-multi-provider-keys/`.
 
 ## §1. What a visitor can choose
 
-A check with no own key runs on Gemini. The form has no provider picker. DeepSeek and Qwen are the
-two providers being added. With an own key the visitor can select Gemini now. Qwen and DeepSeek
-stay off the form, and the public check rejects them, until the manual reading in §2 looks
-acceptable for that provider. There is no experimental label.
+A check with no own key runs on Gemini. The form has no provider picker. With an own key the
+visitor selects Gemini, Qwen, or DeepSeek.
+
+The site can also run Gemini, Qwen, or DeepSeek on the site's own keys. That choice is hidden. It
+is not on the form, because those calls are paid by the site. It stays on Gemini until it is
+changed. A visitor cannot set it.
 
 There is no comparison feature in this slice. Nothing generates a table or a Stats section.
 
-## §2. When a new provider is listed
+## §2. The later reading does not unlist a provider
 
-Building the provider is not blocked by a comparison. Listing it is.
+Building a provider is not blocked by a comparison. The own-key list is not blocked either. All
+three are selectable with an own key.
 
 The reading uses the existing deployed evaluation job, with a provider argument and the deployment
 key. That job already stores `source: "eval"`, so the runs stay out of production statistics. The
@@ -24,9 +27,9 @@ Zero false accusations on the golden set is not enough. `reason_consistency`, `i
 `reason_year` and `reason_ordinal` force `contradicted` from English phrases tuned on Gemini. A
 model that phrases the same reason differently makes those gates go quiet, and false accusations
 fall because the backstop stopped firing. The reading looks at each gate's override count. A
-provider whose overrides disappear on cases where Gemini's still fire is not listed. Qwen and
-DeepSeek are read separately. g17's detection floor of 0 does not drop `reason_ordinal` out of
-that count. Gemini with an own key does not wait: it is the model those gates were tuned on.
+provider whose overrides disappear on cases where Gemini's still fire has failed that reading.
+Qwen and DeepSeek are read separately. g17's detection floor of 0 does not drop `reason_ordinal`
+out of that count. The reading does not remove the provider from the own-key list.
 
 The same reading also looks for known false claims meeting the floor already on that case, an
 unresolved rate no higher than Gemini's on the same pass, and output that still parses, finishes,
