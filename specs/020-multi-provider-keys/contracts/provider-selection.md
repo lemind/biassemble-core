@@ -15,13 +15,23 @@ Body is unchanged.
 
 1. No provider header and no key header → Gemini on the site key. Identical to today.
 2. On `POST /extract`: `gemini` without a key → site key. `deepseek` or `qwen` without a key →
-   `400 provider_requires_own_key`. The eval job does not call this route. It builds the provider
-   in-process with the deployment keys, which is the FR-009 exception for the comparison.
-3. Key present → validated against the chosen provider before the first claim. Each provider maps
-   its own HTTP status onto one shared error type. The caller returns a category, never the raw body:
-   `401 invalid_key`, `402 no_balance`, `429 provider_rate_limited`, `503 provider_unavailable`.
-   A 402 is not retried. A DeepSeek 429 may be retried, and then the run stops. A Gemini quota or
-   depleted-balance error is not retried. None of these fall back to the site key.
+   `400 provider_requires_own_key`. Either of those with a key, while that provider is unlisted →
+   `400 provider_not_listed`. The later reading does not use this route. It uses the existing
+   evaluation job, which may call an unlisted provider with the deployment key.
+3. A listed provider with a key is preflighted before the first claim and before the article is
+   sent. DeepSeek: `GET /user/balance`. Gemini and Qwen: one tiny completion with a fixed prompt.
+   The caller returns a category and a short message, never the raw body. Classification uses the
+   status and the provider error code.
+
+   | Category | Meaning |
+   |---|---|
+   | `invalid_key` | DeepSeek 401. Qwen 401 `invalid_api_key`, including a key from another region. A Gemini key the API rejects, including a standard key. |
+   | `no_balance` | DeepSeek 402. DeepSeek balance `is_available: false`. Qwen quota, arrears, or exhausted balance, including when the status is 429. Gemini quota or depleted balance. Not retried. |
+   | `rate_limited` | DeepSeek 429. Qwen 429 only when the code says throttling. May be retried, then the run stops. |
+   | `unavailable` | 500, 503, or overload. |
+   | `model_access_denied` | Qwen 403 when the model is not purchased or not authorized. Not `invalid_key`. |
+
+   None of these fall back to the site key. A passed preflight does not promise the rest of the run.
 4. The key header is not logged. That is not sufficient. A provider body that echoes the key is
    dropped, and any stored or logged error string is scrubbed before the write.
 5. `POST /extract` still returns `{id, shareToken}` only. `provider` and `model` are added to the

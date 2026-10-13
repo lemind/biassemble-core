@@ -34,9 +34,10 @@
 - Provider names (Gemini, DeepSeek, Qwen) are product choices the user asked for, not implementation
   details, so they appear in the spec.
 - Decided by the user on 2026-10-12: the site account has no provider picker and always runs
-  Gemini. Gemini, Qwen, and DeepSeek are selectable only with the user's own key. Web search stays
-  on the site's account. Keys are kept per browser session by default.
-- Review amendments the same day, checked against the code: a provider is not admitted on false
-  accusations alone; `grounnel_llm_calls.provider` and `.model` already exist; judging cost excludes
-  discovery; the status and share payloads have to carry the provider; error strings are scrubbed;
-  the comparison may use deployment keys without going through the visitor route.
+  Gemini. Web search stays on the site's account. The key stays in page memory only.
+- Review on 2026-10-13, written into the spec: errors are classified from status and error code;
+  JSON-object prompts must contain the word JSON; the later reading is the existing evaluation job,
+  not the public check; an invalid visitor key is rejected by a preflight that does not send the
+  article; pricing, when built, is per call. Qwen and DeepSeek stay off the form until that reading
+  looks acceptable. The $10 ceiling and the comparison-result shape are deferred. They are not
+  deliverables of this slice.
