@@ -13,7 +13,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inngest } from "../src/jobs/client.js";
 
-/** Measured from real runs (D030 §3k): ~226 Gemini calls per full 19-case pass. */
+/** Calls per case, from real runs (D030 §3k measured ~226 calls on the old 19-case set, ~12 each).
+ *  The golden set is 28 cases. Estimate a pass as 28 × this, not 19 × this. */
 const CALLS_PER_CASE_RUN = 12;
 
 const args = process.argv.slice(2);

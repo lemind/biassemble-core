@@ -1,5 +1,14 @@
 <!-- SPECKIT START -->
-**Active plan**: feature 017 — escalation pool union. Escalation re-discovered from scratch each
+**Active plan**: feature 020 — three providers (Gemini, DeepSeek, Qwen) and bring-your-own key.
+Spec, plan, and tasks written. A visitor with no own key stays on Gemini, with no picker. The site
+can also run Gemini, Qwen, or DeepSeek on its own keys, and that choice is hidden because it is
+paid by the site. An own key selects Gemini, Qwen, or DeepSeek. No comparison feature in this
+slice. Decisions: `docs/decisions/033-multi-provider-keys.md`.
+
+- specs/020-multi-provider-keys/spec.md — feature specification
+- specs/020-multi-provider-keys/plan.md — implementation plan
+
+Prior: feature 017 — escalation pool union. Escalation re-discovered from scratch each
 tier and discarded the prior pool: 50 already-selected pages thrown away across 50 tier transitions.
 U1 (carry the pool) is implemented and unit-green; U2 (deployed 3-repeat eval, gate **FA = 0**, plus
 a churn re-query that must read 0) is not run yet.
@@ -39,4 +48,4 @@ Prior plan (008-b2b, audit mode) remains at specs/008-b2b/ if still relevant to 
 
 **Test coverage ceiling (2026-08-10)**: **~60% repo-wide statement coverage is the max to aim for right now — not a floor, a cap.** Token savings beats chasing coverage %. Don't write a new test just to move the number up. Existing tests stay as-is (no pruning), but going forward: default to NOT adding a test — only add one when the bug is in orchestration control flow itself (retry-loop termination, batch splitting, rate-limit handling), not prompt/LLM behavior.
 
-Why 60 and not higher: this codebase already has two regression signals stronger than a unit test for LLM/orchestration-shaped bugs — the 6-gate deterministic chain (`gates.ts`) and the live golden-set eval + `grounnel_gate_events`/`grounnel_llm_calls` telemetry (what actually caught g05/g11/the Emu War finding, not a unit test written in advance). Real coverage as of this note (`npx vitest run --coverage`, `@vitest/coverage-v8`): repo-wide 37% (dragged down by the compiled build artifact `api/index.js`, CLI eval scripts, process entrypoints `server.ts`/`dev.ts`, and DB passthrough wrappers `db/queries.ts` that aren't meant to be unit-tested), but Grounnel's core orchestration (`src/orchestrators/grounnel/`) already sits at ~97% statement/92% branch from 945 tests total. Adding a new hand-crafted `pipeline-service.test.ts` case per future live-eval finding pays token cost to duplicate what the golden set already proves — use a live golden-set re-run to verify LLM-behavior fixes instead. `gates.ts` (pure, zero LLM cost) is the one place still worth keeping exhaustive.
+Why 60 and not higher: this codebase already has two regression signals stronger than a unit test for LLM/orchestration-shaped bugs — the 12-gate chain in `pipeline-gate-chain.ts` (`gates.ts` is only a barrel re-export; the logic is in `gates-*.ts`) and the live golden-set eval + `grounnel_gate_events`/`grounnel_llm_calls` telemetry (what actually caught g05/g11/the Emu War finding, not a unit test written in advance). Admitting another provider still depends on the reason-reading gates actually overriding (D033 §2), not on a false-accusation count alone. Real coverage as of this note (`npx vitest run --coverage`, `@vitest/coverage-v8`): repo-wide 37% (dragged down by the compiled build artifact `api/index.js`, CLI eval scripts, process entrypoints `server.ts`/`dev.ts`, and DB passthrough wrappers `db/queries.ts` that aren't meant to be unit-tested), but Grounnel's core orchestration (`src/orchestrators/grounnel/`) already sits at ~97% statement/92% branch from 945 tests total. Adding a new hand-crafted `pipeline-service.test.ts` case per future live-eval finding pays token cost to duplicate what the golden set already proves — use a live golden-set re-run to verify LLM-behavior fixes instead. The gate functions in `gates-*.ts` (pure, zero LLM cost) are the place still worth keeping exhaustive. `gates.ts` itself has no logic.
