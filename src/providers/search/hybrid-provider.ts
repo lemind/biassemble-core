@@ -7,6 +7,7 @@ import { buildPassageSentences } from "../../orchestrators/grounnel/passage-sent
 import { normalizeUrlKey } from "../../orchestrators/grounnel/pipeline-helpers.js";
 import type { SearchProvider, SearchPassage, SourceStatus } from "./search-provider.js";
 import type { GrounnelSearchCallStore } from "../../persistence/grounnel-search-call-store.js";
+import { scrubErrorMessage } from "../../persistence/error-scrub.js";
 
 const MODULE = "hybrid-search-provider";
 const GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -75,13 +76,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Strips a key embedded in a Gemini URL from an error message — a fetch() failure otherwise leaks the full key in err.message, past pino's redact. D021's research leaked a key this exact way once.
+// A fetch() failure puts the Gemini URL, key and all, in err.message. Pino's redact does not see it. D021.
 function sanitizeErrorForLogging(err: unknown): unknown {
   if (err instanceof Error) {
-    const sanitized = new Error(err.message.replace(/key=[^&\s"]+/gi, "key=[REDACTED]"));
+    const sanitized = new Error(scrubErrorMessage(err.message) ?? err.message);
     sanitized.name = err.name;
     return sanitized;
   }
+  if (typeof err === "string") return scrubErrorMessage(err);
   return err;
 }
 
@@ -355,7 +357,7 @@ export class HybridSearchProvider implements SearchProvider {
         startedAt: new Date(t0),
         endedAt: new Date(),
         durationMs: Date.now() - t0,
-        errorMessage,
+        errorMessage: scrubErrorMessage(errorMessage, [this.geminiApiKey]),
       });
     } catch (err) {
       logger.warn({ module: MODULE, operation: "recordDiscovery", err }, "Discovery telemetry failed — continuing");
@@ -413,7 +415,8 @@ export class HybridSearchProvider implements SearchProvider {
         return safe;
       } catch (err) {
         lastError = err;
-        this.recordDiscovery(context, t0, null, String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        this.recordDiscovery(context, t0, null, message);
         logger.warn(
           { module: MODULE, operation: "discoverUrls", query, attempt, err: sanitizeErrorForLogging(err) },
           "Gemini grounding request failed — retrying"

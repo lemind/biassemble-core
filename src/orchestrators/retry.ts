@@ -1,6 +1,6 @@
 import { logger } from "../observability/logger";
 import { env } from "../lib/env";
-import { RateLimitError } from "../providers/gemini";
+import { RateLimitError } from "../providers/types";
 
 /** Default base delay for retry exponential backoff (ms) */
 const DEFAULT_RETRY_BASE_DELAY_MS = 2000;

@@ -4,7 +4,7 @@ import { PromptRegistry } from "../../../../src/prompts/registry.js";
 import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeGrounnelLlmCallStore } from "../../../mocks/fake-grounnel-llm-call-store.js";
 import { TimeoutError } from "../../../../src/providers/types.js";
-import { RateLimitError } from "../../../../src/providers/gemini.js";
+import { RateLimitError } from "../../../../src/providers/types.js";
 
 // T011 (D030 tasks.md) — orchestration/wiring tests only, mocked provider. This proves the pipeline
 // applies a given classification correctly and fails open on every error shape; it does NOT prove

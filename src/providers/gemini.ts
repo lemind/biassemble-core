@@ -4,30 +4,12 @@ import { logger } from "../observability/logger";
 import { extractJson } from "../parsers/json-from-llm";
 import { zodToGeminiSchema } from "./gemini-schema";
 import type { Provider, CompletionRequest, ProviderResponse, TokenUsage } from "./types";
-import { TimeoutError } from "./types";
+import { RateLimitError, TimeoutError } from "./types";
 
 /** Default temperature for AI provider calls */
 const DEFAULT_TEMPERATURE = 0.7;
 
 const MODULE = "gemini-provider";
-
-/**
- * Thrown when Gemini returns a 429 rate-limit or quota-exhausted error.
- * These should NOT be retried — they will fail again immediately.
- */
-export class RateLimitError extends Error {
-  /** "billing" (credits depleted — never self-clears), "daily" (quota) or "per-minute" (RPM) */
-  readonly limitType: "billing" | "daily" | "per-minute";
-  /** ISO timestamp when the limit resets, if available */
-  readonly resetsAt?: string;
-
-  constructor(message: string, limitType: "billing" | "daily" | "per-minute", resetsAt?: string) {
-    super(message);
-    this.name = "RateLimitError";
-    this.limitType = limitType;
-    this.resetsAt = resetsAt;
-  }
-}
 
 /** Calls Gemini API via Google Generative AI SDK; handles rate limits, markdown-wrapped JSON, and timeout. */
 export class GeminiProvider implements Provider {

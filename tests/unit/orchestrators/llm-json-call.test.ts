@@ -2,8 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { callLlmForJson, type LlmCallCompletionInfo } from "../../../src/orchestrators/llm-json-call.js";
 import { MockProvider } from "../../mocks/mock-provider.js";
-import { RateLimitError } from "../../../src/providers/gemini.js";
-import { TimeoutError } from "../../../src/providers/types.js";
+import { ProviderError, RateLimitError, TimeoutError } from "../../../src/providers/types.js";
 import type { Provider } from "../../../src/providers/types.js";
 
 const Schema = z.object({ value: z.string() });
@@ -186,5 +185,111 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
     ).rejects.toThrow();
     expect(calls).toHaveLength(2);
     for (const c of calls) expect(c).toMatchObject({ status: "error", failureType: "schema_validation" });
+  });
+
+  it.each(["invalid_key", "no_balance", "model_access_denied"] as const)(
+    "does not retry a %s ProviderError — it stops the check",
+    async (category) => {
+      let callCount = 0;
+      const failing: Provider = {
+        mode: "deepseek",
+        completeJson: async () => {
+          callCount++;
+          throw new ProviderError(category, "short");
+        },
+      };
+      const calls: LlmCallCompletionInfo[] = [];
+      await expect(
+        callLlmForJson({
+          provider: failing,
+          system: "test",
+          user: "go",
+          schema: Schema,
+          expectedKeys: ["value"],
+          attempts: 3,
+          module: "test",
+          operation: "stop",
+          onComplete: (info) => calls.push(info),
+        })
+      ).rejects.toMatchObject({ category, message: "short" });
+      expect(callCount).toBe(1);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ status: "error", failureType: "provider_error", errorMessage: "short" });
+    }
+  );
+
+  it("retries a rate_limited ProviderError, then rethrows it so the rest of the check can stop", async () => {
+    let callCount = 0;
+    const failing: Provider = {
+      mode: "deepseek",
+      completeJson: async () => {
+        callCount++;
+        throw new ProviderError("rate_limited", "The provider rate limit stopped this check.");
+      },
+    };
+    const calls: LlmCallCompletionInfo[] = [];
+    await expect(
+      callLlmForJson({
+        provider: failing,
+        system: "test",
+        user: "go",
+        schema: Schema,
+        expectedKeys: ["value"],
+        attempts: 3,
+        module: "test",
+        operation: "rate",
+        onComplete: (info) => calls.push(info),
+      })
+    ).rejects.toMatchObject({ category: "rate_limited" });
+    expect(callCount).toBe(3);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("retries empty content, then throws so the claim can be left unchecked", async () => {
+    let callCount = 0;
+    const failing: Provider = {
+      mode: "deepseek",
+      completeJson: async () => {
+        callCount++;
+        throw new Error("provider returned empty content");
+      },
+    };
+    await expect(
+      callLlmForJson({
+        provider: failing,
+        system: "test",
+        user: "go",
+        schema: Schema,
+        expectedKeys: ["value"],
+        attempts: 3,
+        module: "test",
+        operation: "empty",
+      })
+    ).rejects.toThrow("provider returned empty content");
+    expect(callCount).toBe(3);
+  });
+
+  it("retries an unavailable ProviderError instead of stopping on the first attempt", async () => {
+    let callCount = 0;
+    const failing: Provider = {
+      mode: "qwen",
+      completeJson: async () => {
+        callCount++;
+        throw new ProviderError("unavailable", "The provider is unavailable.");
+      },
+    };
+    await expect(
+      callLlmForJson({
+        provider: failing,
+        system: "test",
+        user: "go",
+        schema: Schema,
+        expectedKeys: ["value"],
+        attempts: 2,
+        module: "test",
+        operation: "outage",
+      })
+    ).rejects.toMatchObject({ category: "unavailable" });
+    expect(callCount).toBe(2);
   });
 });

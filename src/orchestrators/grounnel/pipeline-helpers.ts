@@ -2,7 +2,7 @@
 
 import { logger } from "../../observability/logger.js";
 import { GrounnelVerdictEnum, type ClaimSource, type ClaimCitation } from "../../contracts/grounnel.schemas.js";
-import type { RateLimitError } from "../../providers/gemini.js";
+import type { RateLimitError } from "../../providers/types.js";
 import type { SearchPassage } from "../../providers/search/search-provider.js";
 import type { ResolvedCitation } from "./passage-sentences.js";
 import type { GateEventInput } from "../../persistence/grounnel-gate-event-store.js";

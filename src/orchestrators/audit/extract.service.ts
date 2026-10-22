@@ -4,7 +4,7 @@ import { env } from "../../lib/env.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
-import { RateLimitError } from "../../providers/gemini.js";
+import { RateLimitError } from "../../providers/types.js";
 import { isPastDeadline } from "../retry.js";
 import { EXTRACT_RESPONSE_KEYS, ExtractedClaimSchema } from "../../contracts/audit-internal.schemas.js";
 import { generateClaimId } from "../../lib/audit-identifiers.js";

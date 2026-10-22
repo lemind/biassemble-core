@@ -19,6 +19,7 @@ import {
   grounnelGateEvents,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus, GateReason } from "../persistence/types";
+import { scrubErrorMessage } from "../persistence/error-scrub";
 import type { LlmCall } from "./schema";
 
 function db() {
@@ -167,6 +168,7 @@ export async function recordLlmCall(
     .insert(llmCalls)
     .values({
       ...data,
+      errorMessage: scrubErrorMessage(data.errorMessage),
       startedAt: new Date(data.startedAt),
       endedAt: new Date(data.endedAt),
     })
@@ -202,7 +204,7 @@ export async function updateLlmCallFailure(
     .set({
       status: "error",
       failureType,
-      errorMessage
+      errorMessage: scrubErrorMessage(errorMessage),
     } as Partial<LlmCall>)
     .where(eq(llmCalls.id, id));
 }
@@ -750,7 +752,10 @@ export async function insertGrounnelLlmCall(data: {
   durationMs: number;
   errorMessage: string | null;
 }) {
-  const [row] = await db().insert(grounnelLlmCalls).values(data).returning();
+  const [row] = await db()
+    .insert(grounnelLlmCalls)
+    .values({ ...data, errorMessage: scrubErrorMessage(data.errorMessage) })
+    .returning();
   return row;
 }
 

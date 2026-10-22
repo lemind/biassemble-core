@@ -30,7 +30,7 @@ import {
 import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, InstanceAttributionResponseSchema, PassageRerankResponseSchema, type VerifyProcessedResult } from "./pipeline-schemas.js";
 import { stripInstanceSelector, extractInstanceSelector } from "../../lib/instance-selector.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
-import { RateLimitError } from "../../providers/gemini.js";
+import { ProviderError, RateLimitError, stoppingProviderFailure } from "../../providers/types.js";
 import { env } from "../../lib/env.js";
 import type { ClaimResult } from "../../contracts/grounnel.schemas.js";
 import type { Provider } from "../../providers/types.js";
@@ -61,6 +61,16 @@ const BATCH_MAX = 8;
 const SEARCH_CONCURRENCY = 20;
 /** VERIFY responses are intermittently unparseable, matches audit's own retry count (D018 §5.10). */
 const VERIFY_ATTEMPTS = 3;
+
+/** Gemini keeps its existing copy. Any other stopping failure uses the short category sentence (D033 §3). */
+function messageForRunStop(err: RateLimitError | ProviderError): string {
+  return err instanceof RateLimitError ? buildGeminiRateLimitMessage(err) : err.message;
+}
+
+function runStopLog(err: RateLimitError | ProviderError): { limitType: RateLimitError["limitType"] } | { category: ProviderError["category"] } {
+  return err instanceof RateLimitError ? { limitType: err.limitType } : { category: err.category };
+}
+
 /** Matches audit's DEFAULT_THRESHOLD (audit.schemas.ts) — below this, verdict goes to unverifiable. */
 export const CONFIDENCE_THRESHOLD = 0.6;
 
@@ -160,9 +170,11 @@ export class GrounnelPipelineService {
             if (remaining.length > 0) {
               logger.warn(
                 { module: MODULE, operation: "run", auditId, remaining: remaining.length },
-                "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
+                geminiRateLimit instanceof RateLimitError
+                  ? "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
+                  : "Provider stopped the check — stopping remaining batches"
               );
-              await this.degradeBatch(auditId, remaining, buildGeminiRateLimitMessage(geminiRateLimit));
+              await this.degradeBatch(auditId, remaining, messageForRunStop(geminiRateLimit));
             }
             break;
           }
@@ -585,9 +597,9 @@ export class GrounnelPipelineService {
       );
       return ranked.map((r) => ({ source: r.source, lexicalScore: r.lexicalScore, llmScore: r.llmScore }));
     } catch (err) {
-      // A RateLimitError here doesn't stop other in-flight claims (unlike other call sites) — acceptable, fail-open still degrades correctly; tagged so it's observable.
+      // A stopping provider failure here doesn't stop other in-flight claims (unlike other call sites) — acceptable, fail-open still degrades correctly; tagged so it's observable.
       logger.warn(
-        { module: MODULE, operation: "rerankPassages", auditId, claimId: claim.id, rateLimited: err instanceof RateLimitError, err },
+        { module: MODULE, operation: "rerankPassages", auditId, claimId: claim.id, rateLimited: stoppingProviderFailure(err) !== null, err },
         "Passage reranking failed — falling back to lexical order + gate #4's relevance filter"
       );
       return this.degradedRank(claim, pool);
@@ -784,17 +796,21 @@ export class GrounnelPipelineService {
     verifyVersion: string,
     previous: { verdict: Verdict; evidence: string | null; reason: string | null },
     diagnostics: Diagnostic[]
-  ): Promise<VerifyProcessedResult | RateLimitError | null> {
+  ): Promise<VerifyProcessedResult | RateLimitError | ProviderError | null> {
     const pairs = [{ id: item.claim.id, claim: item.claim.text, subjectEntity: item.claim.subjectEntity, passages: item.passages.map((p) => ({ text: p.text! })) }];
     const user = this.buildReconciliationUser(previous, diagnostics);
     try {
       const parsed = await this.callVerify(auditId, pairs, "retryVerifyClaim", "consistency_retry", verifyVersion, user);
       return parsed.results.find((r) => r.id === item.claim.id) ?? null;
     } catch (err) {
-      // Propagate, don't swallow — a retry hitting the same rate limit needs the same fail-fast treatment as runBatch's primary call.
-      if (err instanceof RateLimitError) {
-        logger.error({ module: MODULE, operation: "retryVerifyClaim", auditId, claimId: item.claim.id, limitType: err.limitType }, "Gemini rate-limited during a T034 retry");
-        return err;
+      // Propagate, don't swallow — a retry hitting the same limit needs the same fail-fast treatment as runBatch's primary call.
+      const stopped = stoppingProviderFailure(err);
+      if (stopped) {
+        logger.error(
+          { module: MODULE, operation: "retryVerifyClaim", auditId, claimId: item.claim.id, ...runStopLog(stopped) },
+          stopped instanceof RateLimitError ? "Gemini rate-limited during a T034 retry" : "Provider stopped the check during a T034 retry"
+        );
+        return stopped;
       }
       logger.warn({ module: MODULE, operation: "retryVerifyClaim", auditId, claimId: item.claim.id, err }, "VERIFY retry failed — keeping the original gate-processed result");
       return null;
@@ -949,7 +965,7 @@ export class GrounnelPipelineService {
     items: ResolvedWithPassage[],
     parsed: { results: VerifyProcessedResult[] },
     verifyVersion: string,
-    retryState: { rateLimit: RateLimitError | null },
+    retryState: { rateLimit: RateLimitError | ProviderError | null },
     answeredIds: Set<string>,
     gateEventsByClaimId: Map<string, GateEventInput[]>,
     // D030 §3d — same set reconcileContradictedVerdicts populates for reason_ordinal; the
@@ -1054,9 +1070,10 @@ export class GrounnelPipelineService {
             { verdict: initialVerdict, evidence: result.evidence, reason },
             firstPass.diagnostics
           );
-          if (retried instanceof RateLimitError) {
-            retryState.rateLimit = retried;
-          } else if (retried) {
+          const stopped = retried instanceof RateLimitError || retried instanceof ProviderError ? stoppingProviderFailure(retried) : null;
+          if (stopped) {
+            retryState.rateLimit = stopped;
+          } else if (retried && !(retried instanceof RateLimitError) && !(retried instanceof ProviderError)) {
             reason = retried.reason;
             confidence = retried.confidence;
             citationsBeforeGates = retried.citations;
@@ -1179,14 +1196,14 @@ export class GrounnelPipelineService {
     );
   }
 
-  /** Returns the RateLimitError if this batch stopped because Gemini itself is rate-limited — the caller uses this to stop early, not just degrade this one batch. */
+  /** Returns the failure if this batch stopped the rest of the check — the caller uses this to stop early, not just degrade this one batch. */
   private async runBatch(
     auditId: string,
     batch: ResolvedWithPassage[],
     protectedContradictionClaimIds: Set<string>,
     // D030 §3h — only set by escalateUnresolved's tiers; undefined on the primary pass, which has nothing yet to protect.
     priorResults?: Map<string, PriorResult>
-  ): Promise<RateLimitError | null> {
+  ): Promise<RateLimitError | ProviderError | null> {
     const pairs = batch.map((b) => ({ id: b.claim.id, claim: b.claim.text, subjectEntity: b.claim.subjectEntity, passages: b.passages.map((p) => ({ text: p.text! })) }));
     const verifyVersion = this.prompts.getGrounnelVerifyVersion();
     // Best-effort (D023 §7) — every batch stamps the same value; cheap and idempotent, simpler
@@ -1197,10 +1214,14 @@ export class GrounnelPipelineService {
     try {
       parsed = await this.callVerify(auditId, pairs, "runBatch", "primary", verifyVersion);
     } catch (err) {
-      if (err instanceof RateLimitError) {
-        logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: err.limitType }, "Gemini rate-limited during VERIFY — stopping");
-        await this.degradeBatch(auditId, batch, buildGeminiRateLimitMessage(err));
-        return err;
+      const stopped = stoppingProviderFailure(err);
+      if (stopped) {
+        logger.error(
+          { module: MODULE, operation: "runBatch", auditId, ...runStopLog(stopped) },
+          stopped instanceof RateLimitError ? "Gemini rate-limited during VERIFY — stopping" : "Provider stopped the check during VERIFY — stopping"
+        );
+        await this.degradeBatch(auditId, batch, messageForRunStop(stopped));
+        return stopped;
       }
       // A failed VERIFY batch marks its claims not_checked (status: "failed") and the run
       // continues — never fails the whole audit over one bad batch (spec.md Success Criteria).
@@ -1211,13 +1232,18 @@ export class GrounnelPipelineService {
 
     const answeredIds = new Set<string>();
     // Object, not a bare `let`: TS doesn't narrow a closure's mutation across an `await`, so a plain `let` would wrongly narrow to `never`.
-    const retryState: { rateLimit: RateLimitError | null } = { rateLimit: null };
+    const retryState: { rateLimit: RateLimitError | ProviderError | null } = { rateLimit: null };
     const gateEventsByClaimId = new Map<string, GateEventInput[]>();
 
     await this.processVerifyResults(auditId, batch, parsed, verifyVersion, retryState, answeredIds, gateEventsByClaimId, protectedContradictionClaimIds, priorResults);
 
     if (retryState.rateLimit) {
-      logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: retryState.rateLimit.limitType }, "Gemini rate-limited during a T034 retry — stopping remaining batches");
+      logger.error(
+        { module: MODULE, operation: "runBatch", auditId, ...runStopLog(retryState.rateLimit) },
+        retryState.rateLimit instanceof RateLimitError
+          ? "Gemini rate-limited during a T034 retry — stopping remaining batches"
+          : "Provider stopped the check during a T034 retry — stopping remaining batches"
+      );
       return retryState.rateLimit;
     }
 
@@ -1233,19 +1259,25 @@ export class GrounnelPipelineService {
         const fillIn = await this.callVerify(auditId, fillInPairs, "runBatch.fillIn", "fill_in", verifyVersion);
         await this.processVerifyResults(auditId, missing, fillIn, verifyVersion, retryState, answeredIds, gateEventsByClaimId, protectedContradictionClaimIds, priorResults);
         // Cast, not a plain read — TS carries the earlier null-narrowing across the mutating call, wrongly typing this as `never`.
-        const fillInRateLimit = retryState.rateLimit as RateLimitError | null;
+        const fillInRateLimit = retryState.rateLimit as RateLimitError | ProviderError | null;
         if (fillInRateLimit) {
           logger.error(
-            { module: MODULE, operation: "runBatch", auditId, limitType: fillInRateLimit.limitType },
-            "Gemini rate-limited during a T034 retry fired from the fill-in pass — stopping remaining batches"
+            { module: MODULE, operation: "runBatch", auditId, ...runStopLog(fillInRateLimit) },
+            fillInRateLimit instanceof RateLimitError
+              ? "Gemini rate-limited during a T034 retry fired from the fill-in pass — stopping remaining batches"
+              : "Provider stopped the check during a T034 retry fired from the fill-in pass — stopping remaining batches"
           );
           return fillInRateLimit;
         }
       } catch (err) {
-        if (err instanceof RateLimitError) {
-          logger.error({ module: MODULE, operation: "runBatch", auditId, limitType: err.limitType }, "Gemini rate-limited during the fill-in retry — stopping");
-          await this.degradeBatch(auditId, missing, buildGeminiRateLimitMessage(err));
-          return err;
+        const stopped = stoppingProviderFailure(err);
+        if (stopped) {
+          logger.error(
+            { module: MODULE, operation: "runBatch", auditId, ...runStopLog(stopped) },
+            stopped instanceof RateLimitError ? "Gemini rate-limited during the fill-in retry — stopping" : "Provider stopped the check during the fill-in retry — stopping"
+          );
+          await this.degradeBatch(auditId, missing, messageForRunStop(stopped));
+          return stopped;
         }
         // Falls through to the generic "still missing" degrade below — same message either way,
         // whether the fill-in call errored outright or just didn't answer everything either.

@@ -6,7 +6,7 @@ import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeli
 import { RedisGrounnelStore } from "../../src/persistence/grounnel-store.js";
 import { InMemoryRateLimiter } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
-import { RateLimitError } from "../../src/providers/gemini.js";
+import { RateLimitError } from "../../src/providers/types.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
 import { NoopGrounnelHistoryStore } from "../mocks/noop-grounnel-history-store.js";
