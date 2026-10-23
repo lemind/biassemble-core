@@ -4,6 +4,7 @@ import { logger } from "../observability/logger";
 import { extractJson } from "../parsers/json-from-llm";
 import { scrubErrorMessage } from "../persistence/error-scrub";
 import { zodToGeminiSchema } from "./gemini-schema";
+import { PREFLIGHT_PROMPT, PREFLIGHT_TIMEOUT_MS } from "./preflight";
 import type { Provider, CompletionRequest, ProviderErrorCategory, ProviderResponse, TokenUsage } from "./types";
 import { ProviderError, RateLimitError, TimeoutError } from "./types";
 
@@ -168,46 +169,72 @@ export class GeminiProvider implements Provider {
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "Malformed JSON from AI provider") throw error;
-
-      const failure = readFailure(error);
-      const message = scrubErrorMessage(failure.message, [this.apiKey]) ?? "";
-      const status = failure.status ?? statusFromMessage(message);
-      const category = status === undefined ? null : classifyGeminiError(status, message, failure.details);
-
-      if (category === "rate_limited") {
-        const kind = limitKind(message, failure.details);
-        const limitType = kind === "daily" ? "daily" : "per-minute";
-        const resetsAt = extractResetTime(message);
-        // providerMessage names which limit and the reset; the thrown error stays the short sentence (2026-08-28).
-        const providerMessage = message.slice(0, 500);
-        logger.warn(
-          { module: MODULE, operation: "completeJson", status, limitType, resetsAt, providerMessage },
-          "Gemini rate limit hit — not retrying"
-        );
-        throw new RateLimitError(
-          limitType === "daily"
-            ? "Daily API quota exhausted. Please try again tomorrow."
-            : "Too many requests. Please try again later.",
-          limitType,
-          resetsAt
-        );
-      }
-      if (category) {
-        logger.warn({ module: MODULE, operation: "completeJson", status, category }, "Gemini call classified");
-        throw new ProviderError(category, CATEGORY_MESSAGE[category]);
-      }
-      // The SDK timeout abort says "This operation was aborted" and does not contain "timeout" (D018 §5.10).
-      if (/timeout|timed out|deadline exceeded|aborted|abort/i.test(message)) {
-        logger.warn({ module: MODULE, operation: "completeJson" }, "Gemini API call timed out");
-        throw new TimeoutError("provider call timed out");
-      }
-      if (status === undefined && /fetch|network|econn|enotfound|socket/i.test(message)) {
-        logger.warn({ module: MODULE, operation: "completeJson", category: "unavailable" }, "Gemini call classified");
-        throw new ProviderError("unavailable", CATEGORY_MESSAGE.unavailable);
-      }
-      logger.error({ module: MODULE, operation: "completeJson", status }, "Gemini API call failed");
-      throw new Error("The provider rejected the request.");
+      this.throwClassified(error, "completeJson");
     }
+  }
+
+  /** One tiny completion. The prompt is fixed, so the article never reaches this call (T2013). */
+  async preflight(): Promise<void> {
+    const model = this.client.getGenerativeModel(
+      {
+        model: this.model,
+        generationConfig: { temperature: 0, maxOutputTokens: 8 },
+      },
+      { timeout: PREFLIGHT_TIMEOUT_MS },
+    );
+    const t0 = Date.now();
+    try {
+      await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: PREFLIGHT_PROMPT }] }],
+      });
+      logger.info(
+        { module: MODULE, operation: "preflight", latencyMs: Date.now() - t0, model: this.model },
+        "Gemini preflight completed",
+      );
+    } catch (error: unknown) {
+      this.throwClassified(error, "preflight");
+    }
+  }
+
+  private throwClassified(error: unknown, operation: string): never {
+    const failure = readFailure(error);
+    const message = scrubErrorMessage(failure.message, [this.apiKey]) ?? "";
+    const status = failure.status ?? statusFromMessage(message);
+    const category = status === undefined ? null : classifyGeminiError(status, message, failure.details);
+
+    if (category === "rate_limited") {
+      const kind = limitKind(message, failure.details);
+      const limitType = kind === "daily" ? "daily" : "per-minute";
+      const resetsAt = extractResetTime(message);
+      // providerMessage names which limit and the reset; the thrown error stays the short sentence (2026-08-28).
+      const providerMessage = message.slice(0, 500);
+      logger.warn(
+        { module: MODULE, operation, status, limitType, resetsAt, providerMessage },
+        "Gemini rate limit hit — not retrying"
+      );
+      throw new RateLimitError(
+        limitType === "daily"
+          ? "Daily API quota exhausted. Please try again tomorrow."
+          : "Too many requests. Please try again later.",
+        limitType,
+        resetsAt
+      );
+    }
+    if (category) {
+      logger.warn({ module: MODULE, operation, status, category }, "Gemini call classified");
+      throw new ProviderError(category, CATEGORY_MESSAGE[category]);
+    }
+    // The SDK timeout abort says "This operation was aborted" and does not contain "timeout" (D018 §5.10).
+    if (/timeout|timed out|deadline exceeded|aborted|abort/i.test(message)) {
+      logger.warn({ module: MODULE, operation }, "Gemini API call timed out");
+      throw new TimeoutError("provider call timed out");
+    }
+    if (status === undefined && /fetch|network|econn|enotfound|socket/i.test(message)) {
+      logger.warn({ module: MODULE, operation, category: "unavailable" }, "Gemini call classified");
+      throw new ProviderError("unavailable", CATEGORY_MESSAGE.unavailable);
+    }
+    logger.error({ module: MODULE, operation, status }, "Gemini API call failed");
+    throw new Error("The provider rejected the request.");
   }
 }
 

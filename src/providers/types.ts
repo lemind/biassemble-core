@@ -90,4 +90,6 @@ export interface Provider {
   /** The model this client calls. Call rows record this, not a process-wide env default (D033). */
   readonly model: string;
   completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>>;
+  /** Own-key probe. Absent on the test double. It must not receive the article (T2013). */
+  preflight?(): Promise<void>;
 }

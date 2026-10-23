@@ -44,7 +44,7 @@ IDs are `T2001` upward: spec `20` plus the two-digit task.
 
 ## Phase 4: Own key (US3)
 
-- [ ] T2013 [US3] Preflight the visitor's key before the first claim, and before the article is sent. DeepSeek calls `GET /user/balance`. Gemini and Qwen send one tiny completion with a fixed prompt. Return within 10 seconds, as a category, never the raw body. Do not fall back to the site key. A passed preflight does not skip mid-run handling.
+- [x] T2013 [US3] Preflight the visitor's key before the first claim, and before the article is sent. DeepSeek calls `GET /user/balance`. Gemini and Qwen send one tiny completion with a fixed prompt. Return within 10 seconds, as a category, never the raw body. Do not fall back to the site key. A passed preflight does not skip mid-run handling.
 - [ ] T2014 [US3] Site repo: own-key picker for Gemini, Qwen, and DeepSeek. No control for the site-paid choice. Keep the key in page memory only. Before the first check, show the notice: model company, Grounnel uses the key and does not save it, Google still searches, the share link is public. A visitor Gemini key that Google rejects is an authentication error.
 - [ ] T2015 Run the three key checks: a successful run, a provider error whose body contains the test key, and a retry or rate limit. The key is absent from stored rows, logs, traces, the user-visible error, and any job payload.
 

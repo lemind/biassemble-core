@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
+import { env } from "../../src/lib/env.js";
+import { DEEPSEEK_BALANCE_URL } from "../../src/providers/openai-compatible.js";
+import { PREFLIGHT_PROMPT } from "../../src/providers/preflight.js";
 import { registerGrounnelRoutes } from "../../src/routes/grounnel.js";
 import { GrounnelExtractService } from "../../src/orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeline.service.js";
@@ -42,6 +45,10 @@ function buildServer(provider: Provider, searchProvider: SearchProvider = NEVER_
 
 describe("POST /extract (T014)", () => {
   let provider: MockProvider;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
   beforeEach(() => {
     provider = new MockProvider();
@@ -207,13 +214,13 @@ describe("POST /extract (T014)", () => {
     expect(provider.getCallCount()).toBe(0);
   });
 
-  it("T2010: a visitor key is the judge for extract, eligibility, and the pipeline", async () => {
-    const visitorKey = "sk-visitor-deepseek-key";
+  function ownKeyServer() {
     const boot = provider;
     class CaptureExtract extends GrounnelExtractService {
       providerArg: Provider | undefined;
       keySourceArg: "site" | "own" | undefined;
       eligibilityProvider: Provider | undefined;
+      runCalls = 0;
       override async run(
         _text: string,
         _source?: "production" | "eval",
@@ -221,6 +228,7 @@ describe("POST /extract (T014)", () => {
         judge?: Provider,
         keySource?: "site" | "own",
       ) {
+        this.runCalls += 1;
         this.providerArg = judge;
         this.keySourceArg = keySource;
         const claim: PipelineClaimInput = {
@@ -262,23 +270,128 @@ describe("POST /extract (T014)", () => {
       rateLimiter: new InMemoryRateLimiter(1000, 60_000),
       assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
     });
+    return { boot, server, extractService, pipelineService };
+  }
+
+  it("T2010: a visitor key is the judge for extract, eligibility, and the pipeline", async () => {
+    const visitorKey = "sk-visitor-deepseek-key";
+    const article = "Some pasted article text.";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ is_available: true, balance_infos: [{ total_balance: "77.25" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { boot, server, extractService, pipelineService } = ownKeyServer();
 
     const res = await server.inject({
       method: "POST",
       url: "/extract",
       headers: { authorization: VALID_AUTH, "x-grounnel-provider": "deepseek", "x-grounnel-provider-key": visitorKey },
-      payload: { text: "Some pasted article text." },
+      payload: { text: article },
     });
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(res.statusCode).toBe(202);
     expect(res.body).not.toContain(visitorKey);
+    expect(res.body).not.toContain("77.25");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(DEEPSEEK_BALANCE_URL);
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    expect(url).not.toContain(article);
     expect(boot.getCallCount()).toBe(0);
+    expect(extractService.runCalls).toBe(1);
     expect(extractService.providerArg).not.toBe(boot);
     expect(extractService.providerArg?.mode).toBe("deepseek");
     expect(extractService.providerArg?.model).toBe("deepseek-flash");
     expect(extractService.keySourceArg).toBe("own");
     expect(extractService.eligibilityProvider).toBe(extractService.providerArg);
     expect(pipelineService.providerArg).toBe(extractService.providerArg);
+  });
+
+  it("T2013: a rejected visitor key stops before the article is sent and is not echoed", async () => {
+    const visitorKey = "sk-visitor-deepseek-key";
+    const article = "Some pasted article text.";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ error: { message: `Authentication Fails, ${visitorKey} leaked`, code: "invalid_request_error" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { boot, server, extractService } = ownKeyServer();
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/extract",
+      headers: { authorization: VALID_AUTH, "x-grounnel-provider": "deepseek", "x-grounnel-provider-key": visitorKey },
+      payload: { text: article },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "invalid_key", message: "The API key was rejected." });
+    expect(res.body).not.toContain(visitorKey);
+    expect(res.body).not.toContain("leaked");
+    expect(res.body).not.toContain(article);
+    expect(extractService.runCalls).toBe(0);
+    expect(boot.getCallCount()).toBe(0);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).not.toContain(article);
+    expect(init.body ?? "").not.toContain(article);
+  });
+
+  it("T2013: an empty DeepSeek balance does not fall back to the site client", async () => {
+    const visitorKey = "sk-visitor-deepseek-key";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ is_available: false, balance_infos: [{ total_balance: "0.00" }] }),
+    }));
+    const { boot, server, extractService } = ownKeyServer();
+    const res = await server.inject({
+      method: "POST",
+      url: "/extract",
+      headers: { authorization: VALID_AUTH, "x-grounnel-provider": "deepseek", "x-grounnel-provider-key": visitorKey },
+      payload: { text: "Some pasted article text." },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "no_balance", message: "The account has no balance for this model." });
+    expect(res.body).not.toContain("0.00");
+    expect(extractService.runCalls).toBe(0);
+    expect(boot.getCallCount()).toBe(0);
+  });
+
+  it("T2013: a Qwen own key is probed with the fixed prompt, then the same client judges", async () => {
+    const visitorKey = "sk-visitor-qwen-key";
+    const article = "Some pasted article text.";
+    const previous = env.QWEN_WORKSPACE_ID;
+    env.QWEN_WORKSPACE_ID = "ws-test";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { server, extractService } = ownKeyServer();
+    try {
+      const res = await server.inject({
+        method: "POST",
+        url: "/extract",
+        headers: { authorization: VALID_AUTH, "x-grounnel-provider": "qwen", "x-grounnel-provider-key": visitorKey },
+        payload: { text: article },
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(res.statusCode).toBe(202);
+      expect(extractService.runCalls).toBe(1);
+      expect(extractService.providerArg?.mode).toBe("qwen");
+      expect(extractService.keySourceArg).toBe("own");
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { messages: Array<{ content: string }> };
+      expect(body.messages[0]?.content).toBe(PREFLIGHT_PROMPT);
+      expect(init.body).not.toContain(article);
+      expect(res.body).not.toContain(visitorKey);
+    } finally {
+      env.QWEN_WORKSPACE_ID = previous;
+    }
   });
 });

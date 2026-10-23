@@ -6,6 +6,7 @@ import { authHook } from "../lib/auth.js";
 import { isShareTokenShape } from "../lib/share-token.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
+import { preflightHttpStatus, preflightOwnKey } from "../providers/preflight.js";
 import { RateLimitError, type Provider } from "../providers/types.js";
 import {
   ProviderConfigError,
@@ -137,6 +138,18 @@ export function registerGrounnelRoutes(
         logger.error({ module: MODULE, operation: "POST /extract", requestId: request.id }, "Provider is not configured");
       }
       return reply.status(decision.status).send({ error: decision.error });
+    }
+
+    // Own key only. Site Gemini is not probed, and a pass does not change later claim handling (D033 §3).
+    if (decision.keySource === "own" && decision.provider) {
+      const failure = await preflightOwnKey(decision.provider);
+      if (failure) {
+        logger.warn(
+          { module: MODULE, operation: "POST /extract", requestId: request.id, category: failure.category, provider: decision.provider.mode },
+          "Visitor key preflight failed",
+        );
+        return reply.status(preflightHttpStatus(failure.category)).send({ error: failure.category, message: failure.message });
+      }
     }
 
     let extracted;

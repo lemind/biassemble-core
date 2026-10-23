@@ -2,6 +2,7 @@
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 import { scrubErrorMessage } from "../persistence/error-scrub.js";
+import { PREFLIGHT_PROMPT, PREFLIGHT_TIMEOUT_MS } from "./preflight.js";
 import {
   ProviderError,
   TimeoutError,
@@ -18,6 +19,9 @@ const MODULE = "openai-compatible";
 export const DEEPSEEK_MAX_TOKENS = 8192;
 
 export const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
+
+/** Balance probe. Amounts in the body are not stored or logged (D033 §3). */
+export const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
 
 const JSON_REQUEST_SUFFIX = 'Reply with a JSON object. Example: {"result":"ok"}';
 
@@ -136,23 +140,93 @@ export class OpenAICompatibleProvider implements Provider {
     }
   }
 
+  /** DeepSeek reads balance. Qwen sends one fixed completion. Neither call takes the article (T2013). */
+  async preflight(): Promise<void> {
+    if (this.config.provider === "deepseek") {
+      await this.preflightDeepSeek();
+      return;
+    }
+    await this.preflightQwen();
+  }
+
+  private async preflightDeepSeek(): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PREFLIGHT_TIMEOUT_MS);
+    try {
+      const response = await fetch(DEEPSEEK_BALANCE_URL, {
+        method: "GET",
+        headers: { authorization: `Bearer ${this.config.apiKey}` },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw await this.errorForResponse(response, "preflight");
+      const available = await readBalanceAvailable(response, this.config.apiKey);
+      if (available === false) {
+        logger.warn(
+          { module: MODULE, operation: "preflight", provider: "deepseek", category: "no_balance" },
+          "provider call classified",
+        );
+        throw new ProviderError("no_balance", CATEGORY_MESSAGE.no_balance);
+      }
+    } catch (error: unknown) {
+      if (error instanceof ProviderError || error instanceof TimeoutError) throw error;
+      if (error instanceof Error && (error.name === "AbortError" || /timeout|timed out|aborted|abort/i.test(error.message))) {
+        throw new TimeoutError("provider call timed out");
+      }
+      logger.warn({ module: MODULE, operation: "preflight", provider: "deepseek" }, "provider call failed");
+      throw new ProviderError("unavailable", CATEGORY_MESSAGE.unavailable);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async preflightQwen(): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PREFLIGHT_TIMEOUT_MS);
+    try {
+      const response = await fetch(this.config.baseUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: [{ role: "user", content: PREFLIGHT_PROMPT }],
+          enable_thinking: false,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw await this.errorForResponse(response, "preflight");
+      await response.text();
+    } catch (error: unknown) {
+      if (error instanceof ProviderError || error instanceof TimeoutError) throw error;
+      if (error instanceof Error && (error.name === "AbortError" || /timeout|timed out|aborted|abort/i.test(error.message))) {
+        throw new TimeoutError("provider call timed out");
+      }
+      logger.warn({ module: MODULE, operation: "preflight", provider: "qwen" }, "provider call failed");
+      throw new ProviderError("unavailable", CATEGORY_MESSAGE.unavailable);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private requestMessages(system: string, user: string): { system: string; user: string } {
     if (promptHasJsonContract(system, user)) return { system, user };
     return { system, user: `${user}\n\n${JSON_REQUEST_SUFFIX}` };
   }
 
-  private async errorForResponse(response: Response): Promise<Error> {
+  private async errorForResponse(response: Response, operation = "completeJson"): Promise<Error> {
     const detail = await readErrorBody(response, this.config.apiKey);
     const category = classifyCompatibleError(this.config.provider, response.status, detail.code, detail.message);
     if (!category) {
       logger.warn(
-        { module: MODULE, operation: "completeJson", provider: this.config.provider, status: response.status },
+        { module: MODULE, operation, provider: this.config.provider, status: response.status },
         "provider rejected the request",
       );
       return new Error("The provider rejected the request.");
     }
     logger.warn(
-      { module: MODULE, operation: "completeJson", provider: this.config.provider, status: response.status, category, code: detail.code },
+      { module: MODULE, operation, provider: this.config.provider, status: response.status, category, code: detail.code },
       "provider call classified",
     );
     return new ProviderError(category, CATEGORY_MESSAGE[category]);
@@ -188,6 +262,17 @@ export class OpenAICompatibleProvider implements Provider {
         }
       : undefined;
     return { result, usage: tokens };
+  }
+}
+
+/** True, false, or unknown. The balance figures in the body are discarded (D033 §3). */
+async function readBalanceAvailable(response: Response, apiKey: string): Promise<boolean | null> {
+  const raw = scrubErrorMessage(await response.text(), [apiKey]) ?? "";
+  try {
+    const parsed = JSON.parse(raw) as { is_available?: unknown };
+    return typeof parsed.is_available === "boolean" ? parsed.is_available : null;
+  } catch {
+    return null;
   }
 }
 
