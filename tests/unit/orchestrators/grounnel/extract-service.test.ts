@@ -302,6 +302,10 @@ describe("GrounnelExtractService (T009)", () => {
     expect(historyStore.createRunCalls[0]).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
     expect(historyStore.createRunCalls[0]!.keySource).toBeUndefined();
     expect(llmCallStore.recordCallContexts[0]).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+    const status = await store.getStatus(historyStore.createRunCalls[0]!.runId);
+    expect(status).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+    expect(status).not.toHaveProperty("key_source");
+    expect(status).not.toHaveProperty("keySource");
   });
 
   it("T2010: records key_source own when the route passes a visitor key", async () => {

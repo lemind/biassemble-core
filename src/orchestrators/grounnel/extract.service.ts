@@ -159,7 +159,15 @@ export class GrounnelExtractService {
       // capped, and dropped entirely below 2 so a one-entity echo cannot change any behaviour.
       subjectEntities: normalizeSubjectEntities(c.subject_entities, c.subject_entity),
     }));
-    const { id } = await this.grounnelStore.createAudit({ id: runId, text, maxClaims: MAX_CLAIMS, claims, truncated });
+    const { id } = await this.grounnelStore.createAudit({
+      id: runId,
+      text,
+      maxClaims: MAX_CLAIMS,
+      claims,
+      truncated,
+      ...(providerId ? { provider: providerId } : {}),
+      model: provider.model,
+    });
 
     // Best-effort (D023 §7) — real truncated value + stamped prompt version, once both are known.
     waitUntil(this.historyStore.updateRun(runId, { truncated, promptVersionExtract: extractVersion }));

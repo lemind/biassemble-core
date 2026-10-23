@@ -110,7 +110,11 @@ describe("GET /status/:id (T015)", () => {
       status: "done",
       progress: { checked: 1, total: 1 },
       caps_hit: false,
+      provider: "gemini",
+      model: "mock",
     });
+    expect(body).not.toHaveProperty("key_source");
+    expect(body).not.toHaveProperty("keySource");
     expect(body.claims).toHaveLength(1);
     expect(body.claims[0]).toMatchObject({ verdict: "supported", status: "done" });
     expect(body.score).toMatchObject({ grounded_n: 1, eligible: 1, not_checked_n: 0 });

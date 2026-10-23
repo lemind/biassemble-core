@@ -667,6 +667,9 @@ export async function selectGrounnelRunByShareToken(shareToken: string) {
       completedAt: grounnelRuns.completedAt,
       // Authoritative verdict tallies snapshotted at completion — the claim rows are best-effort.
       score: grounnelRuns.score,
+      // Judge identity for the share page. key_source stays off this list (D033 §5).
+      provider: grounnelRuns.provider,
+      model: grounnelRuns.model,
     })
     .from(grounnelRuns)
     .where(eq(grounnelRuns.shareToken, shareToken))

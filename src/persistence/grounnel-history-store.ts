@@ -110,6 +110,8 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
       text: run.text,
       createdAt: run.createdAt.toISOString(),
       completedAt: run.completedAt?.toISOString() ?? null,
+      provider: run.provider ?? "gemini",
+      model: run.model ?? null,
       ...(counts.success ? { counts: counts.data } : {}),
       claims: claims.map((c) => ({
         text: c.claimText,

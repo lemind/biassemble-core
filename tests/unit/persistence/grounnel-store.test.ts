@@ -400,4 +400,30 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(broken.status).toBe("failed");
     expect(broken.citations).toEqual([]);
   });
+
+  it("T2011: a hash with no provider reads as Gemini and a null model, and never returns key_source", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [], truncated: false });
+    const status = await store.getStatus(id);
+    expect(status).toMatchObject({ provider: "gemini", model: null });
+    expect(status).not.toHaveProperty("key_source");
+    expect(status).not.toHaveProperty("keySource");
+    expect(JSON.stringify(status)).not.toContain("key_source");
+  });
+
+  it("T2011: stores the judge and keeps it across setEscalating", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({
+      text: "article",
+      maxClaims: 100,
+      claims: [],
+      truncated: false,
+      provider: "qwen",
+      model: "qwen3.7-flash",
+    });
+    await store.setEscalating(id, true);
+    const status = await store.getStatus(id);
+    expect(status).toMatchObject({ provider: "qwen", model: "qwen3.7-flash" });
+    expect(JSON.stringify(status)).not.toContain("key");
+  });
 });

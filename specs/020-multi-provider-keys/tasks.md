@@ -39,7 +39,7 @@ IDs are `T2001` upward: spec `20` plus the two-digit task.
 ## Phase 3: Site path stays Gemini (US2)
 
 - [x] T2010 [US2] In `src/routes/grounnel.ts`, no provider and no key means Gemini on the site key. `deepseek` or `qwen` without a key is rejected, unless the hidden site choice is that provider. The visitor cannot set that choice. It stays Gemini.
-- [ ] T2011 [P] [US2] Add `provider` and `model` to the Redis meta in `src/persistence/grounnel-store.ts`, to both schemas in `src/contracts/grounnel.schemas.ts`, and to the select list in `src/db/queries.ts`.
+- [x] T2011 [P] [US2] Add `provider` and `model` to the Redis meta in `src/persistence/grounnel-store.ts`, to both schemas in `src/contracts/grounnel.schemas.ts`, and to the select list in `src/db/queries.ts`.
 - [ ] T2012 [US2] The result and share page name the provider. No picker. Site repo.
 
 ## Phase 4: Own key (US3)
