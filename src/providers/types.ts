@@ -87,5 +87,7 @@ export class RateLimitError extends Error {
 
 export interface Provider {
   readonly mode: string;
+  /** The model this client calls. Call rows record this, not a process-wide env default (D033). */
+  readonly model: string;
   completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>>;
 }

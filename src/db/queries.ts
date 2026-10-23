@@ -631,6 +631,8 @@ export async function insertGrounnelRun(data: {
   source: "production" | "eval";
   maxClaims: number;
   truncated: boolean;
+  provider?: "gemini" | "deepseek" | "qwen";
+  model?: string;
 }) {
   const [row] = await db().insert(grounnelRuns).values(data).returning();
   return row;

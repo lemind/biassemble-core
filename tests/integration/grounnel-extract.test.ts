@@ -104,7 +104,7 @@ describe("POST /extract (T014)", () => {
 
   it("returns 503 with a clear retry message when Gemini itself is rate-limited during EXTRACT (no audit exists yet to write a per-claim reason into)", async () => {
     const rateLimitedProvider: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async () => {
         throw new RateLimitError("daily quota exceeded", "daily", "2026-08-07T00:00:00Z");
       },

@@ -20,6 +20,10 @@ export interface GrounnelHistoryStore {
     source: "production" | "eval";
     maxClaims: number;
     truncated: boolean;
+    // Set when the judge is gemini, deepseek, or qwen. Omitted keeps the column default (D033).
+    provider?: "gemini" | "deepseek" | "qwen";
+    // Exact model that judge will call (D033).
+    model?: string;
   }): Promise<void>;
 
   updateRun(

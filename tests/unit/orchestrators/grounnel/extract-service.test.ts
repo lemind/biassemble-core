@@ -77,7 +77,7 @@ describe("GrounnelExtractService (T009)", () => {
   it("fails fast on RateLimitError instead of burning all retries against a guaranteed-to-repeat failure", async () => {
     let calls = 0;
     const rateLimitedProvider: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async () => {
         calls++;
         throw new RateLimitError("quota exceeded", "daily");
@@ -277,10 +277,30 @@ describe("GrounnelExtractService (T009)", () => {
       stage: "extract",
       callType: "primary",
       provider: "mock",
+      model: "mock",
       promptVersion: prompts.getGrounnelExtractVersion(),
     });
     expect(llmCallStore.completions).toHaveLength(1);
     expect(llmCallStore.completions[0]!.info.status).toBe("success");
+  });
+
+  it("T2009: records the per-run provider and the model that client will call", async () => {
+    const judge: Provider = {
+      mode: "deepseek",
+      model: "deepseek-flash",
+      completeJson: async () => ({
+        result: { claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false },
+      }),
+    };
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelExtractService(new MockProvider("gemini-2.0-flash"), new PromptRegistry(), store, historyStore, llmCallStore);
+
+    await service.run("Some pasted article text.", "production", null, judge);
+
+    expect(historyStore.createRunCalls[0]).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+    expect(llmCallStore.recordCallContexts[0]).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
   });
 
   it("T025/D023 §4: records one completion per attempt, not just the final one, when a retry happens", async () => {
@@ -397,7 +417,7 @@ describe("GrounnelExtractService (T009)", () => {
         const inner = new MockProvider();
         inner.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
         const hangingProvider: Provider = {
-          mode: "mock",
+          mode: "mock", model: "mock",
           completeJson: (request) =>
             request.system.includes("You are a claim-eligibility classifier")
               ? new Promise(() => {}) // never resolves — simulates a hung provider call
@@ -429,7 +449,7 @@ describe("GrounnelExtractService (T009)", () => {
         const inner = new MockProvider();
         inner.setDefault({ claims: [{ claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
         const slowProvider: Provider = {
-          mode: "mock",
+          mode: "mock", model: "mock",
           completeJson: (request) =>
             request.system.includes("You are a claim-eligibility classifier")
               ? new Promise((resolve) =>

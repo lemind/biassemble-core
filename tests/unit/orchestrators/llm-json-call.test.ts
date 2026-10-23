@@ -90,7 +90,7 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
 
   it("reviewed finding: calls onComplete before rethrowing a RateLimitError, not skipping it entirely", async () => {
     const rateLimitedProvider: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async () => {
         throw new RateLimitError("quota exceeded", "daily");
       },
@@ -116,7 +116,7 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
   it("does not retry a TimeoutError — the next attempt has the same budget and fails identically", async () => {
     let callCount = 0;
     const timingOutProvider: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async () => {
         callCount++;
         throw new TimeoutError("This operation was aborted");
@@ -145,7 +145,7 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
   it("forwards a per-call timeoutMs to the provider — it was dropped before, so no caller could set one", async () => {
     let seen: unknown;
     const capturing: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async (req: { options?: { timeoutMs?: number } }) => {
         seen = req.options?.timeoutMs;
         return { result: { value: "ok" } } as never;
@@ -192,7 +192,7 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
     async (category) => {
       let callCount = 0;
       const failing: Provider = {
-        mode: "deepseek",
+        mode: "deepseek", model: "deepseek-flash",
         completeJson: async () => {
           callCount++;
           throw new ProviderError(category, "short");
@@ -221,7 +221,7 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
   it("retries a rate_limited ProviderError, then rethrows it so the rest of the check can stop", async () => {
     let callCount = 0;
     const failing: Provider = {
-      mode: "deepseek",
+      mode: "deepseek", model: "deepseek-flash",
       completeJson: async () => {
         callCount++;
         throw new ProviderError("rate_limited", "The provider rate limit stopped this check.");
@@ -248,7 +248,7 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
   it("retries empty content, then throws so the claim can be left unchecked", async () => {
     let callCount = 0;
     const failing: Provider = {
-      mode: "deepseek",
+      mode: "deepseek", model: "deepseek-flash",
       completeJson: async () => {
         callCount++;
         throw new Error("provider returned empty content");
@@ -272,7 +272,7 @@ describe("callLlmForJson's onComplete (D023 §4/T025) — additive, no behavior 
   it("retries an unavailable ProviderError instead of stopping on the first attempt", async () => {
     let callCount = 0;
     const failing: Provider = {
-      mode: "qwen",
+      mode: "qwen", model: "qwen3.7-flash",
       completeJson: async () => {
         callCount++;
         throw new ProviderError("unavailable", "The provider is unavailable.");

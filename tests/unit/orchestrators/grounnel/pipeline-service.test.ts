@@ -1640,7 +1640,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     let calls = 0;
     const provider2: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async (request) => {
         calls++;
         // D025 §2 — this batch now makes 3 real calls before batch 2: (1) primary VERIFY, (2) the
@@ -1803,6 +1803,39 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(status!.score.not_checked_n).toBe(1);
   });
 
+  it("T2009: a per-run provider's model is recorded, and JSON that fails validation leaves the claim unchecked", async () => {
+    const claimId = uuid(1);
+    const claimText = "A claim whose VERIFY JSON does not match the schema.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: (claimText + " ").repeat(20) })]]]));
+    const judge: Provider = {
+      mode: "deepseek",
+      model: "deepseek-flash",
+      completeJson: async () => ({ result: {} }),
+    };
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(
+      search,
+      new MockProvider("gemini-2.0-flash"),
+      new PromptRegistry(),
+      store,
+      new NoopGrounnelHistoryStore(),
+      llmCallStore,
+      new NoopGrounnelGateEventStore()
+    );
+
+    await service.run(auditId, [{ id: claimId, text: claimText }], "defaultFlow", undefined, judge);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.status).toBe("failed");
+    expect(claim.verdict).toBeNull();
+    expect(status!.score.not_checked_n).toBe(1);
+    expect(llmCallStore.recordCallContexts.length).toBeGreaterThan(0);
+    expect(llmCallStore.recordCallContexts.every((row) => row.provider === "deepseek" && row.model === "deepseek-flash")).toBe(true);
+  });
+
   it("degrades only the claims VERIFY's response omitted even after a D026 §8 fill-in retry, not the whole batch", async () => {
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const claims = [
@@ -1926,7 +1959,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     let calls = 0;
     const rateLimitedProvider: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async () => {
         calls++;
         throw new RateLimitError("daily quota exceeded", "daily", "2026-08-07T00:00:00Z");
@@ -3068,7 +3101,7 @@ async function runTwoVerifyBatches(fail: () => Error): Promise<{ calls: number; 
   const search = new FakeSearchProvider(responses);
   let calls = 0;
   const failing: Provider = {
-    mode: "deepseek",
+    mode: "deepseek", model: "deepseek-flash",
     completeJson: async () => {
       calls++;
       throw fail();

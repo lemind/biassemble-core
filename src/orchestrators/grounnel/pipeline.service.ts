@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ZodSchema } from "zod";
 import { waitUntil } from "@vercel/functions";
 import { logger } from "../../observability/logger.js";
@@ -31,7 +32,6 @@ import { VerifyRawResponseSchema, ConsistencyCheckResponseSchema, InstanceAttrib
 import { stripInstanceSelector, extractInstanceSelector } from "../../lib/instance-selector.js";
 import { extractKeyTerms, scoreKeyTermMatches } from "../../lib/claim-terms.js";
 import { ProviderError, RateLimitError, stoppingProviderFailure } from "../../providers/types.js";
-import { env } from "../../lib/env.js";
 import type { ClaimResult } from "../../contracts/grounnel.schemas.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
@@ -46,6 +46,18 @@ import type { SearchProvider, SearchPassage } from "../../providers/search/searc
 // Re-exported for backward compatibility — extract.service.ts and routes/grounnel.ts import these
 // from this file. Implementations moved to pipeline-helpers.ts (D031 file-size split).
 export { buildGeminiRateLimitMessage, type PipelineClaimInput };
+
+// One service instance serves concurrent runs, so the per-run judge is not a field on `this` (D033).
+const judgingProviderScope = new AsyncLocalStorage<Provider>();
+
+function withJudgingProvider<T>(provider: Provider, fn: () => Promise<T>): Promise<T> {
+  if (judgingProviderScope.getStore() === provider) return fn();
+  return judgingProviderScope.run(provider, fn);
+}
+
+function judgingProvider(fallback: Provider): Provider {
+  return judgingProviderScope.getStore() ?? fallback;
+}
 
 // D030 §3h — what an escalation tier's write is compared against; see hasValidEvidence in pipeline-helpers.ts.
 interface PriorResult {
@@ -135,13 +147,17 @@ export class GrounnelPipelineService {
   /** Spec 013 T22 — exposes resolveAllEvidence (search + rerank, no VERIFY call) for the fixture-generation
    * step of the verdict/reason field-order A/B: snapshots the exact {claim, subjectEntity, passages} VERIFY
    * would receive, without running VERIFY itself, so the fixture is reusable across both schema orders. */
-  async resolveEvidenceForClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string): Promise<ResolvedEvidence[]> {
-    return this.resolveAllEvidence(auditId, claims, searchEngine, inputText);
+  async resolveEvidenceForClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string, provider?: Provider): Promise<ResolvedEvidence[]> {
+    return withJudgingProvider(provider ?? this.provider, () => this.resolveAllEvidence(auditId, claims, searchEngine, inputText));
   }
 
   /** inputText (spec 015 G1) — the document under test, so retrieval handing back a copy of it can
    * be refused. Optional: omitted means the check is skipped, never that it fails closed. */
-  async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string): Promise<void> {
+  async run(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily" = "defaultFlow", inputText?: string, provider?: Provider): Promise<void> {
+    return withJudgingProvider(provider ?? this.provider, () => this.executeRun(auditId, claims, searchEngine, inputText));
+  }
+
+  private async executeRun(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily", inputText?: string): Promise<void> {
     try {
       // D026 §14/§15 — set before the verify loop to avoid a "done" poll race; stays inside this try so a Redis failure still hits the catch below.
       await this.grounnelStore.setEscalating(auditId, true);
@@ -692,8 +708,9 @@ export class GrounnelPipelineService {
     // spec 014 T021 — VERIFY only: the rendered pairs, so this call can be replayed later.
     inputPayload?: unknown
   ): Promise<T> {
+    const provider = judgingProvider(this.provider);
     return callLlmForJson({
-      provider: this.provider,
+      provider,
       system,
       user,
       schema,
@@ -709,8 +726,8 @@ export class GrounnelPipelineService {
         claimId,
         stage: "verify",
         callType,
-        provider: this.provider.mode,
-        model: env.GEMINI_MODEL,
+        provider: provider.mode,
+        model: provider.model,
         promptVersion,
         inputPayload,
       }),

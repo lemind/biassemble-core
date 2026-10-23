@@ -5,7 +5,6 @@ import { waitUntil } from "@vercel/functions";
 import { callLlmForJson } from "../llm-json-call.js";
 import { isOpinionClaim } from "./opinion-filter.js";
 import { classifyClaimVerifiability, isEligibilityExcluded, eligibilityReason, type ClaimVerifiabilityResult } from "./claim-eligibility.js";
-import { env } from "../../lib/env.js";
 import { logger } from "../../observability/logger.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
@@ -15,6 +14,11 @@ import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-s
 import type { PipelineClaimInput } from "./pipeline.service.js";
 
 const MODULE = "grounnel-extract-service";
+
+function runProviderId(mode: string): "gemini" | "deepseek" | "qwen" | undefined {
+  if (mode === "gemini" || mode === "deepseek" || mode === "qwen") return mode;
+  return undefined;
+}
 /** Matches audit's EXTRACT retry count (D018 §5.10) — a provider hiccup shouldn't hard-fail the whole run. */
 const EXTRACT_ATTEMPTS = 3;
 // Sized to the 300s Vercel Hobby function budget, not guessed: ~6.5s/claim measured on run
@@ -75,8 +79,8 @@ export class GrounnelExtractService {
     private llmCallStore: GrounnelLlmCallStore
   ) {}
 
-  /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). */
-  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null): Promise<GrounnelExtractResult> {
+  /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033). */
+  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider): Promise<GrounnelExtractResult> {
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
     // Minted here, not at completion, so an in-flight run is already addressable (FR-001) and the
@@ -84,7 +88,19 @@ export class GrounnelExtractService {
     const shareToken = generateShareToken();
     // waitUntil, not void: fire-and-forget alone races the response — nothing guarantees this
     // resolves before reply.send(), and Vercel can freeze the container the instant it does.
-    waitUntil(this.historyStore.createRun({ runId, shareToken, sessionId, text, source, maxClaims: MAX_CLAIMS, truncated: false }));
+    const providerId = runProviderId(provider.mode);
+    // Model is the one this client calls. A test double's mode is not a run provider, so that column stays at its default (D033).
+    waitUntil(this.historyStore.createRun({
+      runId,
+      shareToken,
+      sessionId,
+      text,
+      source,
+      maxClaims: MAX_CLAIMS,
+      truncated: false,
+      ...(providerId ? { provider: providerId } : {}),
+      model: provider.model,
+    }));
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
@@ -92,7 +108,7 @@ export class GrounnelExtractService {
     let parsed: z.infer<typeof ExtractResponseSchema>;
     try {
       parsed = await callLlmForJson({
-        provider: this.provider,
+        provider,
         system,
         user: "Return the JSON now.",
         schema: ExtractResponseSchema,
@@ -109,8 +125,8 @@ export class GrounnelExtractService {
           runId,
           stage: "extract",
           callType: "primary",
-          provider: this.provider.mode,
-          model: env.GEMINI_MODEL,
+          provider: provider.mode,
+          model: provider.model,
           promptVersion: extractVersion,
         }),
       });
@@ -164,13 +180,13 @@ export class GrounnelExtractService {
    * excludes still shows `pending` in the meantime — same as any claim still being searched/verified,
    * resolved on the next /status poll once writeExcludedClaim below lands.
    */
-  async classifyEligibility(auditId: string, claims: PipelineClaimInput[]): Promise<PipelineClaimInput[]> {
+  async classifyEligibility(auditId: string, claims: PipelineClaimInput[], provider: Provider = this.provider): Promise<PipelineClaimInput[]> {
     logger.info({ module: MODULE, operation: "classifyEligibility", auditId, claimCount: claims.length }, "Eligibility classification phase starting");
     // D031 (review finding) — Promise.race can't cancel its loser; this flag stops late writes from an abandoned batch, see ADR.
     const abandoned = { value: false };
     try {
       const eligibleClaims = await Promise.race([
-        this.classifyEligibilityBatch(auditId, claims, abandoned),
+        this.classifyEligibilityBatch(auditId, claims, abandoned, provider),
         new Promise<never>((_, reject) =>
           setTimeout(() => {
             abandoned.value = true;
@@ -193,7 +209,7 @@ export class GrounnelExtractService {
     }
   }
 
-  private async classifyEligibilityBatch(auditId: string, claims: PipelineClaimInput[], abandoned: { value: boolean }): Promise<PipelineClaimInput[]> {
+  private async classifyEligibilityBatch(auditId: string, claims: PipelineClaimInput[], abandoned: { value: boolean }, provider: Provider): Promise<PipelineClaimInput[]> {
     const eligibilityResults: Array<{ claim: PipelineClaimInput; result: ClaimVerifiabilityResult }> = [];
     for (let i = 0; i < claims.length; i += ELIGIBILITY_CONCURRENCY) {
       // D031 — checked between chunks so a mid-fan-out timeout stops the next chunk and every write below.
@@ -202,7 +218,7 @@ export class GrounnelExtractService {
       const chunkResults = await Promise.all(
         chunk.map(async (claim) => ({
           claim,
-          result: await classifyClaimVerifiability(this.provider, this.prompts, this.llmCallStore, auditId, claim.id, {
+          result: await classifyClaimVerifiability(provider, this.prompts, this.llmCallStore, auditId, claim.id, {
             claimText: claim.text,
             sourceExcerpt: claim.sourceExcerpt,
           }),

@@ -9,6 +9,11 @@ const MODULE = "mock-provider";
  */
 export class MockProvider implements Provider {
   readonly mode = "mock";
+  readonly model: string;
+
+  constructor(model = "mock") {
+    this.model = model;
+  }
 
   private responseMap: Map<string, unknown> = new Map();
   private responseFnMap: Map<string, (request: CompletionRequest) => unknown> = new Map();

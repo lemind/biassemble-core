@@ -83,9 +83,11 @@ function promptHasJsonContract(system: string, user: string): boolean {
 
 export class OpenAICompatibleProvider implements Provider {
   readonly mode: string;
+  readonly model: string;
 
   constructor(private readonly config: OpenAICompatibleConfig) {
     this.mode = config.provider;
+    this.model = config.model;
   }
 
   async completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>> {
