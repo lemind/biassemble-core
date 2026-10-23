@@ -34,7 +34,7 @@ IDs are `T2001` upward: spec `20` plus the two-digit task.
 - [x] T2007 Add `src/providers/registry.ts`. Every provider's claim cap is 40. Gemini, Qwen, and DeepSeek are selectable with an own key. The hidden site choice defaults to Gemini.
 - [x] T2008 Migration `0018` adds `provider`, `model`, and `key_source` to `grounnel_runs` only, in `src/db/schema.ts`. Do not add those columns to `grounnel_llm_calls`. Needs sign-off before it runs on the shared database. Applied to the shared database on 2026-10-23.
 - [x] T2009 Pass the per-run provider into `src/orchestrators/grounnel/extract.service.ts`, `src/orchestrators/grounnel/claim-eligibility.ts`, and `src/orchestrators/grounnel/pipeline.service.ts`. Record the model that was called. A structured call that still fails validation is an unchecked claim.
-- [ ] T2016 The existing evaluation job takes a provider and uses the deployment key for it. Runs stay `source: "eval"`. It does not call `POST /extract`. It does not write a report.
+- [x] T2016 The existing evaluation job takes a provider and uses the deployment key for it. Runs stay `source: "eval"`. It does not call `POST /extract`. It does not write a report.
 
 ## Phase 3: Site path stays Gemini (US2)
 
