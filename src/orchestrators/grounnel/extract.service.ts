@@ -80,7 +80,7 @@ export class GrounnelExtractService {
   ) {}
 
   /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033). */
-  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider): Promise<GrounnelExtractResult> {
+  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own"): Promise<GrounnelExtractResult> {
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
     // Minted here, not at completion, so an in-flight run is already addressable (FR-001) and the
@@ -100,6 +100,8 @@ export class GrounnelExtractService {
       truncated: false,
       ...(providerId ? { provider: providerId } : {}),
       model: provider.model,
+      // Visitor key → own. Omitted keeps the column default site (D033).
+      ...(keySource ? { keySource } : {}),
     }));
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();

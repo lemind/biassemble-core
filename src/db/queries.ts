@@ -633,6 +633,7 @@ export async function insertGrounnelRun(data: {
   truncated: boolean;
   provider?: "gemini" | "deepseek" | "qwen";
   model?: string;
+  keySource?: "site" | "own";
 }) {
   const [row] = await db().insert(grounnelRuns).values(data).returning();
   return row;

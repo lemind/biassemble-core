@@ -24,6 +24,8 @@ export interface GrounnelHistoryStore {
     provider?: "gemini" | "deepseek" | "qwen";
     // Exact model that judge will call (D033).
     model?: string;
+    // Whose account paid. Omitted keeps the column default site (D033).
+    keySource?: "site" | "own";
   }): Promise<void>;
 
   updateRun(

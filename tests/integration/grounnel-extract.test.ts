@@ -15,6 +15,7 @@ import { NoopGrounnelLlmCallStore } from "../mocks/noop-grounnel-llm-call-store.
 import { NoopGrounnelGateEventStore } from "../mocks/noop-grounnel-gate-event-store.js";
 import type { SearchProvider, SearchPassage } from "../../src/providers/search/search-provider.js";
 import type { Provider } from "../../src/providers/types.js";
+import type { PipelineClaimInput } from "../../src/orchestrators/grounnel/pipeline.service.js";
 
 const VALID_AUTH = "Bearer dev-secret-change-me";
 const NEVER_CALLED_SEARCH: SearchProvider = {
@@ -162,5 +163,122 @@ describe("POST /extract (T014)", () => {
     expect(res.statusCode).toBe(202);
     expect(historyStore.createRunCalls).toHaveLength(1);
     expect(historyStore.createRunCalls[0]).toMatchObject({ sessionId: "11111111-1111-4111-8111-111111111111" });
+  });
+
+  it("T2010: no provider and an explicit gemini header with no key stay on the boot client", async () => {
+    const server = buildServer(provider);
+    const res = await server.inject({
+      method: "POST",
+      url: "/extract",
+      headers: { authorization: VALID_AUTH, "x-grounnel-provider": "gemini", "x-grounnel-provider-key": "   " },
+      payload: { text: "Some pasted article text." },
+    });
+    expect(res.statusCode).toBe(202);
+    expect(provider.getCallCount()).toBe(1);
+  });
+
+  it("T2010: deepseek or qwen without a key is rejected and the article is not sent", async () => {
+    const server = buildServer(provider);
+    for (const id of ["deepseek", "qwen"]) {
+      const res = await server.inject({
+        method: "POST",
+        url: "/extract",
+        headers: { authorization: VALID_AUTH, "x-grounnel-provider": id },
+        payload: { text: "Some pasted article text." },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "provider_requires_own_key" });
+    }
+    expect(provider.getCallCount()).toBe(0);
+  });
+
+  it("T2010: an unknown provider is rejected without echoing the header", async () => {
+    const pasted = "sk-pasted-into-provider-slot";
+    const server = buildServer(provider);
+    const res = await server.inject({
+      method: "POST",
+      url: "/extract",
+      headers: { authorization: VALID_AUTH, "x-grounnel-provider": pasted, "x-grounnel-provider-key": pasted },
+      payload: { text: "Some pasted article text." },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "unknown_provider" });
+    expect(res.body).not.toContain(pasted);
+    expect(provider.getCallCount()).toBe(0);
+  });
+
+  it("T2010: a visitor key is the judge for extract, eligibility, and the pipeline", async () => {
+    const visitorKey = "sk-visitor-deepseek-key";
+    const boot = provider;
+    class CaptureExtract extends GrounnelExtractService {
+      providerArg: Provider | undefined;
+      keySourceArg: "site" | "own" | undefined;
+      eligibilityProvider: Provider | undefined;
+      override async run(
+        _text: string,
+        _source?: "production" | "eval",
+        _sessionId?: string | null,
+        judge?: Provider,
+        keySource?: "site" | "own",
+      ) {
+        this.providerArg = judge;
+        this.keySourceArg = keySource;
+        const claim: PipelineClaimInput = {
+          id: "22222222-2222-4222-8222-222222222222",
+          text: "A checkable claim.",
+          sourceExcerpt: null,
+          subjectEntity: "",
+        };
+        return { id: "11111111-1111-4111-8111-111111111111", shareToken: "abcdefghijabcdefghijabcdefghijab", pendingClaims: [claim] };
+      }
+      override async classifyEligibility(_auditId: string, claims: PipelineClaimInput[], judge?: Provider) {
+        this.eligibilityProvider = judge;
+        return claims;
+      }
+    }
+    class CapturePipeline extends GrounnelPipelineService {
+      providerArg: Provider | undefined;
+      override async run(
+        _auditId: string,
+        _claims: PipelineClaimInput[],
+        _searchEngine?: "defaultFlow" | "tavily",
+        _inputText?: string,
+        judge?: Provider,
+      ) {
+        this.providerArg = judge;
+      }
+    }
+    const prompts = new PromptRegistry();
+    const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new NoopGrounnelHistoryStore();
+    const extractService = new CaptureExtract(boot, prompts, grounnelStore, historyStore, new NoopGrounnelLlmCallStore());
+    const pipelineService = new CapturePipeline(NEVER_CALLED_SEARCH, boot, prompts, grounnelStore, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    const server = Fastify();
+    registerGrounnelRoutes(server, {
+      extractService,
+      pipelineService,
+      grounnelStore,
+      historyStore,
+      rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+      assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    });
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/extract",
+      headers: { authorization: VALID_AUTH, "x-grounnel-provider": "deepseek", "x-grounnel-provider-key": visitorKey },
+      payload: { text: "Some pasted article text." },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body).not.toContain(visitorKey);
+    expect(boot.getCallCount()).toBe(0);
+    expect(extractService.providerArg).not.toBe(boot);
+    expect(extractService.providerArg?.mode).toBe("deepseek");
+    expect(extractService.providerArg?.model).toBe("deepseek-flash");
+    expect(extractService.keySourceArg).toBe("own");
+    expect(extractService.eligibilityProvider).toBe(extractService.providerArg);
+    expect(pipelineService.providerArg).toBe(extractService.providerArg);
   });
 });

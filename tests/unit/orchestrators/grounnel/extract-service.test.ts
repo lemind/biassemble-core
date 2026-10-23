@@ -300,7 +300,30 @@ describe("GrounnelExtractService (T009)", () => {
     await service.run("Some pasted article text.", "production", null, judge);
 
     expect(historyStore.createRunCalls[0]).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+    expect(historyStore.createRunCalls[0]!.keySource).toBeUndefined();
     expect(llmCallStore.recordCallContexts[0]).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+  });
+
+  it("T2010: records key_source own when the route passes a visitor key", async () => {
+    const judge: Provider = {
+      mode: "gemini",
+      model: "gemini-2.0-flash",
+      completeJson: async () => ({
+        result: { claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false },
+      }),
+    };
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(
+      new MockProvider("gemini-2.0-flash"),
+      new PromptRegistry(),
+      new RedisGrounnelStore(new FakeRedisHashClient()),
+      historyStore,
+      new FakeGrounnelLlmCallStore(),
+    );
+
+    await service.run("Some pasted article text.", "production", null, judge, "own");
+
+    expect(historyStore.createRunCalls[0]).toMatchObject({ provider: "gemini", model: "gemini-2.0-flash", keySource: "own" });
   });
 
   it("T025/D023 §4: records one completion per attempt, not just the final one, when a retry happens", async () => {
