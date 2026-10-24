@@ -2,8 +2,7 @@ import type { ZodSchema } from "zod";
 import { logger } from "../observability/logger.js";
 import { repairWithFallback } from "../parsers/repair.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./audit/injection-guard.js";
-import { RateLimitError } from "../providers/gemini.js";
-import { TimeoutError } from "../providers/types.js";
+import { ProviderError, RateLimitError, TimeoutError, stoppingProviderFailure } from "../providers/types.js";
 import type { Provider } from "../providers/types.js";
 import type { LlmCallStatus, LlmCallFailureType } from "../persistence/types.js";
 
@@ -66,20 +65,7 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
       outputTokens = response.usage?.outputTokens ?? null;
       totalTokens = response.usage?.totalTokens ?? null;
     } catch (err) {
-      // A timeout means the work did not fit the budget; the next attempt has the same budget and
-      // fails the same way. Measured: 4 of 4 user failures burned 3 x 30s before erroring (D030 §3m).
-      if (err instanceof TimeoutError) {
-        onComplete?.({
-          raw: null, parsedOutput: null, startedAt, endedAt: new Date(), durationMs: Date.now() - t0,
-          inputTokens, outputTokens, totalTokens,
-          status: "timeout", failureType: "timeout", errorMessage: err.message,
-        });
-        logger.warn({ module, operation, attempt, timeoutMs, err }, "provider call timed out — not retrying, the budget is the same");
-        throw err;
-      }
-      if (err instanceof RateLimitError) {
-        // Reviewed finding: this used to skip onComplete entirely — a rate-limited attempt
-        // produced zero grounnel_llm_calls row, unlike every other failure path here.
+      const recordFailure = (error: Error, status: "timeout" | "error", failureType: "timeout" | "provider_error") => {
         onComplete?.({
           raw: null,
           parsedOutput: null,
@@ -89,11 +75,37 @@ export async function callLlmForJson<T>(options: LlmJsonCallOptions<T>): Promise
           inputTokens,
           outputTokens,
           totalTokens,
-          status: "error",
-          failureType: "provider_error",
-          errorMessage: err.message,
+          status,
+          failureType,
+          errorMessage: error.message,
         });
+      };
+      // A timeout means the work did not fit the budget; the next attempt has the same budget and
+      // fails the same way. Measured: 4 of 4 user failures burned 3 x 30s before erroring (D030 §3m).
+      if (err instanceof TimeoutError) {
+        recordFailure(err, "timeout", "timeout");
+        logger.warn({ module, operation, attempt, timeoutMs, err }, "provider call timed out — not retrying, the budget is the same");
+        throw err;
+      }
+      if (err instanceof RateLimitError) {
+        // Reviewed finding: this used to skip onComplete entirely — a rate-limited attempt
+        // produced zero grounnel_llm_calls row, unlike every other failure path here.
+        recordFailure(err, "error", "provider_error");
         throw err; // fails again immediately — retrying wastes attempts
+      }
+      // D033 §3 — fatal categories are not retried; rate_limited is retried then rethrown; an outage falls through.
+      const stopping = stoppingProviderFailure(err);
+      if (stopping instanceof ProviderError) {
+        recordFailure(stopping, "error", "provider_error");
+        if (stopping.category === "rate_limited" && attempt < attempts) {
+          lastError = stopping;
+          logger.warn({ module, operation, attempt, category: stopping.category }, "provider rate-limited — retrying");
+          continue;
+        }
+        if (stopping.category !== "rate_limited") {
+          logger.warn({ module, operation, attempt, category: stopping.category }, "provider stopped the check — not retrying");
+        }
+        throw stopping;
       }
       lastError = err as Error;
       logger.warn({ module, operation, attempt, err }, "provider call failed — retrying");

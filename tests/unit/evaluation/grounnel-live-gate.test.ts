@@ -318,6 +318,21 @@ describe("repeated runs: a partial or unobserved case must never report a pass",
     expect(evaluateGrounnelRun(runs(2), s).ok).toBe(false);  // 2/5 = 0.40 is below it, and now says so
   });
 
+  it("scores an all-outage run as infra, not below_correct_rate", () => {
+    const outage = "VERIFY failed after retries (provider/parse error) — see grounnel_llm_calls for detail.";
+    const run: GrounnelRun = {
+      claims: [{ text: "The Eiffel Tower was completed in 1889.", verdict: null, reason: outage }],
+    };
+    const result = scoreGrounnelEvalCase(goldenCase, [run], [], undefined, 1);
+    expect(result.error).toBe("degraded (provider outage), not scored");
+    expect(result.matched).toBe(0);
+    expect(result.violations.map((v) => v.rule)).not.toContain("below_correct_rate");
+    const summary = summarizeGrounnelEvalCases([result]);
+    expect(summary.totalMatched).toBe(0);
+    expect(summary.bindingPassed).toBe(true);
+    expect(summary.cases[0]?.error).toBe("degraded (provider outage), not scored");
+  });
+
   it("(review finding) a NaN/garbage repeats value normalizes to 1, never to zero repetitions", () => {
     expect(normalizeRepeats(Number.NaN)).toBe(1);
     expect(normalizeRepeats("abc")).toBe(1);

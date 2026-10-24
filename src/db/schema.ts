@@ -323,6 +323,12 @@ export const grounnelRuns = grounnel.table("grounnel_runs", {
   // analytics, D023 §1's own stated reopening trigger). Deliberately minimal (not
   // benchmark/manual/cli/etc.) — a text-enum column is a one-line migration to extend later.
   source: text("source", { enum: ["production", "eval"] }).notNull().default("production"),
+  // Which provider judged this run. Default gemini so rows from before 0018 stay true (D033 §1).
+  provider: text("provider", { enum: ["gemini", "deepseek", "qwen"] }).notNull().default("gemini"),
+  // Exact model invoked. Null only on rows written before 0018 (D033).
+  model: text("model"),
+  // Whose account paid for judging. Not the key, and not selected into status or share (D033 §5).
+  keySource: text("key_source", { enum: ["site", "own"] }).notNull().default("site"),
   status: text("status", { enum: ["extracting", "verifying", "done", "failed"] }).notNull().default("extracting"),
   maxClaims: integer("max_claims").notNull(),
   truncated: boolean("truncated").notNull().default(false),

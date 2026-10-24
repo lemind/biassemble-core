@@ -23,6 +23,8 @@ const ASSESSMENT: SharedAssessment = {
   text: "The Eiffel Tower was originally constructed in London.",
   createdAt: "2026-09-07T17:25:48.000Z",
   completedAt: "2026-09-07T17:29:11.000Z",
+  provider: "gemini",
+  model: "gemini-2.0-flash",
   claims: [
     {
       text: "The Eiffel Tower was originally constructed in London.",
@@ -72,6 +74,8 @@ describe("GET /assessment/:token (spec 019)", () => {
     const body = JSON.parse(res.body);
     expect(body).not.toHaveProperty("runId");
     expect(body).not.toHaveProperty("sessionId");
+    expect(body).not.toHaveProperty("key_source");
+    expect(body).not.toHaveProperty("keySource");
     expect(body.claims[0]).not.toHaveProperty("id");
   });
 

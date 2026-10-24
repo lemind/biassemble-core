@@ -164,6 +164,10 @@ export const SharedAssessmentSchema = z.object({
   createdAt: z.string(),
   completedAt: z.string().nullable(),
   counts: SharedCountsSchema.optional(),
+  // Which judge produced this run. Not the key, and not key_source (D033 §5).
+  provider: z.enum(["gemini", "deepseek", "qwen"]),
+  // Null only on a row stored before the column existed (D033).
+  model: z.string().nullable(),
 });
 
 export type SharedAssessment = z.infer<typeof SharedAssessmentSchema>;
@@ -210,6 +214,10 @@ export const StatusResponseSchema = z.object({
   // null for audits created before this field existed — no createdAt on their Redis meta hash.
   started_at: z.string().datetime().nullable(),
   elapsed_seconds: z.number().int().nonnegative().nullable(),
+  // Which judge produced this run. Not the key, and not key_source (D033 §5).
+  provider: z.enum(["gemini", "deepseek", "qwen"]),
+  // Null only on a hash written before this field existed (D033).
+  model: z.string().nullable(),
 });
 
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;

@@ -3,6 +3,10 @@ import { z } from "zod";
 const envSchema = z.object({
   GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
   GEMINI_MODEL: z.string().default("gemini-2.0-flash"),
+  // Optional until a run passes the key. Qwen's host needs the workspace id (T2007).
+  DEEPSEEK_API_KEY: z.string().min(1).optional(),
+  QWEN_API_KEY: z.string().min(1).optional(),
+  QWEN_WORKSPACE_ID: z.string().min(1).optional(),
   AI_CORE_API_KEY: z.string().min(1, "AI_CORE_API_KEY is required"),
   PORT: z.coerce.number().int().positive().default(3001),
   AI_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),

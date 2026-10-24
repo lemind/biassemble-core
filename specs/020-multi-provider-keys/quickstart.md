@@ -2,8 +2,8 @@
 
 ## Keys, then a check
 
-1. Set `DEEPSEEK_API_KEY` and `QWEN_API_KEY` (plus the Qwen workspace id) in the core project's
-   environment, next to the existing Gemini key.
+1. Set `DEEPSEEK_API_KEY`, `QWEN_API_KEY`, and `QWEN_WORKSPACE_ID` (the Singapore workspace
+   id, the host prefix) in the core project's environment, next to the existing Gemini key.
 2. Run `npx tsx --env-file=.env scripts/check-provider-keys.ts`. All three must print ok.
 3. A normal site check stays on Gemini. There is no provider control.
 

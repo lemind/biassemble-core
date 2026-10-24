@@ -103,6 +103,8 @@ describe("readAssessmentByToken — citations round-trip (shared link parity)", 
     createdAt: new Date("2026-09-13T00:00:00Z"),
     completedAt: new Date("2026-09-13T00:01:00Z"),
     score: null,
+    provider: "deepseek" as const,
+    model: "deepseek-flash",
   };
   const claimRow = {
     claimText: "The sky is blue.",
@@ -135,5 +137,16 @@ describe("readAssessmentByToken — citations round-trip (shared link parity)", 
     const store = new DrizzleGrounnelHistoryStore();
     const assessment = await store.readAssessmentByToken("tok");
     expect(assessment?.claims[0]?.citations).toEqual([]);
+  });
+
+  it("T2011: names the provider and model, and drops key_source even if the row has it", async () => {
+    mockSelectRunByToken.mockResolvedValue({ ...run, keySource: "own", key_source: "own" });
+    mockSelectClaims.mockResolvedValue([]);
+    const store = new DrizzleGrounnelHistoryStore();
+    const assessment = await store.readAssessmentByToken("tok");
+    expect(assessment).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+    expect(assessment).not.toHaveProperty("keySource");
+    expect(assessment).not.toHaveProperty("key_source");
+    expect(JSON.stringify(assessment)).not.toContain("own");
   });
 });

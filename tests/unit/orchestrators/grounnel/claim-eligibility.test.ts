@@ -4,7 +4,7 @@ import { PromptRegistry } from "../../../../src/prompts/registry.js";
 import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeGrounnelLlmCallStore } from "../../../mocks/fake-grounnel-llm-call-store.js";
 import { TimeoutError } from "../../../../src/providers/types.js";
-import { RateLimitError } from "../../../../src/providers/gemini.js";
+import { RateLimitError } from "../../../../src/providers/types.js";
 
 // T011 (D030 tasks.md) — orchestration/wiring tests only, mocked provider. This proves the pipeline
 // applies a given classification correctly and fails open on every error shape; it does NOT prove
@@ -79,8 +79,22 @@ describe("classifyClaimVerifiability (T011)", () => {
     provider.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a", hasResolvableReferent: true });
     await classify("Some claim.", null);
     expect(llmCallStore.recordCallContexts).toHaveLength(1);
-    expect(llmCallStore.recordCallContexts[0]).toMatchObject({ runId: "run-1", claimId: "claim-1", stage: "extract", callType: "eligibility_check" });
+    expect(llmCallStore.recordCallContexts[0]).toMatchObject({
+      runId: "run-1",
+      claimId: "claim-1",
+      stage: "extract",
+      callType: "eligibility_check",
+      provider: "mock",
+      model: "mock",
+    });
     expect(llmCallStore.completions[0]!.info.status).toBe("success");
+  });
+
+  it("T2009: records the model on the provider, not a process-wide default", async () => {
+    const judge = new MockProvider("qwen3.7-flash");
+    judge.setResponse("You are a claim-eligibility classifier", { category: "checkable", certainty: "uncertain", reason: "n/a", hasResolvableReferent: true });
+    await classifyClaimVerifiability(judge, prompts, llmCallStore, "run-1", "claim-1", { claimText: "Some claim.", sourceExcerpt: null });
+    expect(llmCallStore.recordCallContexts[0]).toMatchObject({ provider: "mock", model: "qwen3.7-flash" });
   });
 
   it("records a grounnel_llm_calls completion even on fail-open (status reflects the real failure, not silently dropped)", async () => {
