@@ -18,7 +18,7 @@ import { PromptRegistry } from "../prompts/registry.js";
 import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../providers/search/tavily-provider.js";
 import { DrizzleGrounnelSearchCallStore } from "../persistence/grounnel-search-call-store.js";
-import { normalizeRepeats, runGrounnelEvalOnce, scoreGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
+import { normalizeRepeats, runGrounnelEvalOnce, runIsProviderOutage, scoreGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
 import { MIN_VERDICT_REPETITIONS } from "../evaluation/grounnel-live-gate.js";
 import type { GrounnelRun } from "../evaluation/grounnel-live-gate.js";
 import { env } from "../lib/env.js";
@@ -181,6 +181,10 @@ export const evalGrounnelRunJob = inngest.createFunction(
             degradedCaseIds.add(goldenCase.id);
             const kind = evalAbortKind(run.claims[0]?.reason ?? "");
             if (kind) abortKind = kind;
+          } else if (runIsProviderOutage(run)) {
+            // Same class as a rate-limit degrade for escalation, but not the 3-strike abort: parse failures share this sentence.
+            degradedCaseIds.add(goldenCase.id);
+            consecutiveRateLimited = 0;
           } else consecutiveRateLimited = 0;
         } catch (err) {
           // One repetition failing must not abandon the case — the remaining repetitions still
