@@ -84,6 +84,8 @@ See `specs/008-b2b/quickstart.md` for example `curl` commands and `docs/decision
 
 **Public MVP (alpha)** — live at [grounnel.vercel.app](https://grounnel.vercel.app), no accounts. A run is capped at **40 claims**, sized to Vercel Hobby's hard 300s function ceiling (~6.5s/claim measured, 2026-09-10); longer texts are checked in part and the response says so. Every run mints a durable share token (`GET /assessment/:token`, spec 019) so a result opens for anyone with the link — a public shape carrying no run id, session id or telemetry. An Inngest cron settles runs whose container died before writing a terminal status, consulting Redis for the real outcome rather than assuming failure.
 
+The judge is Gemini, DeepSeek, or Qwen (`specs/020-multi-provider-keys/`). A check with no visitor key stays on Gemini, and the result names the provider. A visitor who brings a key picks the provider; that key pays for the check and is not stored. There is no control that spends the site key on DeepSeek or Qwen. Web search stays on the site Gemini account.
+
 See `specs/009-grounnel/` for the full spec, `specs/012-grounnel-ordinal-eligibility-gates/` for the eligibility/ordinal-gate feature spec, and `docs/decisions/026-verify-retrieval-first-grounding.md` / `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md` for the design history.
 
 ## Evaluation
@@ -108,7 +110,7 @@ Public App → Public API (Next.js) → AI Core (Fastify) → LLM Provider
 
 - **Runtime**: Node 22 LTS, TypeScript 5.x strict
 - **Framework**: Fastify 5
-- **LLM**: Provider-agnostic adapter (currently Gemini Flash)
+- **LLM**: Provider-agnostic adapter. Grounnel's judge is Gemini, DeepSeek, or Qwen, defaulting to Gemini, including a visitor's own key. Reflection and audit stay on Gemini.
 - **Validation**: Zod 4
 - **DB**: Drizzle ORM + PostgreSQL (reasoning traces, eval results, RAG provenance)
 - **Background jobs**: Inngest (eval runs + async RAG retrieval)
@@ -160,7 +162,7 @@ src/
 ├── contracts/       # Zod schemas (reasoning + reflection + grounnel)
 ├── orchestrators/   # Question/assessment services, audit VERIFY, grounnel/ (extract + pipeline + gates)
 ├── prompts/         # JSON/Markdown-based prompt templates, incl. prompts/grounnel/
-├── providers/       # LLM adapter interface + providers/search/ (Gemini discovery, DIY fetch, Tavily)
+├── providers/       # Gemini, DeepSeek, and Qwen judges + providers/search/ (Gemini discovery, DIY fetch, Tavily)
 ├── parsers/         # JSON extraction + repair pipeline
 ├── catalog/         # Bias taxonomy + normalization
 ├── evaluation/      # Metrics functions
