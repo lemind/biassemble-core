@@ -48,6 +48,10 @@ describe("classifyGeminiError", () => {
     expect(classifyGeminiError(403, "Your API key was reported as leaked.")).toBe("invalid_key");
   });
 
+  it("classifies a disabled Generative Language API as model_access_denied, not a rejected key", () => {
+    expect(classifyGeminiError(403, "PERMISSION_DENIED Generative Language API has not been used in project 123 or it is disabled")).toBe("model_access_denied");
+  });
+
   it("classifies a per-minute or daily quota as rate_limited, even when the text says quota", () => {
     expect(classifyGeminiError(
       429,
@@ -163,6 +167,18 @@ describe("GeminiProvider", () => {
     expect(payload.providerMessage).toContain("reset in 30 seconds");
     expect(payload.providerMessage).toContain("key=[REDACTED]");
     expect(payload.providerMessage).not.toContain(STANDARD_KEY);
+  });
+
+  it("reads a daily cap from the message when QuotaFailure lists no metric", async () => {
+    fail(429, "Quota exceeded per day", [{
+      "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+      violations: [],
+    }]);
+    const error = await new GeminiProvider({ apiKey: STANDARD_KEY }).completeJson(request).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(RateLimitError);
+    const limit = error as RateLimitError;
+    expect(limit.limitType).toBe("daily");
+    expect(limit.message).toBe("Daily API quota exhausted. Please try again tomorrow.");
   });
 
   it("maps an outage and a network failure to unavailable without the raw message", async () => {

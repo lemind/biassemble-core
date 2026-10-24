@@ -24,7 +24,9 @@ const CATEGORY_MESSAGE: Record<ProviderErrorCategory, string> = {
 const PER_MINUTE = /per[\s_-]?minute|requests per minute|\brate limit\b|\brpm\b/i;
 const DAILY = /per[\s_-]?day|\bdaily\b/i;
 const BILLING = /billing|credit|depleted|spend(?:ing)? cap|arrears/i;
-const KEY_REJECTED = /api[_ ]key|unauthenticated|permission_denied|access_token_type_unsupported|auth/;
+const KEY_REJECTED = /api[_ ]key|api_key_invalid|api_key_service_blocked|unauthenticated|access_token_type_unsupported|reported as leaked/i;
+// A project that has not enabled the API is not a rejected key (403 PERMISSION_DENIED / SERVICE_DISABLED).
+const SERVICE_DISABLED = /service_disabled|has not been used|api.*not.*enabled|accessnotconfigured|permission_denied/i;
 
 export interface GeminiProviderOptions {
   /** Per-run model. Absent means the deployment model. */
@@ -45,7 +47,9 @@ export function classifyGeminiError(
   details?: readonly GeminiErrorDetail[],
 ): ProviderErrorCategory | null {
   const kind = limitKind(blob, details);
-  const keyRejected = KEY_REJECTED.test(blob.toLowerCase());
+  const keyRejected = KEY_REJECTED.test(blob);
+  // Enablement wins only when the body is not a real key rejection, so a blocked or leaked key stays invalid_key.
+  if (status === 403 && !keyRejected && SERVICE_DISABLED.test(blob)) return "model_access_denied";
   if (status === 401 || (status === 400 && keyRejected) || (status === 403 && keyRejected && kind !== "billing")) {
     return "invalid_key";
   }
@@ -64,11 +68,12 @@ function limitKind(
   details?: readonly GeminiErrorDetail[],
 ): "per-minute" | "daily" | "billing" | null {
   const metric = quotaMetricText(details);
-  const source = metric ?? blob;
+  // An empty QuotaFailure still returns "" — that must not hide the human message or force per-minute.
+  const source = metric && metric.length > 0 ? metric : blob;
   if (PER_MINUTE.test(source)) return "per-minute";
   if (BILLING.test(source)) return "billing";
   if (DAILY.test(source)) return "daily";
-  if (metric !== null) return "per-minute";
+  if (metric && metric.length > 0) return "per-minute";
   return null;
 }
 
