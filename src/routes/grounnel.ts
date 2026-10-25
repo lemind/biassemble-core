@@ -15,6 +15,8 @@ import {
   resolveProvider,
   type ProviderId,
 } from "../providers/registry.js";
+import { sumGrounnelJudgingTokens } from "../db/queries.js";
+import { publishOwnKeyTokens } from "../lib/own-key-tokens.js";
 import { buildGeminiRateLimitMessage, type GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import type { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import type { GrounnelStore } from "../persistence/grounnel-store.js";
@@ -193,17 +195,24 @@ export function registerGrounnelRoutes(
     if (extracted.pendingClaims.length > 0) {
       waitUntil(
         (async () => {
-          const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims, decision.provider);
-          if (eligible.length > 0) {
-            await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text, decision.provider);
+          try {
+            const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims, decision.provider);
+            if (eligible.length > 0) {
+              await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text, decision.provider);
+            }
+          } catch (err) {
+            logger.error(
+              { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
+              "Eligibility classification or pipeline run failed after the 202 response was already sent"
+            );
+          } finally {
+            // Refresh after the pipeline. The snapshot the live page can rely on was written before escalating cleared.
+            await publishOwnKeyTokens(extracted.id, services.grounnelStore, sumGrounnelJudgingTokens);
           }
-        })().catch((err) => {
-          logger.error(
-            { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
-            "Eligibility classification or pipeline run failed after the 202 response was already sent"
-          );
-        })
+        })()
       );
+    } else {
+      waitUntil(publishOwnKeyTokens(extracted.id, services.grounnelStore, sumGrounnelJudgingTokens));
     }
   });
 

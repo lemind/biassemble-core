@@ -19,6 +19,7 @@ import {
   grounnelGateEvents,
 } from "./schema";
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus, GateReason } from "../persistence/types";
+import { GROUNNEL_JUDGING_STAGES } from "../lib/own-key-tokens";
 import { scrubErrorMessage } from "../persistence/error-scrub";
 import type { LlmCall } from "./schema";
 
@@ -667,9 +668,10 @@ export async function selectGrounnelRunByShareToken(shareToken: string) {
       completedAt: grounnelRuns.completedAt,
       // Authoritative verdict tallies snapshotted at completion — the claim rows are best-effort.
       score: grounnelRuns.score,
-      // Judge identity for the share page. key_source stays off this list (D033 §5).
+      // Judge identity for the share page. key_source is read so token counts can be attached; it is not copied onto the payload (D033 §5).
       provider: grounnelRuns.provider,
       model: grounnelRuns.model,
+      keySource: grounnelRuns.keySource,
     })
     .from(grounnelRuns)
     .where(eq(grounnelRuns.shareToken, shareToken))
@@ -693,6 +695,22 @@ export async function selectGrounnelClaimsByRunId(runId: string) {
     .from(grounnelClaims)
     .where(eq(grounnelClaims.runId, runId))
     .orderBy(grounnelClaims.createdAt);
+}
+
+// extract and verify only. Web search is Grounnel's account and is not in GROUNNEL_JUDGING_STAGES (T2018).
+export async function sumGrounnelJudgingTokens(runId: string): Promise<{ input: number; output: number }> {
+  const [row] = await db()
+    .select({
+      input: sql<number>`coalesce(sum(${grounnelLlmCalls.inputTokens}), 0)::int`,
+      output: sql<number>`coalesce(sum(${grounnelLlmCalls.outputTokens}), 0)::int`,
+    })
+    .from(grounnelLlmCalls)
+    .where(and(eq(grounnelLlmCalls.runId, runId), inArray(grounnelLlmCalls.stage, [...GROUNNEL_JUDGING_STAGES])));
+  const asCount = (value: unknown) => {
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  };
+  return { input: asCount(row?.input), output: asCount(row?.output) };
 }
 
 export async function updateGrounnelRun(

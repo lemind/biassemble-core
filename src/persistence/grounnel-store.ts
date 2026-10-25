@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Redis } from "@upstash/redis";
 import { ClaimSchema, type Claim, type ClaimResult, type StatusResponse } from "../contracts/grounnel.schemas.js";
+import { ownKeyTokensForRun } from "../lib/own-key-tokens.js";
 import { logger } from "../observability/logger.js";
 
 const MODULE = "grounnel-store";
@@ -23,9 +24,14 @@ export interface GrounnelStore {
     truncated: boolean;
     provider?: "gemini" | "deepseek" | "qwen";
     model?: string;
+    keySource?: "site" | "own";
   }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
+  /** True when this audit was started with a visitor key. Missing meta is false. */
+  hasOwnKey(auditId: string): Promise<boolean>;
+  /** Stores judging-token totals. No-op unless the audit's key source is own. */
+  writeOwnKeyTokens(auditId: string, input: number, output: number): Promise<void>;
   /** D026 §14 — run-level, not claim-level: escalation shouldn't revert an already-resolved claim's
    * status back to "pending" (visible UI regression), but "done" must still wait for it to finish. */
   setEscalating(auditId: string, escalating: boolean): Promise<void>;
@@ -53,11 +59,23 @@ interface Meta {
   // Absent on hashes written before T2011. Those reads stay Gemini (D033).
   provider?: "gemini" | "deepseek" | "qwen";
   model?: string;
+  // Internal only. getStatus never copies this onto the response (D033 §5).
+  keySource?: "site" | "own";
+  ownKeyInputTokens?: number;
+  ownKeyOutputTokens?: number;
 }
 
 function storedProvider(value: string | undefined): "gemini" | "deepseek" | "qwen" {
   if (value === "deepseek" || value === "qwen") return value;
   return "gemini";
+}
+
+function storedOwnKeyTotals(meta: Meta): { input: number; output: number } | null {
+  const input = meta.ownKeyInputTokens;
+  const output = meta.ownKeyOutputTokens;
+  if (typeof input !== "number" || typeof output !== "number") return null;
+  if (!Number.isInteger(input) || !Number.isInteger(output) || input < 0 || output < 0) return null;
+  return { input, output };
 }
 
 /** Adapts @upstash/redis's `Redis` to `RedisHashClient`. Build it with `automaticDeserialization: false` — this store parses JSON itself; the SDK's auto-parse would return objects, not strings. */
@@ -114,6 +132,7 @@ export class RedisGrounnelStore implements GrounnelStore {
     truncated: boolean;
     provider?: "gemini" | "deepseek" | "qwen";
     model?: string;
+    keySource?: "site" | "own";
   }): Promise<{ id: string }> {
     const id = data.id ?? randomUUID();
     const key = `audit:${id}`;
@@ -125,6 +144,7 @@ export class RedisGrounnelStore implements GrounnelStore {
       escalating: false,
       ...(data.provider ? { provider: data.provider } : {}),
       ...(model ? { model } : {}),
+      ...(data.keySource ? { keySource: data.keySource } : {}),
     };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };
     for (const claim of data.claims) {
@@ -170,6 +190,24 @@ export class RedisGrounnelStore implements GrounnelStore {
     if (!existingRaw) return; // audit expired/missing — nothing to flag, matches getStatus's own null-on-missing convention
     const meta = JSON.parse(existingRaw) as Meta;
     await this.redis.hset(key, { [META_FIELD]: JSON.stringify({ ...meta, escalating }) });
+  }
+
+  async hasOwnKey(auditId: string): Promise<boolean> {
+    const raw = await this.redis.hget(`audit:${auditId}`, META_FIELD);
+    if (!raw) return false;
+    return (JSON.parse(raw) as Meta).keySource === "own";
+  }
+
+  async writeOwnKeyTokens(auditId: string, input: number, output: number): Promise<void> {
+    const key = `audit:${auditId}`;
+    const existingRaw = await this.redis.hget(key, META_FIELD);
+    if (!existingRaw) return;
+    const meta = JSON.parse(existingRaw) as Meta;
+    if (meta.keySource !== "own") return;
+    const count = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    await this.redis.hset(key, {
+      [META_FIELD]: JSON.stringify({ ...meta, ownKeyInputTokens: count(input), ownKeyOutputTokens: count(output) }),
+    });
   }
 
   async getStatus(id: string): Promise<StatusResponse | null> {
@@ -265,6 +303,7 @@ export class RedisGrounnelStore implements GrounnelStore {
       elapsed_seconds: elapsedSeconds,
       provider: storedProvider(meta.provider),
       model: typeof meta.model === "string" && meta.model.length > 0 ? meta.model : null,
+      ownKeyTokens: ownKeyTokensForRun(meta.keySource, status, storedOwnKeyTotals(meta)),
     };
   }
 }

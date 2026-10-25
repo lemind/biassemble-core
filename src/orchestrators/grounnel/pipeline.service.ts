@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ZodSchema } from "zod";
 import { waitUntil } from "@vercel/functions";
+import { sumGrounnelJudgingTokens } from "../../db/queries.js";
+import { publishOwnKeyTokens } from "../../lib/own-key-tokens.js";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
@@ -205,6 +207,8 @@ export class GrounnelPipelineService {
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
       } finally {
+        // Write judging totals before this clears, or a poll can see done and stop with no number (T2018).
+        await publishOwnKeyTokens(auditId, this.grounnelStore, sumGrounnelJudgingTokens);
         // D026 §15 — must clear on every path or the run sticks at "verifying" forever.
         await this.grounnelStore.setEscalating(auditId, false);
         // The G1 cache holds this document's whole shingle set; nothing else evicts it.
