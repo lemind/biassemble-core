@@ -79,10 +79,8 @@ export function classifyCompatibleError(
     return null;
   }
   const blob = `${code} ${message}`.toLowerCase();
-  // Balance: arrears, exhausted/insufficient quota, AllocationQuota, or a free tier that ran out (D033 §3).
-  const outOfBalance = /arrears|insufficient|exhausted|allocationquota|overdue|free quota|add funds/.test(blob);
-  // A 403 is an unpurchased/unauthorized model, UNLESS the body says the balance or quota ran out — the
-  // free tier returns 403 insufficient_quota, which is no_balance, not model_access_denied (D033 §3).
+  // Quota or balance only. Bare "insufficient" or "add funds" is not a balance failure (D033 §3).
+  const outOfBalance = /arrears|insufficient[_\s-]?quota|exhausted|allocationquota|overdue|free quota/.test(blob);
   if (status === 403) return outOfBalance ? "no_balance" : "model_access_denied";
   if (status === 429) {
     // Throttling.RateQuota is an RPM limit. Balance is arrears, exhausted, or AllocationQuota (D033 §3).
@@ -219,7 +217,7 @@ function sketch(node: JsonSchemaNode): string {
 /** A rejected json_schema. Classified auth, balance, and quota errors are not this (D033 §3). */
 function schemaFormatRejected(provider: "deepseek" | "qwen", status: number, code: string, message: string, raw: string): boolean {
   if (classifyCompatibleError(provider, status, code, message)) return false;
-  return /json_schema|response_format/i.test(`${code} ${message} ${raw}`);
+  return /json_schema|response_format|invalid schema|text\.format/i.test(`${code} ${message} ${raw}`);
 }
 
 export class OpenAICompatibleProvider implements Provider {
@@ -238,10 +236,12 @@ export class OpenAICompatibleProvider implements Provider {
     const parsed = await this.completeOnce<T>(request, system, user, timeoutMs);
     normalizeCitationKeys(parsed.result);
     if (!needsCitationRepair(parsed.result)) return parsed;
-    // Passages are inside the system prompt. Keep it, and name the camelCase key the gate reads (D027).
+    // Passages stay in the system prompt. Rows that already cite are copied back after the repair (D027).
     const repairSystem = `${system}\n\nReply with a JSON object only. The key is evidenceCitations, never evidence_citations. ${CITATION_RULE}`;
-    const repairUser = `${user}\n\nThe previous JSON is invalid. ${CITATION_RULE}`;
-    return this.postJson<T>(this.chatBody(repairSystem, repairUser, request, { type: "json_object" }), timeoutMs, false);
+    const repairUser = `${user}\n\nThe previous JSON is invalid. Keep rows that already cite. Previous JSON: ${JSON.stringify(parsed.result)}\n${CITATION_RULE}`;
+    const repaired = await this.postJson<T>(this.chatBody(repairSystem, repairUser, request, { type: "json_object" }), timeoutMs, false);
+    normalizeCitationKeys(repaired.result);
+    return { result: mergeRepairedCitations(parsed.result, repaired.result) as T, usage: addUsage(parsed.usage, repaired.usage) };
   }
 
   private async completeOnce<T>(
@@ -391,6 +391,7 @@ export class OpenAICompatibleProvider implements Provider {
           model: this.config.model,
           instructions: system,
           input: user,
+          temperature: request.options?.temperature ?? 0,
           reasoning: { effort: "none" },
           max_output_tokens: request.options?.maxTokens ?? DEEPSEEK_MAX_TOKENS,
           text: {
@@ -405,14 +406,14 @@ export class OpenAICompatibleProvider implements Provider {
       });
       if (!response.ok) {
         const detail = await readErrorBody(response, this.config.apiKey);
-        if (classifyCompatibleError(this.config.provider, response.status, detail.code, detail.message)) {
-          throw this.errorFromDetail(response.status, detail, "completeJson");
+        if (schemaFormatRejected(this.config.provider, response.status, detail.code, detail.message, detail.raw)) {
+          logger.warn(
+            { module: MODULE, operation: "completeJson", provider: this.config.provider, status: response.status },
+            "responses json_schema rejected, using json_object",
+          );
+          throw new SchemaFormatUnsupported();
         }
-        logger.warn(
-          { module: MODULE, operation: "completeJson", provider: this.config.provider, status: response.status },
-          "responses json_schema rejected, using json_object",
-        );
-        throw new SchemaFormatUnsupported();
+        throw this.errorFromDetail(response.status, detail, "completeJson");
       }
       return await this.parseResponses<T>(response);
     } catch (error: unknown) {
@@ -528,6 +529,7 @@ export class OpenAICompatibleProvider implements Provider {
   private async parseResponses<T>(response: Response): Promise<ProviderResponse<T>> {
     const raw = await response.text();
     let payload: {
+      status?: string;
       output?: Array<{ type?: string; content?: Array<{ text?: string | null }> }>;
       usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
     };
@@ -536,6 +538,8 @@ export class OpenAICompatibleProvider implements Provider {
     } catch {
       throw new Error("Malformed JSON from AI provider");
     }
+    // A partial or filtered body can still parse as JSON. It is not the whole batch (D033).
+    if (payload.status === "failed" || payload.status === "incomplete") throw new Error("provider returned empty content");
     const message = payload.output?.find((item) => item.type === "message");
     const content = message?.content?.find((part) => typeof part.text === "string" && part.text.trim() !== "")?.text;
     if (typeof content !== "string") throw new Error("provider returned empty content");
@@ -572,17 +576,48 @@ function normalizeCitationKeys(result: unknown): void {
   }
 }
 
+function rowNeedsCitationRepair(item: unknown): boolean {
+  if (!item || typeof item !== "object") return false;
+  const row = item as { verdict?: unknown; evidenceCitations?: unknown };
+  if (typeof row.verdict !== "string" || !CITING_VERDICTS.includes(row.verdict)) return false;
+  return row.evidenceCitations == null || (Array.isArray(row.evidenceCitations) && row.evidenceCitations.length === 0);
+}
+
 /** A citing verdict whose evidenceCitations is null or empty. Repaired once (D027). */
 function needsCitationRepair(result: unknown): boolean {
   if (!result || typeof result !== "object") return false;
   const results = (result as { results?: unknown }).results;
-  if (!Array.isArray(results)) return false;
-  return results.some((item) => {
-    if (!item || typeof item !== "object") return false;
-    const row = item as { verdict?: unknown; evidenceCitations?: unknown };
-    if (typeof row.verdict !== "string" || !CITING_VERDICTS.includes(row.verdict)) return false;
-    return row.evidenceCitations == null || (Array.isArray(row.evidenceCitations) && row.evidenceCitations.length === 0);
+  return Array.isArray(results) && results.some(rowNeedsCitationRepair);
+}
+
+/** Keep rows that already cite. Take a repaired row only for an id that had no citations (D027). */
+function mergeRepairedCitations(original: unknown, repaired: unknown): unknown {
+  if (!original || typeof original !== "object" || !repaired || typeof repaired !== "object") return repaired;
+  const originalResults = (original as { results?: unknown }).results;
+  const repairedResults = (repaired as { results?: unknown }).results;
+  if (!Array.isArray(originalResults) || !Array.isArray(repairedResults)) return repaired;
+  const byId = new Map<string, unknown>();
+  for (const item of repairedResults) {
+    if (!item || typeof item !== "object") continue;
+    const id = (item as { id?: unknown }).id;
+    if (typeof id === "string") byId.set(id, item);
+  }
+  const results = originalResults.map((item) => {
+    if (!rowNeedsCitationRepair(item)) return item;
+    const id = item && typeof item === "object" ? (item as { id?: unknown }).id : undefined;
+    return typeof id === "string" && byId.has(id) ? byId.get(id) : item;
   });
+  return { ...(original as Record<string, unknown>), results };
+}
+
+function addUsage(first: TokenUsage | undefined, second: TokenUsage | undefined): TokenUsage | undefined {
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    inputTokens: first.inputTokens + second.inputTokens,
+    outputTokens: first.outputTokens + second.outputTokens,
+    totalTokens: first.totalTokens + second.totalTokens,
+  };
 }
 
 /** True, false, or unknown. The balance figures in the body are discarded (D033 §3). */

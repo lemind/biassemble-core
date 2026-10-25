@@ -189,6 +189,11 @@ describe("OpenAICompatibleProvider", () => {
     }
   });
 
+  it("maps a Qwen 403 insufficient permissions to model_access_denied", async () => {
+    stub(403, JSON.stringify({ error: { code: "AccessDenied", message: "insufficient permissions" } }));
+    await expect(provider("qwen").completeJson(bare)).rejects.toMatchObject({ category: "model_access_denied" });
+  });
+
   it("maps a Qwen 403 insufficient_quota to no_balance, not model_access_denied", async () => {
     stub(403, JSON.stringify({ error: { code: "insufficient_quota", message: "Free quota exhausted. Please add funds or disable the \"use free tier only\" mode." } }));
     try {
@@ -247,6 +252,7 @@ describe("OpenAICompatibleProvider", () => {
     expect(request.url).toBe(DEEPSEEK_RESPONSES_URL);
     expect(request.body).not.toHaveProperty("response_format");
     expect(request.body.reasoning).toEqual({ effort: "none" });
+    expect(request.body.temperature).toBe(0);
     const format = (request.body.text as { format: { type: string; name: string; schema: unknown } }).format;
     expect(format.type).toBe("json_schema");
     expect(format.name).toBe("grounnel_response");
@@ -303,6 +309,25 @@ describe("OpenAICompatibleProvider", () => {
     expect(result.result).toEqual(cited);
   });
 
+  it("does not fall back when a DeepSeek responses error is not a schema rejection", async () => {
+    const fetchMock = stub(400, JSON.stringify({ error: { message: "maximum context length exceeded" } }));
+    await expect(provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema })).rejects.toThrow(
+      "The provider rejected the request.",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an incomplete DeepSeek responses body instead of a partial batch", async () => {
+    const fetchMock = stub(200, JSON.stringify({
+      status: "incomplete",
+      output: [{ type: "message", content: [{ type: "output_text", text: '{"results":[]}' }] }],
+    }));
+    await expect(provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema })).rejects.toThrow(
+      "provider returned empty content",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not fall back when the DeepSeek responses call is unauthorized", async () => {
     const fetchMock = stub(401, JSON.stringify({ error: { message: "invalid" } }));
     await expect(provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema })).rejects.toMatchObject({
@@ -331,10 +356,39 @@ describe("OpenAICompatibleProvider", () => {
     const user = second.messages.find((message) => message.role === "user")!.content;
     const system = second.messages.find((message) => message.role === "system")!.content;
     expect(user).toContain("The previous JSON is invalid.");
+    expect(user).toContain("Previous JSON:");
     expect(user).toContain("MUST include non-empty evidenceCitations");
     expect(system).toContain("Classify the claim.");
     expect(system).toContain("never evidence_citations");
     expect(result.result).toEqual(fixed);
+    expect(result.usage).toEqual({ inputTokens: 6, outputTokens: 4, totalTokens: 10 });
+  });
+
+  it("keeps rows that already cite when a repair rewrites them", async () => {
+    const original = {
+      results: [
+        { id: "c1", verdict: "supported", reason: "kept", confidence: 0.9, evidenceCitations: [{ source: "A", n: 1 }] },
+        { id: "c2", verdict: "contradicted", reason: "missing", confidence: 0.8, evidenceCitations: null },
+      ],
+    };
+    const rewritten = {
+      results: [
+        { id: "c1", verdict: "contradicted", reason: "flipped", confidence: 0.1, evidenceCitations: [{ source: "B", n: 9 }] },
+        { id: "c2", verdict: "contradicted", reason: "missing", confidence: 0.8, evidenceCitations: null, evidence_citations: [{ source: "A", n: 2 }] },
+      ],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(http(200, successBody(JSON.stringify(original))))
+      .mockResolvedValueOnce(http(200, successBody(JSON.stringify(rewritten))));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await provider("qwen").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.result).toEqual({
+      results: [
+        { id: "c1", verdict: "supported", reason: "kept", confidence: 0.9, evidenceCitations: [{ source: "A", n: 1 }] },
+        { id: "c2", verdict: "contradicted", reason: "missing", confidence: 0.8, evidenceCitations: [{ source: "A", n: 2 }] },
+      ],
+    });
   });
 
   it("copies a snake_case citation array onto evidenceCitations and does not call again", async () => {

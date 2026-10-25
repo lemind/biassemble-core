@@ -55,8 +55,9 @@ describe("key leak checks (T2015)", () => {
 
   it("keeps the key out of a successful call's stored row and logs", async () => {
     const fetchMock = vi.fn().mockResolvedValue(http(200, JSON.stringify({
-      choices: [{ message: { content: '{"result":"ok"}' } }],
-      usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+      status: "completed",
+      output: [{ type: "message", content: [{ type: "output_text", text: '{"result":"ok"}' }] }],
+      usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 },
     })));
     vi.stubGlobal("fetch", fetchMock);
     const stored: LlmCallCompletionInfo[] = [];
