@@ -329,9 +329,31 @@ describe("OpenAICompatibleProvider", () => {
     };
     expect(second.response_format).toEqual({ type: "json_object" });
     const user = second.messages.find((message) => message.role === "user")!.content;
+    const system = second.messages.find((message) => message.role === "system")!.content;
     expect(user).toContain("The previous JSON is invalid.");
     expect(user).toContain("MUST include non-empty evidenceCitations");
+    expect(system).toContain("Classify the claim.");
+    expect(system).toContain("never evidence_citations");
     expect(result.result).toEqual(fixed);
+  });
+
+  it("copies a snake_case citation array onto evidenceCitations and does not call again", async () => {
+    const snake = {
+      results: [{
+        id: "c1",
+        verdict: "supported",
+        reason: "same fact",
+        confidence: 0.9,
+        evidenceCitations: null,
+        evidence_citations: [{ source: "A", n: 2 }],
+      }],
+    };
+    const fetchMock = stub(200, successBody(JSON.stringify(snake)));
+    const result = await provider("qwen").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.result).toEqual({
+      results: [{ id: "c1", verdict: "supported", reason: "same fact", confidence: 0.9, evidenceCitations: [{ source: "A", n: 2 }] }],
+    });
   });
 
   it("returns a reply that already includes evidence citations unchanged", async () => {

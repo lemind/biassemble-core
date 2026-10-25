@@ -236,10 +236,12 @@ export class OpenAICompatibleProvider implements Provider {
     const contract = request.responseSchema ? outputContract(request.responseSchema) : undefined;
     const { system, user } = this.requestMessages(request.system, request.user, contract);
     const parsed = await this.completeOnce<T>(request, system, user, timeoutMs);
+    normalizeCitationKeys(parsed.result);
     if (!needsCitationRepair(parsed.result)) return parsed;
-    // One repair. Qwen accepts json_schema and then ignores it, so the gate would demote the verdict (D033).
+    // Passages are inside the system prompt. Keep it, and name the camelCase key the gate reads (D027).
+    const repairSystem = `${system}\n\nReply with a JSON object only. The key is evidenceCitations, never evidence_citations. ${CITATION_RULE}`;
     const repairUser = `${user}\n\nThe previous JSON is invalid. ${CITATION_RULE}`;
-    return this.postJson<T>(this.chatBody(system, repairUser, request, { type: "json_object" }), timeoutMs, false);
+    return this.postJson<T>(this.chatBody(repairSystem, repairUser, request, { type: "json_object" }), timeoutMs, false);
   }
 
   private async completeOnce<T>(
@@ -552,6 +554,21 @@ export class OpenAICompatibleProvider implements Provider {
         }
       : undefined;
     return { result, usage: tokens };
+  }
+}
+
+/** Copy a real evidence_citations array onto evidenceCitations. An empty string is not a citation (D027). */
+function normalizeCitationKeys(result: unknown): void {
+  if (!result || typeof result !== "object") return;
+  const results = (result as { results?: unknown }).results;
+  if (!Array.isArray(results)) return;
+  for (const item of results) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { evidenceCitations?: unknown; evidence_citations?: unknown };
+    const camelEmpty = row.evidenceCitations == null || (Array.isArray(row.evidenceCitations) && row.evidenceCitations.length === 0);
+    if (!camelEmpty || !Array.isArray(row.evidence_citations) || row.evidence_citations.length === 0) continue;
+    row.evidenceCitations = row.evidence_citations;
+    delete row.evidence_citations;
   }
 }
 
