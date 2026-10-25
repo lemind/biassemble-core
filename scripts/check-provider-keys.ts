@@ -162,7 +162,7 @@ async function checkQwen(key: string, workspaceId: string): Promise<Outcome> {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model: "qwen3.7-flash",
+        model: "qwen3.6-flash",
         messages: [{ role: "user", content: PROMPT }],
         enable_thinking: false,
       }),

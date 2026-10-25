@@ -17,7 +17,7 @@ export const PROVIDER_CLAIM_CAP = 40;
 export const SITE_DEFAULT_PROVIDER: ProviderId = "gemini";
 
 const DEEPSEEK_MODEL = "deepseek-flash";
-const QWEN_MODEL = "qwen3.7-flash";
+const QWEN_MODEL = "qwen3.6-flash";
 
 export interface ProviderOption {
   id: ProviderId;

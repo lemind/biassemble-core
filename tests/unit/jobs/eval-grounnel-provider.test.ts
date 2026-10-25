@@ -82,7 +82,7 @@ describe("resolveEvalProvider (T2016)", () => {
     await qwen.completeJson({ system: "Reply with JSON.", user: '{"ok":true}' });
 
     expect(deepseek.model).toBe("deepseek-flash");
-    expect(qwen.model).toBe("qwen3.7-flash");
+    expect(qwen.model).toBe("qwen3.6-flash");
     expect(seen[0]).toMatchObject({
       url: DEEPSEEK_CHAT_COMPLETIONS_URL,
       authorization: `Bearer ${DEPLOY_DEEPSEEK}`,
@@ -91,7 +91,7 @@ describe("resolveEvalProvider (T2016)", () => {
     expect(seen[1]).toMatchObject({
       url: qwenChatCompletionsUrl("ws-test"),
       authorization: `Bearer ${DEPLOY_QWEN}`,
-      model: "qwen3.7-flash",
+      model: "qwen3.6-flash",
     });
   });
 
