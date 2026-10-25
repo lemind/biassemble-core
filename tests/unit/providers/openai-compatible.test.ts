@@ -3,6 +3,7 @@ import { VerifyRawResponseSchema } from "../../../src/orchestrators/grounnel/pip
 import {
   DEEPSEEK_CHAT_COMPLETIONS_URL,
   DEEPSEEK_MAX_TOKENS,
+  DEEPSEEK_RESPONSES_URL,
   OpenAICompatibleProvider,
   qwenChatCompletionsUrl,
 } from "../../../src/providers/openai-compatible.js";
@@ -18,6 +19,14 @@ function successBody(content: string) {
   return JSON.stringify({
     choices: [{ message: { content } }],
     usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+  });
+}
+
+function responsesBody(text: string) {
+  return JSON.stringify({
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "output_text", text }] }],
+    usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
   });
 }
 
@@ -231,18 +240,22 @@ describe("OpenAICompatibleProvider", () => {
     }
   });
 
-  it("sends a response schema as json_schema, not bare json_object", async () => {
-    const fetchMock = stub(200, successBody('{"results":[]}'));
-    await provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
-    const format = sent(fetchMock).body.response_format as {
-      type: string;
-      json_schema: { name: string; strict: boolean; schema: unknown };
-    };
+  it("sends a DeepSeek response schema on the responses API, with citations required", async () => {
+    const fetchMock = stub(200, responsesBody('{"results":[]}'));
+    const result = await provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    const request = sent(fetchMock);
+    expect(request.url).toBe(DEEPSEEK_RESPONSES_URL);
+    expect(request.body).not.toHaveProperty("response_format");
+    expect(request.body.reasoning).toEqual({ effort: "none" });
+    const format = (request.body.text as { format: { type: string; name: string; schema: unknown } }).format;
     expect(format.type).toBe("json_schema");
-    expect(format.json_schema.name).toBe("grounnel_response");
-    expect(format.json_schema.strict).toBe(false);
-    expect(JSON.stringify(format.json_schema.schema)).toContain("evidenceCitations");
-    expect(format).not.toEqual({ type: "json_object" });
+    expect(format.name).toBe("grounnel_response");
+    const schema = JSON.stringify(format.schema);
+    expect(schema).toContain("evidenceCitations");
+    expect(schema).toContain("oneOf");
+    expect(schema).toContain('"minItems":1');
+    expect(schema).not.toContain("9007199254740991");
+    expect(result).toEqual({ result: { results: [] }, usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } });
   });
 
   it("falls back to json_object and an output contract when json_schema is rejected", async () => {
@@ -264,19 +277,70 @@ describe("OpenAICompatibleProvider", () => {
     expect(first.response_format.type).toBe("json_schema");
     expect(second.response_format).toEqual({ type: "json_object" });
     const user = second.messages.find((message) => message.role === "user")!.content;
+    const system = second.messages.find((message) => message.role === "system")!.content;
     expect(user).toContain("OUTPUT CONTRACT:");
+    expect(system).toContain("OUTPUT CONTRACT:");
     expect(user).toContain("evidenceCitations");
     expect(user).toContain("MUST include non-empty evidenceCitations");
     expect(user).toContain("the verdict is unsupported with evidenceCitations null");
     expect(result.result).toEqual(cited);
   });
 
+  it("falls back from a rejected DeepSeek responses schema to one json_object chat", async () => {
+    const cited = { results: [{ id: "c1", verdict: "unsupported", reason: null, confidence: 0.2, evidenceCitations: null }] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(http(400, JSON.stringify({ error: { message: "invalid schema" } })))
+      .mockResolvedValueOnce(http(200, successBody(JSON.stringify(cited))));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(DEEPSEEK_RESPONSES_URL);
+    expect((fetchMock.mock.calls[1] as [string])[0]).toBe(DEEPSEEK_CHAT_COMPLETIONS_URL);
+    const second = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string) as {
+      response_format: { type: string };
+    };
+    expect(second.response_format).toEqual({ type: "json_object" });
+    expect(result.result).toEqual(cited);
+  });
+
+  it("does not fall back when the DeepSeek responses call is unauthorized", async () => {
+    const fetchMock = stub(401, JSON.stringify({ error: { message: "invalid" } }));
+    await expect(provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema })).rejects.toMatchObject({
+      category: "invalid_key",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(DEEPSEEK_RESPONSES_URL);
+  });
+
+  it("repairs one citing verdict that came back with null citations, and does not repair twice", async () => {
+    const broken = { results: [{ id: "c1", verdict: "supported", reason: "x", confidence: 0.9, evidenceCitations: null }] };
+    const fixed = {
+      results: [{ id: "c1", verdict: "supported", reason: "x", confidence: 0.9, evidenceCitations: [{ source: "A", n: 1 }] }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(http(200, successBody(JSON.stringify(broken))))
+      .mockResolvedValueOnce(http(200, successBody(JSON.stringify(fixed))));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await provider("qwen").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const second = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string) as {
+      response_format: { type: string };
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(second.response_format).toEqual({ type: "json_object" });
+    const user = second.messages.find((message) => message.role === "user")!.content;
+    expect(user).toContain("The previous JSON is invalid.");
+    expect(user).toContain("MUST include non-empty evidenceCitations");
+    expect(result.result).toEqual(fixed);
+  });
+
   it("returns a reply that already includes evidence citations unchanged", async () => {
     const cited = {
       results: [{ id: "c1", verdict: "supported", reason: "same fact", confidence: 0.9, evidenceCitations: [{ source: "A", n: 2 }] }],
     };
-    stub(200, successBody(JSON.stringify(cited)));
+    const fetchMock = stub(200, responsesBody(JSON.stringify(cited)));
     const result = await provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.result).toEqual(cited);
   });
 

@@ -1,4 +1,4 @@
-/** DeepSeek and Qwen chat client. A response schema goes out as json_schema, with json_object as the fallback (D033 §3, §6). */
+/** DeepSeek schema calls use the Responses API. Qwen stays on chat json_schema, then json_object, plus one citation repair (D033 §3, §6). */
 import { z, type ZodType } from "zod";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
@@ -20,6 +20,9 @@ const MODULE = "openai-compatible";
 export const DEEPSEEK_MAX_TOKENS = 8192;
 
 export const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
+
+/** Chat json_schema is rejected here. This endpoint enforces the citation schema (D033 §6). */
+export const DEEPSEEK_RESPONSES_URL = "https://api.deepseek.com/responses";
 
 /** Balance probe. Amounts in the body are not stored or logged (D033 §3). */
 export const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
@@ -96,12 +99,19 @@ function promptHasJsonContract(system: string, user: string): boolean {
   return /\bjson\b/i.test(combined) && /\{[^{}]*\}/.test(combined);
 }
 
+const CITING_VERDICTS = ["supported", "partially_supported", "contradicted"];
+const QUIET_VERDICTS = ["unsupported", "unverifiable", "excluded"];
+
 interface JsonSchemaNode {
   type?: string;
   properties?: Record<string, JsonSchemaNode>;
   items?: JsonSchemaNode;
   enum?: unknown[];
   anyOf?: JsonSchemaNode[];
+  oneOf?: JsonSchemaNode[];
+  required?: string[];
+  additionalProperties?: boolean;
+  minItems?: number;
 }
 
 /** Drop draft metadata, input defaults, and Zod's safe-integer bounds. Real min/max stay. */
@@ -135,13 +145,63 @@ function outputContract(schema: ZodType): string {
   return `OUTPUT CONTRACT: ${sketch(json)}.${rule}`;
 }
 
+/** Citing verdicts require a citation. The other verdicts require null. Wire schema only; Zod stays nullable (D027). */
+function tightenCitationSchema(node: JsonSchemaNode): JsonSchemaNode {
+  if (node.properties && "evidenceCitations" in node.properties) return citationOneOf(node);
+  const next: JsonSchemaNode = { ...node };
+  if (node.properties) next.properties = mapSchema(node.properties);
+  if (node.items) next.items = tightenCitationSchema(node.items);
+  if (node.anyOf) next.anyOf = node.anyOf.map(tightenCitationSchema);
+  if (node.oneOf) next.oneOf = node.oneOf.map(tightenCitationSchema);
+  return next;
+}
+
+function mapSchema(properties: Record<string, JsonSchemaNode>): Record<string, JsonSchemaNode> {
+  return Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, tightenCitationSchema(value)]));
+}
+
+function citationOneOf(node: JsonSchemaNode): JsonSchemaNode {
+  const props = node.properties ?? {};
+  const rest: Record<string, JsonSchemaNode> = {};
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "verdict" || key === "evidenceCitations") continue;
+    rest[key] = tightenCitationSchema(value);
+  }
+  const verdict = props.verdict ?? { type: "string" };
+  const branch = (enumValues: string[], citations: JsonSchemaNode): JsonSchemaNode => ({
+    type: "object",
+    properties: { ...rest, verdict: { ...verdict, enum: enumValues }, evidenceCitations: citations },
+    required: ["id", "verdict", "confidence", "evidenceCitations"],
+    additionalProperties: false,
+  });
+  return {
+    oneOf: [
+      branch(CITING_VERDICTS, citationArrayBranch(props.evidenceCitations ?? {})),
+      branch(QUIET_VERDICTS, { type: "null" }),
+    ],
+  };
+}
+
+function citationArrayBranch(node: JsonSchemaNode): JsonSchemaNode {
+  const array = node.anyOf?.find((child) => child.type === "array") ?? (node.type === "array" ? node : undefined);
+  if (array) return { ...array, minItems: 1 };
+  return {
+    type: "array",
+    minItems: 1,
+    items: { type: "object", properties: { source: { type: "string" }, n: { type: "integer" } }, required: ["source", "n"] },
+  };
+}
+
 function schemaHasKey(node: JsonSchemaNode | undefined, key: string): boolean {
   if (!node) return false;
   if (node.properties && (key in node.properties || Object.values(node.properties).some((child) => schemaHasKey(child, key)))) return true;
-  return schemaHasKey(node.items, key) || (node.anyOf?.some((child) => schemaHasKey(child, key)) ?? false);
+  return schemaHasKey(node.items, key)
+    || (node.anyOf?.some((child) => schemaHasKey(child, key)) ?? false)
+    || (node.oneOf?.some((child) => schemaHasKey(child, key)) ?? false);
 }
 
 function sketch(node: JsonSchemaNode): string {
+  if (node.oneOf && node.oneOf.length > 0) return node.oneOf.map(sketch).join("|");
   if (node.anyOf && node.anyOf.length > 0) return node.anyOf.map(sketch).join("|");
   if (node.enum && node.enum.length > 0) return node.enum.map((item) => String(item)).join("|");
   if (node.type === "object") {
@@ -173,9 +233,31 @@ export class OpenAICompatibleProvider implements Provider {
 
   async completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>> {
     const timeoutMs = request.options?.timeoutMs ?? env.AI_TIMEOUT_MS;
-    const structured = request.responseSchema ? jsonSchemaResponseFormat(request.responseSchema) : undefined;
     const contract = request.responseSchema ? outputContract(request.responseSchema) : undefined;
     const { system, user } = this.requestMessages(request.system, request.user, contract);
+    const parsed = await this.completeOnce<T>(request, system, user, timeoutMs);
+    if (!needsCitationRepair(parsed.result)) return parsed;
+    // One repair. Qwen accepts json_schema and then ignores it, so the gate would demote the verdict (D033).
+    const repairUser = `${user}\n\nThe previous JSON is invalid. ${CITATION_RULE}`;
+    return this.postJson<T>(this.chatBody(system, repairUser, request, { type: "json_object" }), timeoutMs, false);
+  }
+
+  private async completeOnce<T>(
+    request: CompletionRequest,
+    system: string,
+    user: string,
+    timeoutMs: number,
+  ): Promise<ProviderResponse<T>> {
+    if (request.responseSchema && this.config.provider === "deepseek") {
+      try {
+        return await this.postResponses<T>(system, user, request, request.responseSchema, timeoutMs);
+      } catch (error: unknown) {
+        if (!(error instanceof SchemaFormatUnsupported)) throw error;
+      }
+    }
+    const structured = request.responseSchema && this.config.provider !== "deepseek"
+      ? jsonSchemaResponseFormat(request.responseSchema)
+      : undefined;
     let body = this.chatBody(system, user, request, structured ?? { type: "json_object" });
     let allowSchemaFallback = structured !== undefined;
     for (;;) {
@@ -287,6 +369,63 @@ export class OpenAICompatibleProvider implements Provider {
     return body;
   }
 
+  private async postResponses<T>(
+    system: string,
+    user: string,
+    request: CompletionRequest,
+    schema: ZodType,
+    timeoutMs: number,
+  ): Promise<ProviderResponse<T>> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(DEEPSEEK_RESPONSES_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.config.model,
+          instructions: system,
+          input: user,
+          reasoning: { effort: "none" },
+          max_output_tokens: request.options?.maxTokens ?? DEEPSEEK_MAX_TOKENS,
+          text: {
+            format: {
+              type: "json_schema",
+              name: JSON_SCHEMA_NAME,
+              schema: tightenCitationSchema(providerJsonSchema(schema)),
+            },
+          },
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const detail = await readErrorBody(response, this.config.apiKey);
+        if (classifyCompatibleError(this.config.provider, response.status, detail.code, detail.message)) {
+          throw this.errorFromDetail(response.status, detail, "completeJson");
+        }
+        logger.warn(
+          { module: MODULE, operation: "completeJson", provider: this.config.provider, status: response.status },
+          "responses json_schema rejected, using json_object",
+        );
+        throw new SchemaFormatUnsupported();
+      }
+      return await this.parseResponses<T>(response);
+    } catch (error: unknown) {
+      if (error instanceof ProviderError || error instanceof TimeoutError || error instanceof SchemaFormatUnsupported) throw error;
+      if (isKeptProviderError(error)) throw error;
+      if (error instanceof Error && (error.name === "AbortError" || /timeout|timed out|aborted|abort/i.test(error.message))) {
+        throw new TimeoutError("provider call timed out");
+      }
+      logger.warn({ module: MODULE, operation: "completeJson", provider: this.config.provider }, "provider call failed");
+      throw new ProviderError("unavailable", CATEGORY_MESSAGE.unavailable);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async postJson<T>(body: Record<string, unknown>, timeoutMs: number, allowSchemaFallback: boolean): Promise<ProviderResponse<T>> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -328,7 +467,8 @@ export class OpenAICompatibleProvider implements Provider {
   private requestMessages(system: string, user: string, outputContractText?: string): { system: string; user: string } {
     const withJson = promptHasJsonContract(system, user) ? user : `${user}\n\n${JSON_REQUEST_SUFFIX}`;
     if (!outputContractText) return { system, user: withJson };
-    return { system, user: `${withJson}\n\n${outputContractText}` };
+    // The shared VERIFY prompt still shows evidence_citations. The contract after it names evidenceCitations (D027).
+    return { system: `${system}\n\n${outputContractText}`, user: `${withJson}\n\n${outputContractText}` };
   }
 
   private async errorForResponse(response: Response, operation = "completeJson"): Promise<Error> {
@@ -382,6 +522,50 @@ export class OpenAICompatibleProvider implements Provider {
       : undefined;
     return { result, usage: tokens };
   }
+
+  private async parseResponses<T>(response: Response): Promise<ProviderResponse<T>> {
+    const raw = await response.text();
+    let payload: {
+      output?: Array<{ type?: string; content?: Array<{ text?: string | null }> }>;
+      usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+    };
+    try {
+      payload = JSON.parse(raw) as typeof payload;
+    } catch {
+      throw new Error("Malformed JSON from AI provider");
+    }
+    const message = payload.output?.find((item) => item.type === "message");
+    const content = message?.content?.find((part) => typeof part.text === "string" && part.text.trim() !== "")?.text;
+    if (typeof content !== "string") throw new Error("provider returned empty content");
+    let result: T;
+    try {
+      result = JSON.parse(content) as T;
+    } catch {
+      throw new Error("Malformed JSON from AI provider");
+    }
+    const usage = payload.usage;
+    const tokens: TokenUsage | undefined = usage
+      ? {
+          inputTokens: usage.input_tokens ?? 0,
+          outputTokens: usage.output_tokens ?? 0,
+          totalTokens: usage.total_tokens ?? 0,
+        }
+      : undefined;
+    return { result, usage: tokens };
+  }
+}
+
+/** A citing verdict whose evidenceCitations is null or empty. Repaired once (D027). */
+function needsCitationRepair(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const results = (result as { results?: unknown }).results;
+  if (!Array.isArray(results)) return false;
+  return results.some((item) => {
+    if (!item || typeof item !== "object") return false;
+    const row = item as { verdict?: unknown; evidenceCitations?: unknown };
+    if (typeof row.verdict !== "string" || !CITING_VERDICTS.includes(row.verdict)) return false;
+    return row.evidenceCitations == null || (Array.isArray(row.evidenceCitations) && row.evidenceCitations.length === 0);
+  });
 }
 
 /** True, false, or unknown. The balance figures in the body are discarded (D033 §3). */
