@@ -428,33 +428,24 @@ describe("RedisGrounnelStore (T007)", () => {
     expect(status).not.toHaveProperty("keySource");
   });
 
-  it("T2018: own-key totals appear only once the run is terminal, and a site run stays null", async () => {
+  it("T2018: the Redis status never freezes token totals, and key_source stays off the payload", async () => {
     const store = makeStore();
     const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [], truncated: false, keySource: "own" });
-    expect((await store.getStatus(id))!.status).toBe("done");
-    expect((await store.getStatus(id))!.ownKeyTokens).toBeNull();
-
-    await store.writeOwnKeyTokens(id, 58786, 1200);
     const done = await store.getStatus(id);
-    expect(done!.ownKeyTokens).toEqual({ input: 58786, output: 1200 });
+    expect(done!.status).toBe("done");
+    expect(done!.ownKeyTokens).toBeNull();
     expect(done).not.toHaveProperty("key_source");
     expect(done).not.toHaveProperty("keySource");
     expect(JSON.stringify(done)).not.toContain("key_source");
-
-    await store.setEscalating(id, true);
-    expect((await store.getStatus(id))!.ownKeyTokens).toBeNull();
-    await store.setEscalating(id, false);
-    expect((await store.getStatus(id))!.ownKeyTokens).toEqual({ input: 58786, output: 1200 });
+    expect(await store.hasOwnKey(id)).toBe(true);
 
     const site = makeStore();
     const siteAudit = await site.createAudit({ text: "article", maxClaims: 100, claims: [], truncated: false, keySource: "site" });
-    await site.writeOwnKeyTokens(siteAudit.id, 9, 9);
     expect((await site.getStatus(siteAudit.id))!.ownKeyTokens).toBeNull();
     expect(await site.hasOwnKey(siteAudit.id)).toBe(false);
-    expect(await store.hasOwnKey(id)).toBe(true);
   });
 
-  it("T2018: a still-running own-key check hides totals, and a failed one shows them", async () => {
+  it("T2018: a still-running or self-healed own-key check does not carry totals on the Redis read", async () => {
     const redis = new FakeRedisHashClient();
     const store = new RedisGrounnelStore(redis);
     const claimId = "11111111-1111-4111-8111-111111111111";
@@ -465,7 +456,6 @@ describe("RedisGrounnelStore (T007)", () => {
       truncated: false,
       keySource: "own",
     });
-    await store.writeOwnKeyTokens(id, 5, 2);
     const mid = await store.getStatus(id);
     expect(mid!.status).toBe("extracting");
     expect(mid!.ownKeyTokens).toBeNull();
@@ -476,6 +466,6 @@ describe("RedisGrounnelStore (T007)", () => {
     await redis.hset(`audit:${id}`, { meta: JSON.stringify(meta) });
     const failed = await store.getStatus(id);
     expect(failed!.status).toBe("failed");
-    expect(failed!.ownKeyTokens).toEqual({ input: 5, output: 2 });
+    expect(failed!.ownKeyTokens).toBeNull();
   });
 });

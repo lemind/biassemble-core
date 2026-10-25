@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { sumGrounnelJudgingTokens } from "../../db/queries.js";
-import { publishOwnKeyTokens } from "../../lib/own-key-tokens.js";
 import { generateShareToken } from "../../lib/share-token.js";
 import { z } from "zod";
 import { waitUntil } from "@vercel/functions";
@@ -179,9 +177,9 @@ export class GrounnelExtractService {
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
     const pendingClaims = claims.filter((claim) => !isOpinionClaim(claim.text));
-    // No pipeline follows. Publish before the excluded writes, which are what flips status to done (T2018).
-    if (keySource === "own" && pendingClaims.length === 0) {
-      await publishOwnKeyTokens(id, this.grounnelStore, sumGrounnelJudgingTokens);
+    // No pipeline follows, so this is the only writer of status=done. Share hides tokens until then (T2018).
+    if (pendingClaims.length === 0) {
+      await this.historyStore.updateRun(id, { status: "done", completedAt: new Date() });
     }
     const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
     await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
@@ -246,9 +244,9 @@ export class GrounnelExtractService {
     if (abandoned.value) return [];
     const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
     const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
-    // All excluded: these writes flip status to done with escalating still false. Publish first (T2018).
+    // No pipeline follows. Mark Postgres done before these writes flip Redis to done (T2018).
     if (eligibleClaims.length === 0) {
-      await publishOwnKeyTokens(auditId, this.grounnelStore, sumGrounnelJudgingTokens);
+      await this.historyStore.updateRun(auditId, { status: "done", completedAt: new Date() });
     }
     await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result))));
     return eligibleClaims;

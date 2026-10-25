@@ -37,22 +37,18 @@ export function ownKeyTokensForRun(
   return { input: totals.input, output: totals.output };
 }
 
-interface OwnKeyTokenStore {
-  hasOwnKey(auditId: string): Promise<boolean>;
-  writeOwnKeyTokens(auditId: string, input: number, output: number): Promise<void>;
-}
-
-/** One snapshot after the run finishes. A failure leaves the status field null ("not yet known") and does not log a key. */
-export async function publishOwnKeyTokens(
+/** Live judging totals for a finished own-key run. Site-paid and in-progress stay null. A read failure is null, not a frozen 0. */
+export async function ownKeyTokensAtServe(
   runId: string,
-  store: OwnKeyTokenStore,
+  keySource: string | null | undefined,
+  status: string,
   sumJudgingTokens: (runId: string) => Promise<OwnKeyTokens>,
-): Promise<void> {
+): Promise<OwnKeyTokens | null> {
+  if (keySource !== "own" || (status !== "done" && status !== "failed")) return null;
   try {
-    if (!(await store.hasOwnKey(runId))) return;
-    const totals = await sumJudgingTokens(runId);
-    await store.writeOwnKeyTokens(runId, totals.input, totals.output);
+    return ownKeyTokensForRun(keySource, status, await sumJudgingTokens(runId));
   } catch (err) {
-    logger.warn({ module: "own-key-tokens", operation: "publish", runId, err }, "Own-key token totals were not stored");
+    logger.warn({ module: "own-key-tokens", operation: "serve", runId, err }, "Own-key token totals were not read");
+    return null;
   }
 }

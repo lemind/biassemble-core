@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Redis } from "@upstash/redis";
 import { ClaimSchema, type Claim, type ClaimResult, type StatusResponse } from "../contracts/grounnel.schemas.js";
-import { ownKeyTokensForRun } from "../lib/own-key-tokens.js";
 import { logger } from "../observability/logger.js";
 
 const MODULE = "grounnel-store";
@@ -30,8 +29,6 @@ export interface GrounnelStore {
   getStatus(id: string): Promise<StatusResponse | null>;
   /** True when this audit was started with a visitor key. Missing meta is false. */
   hasOwnKey(auditId: string): Promise<boolean>;
-  /** Stores judging-token totals. No-op unless the audit's key source is own. */
-  writeOwnKeyTokens(auditId: string, input: number, output: number): Promise<void>;
   /** D026 §14 — run-level, not claim-level: escalation shouldn't revert an already-resolved claim's
    * status back to "pending" (visible UI regression), but "done" must still wait for it to finish. */
   setEscalating(auditId: string, escalating: boolean): Promise<void>;
@@ -61,21 +58,11 @@ interface Meta {
   model?: string;
   // Internal only. getStatus never copies this onto the response (D033 §5).
   keySource?: "site" | "own";
-  ownKeyInputTokens?: number;
-  ownKeyOutputTokens?: number;
 }
 
 function storedProvider(value: string | undefined): "gemini" | "deepseek" | "qwen" {
   if (value === "deepseek" || value === "qwen") return value;
   return "gemini";
-}
-
-function storedOwnKeyTotals(meta: Meta): { input: number; output: number } | null {
-  const input = meta.ownKeyInputTokens;
-  const output = meta.ownKeyOutputTokens;
-  if (typeof input !== "number" || typeof output !== "number") return null;
-  if (!Number.isInteger(input) || !Number.isInteger(output) || input < 0 || output < 0) return null;
-  return { input, output };
 }
 
 /** Adapts @upstash/redis's `Redis` to `RedisHashClient`. Build it with `automaticDeserialization: false` — this store parses JSON itself; the SDK's auto-parse would return objects, not strings. */
@@ -198,18 +185,6 @@ export class RedisGrounnelStore implements GrounnelStore {
     return (JSON.parse(raw) as Meta).keySource === "own";
   }
 
-  async writeOwnKeyTokens(auditId: string, input: number, output: number): Promise<void> {
-    const key = `audit:${auditId}`;
-    const existingRaw = await this.redis.hget(key, META_FIELD);
-    if (!existingRaw) return;
-    const meta = JSON.parse(existingRaw) as Meta;
-    if (meta.keySource !== "own") return;
-    const count = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
-    await this.redis.hset(key, {
-      [META_FIELD]: JSON.stringify({ ...meta, ownKeyInputTokens: count(input), ownKeyOutputTokens: count(output) }),
-    });
-  }
-
   async getStatus(id: string): Promise<StatusResponse | null> {
     const key = `audit:${id}`;
     const raw = await this.redis.hgetall(key);
@@ -303,7 +278,8 @@ export class RedisGrounnelStore implements GrounnelStore {
       elapsed_seconds: elapsedSeconds,
       provider: storedProvider(meta.provider),
       model: typeof meta.model === "string" && meta.model.length > 0 ? meta.model : null,
-      ownKeyTokens: ownKeyTokensForRun(meta.keySource, status, storedOwnKeyTotals(meta)),
+      // Served from Postgres on GET /status. This hash does not freeze a mid-run sum (T2018).
+      ownKeyTokens: null,
     };
   }
 }

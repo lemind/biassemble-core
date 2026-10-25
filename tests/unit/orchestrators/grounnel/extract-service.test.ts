@@ -355,6 +355,39 @@ describe("GrounnelExtractService (T009)", () => {
     expect(historyStore.createRunCalls[0]).toMatchObject({ sessionId: "11111111-1111-4111-8111-111111111111" });
   });
 
+  it("T2018: an all-opinion run is marked done in Postgres, because no pipeline follows", async () => {
+    provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome.", source_excerpt: "This is the best coffee in Rome." }], truncated: false });
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+    const { id, pendingClaims } = await service.run("Some pasted article text.", "production", null, provider, "own");
+
+    expect(pendingClaims).toHaveLength(0);
+    const done = historyStore.updateRunCalls.filter((call) => call.data.status === "done");
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ runId: id });
+    expect(done[0]!.data.completedAt).toBeInstanceOf(Date);
+    expect((await store.getStatus(id))!.status).toBe("done");
+  });
+
+  it("T2018: a factual extract leaves the done write to the pipeline", async () => {
+    provider.setDefault({ claims: [{ claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." }], truncated: false });
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelExtractService(
+      provider,
+      new PromptRegistry(),
+      new RedisGrounnelStore(new FakeRedisHashClient()),
+      historyStore,
+      new NoopGrounnelLlmCallStore(),
+    );
+
+    const { pendingClaims } = await service.run("Some pasted article text.", "production", null, provider, "own");
+
+    expect(pendingClaims).toHaveLength(1);
+    expect(historyStore.updateRunCalls.some((call) => call.data.status === "done")).toBe(false);
+  });
+
   it("reviewed finding: an opinion-shaped claim (gate #3) also gets a durable grounnel_claims row, not just a Redis write", async () => {
     provider.setDefault({ claims: [{ claim: "This is the best coffee in Rome.", source_excerpt: "This is the best coffee in Rome." }], truncated: false });
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
@@ -401,6 +434,46 @@ describe("GrounnelExtractService (T009)", () => {
       const excluded = status!.claims.find((c) => c.text.includes("Whiskers"))!;
       expect(excluded.status).toBe("done");
       expect(excluded.verdict).toBe("excluded");
+    });
+
+    it("T2018: every claim ineligible marks Postgres done, and a mix leaves that write to the pipeline", async () => {
+      provider.setDefault({ claims: [{ claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." }], truncated: false });
+      provider.setResponse("You are a claim-eligibility classifier", { category: "personal", certainty: "clear", reason: "private circumstance", hasResolvableReferent: true });
+      const store = new RedisGrounnelStore(new FakeRedisHashClient());
+      const historyStore = new FakeGrounnelHistoryStore();
+      const service = new GrounnelExtractService(provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore());
+
+      const { id, pendingClaims } = await service.run("Some pasted article text.", "production", null, provider, "own");
+      expect(pendingClaims).toHaveLength(1);
+      expect(historyStore.updateRunCalls.some((call) => call.data.status === "done")).toBe(false);
+
+      const eligible = await service.classifyEligibility(id, pendingClaims);
+      expect(eligible).toHaveLength(0);
+      const done = historyStore.updateRunCalls.filter((call) => call.data.status === "done");
+      expect(done).toHaveLength(1);
+      expect(done[0]!.runId).toBe(id);
+      expect(done[0]!.data.completedAt).toBeInstanceOf(Date);
+      expect((await store.getStatus(id))!.status).toBe("done");
+
+      provider.setDefault({
+        claims: [
+          { claim: "The Eiffel Tower was completed in 1889.", source_excerpt: "The Eiffel Tower was completed in 1889." },
+          { claim: "My pet cat is named Whiskers.", source_excerpt: "My pet cat is named Whiskers." },
+        ],
+        truncated: false,
+      });
+      provider.setResponseFn("You are a claim-eligibility classifier", (request) => {
+        const isPersonal = request.system.includes("CLAIM: My pet cat is named Whiskers.");
+        return isPersonal
+          ? { category: "personal", certainty: "clear", reason: "private circumstance", hasResolvableReferent: true }
+          : { category: "checkable", certainty: "clear", reason: "public fact", hasResolvableReferent: true };
+      });
+      const mixedHistory = new FakeGrounnelHistoryStore();
+      const mixed = new GrounnelExtractService(provider, new PromptRegistry(), new RedisGrounnelStore(new FakeRedisHashClient()), mixedHistory, new NoopGrounnelLlmCallStore());
+      const mixedRun = await mixed.run("Some pasted article text.", "production", null, provider, "own");
+      const stillEligible = await mixed.classifyEligibility(mixedRun.id, mixedRun.pendingClaims);
+      expect(stillEligible).toHaveLength(1);
+      expect(mixedHistory.updateRunCalls.some((call) => call.data.status === "done")).toBe(false);
     });
 
     it("records a grounnel_llm_calls completion with stage extract / callType eligibility_check", async () => {

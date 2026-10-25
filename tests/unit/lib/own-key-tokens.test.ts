@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
-import { GROUNNEL_JUDGING_STAGES, ownKeyTokensForRun, publishOwnKeyTokens, sumJudgingTokenRows } from "../../../src/lib/own-key-tokens.js";
+import { GROUNNEL_JUDGING_STAGES, ownKeyTokensAtServe, ownKeyTokensForRun, sumJudgingTokenRows } from "../../../src/lib/own-key-tokens.js";
 
 describe("sumJudgingTokenRows (T2018)", () => {
   it("sums extract and verify, drops discovery, and treats null cells as zero", () => {
@@ -35,19 +35,17 @@ describe("sumJudgingTokenRows (T2018)", () => {
     expect(fn).not.toContain("discovery");
   });
 
-  it("publish skips a site run and stores the sum for an own-key run", async () => {
+  it("reads the live sum only for a finished own-key run", async () => {
     const sum = vi.fn().mockResolvedValue({ input: 8, output: 2 });
-    const site = { hasOwnKey: vi.fn().mockResolvedValue(false), writeOwnKeyTokens: vi.fn() };
-    await publishOwnKeyTokens("run-site", site, sum);
+    expect(await ownKeyTokensAtServe("run-site", "site", "done", sum)).toBeNull();
+    expect(await ownKeyTokensAtServe("run-own", "own", "verifying", sum)).toBeNull();
     expect(sum).not.toHaveBeenCalled();
-    expect(site.writeOwnKeyTokens).not.toHaveBeenCalled();
 
-    const own = { hasOwnKey: vi.fn().mockResolvedValue(true), writeOwnKeyTokens: vi.fn() };
-    await publishOwnKeyTokens("run-own", own, sum);
+    expect(await ownKeyTokensAtServe("run-own", "own", "done", sum)).toEqual({ input: 8, output: 2 });
+    expect(await ownKeyTokensAtServe("run-own", "own", "failed", sum)).toEqual({ input: 8, output: 2 });
     expect(sum).toHaveBeenCalledWith("run-own");
-    expect(own.writeOwnKeyTokens).toHaveBeenCalledWith("run-own", 8, 2);
 
     sum.mockRejectedValue(new Error("db down"));
-    await expect(publishOwnKeyTokens("run-own", own, sum)).resolves.toBeUndefined();
+    expect(await ownKeyTokensAtServe("run-own", "own", "done", sum)).toBeNull();
   });
 });

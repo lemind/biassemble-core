@@ -1,8 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ZodSchema } from "zod";
 import { waitUntil } from "@vercel/functions";
-import { sumGrounnelJudgingTokens } from "../../db/queries.js";
-import { publishOwnKeyTokens } from "../../lib/own-key-tokens.js";
 import { logger } from "../../observability/logger.js";
 import { callLlmForJson } from "../llm-json-call.js";
 import { hasSubjectEntity, isPassageRelevant } from "./passage-filter.js";
@@ -207,35 +205,37 @@ export class GrounnelPipelineService {
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
       } finally {
-        // Write judging totals before this clears, or a poll can see done and stop with no number (T2018).
-        await publishOwnKeyTokens(auditId, this.grounnelStore, sumGrounnelJudgingTokens);
-        // D026 §15 — must clear on every path or the run sticks at "verifying" forever.
-        await this.grounnelStore.setEscalating(auditId, false);
         // The G1 cache holds this document's whole shingle set; nothing else evicts it.
         clearInputShingleCache();
       }
+      // Postgres done before Redis can read as done, so /status and the share page see one run (T2018).
+      // Authoritative counts from Redis: grounnel_claims rows are best-effort, so a dropped one
+      // shrinks every denominator. Own try — a Redis blip must not stop the "done" write below.
+      let snapshot: Record<string, unknown> | undefined;
+      try {
+        const settled = await this.grounnelStore.getStatus(auditId);
+        if (settled) snapshot = { ...settled.score, counts: countVerdicts(settled.claims) };
+      } catch (err) {
+        logger.warn({ module: MODULE, operation: "run", auditId, err }, "Could not snapshot counts — run still completes without them");
+      }
+      // Best-effort (D023 §7). `score` is OMITTED, never nulled: a blind overwrite would erase a snapshot we cannot rebuild.
+      await this.historyStore.updateRun(auditId, {
+        status: "done",
+        completedAt: new Date(),
+        ...(snapshot ? { score: snapshot } : {}),
+      });
+      // D026 §15 — clear only after the row is terminal, or a poll can see done while the share is still extracting.
+      await this.grounnelStore.setEscalating(auditId, false);
     } catch (err) {
       // Otherwise status never reaches "failed" on an uncaught error — stuck at its prior status forever.
+      try {
+        await this.grounnelStore.setEscalating(auditId, false);
+      } catch (clearErr) {
+        logger.warn({ module: MODULE, operation: "run", auditId, err: clearErr }, "Could not clear escalating after a failed run");
+      }
       waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
       throw err;
     }
-
-    // Authoritative counts from Redis: grounnel_claims rows are best-effort, so a dropped one
-    // shrinks every denominator. Own try — a Redis blip must not stop the "done" write below.
-    let snapshot: Record<string, unknown> | undefined;
-    try {
-      const settled = await this.grounnelStore.getStatus(auditId);
-      if (settled) snapshot = { ...settled.score, counts: countVerdicts(settled.claims) };
-    } catch (err) {
-      logger.warn({ module: MODULE, operation: "run", auditId, err }, "Could not snapshot counts — run still completes without them");
-    }
-    // Best-effort (D023 §7) — Redis is already fully settled; Postgres just needs to catch up.
-    // `score` is OMITTED, never nulled: a blind overwrite would erase a snapshot we cannot rebuild.
-    await this.historyStore.updateRun(auditId, {
-      status: "done",
-      completedAt: new Date(),
-      ...(snapshot ? { score: snapshot } : {}),
-    });
   }
 
   /** D026 §13 — re-tries an unresolved claim against a wider DIY candidate pool; widens evidence only, no new verification logic. Bounded at 2 tiers. */
