@@ -21,6 +21,8 @@ export interface GrounnelStore {
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text" | "sourceExcerpt">>;
     truncated: boolean;
+    provider?: "gemini" | "deepseek" | "qwen";
+    model?: string;
   }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
@@ -48,6 +50,14 @@ interface Meta {
   truncated: boolean;
   createdAt?: string;
   escalating?: boolean;
+  // Absent on hashes written before T2011. Those reads stay Gemini (D033).
+  provider?: "gemini" | "deepseek" | "qwen";
+  model?: string;
+}
+
+function storedProvider(value: string | undefined): "gemini" | "deepseek" | "qwen" {
+  if (value === "deepseek" || value === "qwen") return value;
+  return "gemini";
 }
 
 /** Adapts @upstash/redis's `Redis` to `RedisHashClient`. Build it with `automaticDeserialization: false` — this store parses JSON itself; the SDK's auto-parse would return objects, not strings. */
@@ -102,10 +112,20 @@ export class RedisGrounnelStore implements GrounnelStore {
     maxClaims: number;
     claims: Array<Pick<Claim, "id" | "text" | "sourceExcerpt">>;
     truncated: boolean;
+    provider?: "gemini" | "deepseek" | "qwen";
+    model?: string;
   }): Promise<{ id: string }> {
     const id = data.id ?? randomUUID();
     const key = `audit:${id}`;
-    const meta: Meta = { total: data.claims.length, truncated: data.truncated, createdAt: new Date().toISOString(), escalating: false };
+    const model = data.model?.trim();
+    const meta: Meta = {
+      total: data.claims.length,
+      truncated: data.truncated,
+      createdAt: new Date().toISOString(),
+      escalating: false,
+      ...(data.provider ? { provider: data.provider } : {}),
+      ...(model ? { model } : {}),
+    };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };
     for (const claim of data.claims) {
       const full: Claim = {
@@ -243,6 +263,8 @@ export class RedisGrounnelStore implements GrounnelStore {
       caps_hit: meta.truncated,
       started_at: startedAt,
       elapsed_seconds: elapsedSeconds,
+      provider: storedProvider(meta.provider),
+      model: typeof meta.model === "string" && meta.model.length > 0 ? meta.model : null,
     };
   }
 }

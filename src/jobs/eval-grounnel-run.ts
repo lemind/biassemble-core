@@ -12,12 +12,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NonRetriableError } from "inngest";
 import { inngest } from "./client.js";
-import { GeminiProvider, RateLimitError } from "../providers/gemini.js";
+import { ProviderConfigError, ProviderKeyRequiredError, UnknownProviderError, resolveProvider, type ProviderId } from "../providers/registry.js";
+import { stoppingProviderFailure, type Provider } from "../providers/types.js";
 import { PromptRegistry } from "../prompts/registry.js";
 import { HybridSearchProvider } from "../providers/search/hybrid-provider.js";
 import { TavilySearchProvider } from "../providers/search/tavily-provider.js";
 import { DrizzleGrounnelSearchCallStore } from "../persistence/grounnel-search-call-store.js";
-import { normalizeRepeats, runGrounnelEvalOnce, scoreGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
+import { normalizeRepeats, runGrounnelEvalOnce, runIsProviderOutage, scoreGrounnelEvalCase, summarizeGrounnelEvalCases, type GoldenCase } from "../evaluation/run-grounnel-eval.js";
 import { MIN_VERDICT_REPETITIONS } from "../evaluation/grounnel-live-gate.js";
 import type { GrounnelRun } from "../evaluation/grounnel-live-gate.js";
 import { env } from "../lib/env.js";
@@ -40,7 +41,60 @@ const ESCALATION_REPEATS = 5;
 const MAX_ESCALATED_CASES = 8;
 // Exact degraded strings the pipeline substitutes for a verdict (pipeline-helpers.ts, pipeline.service.ts).
 // Deliberately NOT the loose regex above: an article about fishing quotas would false-abort on "quota".
-const DEGRADED_MARKERS = ["hit today's AI usage limit", "being rate-limited right now", "search provider's rate limit was reached"];
+const DEGRADED_MARKERS = [
+  "hit today's AI usage limit",
+  "being rate-limited right now",
+  "search provider's rate limit was reached",
+  // ProviderError sentences the pipeline writes when that judge stops the check (D033 §3).
+  "The account has no balance for this model.",
+  "The API key was rejected.",
+  "This account cannot use that model.",
+  "The provider rate limit stopped this check.",
+];
+
+const EVAL_PROVIDER_IDS = ["gemini", "deepseek", "qwen"] as const;
+type EvalAbortKind = "billing" | "balance" | "key" | "model" | "rate";
+
+/** Omitted choice is Gemini. The key is the deployment key, never one carried on the event (D033, T2016). */
+export function resolveEvalProvider(choice: unknown): Provider {
+  const id = choice === undefined || choice === null || choice === "" ? "gemini" : choice;
+  if (typeof id !== "string" || !(EVAL_PROVIDER_IDS as readonly string[]).includes(id)) {
+    throw new UnknownProviderError(typeof id === "string" ? id : "");
+  }
+  const providerId = id as ProviderId;
+  if (providerId === "gemini") return resolveProvider(providerId);
+  if (providerId === "deepseek") return resolveProvider(providerId, env.DEEPSEEK_API_KEY);
+  return resolveProvider(providerId, env.QWEN_API_KEY);
+}
+
+/** Thrown text that will not clear mid-run, after Inngest has turned the error class into a string. */
+export function evalAbortKind(message: string): EvalAbortKind | null {
+  if (BILLING_RE.test(message)) return "billing";
+  if (/no balance/i.test(message)) return "balance";
+  if (/api key was rejected/i.test(message)) return "key";
+  if (/cannot use that model/i.test(message)) return "model";
+  if (RATE_LIMIT_RE.test(message)) return "rate";
+  return null;
+}
+
+export function providerForEvent(choice: unknown): Provider {
+  try {
+    return resolveEvalProvider(choice);
+  } catch (err) {
+    if (err instanceof UnknownProviderError || err instanceof ProviderKeyRequiredError || err instanceof ProviderConfigError) {
+      throw new NonRetriableError(err.message, { cause: err });
+    }
+    throw err;
+  }
+}
+
+const ABORT_CAUSE: Record<EvalAbortKind, string> = {
+  billing: "CAUSE: AI provider credits are depleted — waiting will NOT fix this, top up the account balance.",
+  balance: "CAUSE: the account has no balance for this model — waiting will not fix this.",
+  key: "CAUSE: the deployment key was rejected.",
+  model: "CAUSE: this account cannot use that model.",
+  rate: "Re-run on fresh quota.",
+};
 
 /** A run that "succeeded" but whose claims carry rate-limit text instead of verdicts — junk to score. */
 function runIsRateLimited(run: GrounnelRun): boolean {
@@ -54,6 +108,8 @@ export const evalGrounnelRunJob = inngest.createFunction(
     if (!env.TAVILY_API_KEY) {
       throw new Error("TAVILY_API_KEY is not set — required for a real Grounnel eval run.");
     }
+    // Fail before any case spends quota. The event carries a provider id, not a key (T2016).
+    const provider = providerForEvent(event.data?.provider);
 
     const golden: { cases: GoldenCase[] } = await step.run("load-golden-set", async () => {
       // Same dual-path resolution as eval-run.ts: local dev vs. pnpm build's bundled api/ layout.
@@ -79,13 +135,13 @@ export const evalGrounnelRunJob = inngest.createFunction(
     if (selected.length === 0) {
       throw new Error(`No golden cases matched caseIds=${JSON.stringify(caseIds)}`);
     }
-    logger.info({ module: MODULE, cases: selected.length, repeats }, "Starting Grounnel live eval run");
+    // Search stays on the site Gemini account. Only the judge follows `provider` (D033).
+    logger.info({ module: MODULE, cases: selected.length, repeats, provider: provider.mode, model: provider.model }, "Starting Grounnel live eval run");
 
     // One step per (case, repetition), not one per case — a transient failure in repetition 4
     // shouldn't force Inngest to re-run (and re-spend real API quota on) repetitions 1..3 that
     // already succeeded; step.run's own memoization skips whatever already completed on retry.
     // Scoring is a separate pure step for the same reason: it must never re-trigger the network.
-    const provider = new GeminiProvider();
     const prompts = new PromptRegistry();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, env.GEMINI_MODEL, tavilyProvider, new DrizzleGrounnelSearchCallStore());
@@ -97,7 +153,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
      * empty — without this the escalation filter cannot tell it from a real quality failure. */
     const degradedCaseIds = new Set<string>();
     let abortedAfter: string | null = null;
-    let abortWasBilling = false;
+    let abortKind: EvalAbortKind = "rate";
 
     /** One step per (case, repetition, phase) — a transient failure in repetition 4 must not make
      * Inngest re-spend quota on 1..3, and the phase tag keeps screen and escalation steps distinct. */
@@ -111,25 +167,34 @@ export const evalGrounnelRunJob = inngest.createFunction(
               return await runGrounnelEvalOnce({ provider, prompts, searchProvider }, goldenCase);
             } catch (err) {
               // Inside the step the class survives (outside it, Inngest has serialised it to text —
-              // hence RATE_LIMIT_RE below). A 429 fails again immediately, so don't spend 4 retries
-              // and their backoff discovering that.
-              if (err instanceof RateLimitError) throw new NonRetriableError(err.message, { cause: err });
+              // hence evalAbortKind below). A stopping failure fails again immediately.
+              const stopping = stoppingProviderFailure(err);
+              if (stopping) throw new NonRetriableError(stopping.message, { cause: stopping });
               throw err;
             }
           });
           runs.push(run);
           // A degraded run "succeeds" with rate-limit text in place of verdicts — scoring that as a
           // real result is worse than failing, so it counts toward the abort too (D026 §17).
-          if (runIsRateLimited(run)) { consecutiveRateLimited++; degradedCaseIds.add(goldenCase.id); }
-          else consecutiveRateLimited = 0;
+          if (runIsRateLimited(run)) {
+            consecutiveRateLimited++;
+            degradedCaseIds.add(goldenCase.id);
+            const kind = evalAbortKind(run.claims[0]?.reason ?? "");
+            if (kind) abortKind = kind;
+          } else if (runIsProviderOutage(run)) {
+            // Same class as a rate-limit degrade for escalation, but not the 3-strike abort: parse failures share this sentence.
+            degradedCaseIds.add(goldenCase.id);
+            consecutiveRateLimited = 0;
+          } else consecutiveRateLimited = 0;
         } catch (err) {
           // One repetition failing must not abandon the case — the remaining repetitions still
           // carry signal, and a partial case is reported as partial rather than silently passing.
           const message = err instanceof Error ? err.message : String(err);
           errors.push(message);
           // Inngest serialises step errors, so the RateLimitError class is gone by here — match text.
-          consecutiveRateLimited = RATE_LIMIT_RE.test(message) ? consecutiveRateLimited + 1 : 0;
-          if (BILLING_RE.test(message)) abortWasBilling = true;
+          const kind = evalAbortKind(message);
+          consecutiveRateLimited = kind ? consecutiveRateLimited + 1 : 0;
+          if (kind) abortKind = kind;
         }
         if (consecutiveRateLimited >= RATE_LIMIT_ABORT_AFTER) {
           abortedAfter = `${goldenCase.id} run ${i + 1}`;
@@ -269,9 +334,7 @@ export const evalGrounnelRunJob = inngest.createFunction(
       throw new NonRetriableError(
         `Grounnel live eval ABORTED at ${abortedAfter} — ${RATE_LIMIT_ABORT_AFTER} consecutive rate-limited runs. ` +
           `Scored ${cases.length}/${selected.length} cases before stopping; these numbers are PARTIAL and not a regression signal. ` +
-          (abortWasBilling
-            ? "CAUSE: AI provider credits are depleted — waiting will NOT fix this, top up the account balance."
-            : "Re-run on fresh quota.") +
+          ABORT_CAUSE[abortKind] +
           `\n${JSON.stringify(compact, null, 2)}`
       );
     }

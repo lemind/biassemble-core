@@ -106,6 +106,13 @@
       "when": 1789330242117,
       "tag": "0017_steady_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792733171596,
+      "tag": "0018_fresh_shatterstar",
+      "breakpoints": true
     }
   ]
 }

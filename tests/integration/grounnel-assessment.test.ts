@@ -4,7 +4,7 @@ import { registerGrounnelRoutes } from "../../src/routes/grounnel.js";
 import { GrounnelExtractService } from "../../src/orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../src/persistence/grounnel-store.js";
-import { InMemoryRateLimiter } from "../../src/lib/rate-limit.js";
+import { InMemoryRateLimiter, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
@@ -23,6 +23,8 @@ const ASSESSMENT: SharedAssessment = {
   text: "The Eiffel Tower was originally constructed in London.",
   createdAt: "2026-09-07T17:25:48.000Z",
   completedAt: "2026-09-07T17:29:11.000Z",
+  provider: "gemini",
+  model: "gemini-2.0-flash",
   claims: [
     {
       text: "The Eiffel Tower was originally constructed in London.",
@@ -51,6 +53,7 @@ function buildServer(assessments = new Map([[TOKEN, ASSESSMENT]]), readLimit = 1
     grounnelStore,
     historyStore,
     rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    ownKeyRateLimiter: new InMemoryRateLimiter(RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, 60_000),
     assessmentRateLimiter: new InMemoryRateLimiter(readLimit, 60_000),
   });
   return server;
@@ -72,6 +75,8 @@ describe("GET /assessment/:token (spec 019)", () => {
     const body = JSON.parse(res.body);
     expect(body).not.toHaveProperty("runId");
     expect(body).not.toHaveProperty("sessionId");
+    expect(body).not.toHaveProperty("key_source");
+    expect(body).not.toHaveProperty("keySource");
     expect(body.claims[0]).not.toHaveProperty("id");
   });
 

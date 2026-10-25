@@ -2,6 +2,8 @@ import type { Redis } from "@upstash/redis";
 
 // v10 §3c — placeholder, not yet confirmed (spec.md Assumption 5, Open Questions).
 export const RATE_LIMIT_PER_IP_PER_HOUR = 5;
+// FR-018 — own-key checks pay the judge, but search stays on the site account, so the cap is higher, not unlimited.
+export const RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR = 30;
 // Spec 019 T014 — deliberately generous: it stops a scraper walking the endpoint, not people
 // opening a link they were sent. A 47-claim run measured 159 KB of response.
 export const RATE_LIMIT_READS_PER_IP_PER_HOUR = 120;

@@ -3,7 +3,7 @@ import { env } from "../../lib/env.js";
 import { repairWithFallback } from "../../parsers/repair.js";
 import { executeAndRecordLlmCall } from "../../observability/llm-call-recorder.js";
 import { isSuspectedInjection, InjectionSuspectedError } from "./injection-guard.js";
-import { RateLimitError } from "../../providers/gemini.js";
+import { RateLimitError } from "../../providers/types.js";
 import { isPastDeadline } from "../retry.js";
 import { VERIFY_RESPONSE_KEYS, VerifyResponseSchema, type VerifyResponse } from "../../contracts/audit-internal.schemas.js";
 import {

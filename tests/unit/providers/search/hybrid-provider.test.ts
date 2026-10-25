@@ -73,6 +73,29 @@ describe("discovery telemetry (2026-09-10)", () => {
     expect(store.discoveryCalls[0]).toMatchObject({ status: "error", errorMessage: "HTTP 429" });
   });
 
+  it("stores the discovery error without the Gemini key that the failed URL carried", async () => {
+    const key = "AIzaSyTESTKEYMATERIAL1234567890";
+    const fallback = new StubFallback([{ url: "https://tavily.example", title: "T", domain: "tavily.example", status: "ok", text: "y" }]);
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("generativelanguage.googleapis.com")) {
+        return Promise.reject(new Error(`connect failed ${url}`));
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => "x" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = new FakeGrounnelSearchCallStore();
+    const provider = new HybridSearchProvider(key, "gemini-2.5-flash-lite", fallback, store);
+    await provider.search("some claim", { runId: "r1", claimId: "c1" });
+
+    expect(store.discoveryCalls.length).toBeGreaterThan(0);
+    for (const call of store.discoveryCalls) {
+      expect(call.status).toBe("error");
+      expect(call.errorMessage).not.toContain(key);
+      expect(call.errorMessage).toContain("key=[REDACTED]");
+    }
+  });
+
   it("telemetry failure never costs the claim its candidates", async () => {
     const fallback = new StubFallback([]);
     const fetchMock = vi.fn().mockImplementation((url: string) => {

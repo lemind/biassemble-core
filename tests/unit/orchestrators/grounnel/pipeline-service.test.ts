@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { GrounnelPipelineService, buildGeminiRateLimitMessage } from "../../../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../../../src/persistence/grounnel-store.js";
 import { PromptRegistry } from "../../../../src/prompts/registry.js";
-import { RateLimitError } from "../../../../src/providers/gemini.js";
+import { ProviderError, RateLimitError } from "../../../../src/providers/types.js";
 import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../../../mocks/fake-redis-hash-client.js";
 import { NoopGrounnelHistoryStore } from "../../../mocks/noop-grounnel-history-store.js";
@@ -1640,7 +1640,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     let calls = 0;
     const provider2: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async (request) => {
         calls++;
         // D025 §2 — this batch now makes 3 real calls before batch 2: (1) primary VERIFY, (2) the
@@ -1803,6 +1803,39 @@ describe("GrounnelPipelineService (T010)", () => {
     expect(status!.score.not_checked_n).toBe(1);
   });
 
+  it("T2009: a per-run provider's model is recorded, and JSON that fails validation leaves the claim unchecked", async () => {
+    const claimId = uuid(1);
+    const claimText = "A claim whose VERIFY JSON does not match the schema.";
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: claimText }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[claimText, [webSource({ text: (claimText + " ").repeat(20) })]]]));
+    const judge: Provider = {
+      mode: "deepseek",
+      model: "deepseek-flash",
+      completeJson: async () => ({ result: {} }),
+    };
+    const llmCallStore = new FakeGrounnelLlmCallStore();
+    const service = new GrounnelPipelineService(
+      search,
+      new MockProvider("gemini-2.0-flash"),
+      new PromptRegistry(),
+      store,
+      new NoopGrounnelHistoryStore(),
+      llmCallStore,
+      new NoopGrounnelGateEventStore()
+    );
+
+    await service.run(auditId, [{ id: claimId, text: claimText }], "defaultFlow", undefined, judge);
+
+    const status = await store.getStatus(auditId);
+    const claim = status!.claims.find((c) => c.id === claimId)!;
+    expect(claim.status).toBe("failed");
+    expect(claim.verdict).toBeNull();
+    expect(status!.score.not_checked_n).toBe(1);
+    expect(llmCallStore.recordCallContexts.length).toBeGreaterThan(0);
+    expect(llmCallStore.recordCallContexts.every((row) => row.provider === "deepseek" && row.model === "deepseek-flash")).toBe(true);
+  });
+
   it("degrades only the claims VERIFY's response omitted even after a D026 §8 fill-in retry, not the whole batch", async () => {
     const store = new RedisGrounnelStore(new FakeRedisHashClient());
     const claims = [
@@ -1926,7 +1959,7 @@ describe("GrounnelPipelineService (T010)", () => {
 
     let calls = 0;
     const rateLimitedProvider: Provider = {
-      mode: "mock",
+      mode: "mock", model: "mock",
       completeJson: async () => {
         calls++;
         throw new RateLimitError("daily quota exceeded", "daily", "2026-08-07T00:00:00Z");
@@ -3027,4 +3060,55 @@ describe("spec 017 — escalation pool union", () => {
     const status = await store.getStatus(auditId);
     expect(status!.claims.find((c) => c.id === claimId)!.verdict).toBe("supported");
   });
+
+  it("retries a provider rate limit, then stops the rest of the check with the category sentence", async () => {
+    const { calls, reasons } = await runTwoVerifyBatches(
+      () => new ProviderError("rate_limited", "The provider rate limit stopped this check.")
+    );
+    expect(calls).toBe(3);
+    expect(reasons).toHaveLength(16);
+    expect(reasons.every((reason) => reason === "The provider rate limit stopped this check.")).toBe(true);
+  });
+
+  it("does not retry an empty balance, and stops the rest of the check", async () => {
+    const { calls, reasons } = await runTwoVerifyBatches(
+      () => new ProviderError("no_balance", "The account has no balance for this model.")
+    );
+    expect(calls).toBe(1);
+    expect(reasons.every((reason) => reason === "The account has no balance for this model.")).toBe(true);
+  });
+
+  it("retries an outage, leaves that batch unchecked, and still runs the next batch", async () => {
+    const { calls, reasons } = await runTwoVerifyBatches(
+      () => new ProviderError("unavailable", "The provider is unavailable.")
+    );
+    expect(calls).toBe(6);
+    expect(reasons.every((reason) => reason === "VERIFY failed after retries (provider/parse error) — see grounnel_llm_calls for detail.")).toBe(true);
+  });
+
+  it("retries empty content, leaves the claim unchecked, and still runs the next batch", async () => {
+    const { calls, reasons } = await runTwoVerifyBatches(() => new Error("provider returned empty content"));
+    expect(calls).toBe(6);
+    expect(reasons.every((reason) => reason === "VERIFY failed after retries (provider/parse error) — see grounnel_llm_calls for detail.")).toBe(true);
+  });
 });
+
+async function runTwoVerifyBatches(fail: () => Error): Promise<{ calls: number; reasons: Array<string | null> }> {
+  const claims = Array.from({ length: 16 }, (_, i) => ({ id: uuid(80 + i), text: `Stopping claim ${i} about something checkable.` }));
+  const store = new RedisGrounnelStore(new FakeRedisHashClient());
+  const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims, truncated: false });
+  const responses = new Map(claims.map((c) => [c.text, [webSource({ url: `https://example.com/${c.id}`, text: (c.text + " ").repeat(20) })]]));
+  const search = new FakeSearchProvider(responses);
+  let calls = 0;
+  const failing: Provider = {
+    mode: "deepseek", model: "deepseek-flash",
+    completeJson: async () => {
+      calls++;
+      throw fail();
+    },
+  };
+  const service = new GrounnelPipelineService(search, failing, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+  await service.run(auditId, claims);
+  const status = await store.getStatus(auditId);
+  return { calls, reasons: status!.claims.map((c) => c.reason) };
+}

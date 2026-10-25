@@ -6,7 +6,15 @@ import { authHook } from "../lib/auth.js";
 import { isShareTokenShape } from "../lib/share-token.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
-import { RateLimitError } from "../providers/gemini.js";
+import { preflightHttpStatus, preflightOwnKey } from "../providers/preflight.js";
+import { RateLimitError, type Provider } from "../providers/types.js";
+import {
+  ProviderConfigError,
+  ProviderKeyRequiredError,
+  SITE_DEFAULT_PROVIDER,
+  resolveProvider,
+  type ProviderId,
+} from "../providers/registry.js";
 import { buildGeminiRateLimitMessage, type GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import type { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import type { GrounnelStore } from "../persistence/grounnel-store.js";
@@ -15,6 +23,63 @@ import type { RateLimiter } from "../lib/rate-limit.js";
 
 const MODULE = "routes-grounnel";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PROVIDER_IDS = ["gemini", "deepseek", "qwen"] as const;
+
+export type ExtractProviderDecision =
+  | { ok: true; provider?: Provider; keySource?: "site" | "own" }
+  | { ok: false; status: 400 | 502; error: "provider_requires_own_key" | "unknown_provider" | "Extract failed" };
+
+function headerText(value: unknown): { kind: "absent" } | { kind: "value"; value: string } | { kind: "invalid" } {
+  if (value === undefined) return { kind: "absent" };
+  // A duplicated or non-string header is not read. Its contents are not logged (D033).
+  if (typeof value !== "string") return { kind: "invalid" };
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? { kind: "value", value: trimmed } : { kind: "absent" };
+}
+
+function isProviderId(value: string): value is ProviderId {
+  return (PROVIDER_IDS as readonly string[]).includes(value);
+}
+
+function deploymentKey(id: ProviderId): string | undefined {
+  if (id === "deepseek") return env.DEEPSEEK_API_KEY;
+  if (id === "qwen") return env.QWEN_API_KEY;
+  return undefined;
+}
+
+/** No provider and no key keeps the boot Gemini client. deepseek or qwen without a key is rejected unless that id is the hidden site choice (D033, T2010). */
+export function chooseExtractProvider(
+  providerHeader: unknown,
+  keyHeader: unknown,
+  siteDefault: ProviderId = SITE_DEFAULT_PROVIDER,
+): ExtractProviderDecision {
+  const providerText = headerText(providerHeader);
+  if (providerText.kind === "invalid") return { ok: false, status: 400, error: "unknown_provider" };
+  if (providerText.kind === "value" && !isProviderId(providerText.value)) {
+    return { ok: false, status: 400, error: "unknown_provider" };
+  }
+  // Absent provider is Gemini, not the hidden choice. The hidden choice is not a request header (D033).
+  const providerId: ProviderId = providerText.kind === "value" && isProviderId(providerText.value) ? providerText.value : "gemini";
+  const keyText = headerText(keyHeader);
+  const visitorKey = keyText.kind === "value" ? keyText.value : undefined;
+  if (!visitorKey) {
+    if (providerId === "gemini") return { ok: true };
+    if (providerId !== siteDefault) return { ok: false, status: 400, error: "provider_requires_own_key" };
+    return buildResolved(providerId, deploymentKey(providerId), "site");
+  }
+  return buildResolved(providerId, visitorKey, "own");
+}
+
+function buildResolved(id: ProviderId, key: string | undefined, keySource: "site" | "own"): ExtractProviderDecision {
+  try {
+    return { ok: true, provider: resolveProvider(id, key), keySource };
+  } catch (err) {
+    if (err instanceof ProviderKeyRequiredError || err instanceof ProviderConfigError) {
+      return { ok: false, status: 502, error: "Extract failed" };
+    }
+    throw err;
+  }
+}
 
 /** D020 §4 fix — x-grounnel-client-ip is only honored from the trusted biassemble/backend proxy,
  * proven by a secret AI_CORE_API_KEY doesn't grant (any other holder of that key could otherwise
@@ -42,6 +107,8 @@ export function registerGrounnelRoutes(
     grounnelStore: GrounnelStore;
     historyStore: GrounnelHistoryStore;
     rateLimiter: RateLimiter;
+    /** Own-key checks. Separate from `rateLimiter`; still per IP, because search is site-paid (FR-018). */
+    ownKeyRateLimiter: RateLimiter;
     /** Separate bucket from `rateLimiter` — a burst of shared-link reads must not block a run. */
     assessmentRateLimiter: RateLimiter;
   }
@@ -51,8 +118,10 @@ export function registerGrounnelRoutes(
     // end-user; x-grounnel-client-ip carries the real one, but only once resolveClientIp has
     // verified it came from the trusted proxy (D020 §4) — never trusted from just any caller.
     const clientIp = resolveClientIp(request);
-    // Defense-in-depth behind authHook, not the primary control (D020 §4, spec.md).
-    if (!(await services.rateLimiter.checkAndConsume(clientIp))) {
+    // A blank or duplicated key header is not an own key, so it stays on the stricter site bucket (FR-018).
+    const hasOwnKey = headerText(request.headers["x-grounnel-provider-key"]).kind === "value";
+    const limiter = hasOwnKey ? services.ownKeyRateLimiter : services.rateLimiter;
+    if (!(await limiter.checkAndConsume(clientIp))) {
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 
@@ -66,9 +135,36 @@ export function registerGrounnelRoutes(
       throw error;
     }
 
+    // Headers only. The hidden site choice is SITE_DEFAULT_PROVIDER, which a visitor cannot set (D033).
+    const decision = chooseExtractProvider(request.headers["x-grounnel-provider"], request.headers["x-grounnel-provider-key"]);
+    if (!decision.ok) {
+      if (decision.status === 502) {
+        logger.error({ module: MODULE, operation: "POST /extract", requestId: request.id }, "Provider is not configured");
+      }
+      return reply.status(decision.status).send({ error: decision.error });
+    }
+
+    // Own key only. Site Gemini is not probed, and a pass does not change later claim handling (D033 §3).
+    if (decision.keySource === "own" && decision.provider) {
+      const failure = await preflightOwnKey(decision.provider);
+      if (failure) {
+        logger.warn(
+          { module: MODULE, operation: "POST /extract", requestId: request.id, category: failure.category, provider: decision.provider.mode },
+          "Visitor key preflight failed",
+        );
+        return reply.status(preflightHttpStatus(failure.category)).send({ error: failure.category, message: failure.message });
+      }
+    }
+
     let extracted;
     try {
-      extracted = await services.extractService.run(body.text, "production", body.sessionId ?? null);
+      extracted = await services.extractService.run(
+        body.text,
+        "production",
+        body.sessionId ?? null,
+        decision.provider,
+        decision.keySource,
+      );
     } catch (error) {
       if (error instanceof RateLimitError) {
         // No audit exists yet (D019 trust boundary) — nowhere to write a per-claim reason, so the message becomes the /extract response itself.
@@ -97,9 +193,9 @@ export function registerGrounnelRoutes(
     if (extracted.pendingClaims.length > 0) {
       waitUntil(
         (async () => {
-          const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims);
+          const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims, decision.provider);
           if (eligible.length > 0) {
-            await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text);
+            await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text, decision.provider);
           }
         })().catch((err) => {
           logger.error(

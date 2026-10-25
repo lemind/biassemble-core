@@ -3,6 +3,7 @@
  *
  * Usage:
  *   pnpm eval:grounnel:trigger
+ *   pnpm eval:grounnel:trigger --provider deepseek
  *   pnpm eval:grounnel:trigger --min-correct-rate 0.9
  *
  * Requires: INNGEST_EVENT_KEY env var. The actual eval logic is in
@@ -18,6 +19,19 @@ import { inngest } from "../src/jobs/client.js";
 const CALLS_PER_CASE_RUN = 12;
 
 const args = process.argv.slice(2);
+const EVAL_PROVIDERS = ["gemini", "deepseek", "qwen"] as const;
+
+/** Does not print the argument: a pasted key must not land in the terminal (T2016). */
+function providerArg(): (typeof EVAL_PROVIDERS)[number] | undefined {
+  const idx = args.indexOf("--provider");
+  if (idx === -1) return undefined;
+  const raw = args[idx + 1];
+  if (!raw || raw.startsWith("--") || !(EVAL_PROVIDERS as readonly string[]).includes(raw)) {
+    console.error("Unknown provider. Use gemini, deepseek, or qwen.");
+    process.exit(1);
+  }
+  return raw as (typeof EVAL_PROVIDERS)[number];
+}
 
 function getArg(flag: string): number | undefined {
   const idx = args.indexOf(flag);
@@ -40,12 +54,14 @@ async function main() {
   const minCorrectRate = getArg("--min-correct-rate");
   const repeats = getArg("--repeats");
   const caseIds = getListArg("--cases");
+  const provider = providerArg();
   const eventName = "eval/grounnel-run";
 
   const data: Record<string, unknown> = {};
   if (minCorrectRate !== undefined) data.minCorrectRate = minCorrectRate;
   if (repeats !== undefined) data.repeats = repeats;
   if (caseIds !== undefined) data.caseIds = caseIds;
+  if (provider !== undefined) data.provider = provider;
 
   // Cost is the reason this is opt-in per invocation: one repetition over the full golden set is
   // ~226 Gemini calls, so N=5 over the whole set is ~1130 — roughly a full day's quota (D030 §3k).
@@ -60,6 +76,7 @@ async function main() {
   }
   const cases = caseIds?.length ?? golden.cases.length;
   console.log(`Sending ${eventName}${Object.keys(data).length ? ` ${JSON.stringify(data)}` : ""}...`);
+  console.log(`  provider ${provider ?? "gemini"} on the deployment key; search stays on site Gemini`);
   if (repeats === undefined) {
     // Screen-then-escalate: every case once, then 5 fresh runs for each QUALITY failure (max 8).
     const screen = cases * CALLS_PER_CASE_RUN;
@@ -68,7 +85,7 @@ async function main() {
     console.log(`  (pass --repeats N to force a flat N-repetition pass instead)`);
   } else {
     const n = Math.max(1, Math.min(20, Math.trunc(repeats)));
-    console.log(`  MODE flat — ${cases} case(s) × ${n} repetition(s) ≈ ${cases * n * CALLS_PER_CASE_RUN} Gemini calls`);
+    console.log(`  MODE flat — ${cases} case(s) × ${n} repetition(s) ≈ ${cases * n * CALLS_PER_CASE_RUN} calls`);
   }
 
   // --dry-run prints the cost and sends nothing: this script spends real quota the moment it runs,

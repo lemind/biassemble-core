@@ -8,6 +8,7 @@ import { GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.serv
 import { hasPassage } from "../orchestrators/grounnel/pipeline-helpers.js";
 import { evaluateGrounnelRun, type ClaimOutcome, type GrounnelRun, type LiveEvalSpec, type Violation } from "./grounnel-live-gate.js";
 import type { Provider } from "../providers/types.js";
+import { scrubErrorMessage } from "../persistence/error-scrub.js";
 import type { PromptRegistry } from "../prompts/registry.js";
 import type { SearchProvider } from "../providers/search/search-provider.js";
 
@@ -43,12 +44,10 @@ export class InMemoryRedisHashClient implements RedisHashClient {
   }
 }
 
-// Same redaction hybrid-provider.ts's sanitizeErrorForLogging applies — a real API key leaked into
-// an error message once via a raw fetch URL (D021). Applied here too since this catch is a second
-// place a key-bearing message could otherwise reach a log/dashboard unredacted.
+// A thrown eval run can carry a key in the message (D021). The result list is what the operator reads.
 function sanitizeErrorMessage(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  return message.replace(/key=[^&\s"]+/gi, "key=[REDACTED]");
+  return scrubErrorMessage(message) ?? message;
 }
 
 export interface GoldenCase extends LiveEvalSpec {
@@ -111,6 +110,14 @@ export interface GrounnelEvalSummary {
 }
 
 export const MAX_REPEATS = 20;
+
+/** Pipeline degradeBatch writes this for a 5xx or a parse failure. It is not a verdict (D033). */
+const PROVIDER_OUTAGE_REASON = "VERIFY failed after retries (provider/parse error) — see grounnel_llm_calls for detail.";
+
+/** Every claim is the generic provider/parse degrade. Kept out of DEGRADED_MARKERS so three parse failures do not abort the suite. */
+export function runIsProviderOutage(run: GrounnelRun): boolean {
+  return run.claims.length > 0 && run.claims.every((claim) => (claim.reason ?? "").includes(PROVIDER_OUTAGE_REASON));
+}
 
 /** Coerces an untrusted `repeats` (CLI parseFloat, Inngest event JSON) to a whole number in [1, MAX].
  * A bare clamp lets NaN through — `Math.max(1, Math.min(20, NaN))` is NaN, and `i < NaN` runs the
@@ -200,13 +207,23 @@ export function scoreGrounnelEvalCase(
       errors, error: errors[0] ?? "no repetitions were executed",
     };
   }
+  const scoredRuns = runs.filter((run) => !runIsProviderOutage(run));
+  if (scoredRuns.length === 0) {
+    // Outage text is not a wrong verdict. matched stays 0 so it leaves the correctness denominator.
+    return {
+      id: goldenCase.id, ok: true, verdictIsBinding: false, runs: runs.length, safetyOk: false, correctRate: 0, detectionRate: null, correct: 0, matched: 0,
+      falseAccusations: 0, claims: [], violations: [], runDetails: runs, run: runs[0] ?? null,
+      ...(errors.length > 0 ? { errors } : {}),
+      error: "degraded (provider outage), not scored",
+    };
+  }
   const spec: LiveEvalSpec = {
     id: goldenCase.id,
     claims: goldenCase.claims,
     minCorrectRate: minCorrectRateOverride ?? goldenCase.minCorrectRate,
     detectionFloor: goldenCase.detectionFloor,
   };
-  const result = evaluateGrounnelRun(runs, spec);
+  const result = evaluateGrounnelRun(scoredRuns, spec);
 
   // A partially-completed case must not report a pass (review finding). Scoring 2 of a requested 5
   // repetitions and calling it green is the same underpowered-measurement error this whole protocol
@@ -232,8 +249,8 @@ export function scoreGrounnelEvalCase(
     falseAccusations: violations.filter((v) => v.rule === "no_false_accusation").length,
     claims: result.claims,
     violations,
-    runDetails: runs,
-    run: runs[0] ?? null,
+    runDetails: scoredRuns,
+    run: scoredRuns[0] ?? null,
     ...(errors.length > 0 ? { errors } : {}),
   };
 }

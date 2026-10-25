@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { callLlmForJson } from "../llm-json-call.js";
-import { env } from "../../lib/env.js";
 import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
@@ -83,7 +82,7 @@ export async function classifyClaimVerifiability(
         stage: "extract",
         callType: "eligibility_check",
         provider: provider.mode,
-        model: env.GEMINI_MODEL,
+        model: provider.model,
         promptVersion,
       }),
     });

@@ -32,7 +32,7 @@ import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
 import { TavilySearchProvider } from "./providers/search/tavily-provider";
-import { RedisRateLimiter, UpstashRateLimitRedisClient, RATE_LIMIT_READS_PER_IP_PER_HOUR, WINDOW_SECONDS, type RateLimiter } from "./lib/rate-limit";
+import { RedisRateLimiter, UpstashRateLimitRedisClient, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, RATE_LIMIT_READS_PER_IP_PER_HOUR, WINDOW_SECONDS, type RateLimiter } from "./lib/rate-limit";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -84,6 +84,7 @@ export function buildApp() {
         grounnelStore: RedisGrounnelStore;
         historyStore: DrizzleGrounnelHistoryStore;
         rateLimiter: RateLimiter;
+        ownKeyRateLimiter: RateLimiter;
         assessmentRateLimiter: RateLimiter;
       }
     | undefined;
@@ -109,6 +110,13 @@ export function buildApp() {
       // grounnelStore, unlike the old in-memory RateLimiter (buckets were per-process, so 5/hour
       // was only ever enforced per instance, not globally).
       rateLimiter: new RedisRateLimiter(new UpstashRateLimitRedisClient(redis)),
+      // FR-018 — distinct prefix so an own-key check does not share the 5/hour site bucket. Keyed on IP only.
+      ownKeyRateLimiter: new RedisRateLimiter(
+        new UpstashRateLimitRedisClient(redis),
+        RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR,
+        WINDOW_SECONDS,
+        "ratelimit:extract:ownkey",
+      ),
       // Spec 019 T014 — its own key prefix and a far higher ceiling: reading a shared link is
       // cheap next to running a check, and the two must not share a bucket.
       assessmentRateLimiter: new RedisRateLimiter(

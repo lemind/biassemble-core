@@ -20,6 +20,12 @@ export interface GrounnelHistoryStore {
     source: "production" | "eval";
     maxClaims: number;
     truncated: boolean;
+    // Set when the judge is gemini, deepseek, or qwen. Omitted keeps the column default (D033).
+    provider?: "gemini" | "deepseek" | "qwen";
+    // Exact model that judge will call (D033).
+    model?: string;
+    // Whose account paid. Omitted keeps the column default site (D033).
+    keySource?: "site" | "own";
   }): Promise<void>;
 
   updateRun(
@@ -104,6 +110,8 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
       text: run.text,
       createdAt: run.createdAt.toISOString(),
       completedAt: run.completedAt?.toISOString() ?? null,
+      provider: run.provider ?? "gemini",
+      model: run.model ?? null,
       ...(counts.success ? { counts: counts.data } : {}),
       claims: claims.map((c) => ({
         text: c.claimText,

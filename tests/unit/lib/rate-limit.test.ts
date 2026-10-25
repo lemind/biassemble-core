@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { InMemoryRateLimiter, RedisRateLimiter } from "../../../src/lib/rate-limit.js";
+import { InMemoryRateLimiter, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, RedisRateLimiter, WINDOW_SECONDS } from "../../../src/lib/rate-limit.js";
 import { FakeRateLimitRedisClient } from "../../mocks/fake-rate-limit-redis-client.js";
 
 describe("InMemoryRateLimiter (T011)", () => {
@@ -75,6 +75,23 @@ describe("RedisRateLimiter (D020 §4)", () => {
 
     redis.advanceTime(3600 * 1000 + 1);
     expect(await limiter.checkAndConsume("1.2.3.4")).toBe(true);
+  });
+
+  it("own-key prefix keys on ratelimit:extract:ownkey:<ip> and honors 30", async () => {
+    const redis = new FakeRateLimitRedisClient();
+    const keys: string[] = [];
+    const limiter = new RedisRateLimiter(
+      { incrWithWindow: (key, windowSeconds) => { keys.push(key); return redis.incrWithWindow(key, windowSeconds); } },
+      RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR,
+      WINDOW_SECONDS,
+      "ratelimit:extract:ownkey",
+    );
+    for (let i = 0; i < RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR; i++) {
+      expect(await limiter.checkAndConsume("1.2.3.4")).toBe(true);
+    }
+    expect(await limiter.checkAndConsume("1.2.3.4")).toBe(false);
+    expect(keys).toHaveLength(RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR + 1);
+    expect(new Set(keys)).toEqual(new Set(["ratelimit:extract:ownkey:1.2.3.4"]));
   });
 
   it("concurrent requests for the same IP: the count is exact, never lets more than the limit through", async () => {
