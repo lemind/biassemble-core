@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { VerifyRawResponseSchema } from "../../../src/orchestrators/grounnel/pipeline-schemas.js";
 import {
   DEEPSEEK_CHAT_COMPLETIONS_URL,
   DEEPSEEK_MAX_TOKENS,
@@ -179,6 +180,18 @@ describe("OpenAICompatibleProvider", () => {
     }
   });
 
+  it("maps a Qwen 403 insufficient_quota to no_balance, not model_access_denied", async () => {
+    stub(403, JSON.stringify({ error: { code: "insufficient_quota", message: "Free quota exhausted. Please add funds or disable the \"use free tier only\" mode." } }));
+    try {
+      await provider("qwen").completeJson(bare);
+      expect.fail("expected no_balance");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderError);
+      expect((error as ProviderError).category).toBe("no_balance");
+      expect((error as Error).message).toBe("The account has no balance for this model.");
+    }
+  });
+
   it("maps a Qwen 401 to invalid_key", async () => {
     stub(401, JSON.stringify({ error: { code: "invalid_api_key", message: "Incorrect API key" } }));
     await expect(provider("qwen").completeJson(bare)).rejects.toMatchObject({
@@ -216,6 +229,55 @@ describe("OpenAICompatibleProvider", () => {
       expect((error as Error).message).toBe("The provider is unavailable.");
       expect((error as Error).message).not.toContain("fetch failed");
     }
+  });
+
+  it("sends a response schema as json_schema, not bare json_object", async () => {
+    const fetchMock = stub(200, successBody('{"results":[]}'));
+    await provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    const format = sent(fetchMock).body.response_format as {
+      type: string;
+      json_schema: { name: string; strict: boolean; schema: unknown };
+    };
+    expect(format.type).toBe("json_schema");
+    expect(format.json_schema.name).toBe("grounnel_response");
+    expect(format.json_schema.strict).toBe(false);
+    expect(JSON.stringify(format.json_schema.schema)).toContain("evidenceCitations");
+    expect(format).not.toEqual({ type: "json_object" });
+  });
+
+  it("falls back to json_object and an output contract when json_schema is rejected", async () => {
+    const cited = { results: [{ id: "c1", verdict: "unsupported", reason: null, confidence: 0.2, evidenceCitations: null }] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(http(400, JSON.stringify({ error: { message: "response_format json_schema is not supported" } })))
+      .mockResolvedValueOnce(http(200, successBody(JSON.stringify(cited))));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await provider("qwen").completeJson<{ results: unknown[] }>({ ...bare, responseSchema: VerifyRawResponseSchema });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string) as {
+      response_format: { type: string };
+    };
+    const second = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string) as {
+      response_format: { type: string };
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(first.response_format.type).toBe("json_schema");
+    expect(second.response_format).toEqual({ type: "json_object" });
+    const user = second.messages.find((message) => message.role === "user")!.content;
+    expect(user).toContain("OUTPUT CONTRACT:");
+    expect(user).toContain("evidenceCitations");
+    expect(user).toContain("MUST include non-empty evidenceCitations");
+    expect(user).toContain("the verdict is unsupported with evidenceCitations null");
+    expect(result.result).toEqual(cited);
+  });
+
+  it("returns a reply that already includes evidence citations unchanged", async () => {
+    const cited = {
+      results: [{ id: "c1", verdict: "supported", reason: "same fact", confidence: 0.9, evidenceCitations: [{ source: "A", n: 2 }] }],
+    };
+    stub(200, successBody(JSON.stringify(cited)));
+    const result = await provider("deepseek").completeJson({ ...bare, responseSchema: VerifyRawResponseSchema });
+    expect(result.result).toEqual(cited);
   });
 
   it("rejects a workspace id that is not a host label, and lowercases a valid one", () => {

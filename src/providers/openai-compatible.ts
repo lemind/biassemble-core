@@ -1,4 +1,5 @@
-/** DeepSeek and Qwen chat-completions client. JSON-object mode. Qwen omits max_tokens (D033 §3, §6). */
+/** DeepSeek and Qwen chat client. A response schema goes out as json_schema, with json_object as the fallback (D033 §3, §6). */
+import { z, type ZodType } from "zod";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
 import { scrubErrorMessage } from "../persistence/error-scrub.js";
@@ -24,6 +25,13 @@ export const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/comp
 export const DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance";
 
 const JSON_REQUEST_SUFFIX = 'Reply with a JSON object. Example: {"result":"ok"}';
+
+/** OpenAI-compatible structured-output name. strict stays false: VERIFY citations are nullable (D027). */
+const JSON_SCHEMA_NAME = "grounnel_response";
+
+/** Parsed key is evidenceCitations; the shared VERIFY prompt still says evidence_citations (D027). */
+const CITATION_RULE =
+  "A supported / partially_supported / contradicted verdict MUST include non-empty evidenceCitations as [{source,n}] drawn only from the given passages; if you cannot cite a given sentence, the verdict is unsupported with evidenceCitations null.";
 
 const CATEGORY_MESSAGE: Record<ProviderErrorCategory, string> = {
   invalid_key: "The API key was rejected.",
@@ -68,11 +76,14 @@ export function classifyCompatibleError(
     return null;
   }
   const blob = `${code} ${message}`.toLowerCase();
-  // A 403 is an unpurchased model even when the body also says the key is invalid (D033 §3).
-  if (status === 403) return "model_access_denied";
+  // Balance: arrears, exhausted/insufficient quota, AllocationQuota, or a free tier that ran out (D033 §3).
+  const outOfBalance = /arrears|insufficient|exhausted|allocationquota|overdue|free quota|add funds/.test(blob);
+  // A 403 is an unpurchased/unauthorized model, UNLESS the body says the balance or quota ran out — the
+  // free tier returns 403 insufficient_quota, which is no_balance, not model_access_denied (D033 §3).
+  if (status === 403) return outOfBalance ? "no_balance" : "model_access_denied";
   if (status === 429) {
     // Throttling.RateQuota is an RPM limit. Balance is arrears, exhausted, or AllocationQuota (D033 §3).
-    if (/arrears|insufficient|exhausted|allocationquota|overdue/.test(blob)) return "no_balance";
+    if (outOfBalance) return "no_balance";
     return "rate_limited";
   }
   if (status === 401 || /invalid_api_key|incorrect api key/.test(blob)) return "invalid_key";
@@ -83,6 +94,72 @@ export function classifyCompatibleError(
 function promptHasJsonContract(system: string, user: string): boolean {
   const combined = `${system}\n${user}`;
   return /\bjson\b/i.test(combined) && /\{[^{}]*\}/.test(combined);
+}
+
+interface JsonSchemaNode {
+  type?: string;
+  properties?: Record<string, JsonSchemaNode>;
+  items?: JsonSchemaNode;
+  enum?: unknown[];
+  anyOf?: JsonSchemaNode[];
+}
+
+/** Drop draft metadata, input defaults, and Zod's safe-integer bounds. Real min/max stay. */
+function providerJsonSchema(schema: ZodType): JsonSchemaNode {
+  return stripSchemaNoise(z.toJSONSchema(schema, { io: "input" })) as JsonSchemaNode;
+}
+
+function stripSchemaNoise(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripSchemaNoise);
+  if (!node || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (key === "$schema" || key === "default") continue;
+    if ((key === "minimum" || key === "maximum") && typeof value === "number" && Math.abs(value) >= Number.MAX_SAFE_INTEGER) continue;
+    out[key] = stripSchemaNoise(value);
+  }
+  return out;
+}
+
+function jsonSchemaResponseFormat(schema: ZodType): { type: "json_schema"; json_schema: { name: string; schema: JsonSchemaNode; strict: false } } {
+  return {
+    type: "json_schema",
+    json_schema: { name: JSON_SCHEMA_NAME, schema: providerJsonSchema(schema), strict: false },
+  };
+}
+
+/** Field sketch, plus the citation rule when the schema has evidenceCitations. This path only (D033). */
+function outputContract(schema: ZodType): string {
+  const json = providerJsonSchema(schema);
+  const rule = schemaHasKey(json, "evidenceCitations") ? ` ${CITATION_RULE}` : "";
+  return `OUTPUT CONTRACT: ${sketch(json)}.${rule}`;
+}
+
+function schemaHasKey(node: JsonSchemaNode | undefined, key: string): boolean {
+  if (!node) return false;
+  if (node.properties && (key in node.properties || Object.values(node.properties).some((child) => schemaHasKey(child, key)))) return true;
+  return schemaHasKey(node.items, key) || (node.anyOf?.some((child) => schemaHasKey(child, key)) ?? false);
+}
+
+function sketch(node: JsonSchemaNode): string {
+  if (node.anyOf && node.anyOf.length > 0) return node.anyOf.map(sketch).join("|");
+  if (node.enum && node.enum.length > 0) return node.enum.map((item) => String(item)).join("|");
+  if (node.type === "object") {
+    const fields = Object.entries(node.properties ?? {}).map(([key, value]) => `${key}:${sketch(value)}`);
+    return `{${fields.join(",")}}`;
+  }
+  if (node.type === "array") return `${sketch(node.items ?? { type: "string" })}[]`;
+  if (node.type === "integer") return "integer";
+  if (node.type === "number") return "number";
+  if (node.type === "boolean") return "boolean";
+  if (node.type === "null") return "null";
+  return node.type ?? "value";
+}
+
+/** A rejected json_schema. Classified auth, balance, and quota errors are not this (D033 §3). */
+function schemaFormatRejected(provider: "deepseek" | "qwen", status: number, code: string, message: string, raw: string): boolean {
+  if (classifyCompatibleError(provider, status, code, message)) return false;
+  return /json_schema|response_format/i.test(`${code} ${message} ${raw}`);
 }
 
 export class OpenAICompatibleProvider implements Provider {
@@ -96,47 +173,23 @@ export class OpenAICompatibleProvider implements Provider {
 
   async completeJson<T>(request: CompletionRequest): Promise<ProviderResponse<T>> {
     const timeoutMs = request.options?.timeoutMs ?? env.AI_TIMEOUT_MS;
-    const { system, user } = this.requestMessages(request.system, request.user);
-    const body: Record<string, unknown> = {
-      model: this.config.model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      response_format: { type: "json_object" },
-      temperature: request.options?.temperature ?? 0,
-    };
-    if (this.config.provider === "deepseek") {
-      body.max_tokens = request.options?.maxTokens ?? DEEPSEEK_MAX_TOKENS;
-      body.thinking = { type: "disabled" };
-    } else {
-      body.enable_thinking = false;
-    }
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(this.config.baseUrl, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!response.ok) throw await this.errorForResponse(response);
-      return await this.parseSuccess<T>(response);
-    } catch (error: unknown) {
-      if (error instanceof ProviderError || error instanceof TimeoutError) throw error;
-      if (isKeptProviderError(error)) throw error;
-      if (error instanceof Error && (error.name === "AbortError" || /timeout|timed out|aborted|abort/i.test(error.message))) {
-        throw new TimeoutError("provider call timed out");
+    const structured = request.responseSchema ? jsonSchemaResponseFormat(request.responseSchema) : undefined;
+    const contract = request.responseSchema ? outputContract(request.responseSchema) : undefined;
+    const { system, user } = this.requestMessages(request.system, request.user, contract);
+    let body = this.chatBody(system, user, request, structured ?? { type: "json_object" });
+    let allowSchemaFallback = structured !== undefined;
+    for (;;) {
+      try {
+        return await this.postJson<T>(body, timeoutMs, allowSchemaFallback);
+      } catch (error: unknown) {
+        if (allowSchemaFallback && error instanceof SchemaFormatUnsupported) {
+          // One retry on json_object. The contract is already on this request (D033).
+          body = this.chatBody(system, user, request, { type: "json_object" });
+          allowSchemaFallback = false;
+          continue;
+        }
+        throw error;
       }
-      logger.warn({ module: MODULE, operation: "completeJson", provider: this.config.provider }, "provider call failed");
-      throw new ProviderError("unavailable", CATEGORY_MESSAGE.unavailable);
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -210,23 +263,89 @@ export class OpenAICompatibleProvider implements Provider {
     }
   }
 
-  private requestMessages(system: string, user: string): { system: string; user: string } {
-    if (promptHasJsonContract(system, user)) return { system, user };
-    return { system, user: `${user}\n\n${JSON_REQUEST_SUFFIX}` };
+  private chatBody(
+    system: string,
+    user: string,
+    request: CompletionRequest,
+    responseFormat: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model: this.config.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      response_format: responseFormat,
+      temperature: request.options?.temperature ?? 0,
+    };
+    if (this.config.provider === "deepseek") {
+      body.max_tokens = request.options?.maxTokens ?? DEEPSEEK_MAX_TOKENS;
+      body.thinking = { type: "disabled" };
+    } else {
+      body.enable_thinking = false;
+    }
+    return body;
+  }
+
+  private async postJson<T>(body: Record<string, unknown>, timeoutMs: number, allowSchemaFallback: boolean): Promise<ProviderResponse<T>> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(this.config.baseUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const detail = await readErrorBody(response, this.config.apiKey);
+        if (allowSchemaFallback && schemaFormatRejected(this.config.provider, response.status, detail.code, detail.message, detail.raw)) {
+          logger.warn(
+            { module: MODULE, operation: "completeJson", provider: this.config.provider, status: response.status },
+            "json_schema unsupported, using json_object",
+          );
+          throw new SchemaFormatUnsupported();
+        }
+        throw this.errorFromDetail(response.status, detail, "completeJson");
+      }
+      return await this.parseSuccess<T>(response);
+    } catch (error: unknown) {
+      if (error instanceof ProviderError || error instanceof TimeoutError || error instanceof SchemaFormatUnsupported) throw error;
+      if (isKeptProviderError(error)) throw error;
+      if (error instanceof Error && (error.name === "AbortError" || /timeout|timed out|aborted|abort/i.test(error.message))) {
+        throw new TimeoutError("provider call timed out");
+      }
+      logger.warn({ module: MODULE, operation: "completeJson", provider: this.config.provider }, "provider call failed");
+      throw new ProviderError("unavailable", CATEGORY_MESSAGE.unavailable);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private requestMessages(system: string, user: string, outputContractText?: string): { system: string; user: string } {
+    const withJson = promptHasJsonContract(system, user) ? user : `${user}\n\n${JSON_REQUEST_SUFFIX}`;
+    if (!outputContractText) return { system, user: withJson };
+    return { system, user: `${withJson}\n\n${outputContractText}` };
   }
 
   private async errorForResponse(response: Response, operation = "completeJson"): Promise<Error> {
-    const detail = await readErrorBody(response, this.config.apiKey);
-    const category = classifyCompatibleError(this.config.provider, response.status, detail.code, detail.message);
+    return this.errorFromDetail(response.status, await readErrorBody(response, this.config.apiKey), operation);
+  }
+
+  private errorFromDetail(status: number, detail: { code: string; message: string }, operation: string): Error {
+    const category = classifyCompatibleError(this.config.provider, status, detail.code, detail.message);
     if (!category) {
       logger.warn(
-        { module: MODULE, operation, provider: this.config.provider, status: response.status },
+        { module: MODULE, operation, provider: this.config.provider, status },
         "provider rejected the request",
       );
       return new Error("The provider rejected the request.");
     }
     logger.warn(
-      { module: MODULE, operation, provider: this.config.provider, status: response.status, category, code: detail.code },
+      { module: MODULE, operation, provider: this.config.provider, status, category, code: detail.code },
       "provider call classified",
     );
     return new ProviderError(category, CATEGORY_MESSAGE[category]);
@@ -276,6 +395,14 @@ async function readBalanceAvailable(response: Response, apiKey: string): Promise
   }
 }
 
+/** Signals one json_object retry. Not a provider failure and not logged as one. */
+class SchemaFormatUnsupported extends Error {
+  constructor() {
+    super("json_schema response_format is unsupported");
+    this.name = "SchemaFormatUnsupported";
+  }
+}
+
 function isKeptProviderError(error: unknown): error is Error {
   return (
     error instanceof Error &&
@@ -285,7 +412,7 @@ function isKeptProviderError(error: unknown): error is Error {
   );
 }
 
-async function readErrorBody(response: Response, apiKey: string): Promise<{ code: string; message: string }> {
+async function readErrorBody(response: Response, apiKey: string): Promise<{ code: string; message: string; raw: string }> {
   const raw = scrubErrorMessage(await response.text(), [apiKey]) ?? "";
   try {
     const parsed = JSON.parse(raw) as { error?: ProviderErrorBody } | ProviderErrorBody;
@@ -295,8 +422,9 @@ async function readErrorBody(response: Response, apiKey: string): Promise<{ code
     return {
       code: typeof error.code === "string" ? error.code : "",
       message: typeof error.message === "string" ? error.message : "",
+      raw,
     };
   } catch {
-    return { code: "", message: "" };
+    return { code: "", message: "", raw };
   }
 }
