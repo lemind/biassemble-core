@@ -107,6 +107,8 @@ export function registerGrounnelRoutes(
     grounnelStore: GrounnelStore;
     historyStore: GrounnelHistoryStore;
     rateLimiter: RateLimiter;
+    /** Own-key checks. Separate from `rateLimiter`; still per IP, because search is site-paid (FR-018). */
+    ownKeyRateLimiter: RateLimiter;
     /** Separate bucket from `rateLimiter` — a burst of shared-link reads must not block a run. */
     assessmentRateLimiter: RateLimiter;
   }
@@ -116,8 +118,10 @@ export function registerGrounnelRoutes(
     // end-user; x-grounnel-client-ip carries the real one, but only once resolveClientIp has
     // verified it came from the trusted proxy (D020 §4) — never trusted from just any caller.
     const clientIp = resolveClientIp(request);
-    // Defense-in-depth behind authHook, not the primary control (D020 §4, spec.md).
-    if (!(await services.rateLimiter.checkAndConsume(clientIp))) {
+    // A blank or duplicated key header is not an own key, so it stays on the stricter site bucket (FR-018).
+    const hasOwnKey = headerText(request.headers["x-grounnel-provider-key"]).kind === "value";
+    const limiter = hasOwnKey ? services.ownKeyRateLimiter : services.rateLimiter;
+    if (!(await limiter.checkAndConsume(clientIp))) {
       return reply.status(429).send({ error: "Too many requests — try again later." });
     }
 

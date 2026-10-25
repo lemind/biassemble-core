@@ -7,7 +7,7 @@ import { registerGrounnelRoutes } from "../../src/routes/grounnel.js";
 import { GrounnelExtractService } from "../../src/orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../src/persistence/grounnel-store.js";
-import { InMemoryRateLimiter } from "../../src/lib/rate-limit.js";
+import { InMemoryRateLimiter, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { RateLimitError } from "../../src/providers/types.js";
 import { MockProvider } from "../mocks/mock-provider.js";
@@ -38,6 +38,7 @@ function buildServer(provider: Provider, searchProvider: SearchProvider = NEVER_
     historyStore: new NoopGrounnelHistoryStore(),
     // High limit — this file exercises /extract's own contract, not rate limiting (T016's job).
     rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    ownKeyRateLimiter: new InMemoryRateLimiter(RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, 60_000),
     assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return server;
@@ -158,6 +159,7 @@ describe("POST /extract (T014)", () => {
       pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
       grounnelStore,
       rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+      ownKeyRateLimiter: new InMemoryRateLimiter(RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, 60_000),
     });
 
     const res = await server.inject({
@@ -268,6 +270,7 @@ describe("POST /extract (T014)", () => {
       grounnelStore,
       historyStore,
       rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+      ownKeyRateLimiter: new InMemoryRateLimiter(RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, 60_000),
       assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
     });
     return { boot, server, extractService, pipelineService };

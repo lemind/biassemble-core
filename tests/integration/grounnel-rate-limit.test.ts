@@ -1,10 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import Fastify from "fastify";
 import { registerGrounnelRoutes } from "../../src/routes/grounnel.js";
 import { GrounnelExtractService } from "../../src/orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../src/persistence/grounnel-store.js";
-import { InMemoryRateLimiter } from "../../src/lib/rate-limit.js";
+import { InMemoryRateLimiter, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
@@ -35,6 +35,7 @@ function buildServer(limit: number) {
     grounnelStore,
     historyStore: new NoopGrounnelHistoryStore(),
     rateLimiter: new InMemoryRateLimiter(limit, 60_000),
+    ownKeyRateLimiter: new InMemoryRateLimiter(RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, 60_000),
     assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return server;
@@ -129,5 +130,81 @@ describe("POST /extract rate limiting (T016, defense-in-depth behind authHook â€
 
     expect(first.statusCode).toBe(202);
     expect(second.statusCode).toBe(429);
+  });
+});
+
+describe("POST /extract own-key bucket (FR-018)", () => {
+  function closedLimiter() {
+    return { checkAndConsume: vi.fn(async () => false) };
+  }
+
+  function buildClosed(keyHeader?: unknown) {
+    const provider = new MockProvider();
+    const server = Fastify();
+    // Node joins a duplicated custom header into one string, so this is how an array value reaches the route.
+    if (keyHeader !== undefined) {
+      server.addHook("onRequest", async (request) => {
+        request.headers["x-grounnel-provider-key"] = keyHeader as string;
+      });
+    }
+    const grounnelStore = new RedisGrounnelStore(new FakeRedisHashClient());
+    const prompts = new PromptRegistry();
+    const extractService = new GrounnelExtractService(provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore());
+    const run = vi.spyOn(extractService, "run");
+    const rateLimiter = closedLimiter();
+    const ownKeyRateLimiter = closedLimiter();
+    registerGrounnelRoutes(server, {
+      extractService,
+      pipelineService: new GrounnelPipelineService(NEVER_CALLED_SEARCH, provider, prompts, grounnelStore, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore()),
+      grounnelStore,
+      historyStore: new NoopGrounnelHistoryStore(),
+      rateLimiter,
+      ownKeyRateLimiter,
+      assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    });
+    return { server, run, rateLimiter, ownKeyRateLimiter };
+  }
+
+  function postClosed(server: ReturnType<typeof Fastify>, headers: Record<string, string | string[]> = {}) {
+    return server.inject({
+      method: "POST",
+      url: "/extract",
+      headers: { authorization: VALID_AUTH, ...headers },
+      payload: { text: "Some pasted article text." },
+      remoteAddress: "4.4.4.4",
+    });
+  }
+
+  async function expectSiteBucket(headers: Record<string, string | string[]> = {}, keyHeader?: unknown) {
+    const { server, run, rateLimiter, ownKeyRateLimiter } = buildClosed(keyHeader);
+    const res = await postClosed(server, headers);
+    expect(res.statusCode).toBe(429);
+    expect(JSON.parse(res.body)).toEqual({ error: "Too many requests â€” try again later." });
+    expect(rateLimiter.checkAndConsume).toHaveBeenCalledTimes(1);
+    expect(rateLimiter.checkAndConsume).toHaveBeenCalledWith("4.4.4.4");
+    expect(ownKeyRateLimiter.checkAndConsume).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  }
+
+  it("charges a visitor key to the own-key limiter and does not run extract when that bucket is full", async () => {
+    const { server, run, rateLimiter, ownKeyRateLimiter } = buildClosed();
+    const res = await postClosed(server, { "x-grounnel-provider-key": "visitor-key" });
+    expect(res.statusCode).toBe(429);
+    expect(ownKeyRateLimiter.checkAndConsume).toHaveBeenCalledTimes(1);
+    expect(ownKeyRateLimiter.checkAndConsume).toHaveBeenCalledWith("4.4.4.4");
+    expect(rateLimiter.checkAndConsume).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("charges a request with no key to the site limiter", async () => {
+    await expectSiteBucket();
+  });
+
+  it("charges a blank key header to the site limiter", async () => {
+    await expectSiteBucket({ "x-grounnel-provider-key": "   " });
+  });
+
+  it("charges a duplicated key header to the site limiter", async () => {
+    await expectSiteBucket({}, ["one", "two"]);
   });
 });

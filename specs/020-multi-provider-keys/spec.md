@@ -190,8 +190,10 @@ No Stats change now. A public comparison section waits until the hand comparison
   share link can open the result. An own-key check MUST also say the key is sent to Grounnel for
   that check and is not saved. Own-key is not a private or local-only mode. The site default stays
   Gemini, so a visitor who does not bring a key is told the model company is Google.
-- **FR-018**: Checks with an own key MUST still count toward the site's run limits, because web
-  search runs on the site's account.
+- **FR-018**: Checks with an own key MUST still be rate-limited per IP, because web search runs on
+  the site's account — but on a SEPARATE, higher per-IP bucket than the site-paid path, since the
+  user pays for the judging calls. A site-paid check (no own key, or the hidden site choice) stays
+  on the existing site bucket. The key is never part of the limiter identity; it keys on IP only.
 
 **Stats publication**
 

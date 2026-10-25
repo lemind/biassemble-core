@@ -4,7 +4,7 @@ import { registerGrounnelRoutes } from "../../src/routes/grounnel.js";
 import { GrounnelExtractService } from "../../src/orchestrators/grounnel/extract.service.js";
 import { GrounnelPipelineService } from "../../src/orchestrators/grounnel/pipeline.service.js";
 import { RedisGrounnelStore } from "../../src/persistence/grounnel-store.js";
-import { InMemoryRateLimiter } from "../../src/lib/rate-limit.js";
+import { InMemoryRateLimiter, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR } from "../../src/lib/rate-limit.js";
 import { PromptRegistry } from "../../src/prompts/registry.js";
 import { MockProvider } from "../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../mocks/fake-redis-hash-client.js";
@@ -26,6 +26,7 @@ function buildServer(provider: Provider, searchProvider: SearchProvider) {
     grounnelStore,
     historyStore: new NoopGrounnelHistoryStore(),
     rateLimiter: new InMemoryRateLimiter(1000, 60_000),
+    ownKeyRateLimiter: new InMemoryRateLimiter(RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, 60_000),
     assessmentRateLimiter: new InMemoryRateLimiter(1000, 60_000),
   });
   return { server, grounnelStore };
