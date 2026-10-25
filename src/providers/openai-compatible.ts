@@ -79,8 +79,8 @@ export function classifyCompatibleError(
     return null;
   }
   const blob = `${code} ${message}`.toLowerCase();
-  // Quota or balance only. Bare "insufficient" or "add funds" is not a balance failure (D033 §3).
-  const outOfBalance = /arrears|insufficient[_\s-]?quota|exhausted|allocationquota|overdue|free quota/.test(blob);
+  // Quota or balance wording only. Bare "insufficient" is not a balance failure (D033 §3).
+  const outOfBalance = /arrears|insufficient[_\s-]?(quota|balance|funds|credit)|exhausted|allocationquota|overdue|free quota|no[_\s-]?balance/.test(blob);
   if (status === 403) return outOfBalance ? "no_balance" : "model_access_denied";
   if (status === 429) {
     // Throttling.RateQuota is an RPM limit. Balance is arrears, exhausted, or AllocationQuota (D033 §3).

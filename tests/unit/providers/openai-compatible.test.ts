@@ -194,6 +194,14 @@ describe("OpenAICompatibleProvider", () => {
     await expect(provider("qwen").completeJson(bare)).rejects.toMatchObject({ category: "model_access_denied" });
   });
 
+  it("maps a Qwen 403 insufficient balance to no_balance", async () => {
+    stub(403, JSON.stringify({ error: { code: "insufficient_balance", message: "insufficient balance" } }));
+    await expect(provider("qwen").completeJson(bare)).rejects.toMatchObject({
+      category: "no_balance",
+      message: "The account has no balance for this model.",
+    });
+  });
+
   it("maps a Qwen 403 insufficient_quota to no_balance, not model_access_denied", async () => {
     stub(403, JSON.stringify({ error: { code: "insufficient_quota", message: "Free quota exhausted. Please add funds or disable the \"use free tier only\" mode." } }));
     try {
