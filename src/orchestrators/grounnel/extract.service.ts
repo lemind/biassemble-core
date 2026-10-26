@@ -24,6 +24,8 @@ const EXTRACT_ATTEMPTS = 3;
 // Sized to the 300s Vercel Hobby function budget, not guessed: ~6.5s/claim measured on run
 // 7eef58d1 (2026-09-10). Raising it needs a bigger time budget first — spec 018 tasks.md.
 const MAX_CLAIMS = 40;
+// Own-key checks pay their own judging, so they get a higher cap. Web search still runs on Grounnel's account per claim, so this is raised, not removed (D033).
+const OWN_KEY_MAX_CLAIMS = 100;
 // EXTRACT emits up to MAX_CLAIMS claims, each with a verbatim source_excerpt, so it is the slowest
 // call in the system: p50 494ms but 19.2s measured on a 13.7KB document. D030 §3m Addendum 23.
 const EXTRACT_TIMEOUT_MS = 60_000;
@@ -81,6 +83,8 @@ export class GrounnelExtractService {
 
   /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033). */
   async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own"): Promise<GrounnelExtractResult> {
+    // Own key pays the judge, so it extracts up to OWN_KEY_MAX_CLAIMS; site runs stay at MAX_CLAIMS (D033).
+    const maxClaims = keySource === "own" ? OWN_KEY_MAX_CLAIMS : MAX_CLAIMS;
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
     // Minted here, not at completion, so an in-flight run is already addressable (FR-001) and the
@@ -96,7 +100,7 @@ export class GrounnelExtractService {
       sessionId,
       text,
       source,
-      maxClaims: MAX_CLAIMS,
+      maxClaims,
       truncated: false,
       ...(providerId ? { provider: providerId } : {}),
       model: provider.model,
@@ -105,7 +109,7 @@ export class GrounnelExtractService {
     }));
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
-    const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
+    const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(maxClaims) });
 
     let parsed: z.infer<typeof ExtractResponseSchema>;
     try {
@@ -141,9 +145,9 @@ export class GrounnelExtractService {
 
     // Belt-and-suspenders cap enforcement (same rationale as audit's) — computed before slicing so it reflects a real cut, not re-derived from a count that could legitimately equal the cap.
     let extractedClaims = parsed.claims;
-    const truncated = parsed.truncated || extractedClaims.length > MAX_CLAIMS;
-    if (extractedClaims.length > MAX_CLAIMS) {
-      extractedClaims = extractedClaims.slice(0, MAX_CLAIMS);
+    const truncated = parsed.truncated || extractedClaims.length > maxClaims;
+    if (extractedClaims.length > maxClaims) {
+      extractedClaims = extractedClaims.slice(0, maxClaims);
     }
 
     // D028 — strict, un-normalized substring check. A miss (or empty/missing excerpt, see the
@@ -162,7 +166,7 @@ export class GrounnelExtractService {
     const { id } = await this.grounnelStore.createAudit({
       id: runId,
       text,
-      maxClaims: MAX_CLAIMS,
+      maxClaims,
       claims,
       truncated,
       ...(providerId ? { provider: providerId } : {}),
