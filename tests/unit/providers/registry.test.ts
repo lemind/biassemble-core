@@ -77,7 +77,7 @@ describe("provider registry", () => {
     }
     expect(providerOption("gemini")?.defaultModel).toBe(env.GEMINI_MODEL);
     expect(providerOption("deepseek")?.defaultModel).toBe("deepseek-flash");
-    expect(providerOption("qwen")?.defaultModel).toBe("qwen3.6-flash");
+    expect(providerOption("qwen")?.defaultModel).toBe("qwen3.7-flash");
     expect(providerOption("claude")).toBeUndefined();
     expect(SITE_DEFAULT_PROVIDER).toBe("gemini");
   });
@@ -106,7 +106,7 @@ describe("provider registry", () => {
     expect(qwen.mode).toBe("qwen");
     const qwenCall = await sent(qwen);
     expect(qwenCall.url).toBe(qwenChatCompletionsUrl(WORKSPACE));
-    expect(qwenCall.model).toBe("qwen3.6-flash");
+    expect(qwenCall.model).toBe("qwen3.7-flash");
     expect(qwenCall.authorization).toBe(`Bearer ${OWN_KEY}`);
   });
 

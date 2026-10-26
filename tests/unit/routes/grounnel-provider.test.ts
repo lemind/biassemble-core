@@ -103,7 +103,7 @@ describe("chooseExtractProvider (T2010)", () => {
     expect(qwen.keySource).toBe("site");
     expect(await sent(qwen.provider!)).toMatchObject({
       url: qwenChatCompletionsUrl("ws-test"),
-      model: "qwen3.6-flash",
+      model: "qwen3.7-flash",
       authorization: `Bearer ${DEPLOY_QWEN}`,
     });
   });
