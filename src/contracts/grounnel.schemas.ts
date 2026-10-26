@@ -145,6 +145,14 @@ export type SharedClaim = z.infer<typeof SharedClaimSchema>;
 
 // FR-011 — a failed or still-running run renders what exists and says so, rather than looking
 // complete. The reader keys on `status`, which is a different state from a null verdict.
+// Judging tokens on the visitor key (extract+verify). Null unless own-key and finished. TODO(T2018): public on the share page; drop this field from SharedAssessmentSchema and readAssessmentByToken to hide it.
+const OwnKeyTokensSchema = z
+  .object({
+    input: z.number().int().nonnegative(),
+    output: z.number().int().nonnegative(),
+  })
+  .nullable();
+
 /** Authoritative verdict tallies, snapshotted from Redis at completion. Optional: runs that
  *  finished before this existed have none, and a reader falls back to counting rows. */
 export const SharedCountsSchema = z.object({
@@ -168,6 +176,7 @@ export const SharedAssessmentSchema = z.object({
   provider: z.enum(["gemini", "deepseek", "qwen"]),
   // Null only on a row stored before the column existed (D033).
   model: z.string().nullable(),
+  ownKeyTokens: OwnKeyTokensSchema,
 });
 
 export type SharedAssessment = z.infer<typeof SharedAssessmentSchema>;
@@ -218,6 +227,7 @@ export const StatusResponseSchema = z.object({
   provider: z.enum(["gemini", "deepseek", "qwen"]),
   // Null only on a hash written before this field existed (D033).
   model: z.string().nullable(),
+  ownKeyTokens: OwnKeyTokensSchema,
 });
 
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;

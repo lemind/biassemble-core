@@ -5,6 +5,7 @@ const mockUpdateRun = vi.fn();
 const mockInsertClaim = vi.fn();
 const mockSelectRunByToken = vi.fn();
 const mockSelectClaims = vi.fn();
+const mockSumJudgingTokens = vi.fn();
 
 vi.mock("../../../src/db/queries.js", () => ({
   insertGrounnelRun: (...args: unknown[]) => mockInsertRun(...args),
@@ -12,6 +13,7 @@ vi.mock("../../../src/db/queries.js", () => ({
   insertGrounnelClaim: (...args: unknown[]) => mockInsertClaim(...args),
   selectGrounnelRunByShareToken: (...args: unknown[]) => mockSelectRunByToken(...args),
   selectGrounnelClaimsByRunId: (...args: unknown[]) => mockSelectClaims(...args),
+  sumGrounnelJudgingTokens: (...args: unknown[]) => mockSumJudgingTokens(...args),
 }));
 
 const { DrizzleGrounnelHistoryStore } = await import("../../../src/persistence/grounnel-history-store.js");
@@ -120,6 +122,8 @@ describe("readAssessmentByToken — citations round-trip (shared link parity)", 
   beforeEach(() => {
     mockSelectRunByToken.mockReset();
     mockSelectClaims.mockReset();
+    mockSumJudgingTokens.mockReset();
+    mockSumJudgingTokens.mockResolvedValue({ input: 0, output: 0 });
   });
 
   it("passes stored citations through untouched", async () => {
@@ -140,13 +144,26 @@ describe("readAssessmentByToken — citations round-trip (shared link parity)", 
   });
 
   it("T2011: names the provider and model, and drops key_source even if the row has it", async () => {
+    mockSumJudgingTokens.mockResolvedValue({ input: 11, output: 4 });
     mockSelectRunByToken.mockResolvedValue({ ...run, keySource: "own", key_source: "own" });
     mockSelectClaims.mockResolvedValue([]);
     const store = new DrizzleGrounnelHistoryStore();
     const assessment = await store.readAssessmentByToken("tok");
-    expect(assessment).toMatchObject({ provider: "deepseek", model: "deepseek-flash" });
+    expect(assessment).toMatchObject({ provider: "deepseek", model: "deepseek-flash", ownKeyTokens: { input: 11, output: 4 } });
     expect(assessment).not.toHaveProperty("keySource");
     expect(assessment).not.toHaveProperty("key_source");
-    expect(JSON.stringify(assessment)).not.toContain("own");
+    expect(JSON.stringify(assessment)).not.toMatch(/key_source|keySource/);
+    expect(mockSumJudgingTokens).toHaveBeenCalledWith("r1");
+  });
+
+  it("T2018: a site-paid share and an unfinished own-key share carry null totals", async () => {
+    mockSelectClaims.mockResolvedValue([]);
+    mockSelectRunByToken.mockResolvedValue({ ...run, keySource: "site" });
+    const store = new DrizzleGrounnelHistoryStore();
+    expect((await store.readAssessmentByToken("tok"))?.ownKeyTokens).toBeNull();
+
+    mockSelectRunByToken.mockResolvedValue({ ...run, status: "verifying", keySource: "own" });
+    expect((await store.readAssessmentByToken("tok"))?.ownKeyTokens).toBeNull();
+    expect(mockSumJudgingTokens).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,9 @@ import {
   insertGrounnelClaim,
   selectGrounnelRunByShareToken,
   selectGrounnelClaimsByRunId,
+  sumGrounnelJudgingTokens,
 } from "../db/queries.js";
+import { ownKeyTokensAtServe } from "../lib/own-key-tokens.js";
 import { logger } from "../observability/logger.js";
 import { SharedCountsSchema } from "../contracts/grounnel.schemas.js";
 import type { ClaimCitation, ClaimSource, SharedAssessment } from "../contracts/grounnel.schemas.js";
@@ -104,6 +106,8 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
     // best-effort, and a dropped one would silently shrink the reader's denominators.
     const snapshot = (run.score as { counts?: unknown } | null)?.counts;
     const counts = SharedCountsSchema.safeParse(snapshot);
+    // Public counts, not the key. TODO(T2018): return null here to hide them on the share link.
+    const ownKeyTokens = await ownKeyTokensAtServe(run.runId, run.keySource, run.status, sumGrounnelJudgingTokens);
 
     return {
       status: run.status,
@@ -112,6 +116,7 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
       completedAt: run.completedAt?.toISOString() ?? null,
       provider: run.provider ?? "gemini",
       model: run.model ?? null,
+      ownKeyTokens,
       ...(counts.success ? { counts: counts.data } : {}),
       claims: claims.map((c) => ({
         text: c.claimText,

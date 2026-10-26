@@ -52,6 +52,8 @@ IDs are `T2001` upward: spec `20` plus the two-digit task.
 
 - [ ] T2017 [US3] An own-key check (the `x-grounnel-provider-key` header is present) consumes a SEPARATE, looser per-IP bucket, not the 5/hour site bucket. Add `RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR` in `src/lib/rate-limit.ts` (start ~30) and a second `RateLimiter` instance wired in `src/web/server.ts`. In `src/routes/grounnel.ts`, pick the bucket by whether a visitor key header is present BEFORE consuming (the current check at the top of `POST /extract` runs before `chooseExtractProvider`, so it must learn key-presence first). A site-paid check — no key, or the hidden site choice — stays on the existing 5/hour bucket. The limiter keys on IP only; the key is never part of the limiter identity and is never logged. Rationale: an own key pays the judging LLM, but web search still runs on the site account, so own-key runs are capped higher, not unlimited.
 
+- [ ] T2018 [US3] After an own-key check finishes, `GET /status/:id` and the public share assessment include `ownKeyTokens: { input, output }`. The sum is `grounnel_llm_calls` rows for that run with `stage IN ('extract','verify')` only. `stage='discovery'` is web search on Grounnel's account and MUST be excluded. Null token cells count as 0. The value is null unless `grounnel_runs.key_source='own'` and the run status is `done` or `failed` (no running total). A site-paid run is null. The key and `key_source` stay off both payloads. Counts are public on the share link; to hide them, omit the field from `SharedAssessmentSchema` and `readAssessmentByToken` and keep it only on `/status`.
+
 ## Done when
 
 - T2002 passed for all three deployment keys.
@@ -60,6 +62,7 @@ IDs are `T2001` upward: spec `20` plus the two-digit task.
 - The visitor form has no site-paid provider choice. With no own key, the check runs on Gemini.
 - A bad key errors before any claim, without the article being sent, and does not fall back to the site key.
 - An own-key check is rate-limited on its own higher per-IP bucket, while a site-paid check still hits the 5/hour limit.
+- A finished own-key check reports judging-call input and output tokens. A site-paid check does not. Discovery tokens are not included.
 
 ## Not this slice
 

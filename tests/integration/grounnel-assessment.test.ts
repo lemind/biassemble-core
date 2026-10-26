@@ -25,6 +25,7 @@ const ASSESSMENT: SharedAssessment = {
   completedAt: "2026-09-07T17:29:11.000Z",
   provider: "gemini",
   model: "gemini-2.0-flash",
+  ownKeyTokens: null,
   claims: [
     {
       text: "The Eiffel Tower was originally constructed in London.",

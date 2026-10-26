@@ -15,6 +15,8 @@ import {
   resolveProvider,
   type ProviderId,
 } from "../providers/registry.js";
+import { sumGrounnelJudgingTokens } from "../db/queries.js";
+import { ownKeyTokensAtServe } from "../lib/own-key-tokens.js";
 import { buildGeminiRateLimitMessage, type GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import type { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
 import type { GrounnelStore } from "../persistence/grounnel-store.js";
@@ -193,16 +195,19 @@ export function registerGrounnelRoutes(
     if (extracted.pendingClaims.length > 0) {
       waitUntil(
         (async () => {
-          const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims, decision.provider);
-          if (eligible.length > 0) {
-            await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text, decision.provider);
+          try {
+            const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims, decision.provider);
+            // eligible.length === 0 is already status=done inside classifyEligibility. Running the pipeline here would write done twice.
+            if (eligible.length > 0) {
+              await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text, decision.provider);
+            }
+          } catch (err) {
+            logger.error(
+              { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
+              "Eligibility classification or pipeline run failed after the 202 response was already sent"
+            );
           }
-        })().catch((err) => {
-          logger.error(
-            { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
-            "Eligibility classification or pipeline run failed after the 202 response was already sent"
-          );
-        })
+        })()
       );
     }
   });
@@ -218,6 +223,12 @@ export function registerGrounnelRoutes(
     const status = await services.grounnelStore.getStatus(id);
     if (!status) {
       return reply.status(404).send({ error: "not_found" });
+    }
+
+    // Same live sum as the share page. A Redis snapshot raced the llm-call inserts and stuck at 0 (T2018).
+    if (status.status === "done" || status.status === "failed") {
+      const keySource = (await services.grounnelStore.hasOwnKey(id)) ? "own" : undefined;
+      status.ownKeyTokens = await ownKeyTokensAtServe(id, keySource, status.status, sumGrounnelJudgingTokens);
     }
 
     return reply.status(200).send(status);

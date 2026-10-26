@@ -23,9 +23,12 @@ export interface GrounnelStore {
     truncated: boolean;
     provider?: "gemini" | "deepseek" | "qwen";
     model?: string;
+    keySource?: "site" | "own";
   }): Promise<{ id: string }>;
   writeClaimResult(auditId: string, claimId: string, result: ClaimResult): Promise<void>;
   getStatus(id: string): Promise<StatusResponse | null>;
+  /** True when this audit was started with a visitor key. Missing meta is false. */
+  hasOwnKey(auditId: string): Promise<boolean>;
   /** D026 §14 — run-level, not claim-level: escalation shouldn't revert an already-resolved claim's
    * status back to "pending" (visible UI regression), but "done" must still wait for it to finish. */
   setEscalating(auditId: string, escalating: boolean): Promise<void>;
@@ -53,6 +56,8 @@ interface Meta {
   // Absent on hashes written before T2011. Those reads stay Gemini (D033).
   provider?: "gemini" | "deepseek" | "qwen";
   model?: string;
+  // Internal only. getStatus never copies this onto the response (D033 §5).
+  keySource?: "site" | "own";
 }
 
 function storedProvider(value: string | undefined): "gemini" | "deepseek" | "qwen" {
@@ -114,6 +119,7 @@ export class RedisGrounnelStore implements GrounnelStore {
     truncated: boolean;
     provider?: "gemini" | "deepseek" | "qwen";
     model?: string;
+    keySource?: "site" | "own";
   }): Promise<{ id: string }> {
     const id = data.id ?? randomUUID();
     const key = `audit:${id}`;
@@ -125,6 +131,7 @@ export class RedisGrounnelStore implements GrounnelStore {
       escalating: false,
       ...(data.provider ? { provider: data.provider } : {}),
       ...(model ? { model } : {}),
+      ...(data.keySource ? { keySource: data.keySource } : {}),
     };
     const fields: Record<string, string> = { [META_FIELD]: JSON.stringify(meta) };
     for (const claim of data.claims) {
@@ -170,6 +177,12 @@ export class RedisGrounnelStore implements GrounnelStore {
     if (!existingRaw) return; // audit expired/missing — nothing to flag, matches getStatus's own null-on-missing convention
     const meta = JSON.parse(existingRaw) as Meta;
     await this.redis.hset(key, { [META_FIELD]: JSON.stringify({ ...meta, escalating }) });
+  }
+
+  async hasOwnKey(auditId: string): Promise<boolean> {
+    const raw = await this.redis.hget(`audit:${auditId}`, META_FIELD);
+    if (!raw) return false;
+    return (JSON.parse(raw) as Meta).keySource === "own";
   }
 
   async getStatus(id: string): Promise<StatusResponse | null> {
@@ -265,6 +278,8 @@ export class RedisGrounnelStore implements GrounnelStore {
       elapsed_seconds: elapsedSeconds,
       provider: storedProvider(meta.provider),
       model: typeof meta.model === "string" && meta.model.length > 0 ? meta.model : null,
+      // Served from Postgres on GET /status. This hash does not freeze a mid-run sum (T2018).
+      ownKeyTokens: null,
     };
   }
 }

@@ -167,6 +167,7 @@ export class GrounnelExtractService {
       truncated,
       ...(providerId ? { provider: providerId } : {}),
       model: provider.model,
+      ...(keySource ? { keySource } : {}),
     });
 
     // Best-effort (D023 §7) — real truncated value + stamped prompt version, once both are known.
@@ -176,6 +177,10 @@ export class GrounnelExtractService {
     // Independent per-claim writes (grounnel-store.ts), safe and tested to run concurrently.
     const opinionClaims = claims.filter((claim) => isOpinionClaim(claim.text));
     const pendingClaims = claims.filter((claim) => !isOpinionClaim(claim.text));
+    // No pipeline follows, so this is the only writer of status=done. Share hides tokens until then (T2018).
+    if (pendingClaims.length === 0) {
+      await this.historyStore.updateRun(id, { status: "done", completedAt: new Date() });
+    }
     const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
     await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
@@ -239,6 +244,10 @@ export class GrounnelExtractService {
     if (abandoned.value) return [];
     const ineligibleClaims = eligibilityResults.filter((r) => isEligibilityExcluded(r.result));
     const eligibleClaims = eligibilityResults.filter((r) => !isEligibilityExcluded(r.result)).map((r) => r.claim);
+    // No pipeline follows. Mark Postgres done before these writes flip Redis to done (T2018).
+    if (eligibleClaims.length === 0) {
+      await this.historyStore.updateRun(auditId, { status: "done", completedAt: new Date() });
+    }
     await Promise.all(ineligibleClaims.map(({ claim, result }) => this.writeExcludedClaim(auditId, claim, eligibilityReason(result))));
     return eligibleClaims;
   }

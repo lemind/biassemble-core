@@ -423,7 +423,49 @@ describe("RedisGrounnelStore (T007)", () => {
     });
     await store.setEscalating(id, true);
     const status = await store.getStatus(id);
-    expect(status).toMatchObject({ provider: "qwen", model: "qwen3.7-flash" });
-    expect(JSON.stringify(status)).not.toContain("key");
+    expect(status).toMatchObject({ provider: "qwen", model: "qwen3.7-flash", ownKeyTokens: null });
+    expect(status).not.toHaveProperty("key_source");
+    expect(status).not.toHaveProperty("keySource");
+  });
+
+  it("T2018: the Redis status never freezes token totals, and key_source stays off the payload", async () => {
+    const store = makeStore();
+    const { id } = await store.createAudit({ text: "article", maxClaims: 100, claims: [], truncated: false, keySource: "own" });
+    const done = await store.getStatus(id);
+    expect(done!.status).toBe("done");
+    expect(done!.ownKeyTokens).toBeNull();
+    expect(done).not.toHaveProperty("key_source");
+    expect(done).not.toHaveProperty("keySource");
+    expect(JSON.stringify(done)).not.toContain("key_source");
+    expect(await store.hasOwnKey(id)).toBe(true);
+
+    const site = makeStore();
+    const siteAudit = await site.createAudit({ text: "article", maxClaims: 100, claims: [], truncated: false, keySource: "site" });
+    expect((await site.getStatus(siteAudit.id))!.ownKeyTokens).toBeNull();
+    expect(await site.hasOwnKey(siteAudit.id)).toBe(false);
+  });
+
+  it("T2018: a still-running or self-healed own-key check does not carry totals on the Redis read", async () => {
+    const redis = new FakeRedisHashClient();
+    const store = new RedisGrounnelStore(redis);
+    const claimId = "11111111-1111-4111-8111-111111111111";
+    const { id } = await store.createAudit({
+      text: "article",
+      maxClaims: 100,
+      claims: [{ id: claimId, text: "Claim A" }],
+      truncated: false,
+      keySource: "own",
+    });
+    const mid = await store.getStatus(id);
+    expect(mid!.status).toBe("extracting");
+    expect(mid!.ownKeyTokens).toBeNull();
+
+    const raw = await redis.hget(`audit:${id}`, "meta");
+    const meta = JSON.parse(raw!) as { createdAt: string };
+    meta.createdAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await redis.hset(`audit:${id}`, { meta: JSON.stringify(meta) });
+    const failed = await store.getStatus(id);
+    expect(failed!.status).toBe("failed");
+    expect(failed!.ownKeyTokens).toBeNull();
   });
 });
