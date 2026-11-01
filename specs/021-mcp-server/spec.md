@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-01
 
-**Status**: Draft (three external reviews applied; rate-limit decision made, see FR-014)
+**Status**: Ready for plan (four external reviews applied; rate-limit decision made, see FR-014)
 
 **Input**: Let people use Grounnel from their own AI assistant (Claude, Claude Code, Cursor, and
 other MCP clients). The assistant sends a text to Grounnel and gets the claims and verdicts back as
@@ -176,13 +176,22 @@ reach a finished check.
 - **FR-003**: The start tool MUST return once the key has passed preflight and the claims have been
   extracted, without waiting for verification. It returns the share token, the share link, the
   status, and how many seconds to wait before the first read.
-- **FR-003a**: Request tokens MUST be kept for an hour in shared storage, not process memory, scoped
-  to provider, key fingerprint and token, together with a fingerprint of the text and the resulting
-  share token. Creating the record is atomic, so two identical starts arriving together create one
-  check. Same token and same text returns the first check without using another allowance; same
-  token and different text is refused as a token conflict.
-- **FR-004**: The result tool MUST take the share token and return what the public share page shows
-  and nothing more: status, current phase, progress (claims finished out of claims found), every
+- **FR-003a**: A request token MUST be reserved before anything is spent, in this order:
+  1. Atomically look up or reserve `(provider, key fingerprint, request token)` in shared storage
+     (not process memory), for one hour.
+  2. If a finished reservation exists with the same text fingerprint, return its share token without
+     using another allowance. With a different text fingerprint, refuse as a token conflict.
+  3. If another request holds a pending reservation, return a retryable "in progress" error.
+  4. Only the reservation's owner uses the allowance, runs preflight and extraction, and creates the
+     check, then records the share token on the reservation.
+  5. If preflight or extraction fails, the owner releases the reservation, so a retry can try again.
+  The text fingerprint is an HMAC of the exact UTF-8 text under a server secret, with its own
+  purpose separate from the key fingerprint, so a stored value can't be matched by hashing guessed
+  texts. Request tokens are at most 128 characters of letters, digits, `-` and `_`; anything else
+  is refused as invalid input.
+- **FR-004**: The result tool MUST take the share token and return what the public share page
+  already serves (status, the claims, verdict counts, provider, model and token usage) plus one
+  field the page doesn't have, the cap flag (FR-006), and nothing else: status, current phase, progress (claims finished out of claims found), every
   finished claim, and, while running, how many seconds to wait before the next read. The pipeline's
   "extracting" and "verifying" are reported as status "running" with that phase; "done" and "failed"
   keep their meaning.
@@ -204,9 +213,11 @@ reach a finished check.
 
 **Keys and providers**
 
-- **FR-010**: Every MCP check MUST use the caller's own key. A request without a key MUST be refused
-  as "key required". There are no site-paid MCP checks in this slice.
-- **FR-011**: The caller MUST choose the provider (Gemini, DeepSeek or Qwen) in a request header. A
+- **FR-010**: Every MCP check MUST use the caller's own key, sent in the existing
+  `X-Grounnel-Provider-Key` header. A request without it MUST be refused as "key required". There
+  are no site-paid MCP checks in this slice.
+- **FR-011**: The caller MUST choose the provider (Gemini, DeepSeek or Qwen) in the existing
+  `X-Grounnel-Provider` header. No other header names are accepted. A
   missing provider is refused as "provider not chosen", any other value as "unsupported provider".
   There is no default provider over MCP.
 - **FR-012**: The key MUST reach the check only through the existing own-key execution path: held in
@@ -239,6 +250,12 @@ reach a finished check.
   shared bucket for connector addresses (one heavy user blocks everyone). Website own-key checks
   keep their per-address limit and no fingerprint, so the website's "never stored, not even hashed"
   promise stays true; the About page's MCP section states the fingerprint for MCP checks.
+- **FR-014a**: If the shared storage behind the limit or the request tokens is unavailable, the start
+  tool MUST fail closed with a temporary service error and never run a check without a reserved
+  allowance. The HMAC secret is a server secret, the same on every instance and region and stable
+  across deployments. Rotating it resets every allowance, which is acceptable.
+- **FR-014b**: The operator MUST be able to switch off new MCP starts with one setting, without a
+  deploy. Reads keep working, so running checks can still be collected.
 - **FR-015**: Result reads MUST be limited per share token, not per address, with a separate global
   ceiling on total read traffic. The per-token limit is sized for one check read at the advised
   interval to completion, with margin. The 120-an-hour shared-link limit is not used here. Over the limit, a read returns a retry time and never affects the check. Exact numbers go
@@ -255,9 +272,12 @@ reach a finished check.
     text, text too large, token conflict, Grounnel rate limit; preflight failed with one reason
     (invalid key, no balance, provider rate limit, provider unavailable); extraction failed.
   - Read errors: not found, rate limited.
-  - A check that was created and then failed reports one reason: provider quota or balance used up,
-    provider rate limit, provider unavailable, unreadable provider answer, time limit reached, or
-    pipeline failure.
+  - Start errors also include: in progress (another start with the same request token is running),
+    and service temporarily unavailable (FR-014a, or MCP starts switched off, FR-014b).
+  - A check that was created and then failed is NOT a tool error. Reading it succeeds and returns
+    status "failed", one reason (provider quota or balance used up, provider rate limit, provider
+    unavailable, unreadable provider answer, time limit reached, or pipeline failure) and every
+    claim that finished. Only a failure of the start or read call itself is marked as an error.
 
   Grounnel's own limit, the provider's rate limit, and the provider's quota stay distinct reasons.
 - **FR-018**: No part of the key MAY appear anywhere Grounnel writes or emits: errors, tool results,
@@ -267,17 +287,19 @@ reach a finished check.
 
 **Records**
 
-- **FR-019**: Each run MUST record its entry point (website or MCP) in a new field set by the server.
-  It is separate from the existing production/evaluation field: MCP checks are production runs with
-  entry point MCP. Existing runs are recorded as website.
+- **FR-019**: Each new run MUST record its entry point in a new field set by the server: website, MCP,
+  or evaluation job. It is separate from the existing production/evaluation field: MCP checks are
+  production runs with entry point MCP. Existing runs keep the entry point empty, since their origin
+  can't be proven, and are not counted as website usage.
 
 **Access**
 
 - **FR-020**: The server MUST be reachable at one public address with nothing to install, over
   Streamable HTTP as defined in MCP revision 2026-07-28: stateless, one POST endpoint, the required
-  request metadata headers, and Origin validation when an Origin header is sent. It SHOULD answer
-  server discovery for clients that ask for capabilities up front.
-  Support for the earlier 2025-11-25 revision is decided in the plan and tested if kept.
+  request metadata headers, and Origin validation when an Origin header is sent. The server MUST
+  implement `server/discover`; clients MAY call it but don't have to. A client still on the earlier
+  2025-11-25 revision cannot talk to a server that only speaks 2026-07-28, so the plan checks what
+  each supported client sends and serves both revisions if any of them is still on the old one.
 - **FR-021**: The About page MUST explain how to connect: step-by-step connector instructions for
   Claude, config snippets for Claude Code and Cursor, the data-flow and public-page warnings, that
   Claude's connector stores the key on Anthropic's side and calls Grounnel from Anthropic's cloud,
@@ -295,8 +317,9 @@ reach a finished check.
   doesn't store them.
 - **Key fingerprint**: a salted one-way value derived from the key, used only as the rate-limit
   bucket name for MCP checks and expiring within an hour. Never written to the database.
-- **Request token**: optional, client-chosen, used only to return the same check on a retried
-  start; kept for an hour.
+- **Request token reservation**: optional, client-chosen token; stored for an hour with the provider,
+  key fingerprint, a keyed text fingerprint, its state (pending or finished) and the share token.
+  Never the text or the key.
 
 ## Success Criteria *(mandatory)*
 
@@ -314,9 +337,13 @@ reach a finished check.
 - **SC-006**: 5 concurrent checks with 5 different share tokens, read through the same Claude
   connector at the advised interval to completion, never hit a read limit.
 - **SC-006a**: A deployed 40-claim check finishes within the function's time limit in at least 19 of
-  20 runs, and a run cut short ends as failed with its finished claims, not stuck as running.
-- **SC-006b**: Two identical starts with the same request token, sent at the same moment, create one
-  check.
+  20 runs on each provider (Gemini, DeepSeek, Qwen), timed from the start of the invocation. Each run
+  records provider, model, function configuration, elapsed time and outcome. Separately, a run cut
+  short ends as failed with its finished claims, not stuck as running.
+- **SC-006b**: Two identical starts with the same request token, sent at the same moment, produce one
+  extraction, one stored run, one allowance used and one share token.
+- **SC-006c**: With the shared storage unreachable, the start tool refuses every start, and no check
+  runs.
 - **SC-007**: Every error in FR-017 can be produced on purpose and comes back with its own code.
 - **SC-008**: Each supported client sends both headers and completes a check, tested end to end.
 - **SC-009**: Website and MCP runs carry the right entry point, and both are production.
@@ -330,10 +357,11 @@ reach a finished check.
   time of writing), Claude Code (`--header` or `headers` in config) and Cursor (remote server config).
   Each is listed only after passing SC-008.
 - **Claude's connectors call from Anthropic's cloud**, not the user's machine. This drives FR-014.
-- **No global spend cutoff exists today.** MCP adds a second, independent own-key allowance on top
-  of the website's, and a per-key limit can be multiplied with more keys. Each extra check still
-  spends money on the caller's own key. A global spend and in-flight limit is separate work, listed
-  below.
+- **The per-key limit is an abuse throttle, not a spend limit.** A caller can multiply the allowance
+  with several provider keys, and MCP's allowance is independent of the website's. Every extra check
+  also costs Grounnel money for search and fetching. There is no global spend ceiling or global limit
+  on checks in flight in this slice; the operator accepts this exposure, with the switch in FR-014b
+  as the emergency stop.
 - **Two tools, not native MCP tasks.** Tasks are an optional extension in revision 2026-07-28 and
   client support is unverified. Revisit once the supported clients handle them.
 - **Result size is bounded** by the 40-claim cap; no paging in this slice.
