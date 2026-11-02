@@ -27,8 +27,8 @@ IDs are `T2101` upward: spec `21` plus the two-digit task. `[P]` can run in para
   limits (Claude's and Cursor's cloud addresses, research R2), why no queue, why SDK v2 with the
   2025 fallback, the reservation order, fail-closed limiting, the switch. Code comments point here.
 - [ ] T2102 Add `@modelcontextprotocol/server@2.4.0` to core.
-- [ ] T2103 Add `MCP_HMAC_SECRET` to `src/lib/env.ts` (optional at boot; the MCP route refuses starts
-  without it). Operator: set a 32-byte random value in Vercel Production and Preview, the same in both.
+- [ ] T2103 Add `MCP_HMAC_SECRET` to `src/lib/env.ts` (optional at boot; without it every start
+  returns `service_unavailable` as a tool error, never a thrown protocol error). Operator: set a 32-byte random value in Vercel Production and Preview, the same in both.
 - [ ] T2104 Migration 0019: `grounnel_runs.entry_point` (nullable enum `website|mcp|eval`) and
   `failure_reason` (nullable enum, data-model.md). Update `src/db/schema.ts`. Existing rows stay null.
 - [ ] T2105 Pass the entry point into run creation: `website` from `/extract`, `eval` from
@@ -66,8 +66,9 @@ changed.
   share token; release on failure. Returns `owner | done(shareToken) | in_progress | conflict`. Unit
   tests with a fake Redis for every transition in data-model.md.
 - [ ] T2113 MCP limiters in `src/server.ts`: `RedisRateLimiter` with prefixes `ratelimit:mcp-start`
-  (30/h), `ratelimit:mcp-read` (360/h), and a global read bucket (3000/60 s). A wrapper turns any
-  Redis error into `service_unavailable` (fail closed). Unit test: a throwing Redis never lets a
+  (30/h), `ratelimit:mcp-read` (360/h), and a global read bucket (3000/60 s). Extend
+  `RateLimitRedisClient` so a refusal also returns the counter's remaining TTL, for
+  `retryAfterSeconds`. A wrapper turns any Redis error into `service_unavailable` (fail closed). Unit test: a throwing Redis never lets a
   start through.
 - [ ] T2114 Emergency switch: read `grounnel:mcp:starts-disabled` at the start of each start call;
   `scripts/mcp-starts.ts on|off|status` sets, clears and shows it.

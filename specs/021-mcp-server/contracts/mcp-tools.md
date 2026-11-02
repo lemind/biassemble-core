@@ -9,8 +9,10 @@ allow-list (empty by default, so browser-originated calls are refused).
 
 | Header | Required | Values |
 |---|---|---|
-| `X-Grounnel-Provider` | yes | `gemini`, `deepseek`, `qwen` |
-| `X-Grounnel-Provider-Key` | yes | the user's own provider key |
+| `X-Grounnel-Provider` | for `start_fact_check` | `gemini`, `deepseek`, `qwen` |
+| `X-Grounnel-Provider-Key` | for `start_fact_check` | the user's own provider key |
+
+Tool listing, discovery and `get_fact_check` work without either header.
 
 ## Tool `start_fact_check`
 
@@ -79,10 +81,10 @@ Every tool-level failure is a `CallToolResult` with `isError: true` and this str
 | `empty_text` / `text_too_large` / `invalid_request_token` | start | input checks |
 | `token_conflict` | start | same request token, different text |
 | `in_progress` | start | same request token, first start still running (`retryAfterSeconds` 5) |
-| `rate_limited` | start, read | Grounnel's own limit (`retryAfterSeconds` = window remainder) |
+| `rate_limited` | start, read | Grounnel's own limit (`retryAfterSeconds` = seconds left in the window, from the counter's TTL) |
 | `preflight_invalid_key` / `preflight_no_balance` / `preflight_provider_rate_limited` / `preflight_provider_unavailable` | start | key preflight |
 | `extraction_failed` | start | extraction errored; no check exists |
-| `service_unavailable` | start | Redis unreachable, or MCP starts switched off |
+| `service_unavailable` | start | Redis unreachable, MCP starts switched off, or `MCP_HMAC_SECRET` not set |
 | `not_found` | read | unknown share token |
 
 Malformed JSON-RPC, unknown methods and protocol-version mismatches are protocol errors, answered by

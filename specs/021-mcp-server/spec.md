@@ -214,10 +214,11 @@ reach a finished check.
 **Keys and providers**
 
 - **FR-010**: Every MCP check MUST use the caller's own key, sent in the existing
-  `X-Grounnel-Provider-Key` header. A request without it MUST be refused as "key required". There
-  are no site-paid MCP checks in this slice.
+  `X-Grounnel-Provider-Key` header. A start without it MUST be refused as "key required". There
+  are no site-paid MCP checks in this slice. Listing tools and reading a check need no key: a read
+  takes a share token and returns public data.
 - **FR-011**: The caller MUST choose the provider (Gemini, DeepSeek or Qwen) in the existing
-  `X-Grounnel-Provider` header. No other header names are accepted. A
+  `X-Grounnel-Provider` header. No other header names are accepted. On a start, a
   missing provider is refused as "provider not chosen", any other value as "unsupported provider".
   There is no default provider over MCP.
 - **FR-012**: The key MUST reach the check only through the existing own-key execution path: held in
@@ -245,7 +246,8 @@ reach a finished check.
   named by an HMAC-SHA-256 of the key under a server-side secret, namespaced by provider, kept in
   shared storage, incremented atomically, expiring with its window, and never written to the
   database. The window is fixed, like the website's. A start uses an allowance once its input is
-  valid, before preflight, as on the website. Website and MCP allowances are independent. Per address doesn't work, because Claude's connectors all call from Anthropic's
+  valid, before preflight. (The website charges before validating; MCP validates first on purpose,
+  so a malformed call costs nothing.) Website and MCP allowances are independent. Per address doesn't work, because Claude's connectors all call from Anthropic's
   addresses. Decided 2026-11-01 (option a), over a per-user MCP token (extra setup step) and a
   shared bucket for connector addresses (one heavy user blocks everyone). Website own-key checks
   keep their per-address limit and no fingerprint, so the website's "never stored, not even hashed"
@@ -315,7 +317,7 @@ reach a finished check.
 - **Connection settings**: the server address, the provider and the key, set once in the user's
   client. For Claude connectors, Anthropic stores them (encrypted, per their documentation). Grounnel
   doesn't store them.
-- **Key fingerprint**: a salted one-way value derived from the key, used only as the rate-limit
+- **Key fingerprint**: an HMAC-SHA-256 of the provider and key under a server secret, used only as the rate-limit
   bucket name for MCP checks and expiring within an hour. Never written to the database.
 - **Request token reservation**: optional, client-chosen token; stored for an hour with the provider,
   key fingerprint, a keyed text fingerprint, its state (pending or finished) and the share token.
