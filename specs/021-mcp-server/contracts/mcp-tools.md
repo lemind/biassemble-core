@@ -12,7 +12,9 @@ allow-list (empty by default, so browser-originated calls are refused).
 | `X-Grounnel-Provider` | for `start_fact_check` | `gemini`, `deepseek`, `qwen` |
 | `X-Grounnel-Provider-Key` | for `start_fact_check` | the user's own provider key |
 
-Tool listing, discovery and `get_fact_check` work without either header.
+Tool listing, discovery and `get_fact_check` work without either header. These are the only keys
+a client sends: search (Gemini grounding, Tavily) runs on Grounnel's own keys and is paid by
+Grounnel.
 
 ## Tool `start_fact_check`
 

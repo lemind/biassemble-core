@@ -104,6 +104,13 @@ Site repo (`biassemble/frontend`): About page "Use Grounnel from your assistant"
 
 ## Key design decisions
 
+### Who pays
+
+The user's LLM key pays extraction and verification. Search (Gemini grounding and Tavily) stays on
+the site keys, as on the website, so every MCP check costs Grounnel its search share (spec "Who
+pays"). `startCheck` uses the shared `HybridSearchProvider`; no per-request search provider and no
+extra key headers. Our spend is bounded only by the per-key limit and the switch.
+
 ### One start path, two doors
 
 `/extract` and `start_fact_check` both call `startCheck({ text, providerDecision, entryPoint })`.
@@ -223,4 +230,5 @@ claims. The website's limit is unchanged.
 - **The bypass token leaked during research.** It is rotated before any further deploy (T2137).
 - **The refactor of `/extract`.** It's the live website path. Phase 2 lands alone, with the existing
   route tests passing and a deploy check, before any MCP code.
-- **Per-key limits multiply with keys.** Accepted in the spec; the switch (FR-014b) is the stop.
+- **Per-key limits multiply with keys, and each check spends our search money.** Accepted in the
+  spec ("Who pays"); the switch (FR-014b) is the stop. Watch site Gemini and Tavily spend after launch.

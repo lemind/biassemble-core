@@ -18,6 +18,14 @@ site account, so a site-paid MCP check needs a way to know who is calling. That 
 which are a separate decision. This slice ships two tools, own-key only, with the same public share
 page as a website check.
 
+## Who pays
+
+Decided 2026-11-02. The user's config carries one key: their LLM provider key. It pays for
+extraction and verification. Search stays on Grounnel's accounts: Gemini grounding (site
+`GEMINI_API_KEY`) and Tavily (site `TAVILY_API_KEY`), so Grounnel pays search and page discovery
+for every MCP check. The user is never asked for a Google or Tavily key. The limits in FR-014 and
+the switch in FR-014b are what bound that spend.
+
 ## How it works
 
 The user adds Grounnel's MCP address to their assistant once, with their provider choice and their

@@ -14,6 +14,9 @@ same two headers the website uses. The start tool runs the website's own start p
 key stays in memory and never enters a queue. Limits are per key fingerprint for starts and per
 share token for reads. A failed check is a successful read with a reason.
 
+Who pays: the user's LLM key pays the model; Gemini grounding and Tavily search stay on the site
+keys (spec "Who pays"). No search key headers.
+
 ## Format: `[ID] [P?] [Story?] Description`
 
 IDs are `T2101` upward: spec `21` plus the two-digit task. `[P]` can run in parallel with the other
@@ -32,7 +35,8 @@ IDs are `T2101` upward: spec `21` plus the two-digit task. `[P]` can run in para
 
 - [ ] T2101 Write `docs/decisions/034-mcp-server.md`: why two tools and polling, why per-key HMAC
   limits (Claude's and Cursor's cloud addresses, research R2), why no queue, why SDK v2 with the
-  2025 fallback, the reservation order, fail-closed limiting, the switch. Code comments point here.
+  2025 fallback, the reservation order, fail-closed limiting, the switch, and who pays (user's LLM
+  key for the model, site keys for search). Code comments point here.
 - [ ] T2102 Add `@modelcontextprotocol/server@2.4.0` to core.
 - [ ] T2103 Add `MCP_HMAC_SECRET` to `src/lib/env.ts` (optional at boot; without it every start
   returns `service_unavailable` as a tool error, never a thrown protocol error). Operator: set a 32-byte random value in Vercel Production and Preview, the same in both.
@@ -142,7 +146,8 @@ changed.
   `failed`, `failure_reason` `time_limit`, finished claims intact, and the run no longer reported as
   running by `get_fact_check`.
 - [ ] T2132 [US4] Site repo: About page section "Use Grounnel from your assistant": address, Claude
-  connector steps, Claude Code and Cursor snippets, the data-flow and public-page warnings, the key
+  connector steps, Claude Code and Cursor snippets (one LLM key; search is on Grounnel), the
+  data-flow and public-page warnings, the key
   fingerprint note, and keeping keys out of shared config (FR-021).
 - [ ] T2133 If the own-key article is published by then, add the one-line MCP fingerprint note
   (FR-021).

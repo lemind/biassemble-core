@@ -10,7 +10,8 @@
 | `failure_reason` | new, nullable text enum | `provider_quota`, `provider_rate_limited`, `provider_unavailable`, `provider_invalid_response`, `time_limit`, `pipeline` | Written once, when a run ends `failed`. Null for `done` runs and for historical rows. |
 | `truncated` | unchanged | boolean | Already the cap flag. Now also returned to MCP readers. |
 
-No column holds a key, a key fingerprint, or a request token.
+No column holds a key, a key fingerprint, or a request token. Only the user's LLM key arrives;
+search uses the existing site keys, so no search key is handled anywhere.
 
 ## Redis (Upstash), all with TTL
 
