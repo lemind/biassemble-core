@@ -127,26 +127,54 @@ and DELETE get 405, per 2026-07-28; legacy clients don't need GET in stateless m
 
 ### Key never leaves memory
 
-The tool handler reads the two headers from `ctx.requestInfo`, builds the provider object, and
-passes it to `startCheck`. Nothing logs headers: Fastify's logger is off, our logger never receives
+The tool handler reads the two headers with `ctx.http?.req?.headers.get("X-Grounnel-Provider")` and
+`ctx.http?.req?.headers.get("X-Grounnel-Provider-Key")` (SDK v2 `ServerContext`; v1's
+`extra.requestInfo` no longer exists there). Missing HTTP context counts as missing headers, never
+as permission to use a default provider. It builds the provider object and passes it to
+`startCheck`. Nothing logs headers: Fastify's logger is off, our logger never receives
 the headers object, and SDK errors go through `scrubErrorMessage` before logging. The only derived
 value stored anywhere is the key HMAC, as a Redis key name with a one-hour TTL.
+
+### Input validation lives in the handler
+
+The SDK validates arguments against `inputSchema` before calling the handler and turns a failure
+into its own generic `isError` result, which can't carry our codes. So the registered input schema
+is permissive (`text: string`, `requestToken?: string`), and the handler checks emptiness, the
+20,000-character limit and the token pattern itself, returning `empty_text`, `text_too_large` or
+`invalid_request_token`.
 
 ### Order inside `start_fact_check`
 
 1. Validate headers and input (no Redis, no spend).
 2. Switch check: `grounnel:mcp:starts-disabled` → `service_unavailable`.
-3. If a request token was given: reserve (`SET NX`) or answer from the existing reservation.
+3. If a request token was given: reserve or answer from the existing reservation (below).
 4. Allowance: `ratelimit:mcp-start:{keyHmac}`. Over → release reservation, `rate_limited`.
-5. `startCheck(...)`: preflight, then extraction. On failure → release reservation, map the error.
-6. Reply with share token and `readAfterSeconds`; mark the reservation `done`.
+5. `startCheck(...)`: preflight, then extraction. As soon as the run row exists, `startCheck` calls
+   `onRunCreated(shareToken)`, which moves the reservation to `created` with the share token.
+   On a failure before that → release the reservation, map the error.
+6. Reply with share token and `readAfterSeconds`; the reservation is already `created`.
 7. `waitUntil` runs eligibility and the pipeline (inside `startCheck`).
 
 Any Redis error in steps 2–4 → `service_unavailable` (fail closed, FR-014a).
 
+### Reservation lifecycle
+
+A `pending` reservation is a short lease (120 s, longer than a start's p95 with margin) carrying a
+random owner id; only that owner may advance or release it. `created` holds the share token for the
+full hour. So:
+- the process dies before a run exists → the lease expires in 120 s and a retry starts cleanly;
+- the process dies after the run exists → the reservation is already `created`, and a retry gets
+  that share token (the reaper settles the run itself);
+- a retry during a live lease gets `in_progress`.
+
+Rotating `MCP_HMAC_SECRET` changes reservation keys as well as limit buckets, so a retry within an
+hour of a rotation can start a second check. Rotation is rare and manual; accepted and noted in the
+ADR.
+
 ### Read path
 
-`get_fact_check` applies the per-token and global read limits, then calls
+`get_fact_check` applies the per-token and global read limits (a Redis error → `service_unavailable`,
+fail closed like starts), then calls
 `historyStore.readAssessmentByToken` (the share route's own read, extended with `truncated` and
 `failure_reason`). It maps `extracting`/`verifying` to `running` + phase, adds `readAfterSeconds`
 (10 s while running), and projects claims to the contract shape.
@@ -189,9 +217,10 @@ claims. The website's limit is unchanged.
   approval with a cost estimate first.
 - **Client support moves.** Clients may switch to 2026-07-28 at any time; the SDK serves both, and
   T2134 re-checks before launch.
-- **Untested cloud clients.** Claude's web connector and Grok-via-API weren't measured (research
-  R2). Cursor's cloud path worked; the Claude connector is re-tested in T2134 if an account is
-  available.
+- **Untested cloud clients.** Claude's connector and Grok-via-API weren't measured (research R2).
+  Cursor's cloud path worked. Claude is listed as supported only after passing SC-008; without a
+  test account before release, the About page lists it as unverified.
+- **The bypass token leaked during research.** It is rotated before any further deploy (T2137).
 - **The refactor of `/extract`.** It's the live website path. Phase 2 lands alone, with the existing
   route tests passing and a deploy check, before any MCP code.
 - **Per-key limits multiply with keys.** Accepted in the spec; the switch (FR-014b) is the stop.

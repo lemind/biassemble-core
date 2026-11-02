@@ -178,21 +178,26 @@ reach a finished check.
   status, and how many seconds to wait before the first read.
 - **FR-003a**: A request token MUST be reserved before anything is spent, in this order:
   1. Atomically look up or reserve `(provider, key fingerprint, request token)` in shared storage
-     (not process memory), for one hour.
-  2. If a finished reservation exists with the same text fingerprint, return its share token without
-     using another allowance. With a different text fingerprint, refuse as a token conflict.
-  3. If another request holds a pending reservation, return a retryable "in progress" error.
-  4. Only the reservation's owner uses the allowance, runs preflight and extraction, and creates the
-     check, then records the share token on the reservation.
-  5. If preflight or extraction fails, the owner releases the reservation, so a retry can try again.
+     (not process memory). A new reservation is a short pending lease (minutes, not an hour) with an
+     owner id; only the owner may advance or release it.
+  2. If a reservation with a created check exists and has the same text fingerprint, return its
+     share token without using another allowance. With a different text fingerprint, refuse as a
+     token conflict.
+  3. If another request holds a live pending lease, return a retryable "in progress" error.
+  4. Only the owner uses the allowance, runs preflight and extraction, and creates the check. The
+     moment the run exists, the reservation records its share token and is kept for one hour.
+  5. If preflight or extraction fails before a run exists, the owner releases the reservation. If the
+     owner dies first, the lease simply runs out, so a retry can start cleanly. If it dies after the
+     run exists, a retry gets that run's share token, so no second check is created.
   The text fingerprint is an HMAC of the exact UTF-8 text under a server secret, with its own
   purpose separate from the key fingerprint, so a stored value can't be matched by hashing guessed
   texts. Request tokens are at most 128 characters of letters, digits, `-` and `_`; anything else
-  is refused as invalid input.
-- **FR-004**: The result tool MUST take the share token and return what the public share page
-  already serves (status, the claims, verdict counts, provider, model and token usage) plus one
-  field the page doesn't have, the cap flag (FR-006), and nothing else: status, current phase, progress (claims finished out of claims found), every
-  finished claim, and, while running, how many seconds to wait before the next read. The pipeline's
+  is refused as an invalid request token. The start tool's description tells the assistant to make a
+  new token per check and to reuse it, with the exact same text, only when retrying that check.
+- **FR-004**: The result tool MUST take the share token and return the public share-page data
+  (status, the claims, verdict counts, provider, model and token usage), plus the cap flag (FR-006),
+  plus MCP-only control fields: current phase, progress (claims finished out of claims found), and,
+  while running, how many seconds to wait before the next read. No other non-public data. The pipeline's
   "extracting" and "verifying" are reported as status "running" with that phase; "done" and "failed"
   keep their meaning.
 - **FR-005**: Each claim MUST carry its text, status, verdict, confidence, reason, sources (title,
@@ -255,7 +260,9 @@ reach a finished check.
 - **FR-014a**: If the shared storage behind the limit or the request tokens is unavailable, the start
   tool MUST fail closed with a temporary service error and never run a check without a reserved
   allowance. The HMAC secret is a server secret, the same on every instance and region and stable
-  across deployments. Rotating it resets every allowance, which is acceptable.
+  across deployments. Rotating it resets every allowance and orphans open request-token
+  reservations, so a retry within an hour of a rotation can start a second check. Rotation is rare
+  and manual; both effects are accepted. Reads fail closed the same way when storage is unavailable.
 - **FR-014b**: The operator MUST be able to switch off new MCP starts with one setting, without a
   deploy. Reads keep working, so running checks can still be collected.
 - **FR-015**: Result reads MUST be limited per share token, not per address, with a separate global
@@ -271,9 +278,10 @@ reach a finished check.
   error, carrying `{ code, message, retryAfterSeconds }` (the last is null when unknown). Malformed
   requests and unknown methods stay protocol errors, as the MCP specification defines them.
   - Start errors, no check created: key required, provider not chosen, unsupported provider, empty
-    text, text too large, token conflict, Grounnel rate limit; preflight failed with one reason
-    (invalid key, no balance, provider rate limit, provider unavailable); extraction failed.
-  - Read errors: not found, rate limited.
+    text, text too large, invalid request token, token conflict, Grounnel rate limit; preflight
+    failed with one reason (invalid key, no balance, provider rate limit, provider unavailable);
+    extraction failed.
+  - Read errors: not found, rate limited, service temporarily unavailable (storage unreachable).
   - Start errors also include: in progress (another start with the same request token is running),
     and service temporarily unavailable (FR-014a, or MCP starts switched off, FR-014b).
   - A check that was created and then failed is NOT a tool error. Reading it succeeds and returns
@@ -334,8 +342,12 @@ reach a finished check.
 - **SC-003**: The start tool answers within 30 seconds at the 95th percentile, including with several
   starts at once, and the check finishes after the start call has ended.
 - **SC-004**: A missing or invalid key causes no claim extraction and no search.
-- **SC-005**: After a full test run with a synthetic key, including failed and wrong-key requests,
-  the key is absent from the database, logs, traces, stored errors and tool results.
+- **SC-005**: After a full test run with a synthetic key sent on every request (discovery, tool
+  listing, successful and rejected starts, reads), the key is absent from the database, Redis, logs,
+  traces, metrics, stored errors and tool results.
+- **SC-005a**: Both protocol eras pass an integration test: a 2026-07-28 client (discovery, tool
+  listing, a tool call, with the required request headers) and a 2025-11-25 client, through the real
+  Fastify route.
 - **SC-006**: 5 concurrent checks with 5 different share tokens, read through the same Claude
   connector at the advised interval to completion, never hit a read limit.
 - **SC-006a**: A deployed 40-claim check finishes within the function's time limit in at least 19 of
@@ -357,7 +369,9 @@ reach a finished check.
 - **Supported clients** can set custom request headers on a remote MCP server: Claude (custom
   connectors on desktop and web, "No sign-in" plus request headers; marked beta by Anthropic at the
   time of writing), Claude Code (`--header` or `headers` in config) and Cursor (remote server config).
-  Each is listed only after passing SC-008.
+  Each is listed as supported only after passing SC-008. Claude Code and Cursor have passed the
+  header test already (research R2). If no Claude account is available to test the connector before
+  release, the About page lists Claude as unverified, not supported.
 - **Claude's connectors call from Anthropic's cloud**, not the user's machine. This drives FR-014.
 - **The per-key limit is an abuse throttle, not a spend limit.** A caller can multiply the allowance
   with several provider keys, and MCP's allowance is independent of the website's. Every extra check

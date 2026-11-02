@@ -23,6 +23,12 @@ returns at once; read the result with `get_fact_check` after `readAfterSeconds`.
 the provider chosen in the connection settings and to Grounnel's own Google (Gemini) and Tavily
 accounts for search; the text and results are published at a permanent link anyone with it can
 open. Confirm with the user before checking anything sensitive. A check takes up to a few minutes.
+Generate a unique request token for each new check. If the start call times out and you retry that
+same check, reuse the same token and the exact same text. Never reuse a token for a different check.
+
+The registered input schema is deliberately loose (`text: string`, `requestToken?: string`): the SDK
+would answer a schema failure with its own generic error, so the length and pattern rules below are
+checked by the handler, which returns the codes in the error table.
 
 **Input**
 ```json
@@ -84,7 +90,7 @@ Every tool-level failure is a `CallToolResult` with `isError: true` and this str
 | `rate_limited` | start, read | Grounnel's own limit (`retryAfterSeconds` = seconds left in the window, from the counter's TTL) |
 | `preflight_invalid_key` / `preflight_no_balance` / `preflight_provider_rate_limited` / `preflight_provider_unavailable` | start | key preflight |
 | `extraction_failed` | start | extraction errored; no check exists |
-| `service_unavailable` | start | Redis unreachable, MCP starts switched off, or `MCP_HMAC_SECRET` not set |
+| `service_unavailable` | start, read | Redis unreachable (both tools fail closed); for start also MCP starts switched off, or `MCP_HMAC_SECRET` not set |
 | `not_found` | read | unknown share token |
 
 Malformed JSON-RPC, unknown methods and protocol-version mismatches are protocol errors, answered by
