@@ -38,6 +38,7 @@ import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import { failureReasonOf } from "./failure-reason.js";
+import type { GrounnelFailureReason } from "../../db/schema.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
@@ -165,6 +166,8 @@ export class GrounnelPipelineService {
       // spec 017 T017 — run-scoped: a page that failed for one claim has failed for the run. Lives
       // here, not in the provider, so it dies with the run instead of leaking across runs.
       const failedUrlKeys = new Set<string>();
+      // Set when the provider stops the check: the run still ends done, with the rest unchecked (D034 §8).
+      let stoppedBy: GrounnelFailureReason | undefined;
       try {
         const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine, inputText, failedUrlKeys);
 
@@ -183,6 +186,7 @@ export class GrounnelPipelineService {
           const geminiRateLimit = await this.runBatch(auditId, batch, protectedContradictionClaimIds);
           if (geminiRateLimit) {
             rateLimitedMidRun = true;
+            stoppedBy = failureReasonOf(geminiRateLimit);
             const remaining = needsVerify.slice(i + BATCH_MAX);
             if (remaining.length > 0) {
               logger.warn(
@@ -224,6 +228,7 @@ export class GrounnelPipelineService {
         status: "done",
         completedAt: new Date(),
         ...(snapshot ? { score: snapshot } : {}),
+        ...(stoppedBy ? { failureReason: stoppedBy } : {}),
       });
       // D026 §15 — clear only after the row is terminal, or a poll can see done while the share is still extracting.
       await this.grounnelStore.setEscalating(auditId, false);

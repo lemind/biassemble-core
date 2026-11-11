@@ -72,7 +72,8 @@ Annotations: `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false
 }
 ```
 `readAfterSeconds` is null once `status` is `done` or `failed`. A `failed` check is a successful
-read (no `isError`), with `failureReason` and every finished claim.
+read (no `isError`), with `failureReason` and every finished claim. A `done` check carries a
+non-null `failureReason` when the provider stopped it partway; its remaining claims are unchecked.
 
 ## Errors
 

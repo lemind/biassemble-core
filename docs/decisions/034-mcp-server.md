@@ -65,7 +65,10 @@ to return our error codes.
 `grounnel_runs.entry_point` (`website | mcp | eval`) records the door that started a run, separate
 from `source`. Rows from before migration 0019 stay null: their origin can't be proven.
 
-`failure_reason` is written once when a run ends failed:
+`failure_reason` is written once: when a run ends failed, or when the provider stops a run partway.
+A stopped run still ends `done` with the rest of its claims unchecked, exactly as the website has
+always shown it; only the reason is new (decided 2026-11-11). So `done` with a reason means
+"stopped early", and the MCP read passes it on.
 
 | Error | Reason |
 |---|---|

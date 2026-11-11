@@ -95,9 +95,10 @@ sentence, and none echoes the key.
    gets "preflight failed: no balance".
 3. **Given** the hourly limit is used up, **When** the assistant starts a check, **Then** it gets
    "rate limited" and when it can try again.
-4. **Given** a provider that fails partway through a check, **When** the assistant reads it, **Then**
-   the status is "failed" with the provider reason (quota, rate limit, outage, unreadable answer),
-   and claims finished before the failure are still returned.
+4. **Given** a provider that stops partway through a check (quota or balance used up, rate limit,
+   key revoked), **When** the assistant reads it, **Then** the status is "done" as on the website,
+   the remaining claims are unchecked, and `failureReason` names the stop. Claims finished before
+   it are returned with their verdicts.
 
 ---
 
@@ -159,8 +160,10 @@ reach a finished check.
 - **Preflight or extraction fails before a check exists** (provider throttling, provider down,
   extraction error): the start tool returns the error and no share token, because there is no check
   to read.
-- **The key passes preflight but the provider fails later**: the check ends as failed with the
-  provider reason; claims finished before it are kept.
+- **The key passes preflight but the provider stops it later**: the check ends done, as on the
+  website, with the rest of its claims unchecked and the stop recorded as its failure reason
+  (decided 2026-11-11, option B: the website's behaviour does not change). A run that ends failed
+  (extraction or eligibility error, time limit, crash) carries its reason the same way.
 - **Unknown share token**: "not found". The result tool returns only what the public share page
   shows, so a token gives no access the link doesn't already give.
 - **The assistant reads too often**: reads have their own limit and never count against checks.
@@ -292,8 +295,9 @@ reach a finished check.
   - Read errors: not found, rate limited, service temporarily unavailable (storage unreachable).
   - Start errors also include: in progress (another start with the same request token is running),
     and service temporarily unavailable (FR-014a, or MCP starts switched off, FR-014b).
-  - A check that was created and then failed is NOT a tool error. Reading it succeeds and returns
-    status "failed", one reason (provider quota or balance used up, provider rate limit, provider
+  - A check that was created and then failed, or that the provider stopped partway (status
+    "done" with unchecked claims), is NOT a tool error. Reading it succeeds and returns its status,
+    one reason (provider quota or balance used up, provider rate limit, provider
     unavailable, unreadable provider answer, time limit reached, or pipeline failure) and every
     claim that finished. Only a failure of the start or read call itself is marked as an error.
 

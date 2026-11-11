@@ -7,7 +7,7 @@
 | Column | Change | Values | Notes |
 |---|---|---|---|
 | `entry_point` | new, nullable text enum | `website`, `mcp`, `eval` | Set by the server at run creation. Existing rows stay null (FR-019): their origin can't be proven. Independent of `source` (`production`/`eval`). |
-| `failure_reason` | new, nullable text enum | `provider_quota`, `provider_rate_limited`, `provider_unavailable`, `provider_invalid_response`, `time_limit`, `pipeline` | Written once, when a run ends `failed`. Null for `done` runs and for historical rows. |
+| `failure_reason` | new, nullable text enum | `provider_quota`, `provider_rate_limited`, `provider_unavailable`, `provider_invalid_response`, `time_limit`, `pipeline` | Written once: when a run ends `failed`, or when the provider stopped a run that still ends `done` with unchecked claims. Null for a normal `done` run and for historical rows. |
 | `truncated` | unchanged | boolean | Already the cap flag. Now also returned to MCP readers. |
 
 No column holds a key, a key fingerprint, or a request token. Only the user's LLM key arrives;

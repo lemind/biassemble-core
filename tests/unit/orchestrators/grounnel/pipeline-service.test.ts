@@ -7,6 +7,7 @@ import { MockProvider } from "../../../mocks/mock-provider.js";
 import { FakeRedisHashClient } from "../../../mocks/fake-redis-hash-client.js";
 import { NoopGrounnelHistoryStore } from "../../../mocks/noop-grounnel-history-store.js";
 import { FakeGrounnelHistoryStore } from "../../../mocks/fake-grounnel-history-store.js";
+import type { GrounnelHistoryStore } from "../../../../src/persistence/grounnel-history-store.js";
 import { NoopGrounnelLlmCallStore } from "../../../mocks/noop-grounnel-llm-call-store.js";
 import { FakeGrounnelLlmCallStore } from "../../../mocks/fake-grounnel-llm-call-store.js";
 import { NoopGrounnelGateEventStore } from "../../../mocks/noop-grounnel-gate-event-store.js";
@@ -3078,6 +3079,17 @@ describe("spec 017 — escalation pool union", () => {
     expect(reasons.every((reason) => reason === "The account has no balance for this model.")).toBe(true);
   });
 
+  it("ends a provider-stopped check done, with the stop recorded as its failure reason (D034 §8)", async () => {
+    const { finalRun } = await runTwoVerifyBatches(() => new ProviderError("no_balance", "The account has no balance for this model."));
+    expect(finalRun?.failureReason).toBe("provider_quota");
+  });
+
+  it("leaves the failure reason empty when an outage only leaves claims unchecked", async () => {
+    const { finalRun } = await runTwoVerifyBatches(() => new ProviderError("unavailable", "The provider is unavailable."));
+    expect(finalRun).toBeDefined();
+    expect(finalRun?.failureReason).toBeUndefined();
+  });
+
   it("retries an outage, leaves that batch unchecked, and still runs the next batch", async () => {
     const { calls, reasons } = await runTwoVerifyBatches(
       () => new ProviderError("unavailable", "The provider is unavailable.")
@@ -3093,7 +3105,7 @@ describe("spec 017 — escalation pool union", () => {
   });
 });
 
-async function runTwoVerifyBatches(fail: () => Error): Promise<{ calls: number; reasons: Array<string | null> }> {
+async function runTwoVerifyBatches(fail: () => Error): Promise<{ calls: number; reasons: Array<string | null>; finalRun: Parameters<GrounnelHistoryStore["updateRun"]>[1] | undefined }> {
   const claims = Array.from({ length: 16 }, (_, i) => ({ id: uuid(80 + i), text: `Stopping claim ${i} about something checkable.` }));
   const store = new RedisGrounnelStore(new FakeRedisHashClient());
   const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims, truncated: false });
@@ -3107,8 +3119,10 @@ async function runTwoVerifyBatches(fail: () => Error): Promise<{ calls: number; 
       throw fail();
     },
   };
-  const service = new GrounnelPipelineService(search, failing, new PromptRegistry(), store, new NoopGrounnelHistoryStore(), new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+  const historyStore = new FakeGrounnelHistoryStore();
+  const service = new GrounnelPipelineService(search, failing, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
   await service.run(auditId, claims);
   const status = await store.getStatus(auditId);
-  return { calls, reasons: status!.claims.map((c) => c.reason) };
+  const finalRun = historyStore.updateRunCalls.find((c) => c.data.status === "done")?.data;
+  return { calls, reasons: status!.claims.map((c) => c.reason), finalRun };
 }
