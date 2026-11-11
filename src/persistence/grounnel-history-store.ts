@@ -10,6 +10,7 @@ import { ownKeyTokensAtServe } from "../lib/own-key-tokens.js";
 import { logger } from "../observability/logger.js";
 import { SharedCountsSchema } from "../contracts/grounnel.schemas.js";
 import type { ClaimCitation, ClaimSource, SharedAssessment } from "../contracts/grounnel.schemas.js";
+import type { GrounnelEntryPoint, GrounnelFailureReason } from "../db/schema.js";
 
 const MODULE = "grounnel-history-store";
 
@@ -28,6 +29,8 @@ export interface GrounnelHistoryStore {
     model?: string;
     // Whose account paid. Omitted keeps the column default site (D033).
     keySource?: "site" | "own";
+    // Which door started the run (D034). Omitted leaves the column null.
+    entryPoint?: GrounnelEntryPoint;
   }): Promise<void>;
 
   updateRun(
@@ -39,6 +42,7 @@ export interface GrounnelHistoryStore {
       promptVersionVerify: string;
       score: unknown;
       completedAt: Date;
+      failureReason: GrounnelFailureReason;
     }>
   ): Promise<void>;
 
@@ -117,6 +121,8 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
       provider: run.provider ?? "gemini",
       model: run.model ?? null,
       ownKeyTokens,
+      truncated: run.truncated,
+      failureReason: run.failureReason ?? null,
       ...(counts.success ? { counts: counts.data } : {}),
       claims: claims.map((c) => ({
         text: c.claimText,

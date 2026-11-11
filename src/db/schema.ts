@@ -329,6 +329,10 @@ export const grounnelRuns = grounnel.table("grounnel_runs", {
   model: text("model"),
   // Whose account paid for judging. Not the key, and not selected into status or share (D033 §5).
   keySource: text("key_source", { enum: ["site", "own"] }).notNull().default("site"),
+  // Which door started the run. Null on rows from before 0019: their origin can't be proven (D034).
+  entryPoint: text("entry_point", { enum: ["website", "mcp", "eval"] }),
+  // Set once, when a run ends failed. Null for done runs and rows from before 0019 (D034).
+  failureReason: text("failure_reason", { enum: ["provider_quota", "provider_rate_limited", "provider_unavailable", "provider_invalid_response", "time_limit", "pipeline"] }),
   status: text("status", { enum: ["extracting", "verifying", "done", "failed"] }).notNull().default("extracting"),
   maxClaims: integer("max_claims").notNull(),
   truncated: boolean("truncated").notNull().default(false),
@@ -347,6 +351,9 @@ export const grounnelRuns = grounnel.table("grounnel_runs", {
   index("grounnel_runs_session_created_idx").on(table.sessionId, table.createdAt),
   uniqueIndex("grounnel_runs_share_token_idx").on(table.shareToken),
 ]);
+
+export type GrounnelEntryPoint = NonNullable<typeof grounnelRuns.$inferSelect["entryPoint"]>;
+export type GrounnelFailureReason = NonNullable<typeof grounnelRuns.$inferSelect["failureReason"]>;
 
 // One row per claim, durable copy of what Redis holds transiently (D023 §7 — additive, not a
 // replacement). Deliberately narrower status enum than the live ClaimStatusEnum (no "pending") —

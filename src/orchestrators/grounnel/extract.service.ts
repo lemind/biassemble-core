@@ -12,6 +12,8 @@ import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { PipelineClaimInput } from "./pipeline.service.js";
+import { failureReasonOf } from "./failure-reason.js";
+import type { GrounnelEntryPoint } from "../../db/schema.js";
 
 const MODULE = "grounnel-extract-service";
 
@@ -79,8 +81,8 @@ export class GrounnelExtractService {
     private llmCallStore: GrounnelLlmCallStore
   ) {}
 
-  /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033). */
-  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own"): Promise<GrounnelExtractResult> {
+  /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033); entryPoint is the door that started it (D034). */
+  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own", entryPoint: GrounnelEntryPoint = source === "eval" ? "eval" : "website"): Promise<GrounnelExtractResult> {
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
     // Minted here, not at completion, so an in-flight run is already addressable (FR-001) and the
@@ -102,6 +104,7 @@ export class GrounnelExtractService {
       model: provider.model,
       // Visitor key → own. Omitted keeps the column default site (D033).
       ...(keySource ? { keySource } : {}),
+      entryPoint,
     }));
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
@@ -135,7 +138,7 @@ export class GrounnelExtractService {
     } catch (err) {
       // Reviewed finding: status otherwise never reaches "failed" — the row would stay stuck
       // at "extracting" forever on any EXTRACT failure (D023 §3's own enum names this state).
-      waitUntil(this.historyStore.updateRun(runId, { status: "failed", completedAt: new Date() }));
+      waitUntil(this.historyStore.updateRun(runId, { status: "failed", completedAt: new Date(), failureReason: failureReasonOf(err) }));
       throw err;
     }
 
@@ -219,7 +222,7 @@ export class GrounnelExtractService {
       // mode pipeline.service.ts's own catch (line ~226) already guards against. waitUntil, not
       // await (round-2 review finding): an await here would let a second failure on this same
       // write path replace and obscure the original error `err` being rethrown below.
-      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
+      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date(), failureReason: failureReasonOf(err) }));
       throw err;
     }
   }

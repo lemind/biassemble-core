@@ -36,7 +36,8 @@ export function createReapStuckRunsJob(grounnelStore: GrounnelStore, historyStor
           logger.warn({ module: MODULE, operation: "reap", runId, err }, "Could not read Redis for a stuck run — settling as failed");
         }
 
-        await historyStore.updateRun(runId, { status, completedAt: new Date(), ...(score ? { score } : {}) });
+        // A run the reaper settles as failed ran out of its invocation (D034).
+        await historyStore.updateRun(runId, { status, completedAt: new Date(), ...(score ? { score } : {}), ...(status === "failed" ? { failureReason: "time_limit" as const } : {}) });
         status === "done" ? done++ : failed++;
       }
 

@@ -21,7 +21,7 @@ import {
 import type { LlmCallStage, LlmCallType, LlmCallStatus, LlmCallFailureType, RagStatus, GateReason } from "../persistence/types";
 import { GROUNNEL_JUDGING_STAGES } from "../lib/own-key-tokens";
 import { scrubErrorMessage } from "../persistence/error-scrub";
-import type { LlmCall } from "./schema";
+import type { LlmCall, GrounnelEntryPoint, GrounnelFailureReason } from "./schema";
 
 function db() {
   return getDb();
@@ -635,6 +635,7 @@ export async function insertGrounnelRun(data: {
   provider?: "gemini" | "deepseek" | "qwen";
   model?: string;
   keySource?: "site" | "own";
+  entryPoint?: GrounnelEntryPoint;
 }) {
   const [row] = await db().insert(grounnelRuns).values(data).returning();
   return row;
@@ -672,6 +673,9 @@ export async function selectGrounnelRunByShareToken(shareToken: string) {
       provider: grounnelRuns.provider,
       model: grounnelRuns.model,
       keySource: grounnelRuns.keySource,
+      // For the MCP read (spec 021); the share page ignores both.
+      truncated: grounnelRuns.truncated,
+      failureReason: grounnelRuns.failureReason,
     })
     .from(grounnelRuns)
     .where(eq(grounnelRuns.shareToken, shareToken))
@@ -722,6 +726,7 @@ export async function updateGrounnelRun(
     promptVersionVerify: string;
     score: unknown;
     completedAt: Date;
+    failureReason: GrounnelFailureReason;
   }>
 ): Promise<void> {
   await db().update(grounnelRuns).set(data).where(eq(grounnelRuns.runId, runId));

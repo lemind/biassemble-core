@@ -33,21 +33,21 @@ IDs are `T2101` upward: spec `21` plus the two-digit task. `[P]` can run in para
 
 ## Phase 1: Foundation
 
-- [ ] T2101 Write `docs/decisions/034-mcp-server.md`: why two tools and polling, why per-key HMAC
+- [x] T2101 Write `docs/decisions/034-mcp-server.md`: why two tools and polling, why per-key HMAC
   limits (Claude's and Cursor's cloud addresses, research R2), why no queue, why SDK v2 with the
   2025 fallback, the reservation order, fail-closed limiting, the switch, and who pays (user's LLM
   key for the model, site keys for search). Code comments point here.
-- [ ] T2102 Add `@modelcontextprotocol/server@2.4.0` to core.
-- [ ] T2103 Add `MCP_HMAC_SECRET` to `src/lib/env.ts` (optional at boot; without it every start
+- [x] T2102 Add `@modelcontextprotocol/server@2.4.0` to core.
+- [x] T2103 Add `MCP_HMAC_SECRET` to `src/lib/env.ts` (optional at boot; without it every start
   returns `service_unavailable` as a tool error, never a thrown protocol error). Operator: set a 32-byte random value in Vercel Production and Preview, the same in both.
-- [ ] T2104 Migration 0019: `grounnel_runs.entry_point` (nullable enum `website|mcp|eval`) and
+- [x] T2104 Migration 0019: `grounnel_runs.entry_point` (nullable enum `website|mcp|eval`) and
   `failure_reason` (nullable enum, data-model.md). Update `src/db/schema.ts`. Existing rows stay null.
-- [ ] T2105 Pass the entry point into run creation: `website` from `/extract`, `eval` from
+- [x] T2105 Pass the entry point into run creation: `website` from `/extract`, `eval` from
   `src/jobs/eval-grounnel-run.ts` and `scripts/eval-grounnel.ts`.
-- [ ] T2106 Record `failure_reason` when a run ends failed: map provider error categories and
+- [x] T2106 Record `failure_reason` when a run ends failed: map provider error categories and
   `RateLimitError` in the pipeline's terminal-failure write; the reaper writes `time_limit`; anything
   else is `pipeline`. One unit test for the mapping function.
-- [ ] T2107 `readAssessmentByToken` also returns `truncated` and `failure_reason`. The share page
+- [x] T2107 `readAssessmentByToken` also returns `truncated` and `failure_reason`. The share page
   ignores both; the schema gains them as optional.
 
 **Checkpoint**: migration applied; website and eval runs write their entry point; nothing user-facing

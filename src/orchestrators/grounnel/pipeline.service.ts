@@ -37,6 +37,7 @@ import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
+import { failureReasonOf } from "./failure-reason.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
@@ -233,7 +234,7 @@ export class GrounnelPipelineService {
       } catch (clearErr) {
         logger.warn({ module: MODULE, operation: "run", auditId, err: clearErr }, "Could not clear escalating after a failed run");
       }
-      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
+      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date(), failureReason: failureReasonOf(err) }));
       throw err;
     }
   }

@@ -113,6 +113,13 @@
       "when": 1792733171596,
       "tag": "0018_fresh_shatterstar",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794385080389,
+      "tag": "0019_open_sandman",
+      "breakpoints": true
     }
   ]
 }
