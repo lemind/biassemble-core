@@ -82,7 +82,7 @@ export class GrounnelExtractService {
   ) {}
 
   /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033); entryPoint is the door that started it (D034). */
-  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own", entryPoint: GrounnelEntryPoint = source === "eval" ? "eval" : "website"): Promise<GrounnelExtractResult> {
+  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own", entryPoint: GrounnelEntryPoint = source === "eval" ? "eval" : "website", onRunCreated?: (shareToken: string) => Promise<void>): Promise<GrounnelExtractResult> {
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
     // Minted here, not at completion, so an in-flight run is already addressable (FR-001) and the
@@ -92,7 +92,7 @@ export class GrounnelExtractService {
     // resolves before reply.send(), and Vercel can freeze the container the instant it does.
     const providerId = runProviderId(provider.mode);
     // Model is the one this client calls. A test double's mode is not a run provider, so that column stays at its default (D033).
-    waitUntil(this.historyStore.createRun({
+    const runCreated = this.historyStore.createRun({
       runId,
       shareToken,
       sessionId,
@@ -105,7 +105,10 @@ export class GrounnelExtractService {
       // Visitor key → own. Omitted keeps the column default site (D033).
       ...(keySource ? { keySource } : {}),
       entryPoint,
-    }));
+    })
+      .then(() => onRunCreated?.(shareToken))
+      .catch((err) => logger.warn({ module: MODULE, operation: "run", runId, err }, "onRunCreated failed — the run continues"));
+    waitUntil(runCreated);
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
@@ -187,6 +190,8 @@ export class GrounnelExtractService {
     const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
     await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
+    // The caller's reservation must be settled before it replies (D034 §5).
+    if (onRunCreated) await runCreated;
     return { id, shareToken, pendingClaims };
   }
 

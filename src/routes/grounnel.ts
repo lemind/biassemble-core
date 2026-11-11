@@ -1,13 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
-import { waitUntil } from "@vercel/functions";
 import { ExtractRequestSchema } from "../contracts/grounnel.schemas.js";
 import { authHook } from "../lib/auth.js";
 import { isShareTokenShape } from "../lib/share-token.js";
 import { env } from "../lib/env.js";
 import { logger } from "../observability/logger.js";
-import { preflightHttpStatus, preflightOwnKey } from "../providers/preflight.js";
-import { RateLimitError, type Provider } from "../providers/types.js";
+import { preflightHttpStatus } from "../providers/preflight.js";
+import type { Provider } from "../providers/types.js";
 import {
   ProviderConfigError,
   ProviderKeyRequiredError,
@@ -19,6 +18,7 @@ import { sumGrounnelJudgingTokens } from "../db/queries.js";
 import { ownKeyTokensAtServe } from "../lib/own-key-tokens.js";
 import { buildGeminiRateLimitMessage, type GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import type { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
+import { startCheck } from "../orchestrators/grounnel/start-check.js";
 import type { GrounnelStore } from "../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
 import type { RateLimiter } from "../lib/rate-limit.js";
@@ -146,70 +146,40 @@ export function registerGrounnelRoutes(
       return reply.status(decision.status).send({ error: decision.error });
     }
 
-    // Own key only. Site Gemini is not probed, and a pass does not change later claim handling (D033 §3).
-    if (decision.keySource === "own" && decision.provider) {
-      const failure = await preflightOwnKey(decision.provider);
-      if (failure) {
+    const started = await startCheck(services, {
+      text: body.text,
+      sessionId: body.sessionId ?? null,
+      searchEngine: body.searchEngine,
+      provider: decision.provider,
+      keySource: decision.keySource,
+      entryPoint: "website",
+    });
+    if (!started.ok) {
+      if (started.kind === "preflight") {
         logger.warn(
-          { module: MODULE, operation: "POST /extract", requestId: request.id, category: failure.category, provider: decision.provider.mode },
+          { module: MODULE, operation: "POST /extract", requestId: request.id, category: started.failure.category, provider: decision.provider?.mode },
           "Visitor key preflight failed",
         );
-        return reply.status(preflightHttpStatus(failure.category)).send({ error: failure.category, message: failure.message });
+        return reply.status(preflightHttpStatus(started.failure.category)).send({ error: started.failure.category, message: started.failure.message });
       }
-    }
-
-    let extracted;
-    try {
-      extracted = await services.extractService.run(
-        body.text,
-        "production",
-        body.sessionId ?? null,
-        decision.provider,
-        decision.keySource,
-      );
-    } catch (error) {
-      if (error instanceof RateLimitError) {
+      if (started.kind === "rate_limited") {
         // No audit exists yet (D019 trust boundary) — nowhere to write a per-claim reason, so the message becomes the /extract response itself.
         logger.error(
-          { module: MODULE, operation: "POST /extract", limitType: error.limitType, requestId: request.id },
+          { module: MODULE, operation: "POST /extract", limitType: started.error.limitType, requestId: request.id },
           "Gemini rate-limited during EXTRACT"
         );
         return reply.status(503).send({
-          error: buildGeminiRateLimitMessage(error),
-          limit_type: error.limitType,
-          resets_at: error.resetsAt ?? null,
+          error: buildGeminiRateLimitMessage(started.error),
+          limit_type: started.error.limitType,
+          resets_at: started.error.resetsAt ?? null,
         });
       }
-      logger.error({ module: MODULE, operation: "POST /extract", error, requestId: request.id }, "Extract failed");
+      logger.error({ module: MODULE, operation: "POST /extract", error: started.error, requestId: request.id }, "Extract failed");
       return reply.status(502).send({ error: "Extract failed" });
     }
 
-    reply.status(202).send({ id: extracted.id, shareToken: extracted.shareToken });
-
-    // No external queue (D020 §3) — eligibility classification + the pipeline both run here, after
-    // the response is flushed. waitUntil (D016/assessment.service.ts's own established pattern), not
-    // a bare await: Vercel freezes the container as soon as `res` finishes, regardless of whether
-    // this handler's own promise chain is still pending — maxDuration only bounds how long work is
-    // ALLOWED to run, it does not keep the container alive to do it. waitUntil is the actual platform
-    // contract. D030 §3b (review finding) — eligibility used to run inside extractService.run(), blocking this response.
-    if (extracted.pendingClaims.length > 0) {
-      waitUntil(
-        (async () => {
-          try {
-            const eligible = await services.extractService.classifyEligibility(extracted.id, extracted.pendingClaims, decision.provider);
-            // eligible.length === 0 is already status=done inside classifyEligibility. Running the pipeline here would write done twice.
-            if (eligible.length > 0) {
-              await services.pipelineService.run(extracted.id, eligible, body.searchEngine, body.text, decision.provider);
-            }
-          } catch (err) {
-            logger.error(
-              { module: MODULE, operation: "POST /extract (background pipeline)", auditId: extracted.id, err },
-              "Eligibility classification or pipeline run failed after the 202 response was already sent"
-            );
-          }
-        })()
-      );
-    }
+    // Eligibility and the pipeline already run after this reply, inside startCheck (D034 §3).
+    return reply.status(202).send({ id: started.id, shareToken: started.shareToken });
   });
 
   server.get("/status/:id", { preHandler: [authHook] }, async (request, reply) => {

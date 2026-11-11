@@ -55,7 +55,7 @@ changed.
 
 ## Phase 2: Shared start path
 
-- [ ] T2108 Extract `startCheck({ text, decision, entryPoint, searchEngine })` into
+- [x] T2108 Extract `startCheck({ text, decision, entryPoint, searchEngine })` into
   `src/orchestrators/grounnel/start-check.ts`: preflight (own key), extraction, then `waitUntil` for
   eligibility and the pipeline. An optional `onRunCreated(shareToken)` callback fires as soon as the
   run row exists (the MCP reservation uses it). It returns `{ id, shareToken, pendingClaims }` or a typed failure
