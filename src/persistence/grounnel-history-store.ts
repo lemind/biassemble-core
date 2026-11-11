@@ -31,7 +31,7 @@ export interface GrounnelHistoryStore {
     keySource?: "site" | "own";
     // Which door started the run (D034). Omitted leaves the column null.
     entryPoint?: GrounnelEntryPoint;
-  }): Promise<void>;
+  }): Promise<boolean>;
 
   updateRun(
     runId: string,
@@ -75,11 +75,14 @@ export interface GrounnelHistoryStore {
  * exists. Spec 019 is the first thing to read these rows back.
  */
 export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
-  async createRun(data: Parameters<GrounnelHistoryStore["createRun"]>[0]): Promise<void> {
+  /** False when the row could not be written; still never throws. */
+  async createRun(data: Parameters<GrounnelHistoryStore["createRun"]>[0]): Promise<boolean> {
     try {
       await insertGrounnelRun(data);
+      return true;
     } catch (err) {
       logger.warn({ module: MODULE, operation: "createRun", runId: data.runId, err }, "Failed to write grounnel_runs row — Redis remains authoritative (D023 §7)");
+      return false;
     }
   }
 

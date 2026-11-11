@@ -17,6 +17,14 @@ import type { GrounnelEntryPoint } from "../../db/schema.js";
 
 const MODULE = "grounnel-extract-service";
 
+/** The run row could not be written, so its share token would read as not found (D034 §5). */
+export class RunNotRecordedError extends Error {
+  constructor(runId: string) {
+    super(`Run ${runId} has no Postgres row`);
+    this.name = "RunNotRecordedError";
+  }
+}
+
 function runProviderId(mode: string): "gemini" | "deepseek" | "qwen" | undefined {
   if (mode === "gemini" || mode === "deepseek" || mode === "qwen") return mode;
   return undefined;
@@ -106,8 +114,14 @@ export class GrounnelExtractService {
       ...(keySource ? { keySource } : {}),
       entryPoint,
     })
-      .then(() => onRunCreated?.(shareToken))
-      .catch((err) => logger.warn({ module: MODULE, operation: "run", runId, err }, "onRunCreated failed — the run continues"));
+      .then(async (written) => {
+        if (written) await onRunCreated?.(shareToken);
+        return written;
+      })
+      .catch((err) => {
+        logger.warn({ module: MODULE, operation: "run", runId, err }, "onRunCreated failed — the run continues");
+        return true;
+      });
     waitUntil(runCreated);
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
@@ -190,8 +204,8 @@ export class GrounnelExtractService {
     const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
     await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
-    // The caller's reservation must be settled before it replies (D034 §5).
-    if (onRunCreated) await runCreated;
+    // The caller's reservation must be settled before it replies; no row means no shareable run (D034 §5).
+    if (onRunCreated && !(await runCreated)) throw new RunNotRecordedError(runId);
     return { id, shareToken, pendingClaims };
   }
 

@@ -5,7 +5,9 @@ import type { SharedAssessment } from "../../src/contracts/grounnel.schemas.js";
 export class NoopGrounnelHistoryStore implements GrounnelHistoryStore {
   /** Seeded by token, so a test can stand up a shared assessment without a database. */
   constructor(private assessments: Map<string, SharedAssessment> = new Map()) {}
-  async createRun(): Promise<void> {}
+  async createRun(): Promise<boolean> {
+    return true;
+  }
   async updateRun(): Promise<void> {}
   async createClaim(): Promise<void> {}
   async readAssessmentByToken(shareToken: string): Promise<SharedAssessment | null> {
