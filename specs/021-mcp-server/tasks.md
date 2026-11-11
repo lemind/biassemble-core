@@ -61,7 +61,7 @@ changed.
   run row exists (the MCP reservation uses it). It returns `{ id, shareToken, pendingClaims }` or a typed failure
   (preflight category, rate-limited extraction, extraction failed). `/extract` keeps its rate limit,
   body parsing and HTTP mapping and calls it. Existing `/extract` tests pass unchanged.
-- [ ] T2109 Deploy (on explicit order) and run one site check and one own-key check on the website.
+- [x] T2109 Deploy (on explicit order) and run one site check and one own-key check on the website.
   Both finish as before. This lands before any MCP code.
 
 **Checkpoint**: the website path runs through `startCheck` in production.
