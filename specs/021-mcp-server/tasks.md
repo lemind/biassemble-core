@@ -68,25 +68,25 @@ changed.
 
 ## Phase 3: MCP endpoint (US1, US2, US3)
 
-- [ ] T2110 [P] `src/mcp/errors.ts`: the `{ code, message, retryAfterSeconds }` shape, the code list
+- [x] T2110 [P] `src/mcp/errors.ts`: the `{ code, message, retryAfterSeconds }` shape, the code list
   from the contract, and a helper that builds an `isError: true` tool result with structured content
   plus the same JSON as text.
-- [ ] T2111 [P] `src/mcp/fingerprint.ts`: `keyHmac(provider, key)` and `textHmac(text)` with HMAC-SHA-256,
+- [x] T2111 [P] `src/mcp/fingerprint.ts`: `keyHmac(provider, key)` and `textHmac(text)` with HMAC-SHA-256,
   `"key:"` / `"text:"` prefixes, exact UTF-8 bytes. Unit test: stable output, the two purposes never
   collide, a missing secret throws.
-- [ ] T2112 [P] `src/mcp/reservation.ts`: reserve as a 120 s `pending` lease with a random owner id
+- [x] T2112 [P] `src/mcp/reservation.ts`: reserve as a 120 s `pending` lease with a random owner id
   (`SET NX EX 120`); `markCreated(shareToken)` by the owner only, extending to 3600 s; `release` by
   the owner only. Returns `owner | created(shareToken) | in_progress | conflict`. Unit tests with a
   fake Redis for every transition in data-model.md, including an expired lease and a non-owner
   trying to advance or release.
-- [ ] T2113 MCP limiters in `src/server.ts`: `RedisRateLimiter` with prefixes `ratelimit:mcp-start`
+- [x] T2113 MCP limiters in `src/server.ts`: `RedisRateLimiter` with prefixes `ratelimit:mcp-start`
   (30/h), `ratelimit:mcp-read` (360/h), and a global read bucket (3000/60 s). Extend
   `RateLimitRedisClient` so a refusal also returns the counter's remaining TTL, for
   `retryAfterSeconds`. A wrapper turns any Redis error into `service_unavailable` (fail closed), for
   starts and reads alike. Unit test: a throwing Redis never lets a start or a read through.
-- [ ] T2114 Emergency switch: read `grounnel:mcp:starts-disabled` at the start of each start call;
+- [x] T2114 Emergency switch: read `grounnel:mcp:starts-disabled` at the start of each start call;
   `scripts/mcp-starts.ts on|off|status` sets, clears and shows it.
-- [ ] T2115 [US1][US2] `src/mcp/tools/start.ts` in the plan's order. Headers come from
+- [x] T2115 [US1][US2] `src/mcp/tools/start.ts` in the plan's order. Headers come from
   `ctx.http?.req?.headers.get(...)`; no HTTP context counts as missing headers (`key_required`,
   `provider_not_chosen`, `unsupported_provider`). Input checks run in the handler, not the SDK
   schema (`empty_text`, `text_too_large` over 20,000 chars, `invalid_request_token`). Then switch,
@@ -95,20 +95,20 @@ changed.
   real v2 tool handler with both headers set: the provider decision is right; validation runs
   before any Redis call; a failed preflight releases the reservation; a duplicate after `created`
   uses no allowance.
-- [ ] T2116 [US1] `src/mcp/tools/read.ts`: read limits (`service_unavailable` on a Redis error), `readAssessmentByToken`, `not_found`,
+- [x] T2116 [US1] `src/mcp/tools/read.ts`: read limits (`service_unavailable` on a Redis error), `readAssessmentByToken`, `not_found`,
   status/phase mapping, `readAfterSeconds` (10 while running, null at the end), claim projection,
   `failed` returned as a normal result. Unit test for the status mapping.
-- [ ] T2117 [US1][US3] `src/mcp/server.ts`: `McpServer` factory registering both tools with the
+- [x] T2117 [US1][US3] `src/mcp/server.ts`: `McpServer` factory registering both tools with the
   contract's permissive input schemas and full output schemas (zod), annotations, and descriptions
   carrying FR-008, FR-013 and the request-token instruction.
-- [ ] T2118 `src/routes/mcp.ts`: `POST /mcp` builds a web `Request`, applies the Origin allow-list
+- [x] T2118 `src/routes/mcp.ts`: `POST /mcp` builds a web `Request`, applies the Origin allow-list
   (403), calls `createMcpHandler(factory)` (default stateless legacy fallback), copies the
   `Response` back. GET and DELETE return 405. Registered in `src/server.ts` outside `authHook`.
-- [ ] T2119 Key-leak test, with a synthetic key sent on every request: `server/discover`,
+- [x] T2119 Key-leak test, with a synthetic key sent on every request: `server/discover`,
   `tools/list`, a successful start, a wrong key, a preflight failure, an extraction failure, a
   successful read and a rejected read. Assert the key appears in no captured log line, no tool
   result, no Redis key or value written, and no stored error.
-- [ ] T2138 Protocol-era integration test through the real Fastify route: a 2026-07-28 client (SDK
+- [x] T2138 Protocol-era integration test through the real Fastify route: a 2026-07-28 client (SDK
   v2 `@modelcontextprotocol/client` as a dev dependency) runs `server/discover`, `tools/list` and a
   `get_fact_check` call with the required request headers; a 2025-11-25 client runs `initialize`,
   `tools/list` and the same call. Both get the same tool list and result.
