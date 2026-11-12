@@ -9,6 +9,10 @@ export const RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR = 30;
 export const RATE_LIMIT_READS_PER_IP_PER_HOUR = 120;
 const WINDOW_MS = 60 * 60 * 1000;
 export const WINDOW_SECONDS = WINDOW_MS / 1000;
+// Spec 021 FR-014/FR-015: MCP starts per provider key, reads per share token, and a global read ceiling.
+export const MCP_STARTS_PER_KEY_PER_HOUR = 30;
+export const MCP_READS_PER_TOKEN_PER_HOUR = 360;
+export const MCP_READS_GLOBAL_PER_MINUTE = 3000;
 
 /** Fixed window, per IP: exactly RATE_LIMIT_PER_IP_PER_HOUR requests, window starts on that key's
  * first request and resets in full afterward — not sliding/token-bucket. D020 §4 (rate-limit fix). */
@@ -62,16 +66,47 @@ export interface RateLimitRedisClient {
 // for the same key into a "who sets the TTL" gap; this doesn't need MULTI/EXEC or a pipeline.
 const INCR_WITH_WINDOW_SCRIPT = "local c = redis.call('INCR', KEYS[1]) if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end return c";
 
+/** Same counter, also returning the seconds left in the window, for a caller that reports when to retry (spec 021). */
+export interface WindowCounterClient {
+  incrWithWindowTtl(key: string, windowSeconds: number): Promise<{ count: number; ttlSeconds: number }>;
+}
+
+const INCR_WITH_WINDOW_TTL_SCRIPT = "local c = redis.call('INCR', KEYS[1]) if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end return {c, redis.call('TTL', KEYS[1])}";
+
 /** Adapts @upstash/redis's `Redis` to `RateLimitRedisClient`. */
-export class UpstashRateLimitRedisClient implements RateLimitRedisClient {
+export class UpstashRateLimitRedisClient implements RateLimitRedisClient, WindowCounterClient {
   private readonly script;
+  private readonly ttlScript;
 
   constructor(redis: Redis) {
     this.script = redis.createScript<number>(INCR_WITH_WINDOW_SCRIPT);
+    this.ttlScript = redis.createScript<[number, number]>(INCR_WITH_WINDOW_TTL_SCRIPT);
   }
 
   async incrWithWindow(key: string, windowSeconds: number): Promise<number> {
     return this.script.eval([key], [String(windowSeconds)]);
+  }
+
+  async incrWithWindowTtl(key: string, windowSeconds: number): Promise<{ count: number; ttlSeconds: number }> {
+    const [count, ttlSeconds] = await this.ttlScript.eval([key], [String(windowSeconds)]);
+    return { count: Number(count), ttlSeconds: Number(ttlSeconds) };
+  }
+}
+
+/** Fixed-window limit that says how long until it opens again. Redis errors propagate: callers fail closed (D034 §6). */
+export class RedisWindowLimiter {
+  constructor(
+    private readonly redis: WindowCounterClient,
+    private readonly limit: number,
+    private readonly windowSeconds: number,
+    private readonly keyPrefix: string
+  ) {}
+
+  /** An empty id counts against the prefix itself, for a global bucket. */
+  async consume(id: string): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
+    const { count, ttlSeconds } = await this.redis.incrWithWindowTtl(id ? `${this.keyPrefix}:${id}` : this.keyPrefix, this.windowSeconds);
+    if (count <= this.limit) return { allowed: true };
+    return { allowed: false, retryAfterSeconds: ttlSeconds > 0 ? ttlSeconds : this.windowSeconds };
   }
 }
 
