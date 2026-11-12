@@ -206,7 +206,8 @@ export class GrounnelPipelineService {
           const escalationT0 = Date.now();
           // spec 017 — seed the carry from the base pass: CSS/B lost its deciding page HERE, not between escalation tiers.
           const carriedByClaimId = new Map(resolved.filter((r) => r.rankedPool?.length).map((r) => [r.claim.id, r.rankedPool!]));
-          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText, carriedByClaimId, failedUrlKeys);
+          const escalationStop = await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText, carriedByClaimId, failedUrlKeys);
+          if (escalationStop) stoppedBy = failureReasonOf(escalationStop);
           logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
         }
       } finally {
@@ -255,12 +256,12 @@ export class GrounnelPipelineService {
     // spec 017 — seeded from the base pass; each tier ranks over it and replaces it with its own pool.
     carriedByClaimId: Map<string, ScoredSource[]> = new Map(),
     failedUrlKeys?: Set<string>
-  ): Promise<void> {
+  ): Promise<RateLimitError | ProviderError | null> {
     const byId = new Map(claims.map((c) => [c.id, c]));
     let pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
 
     for (const tier of ESCALATION_TIERS) {
-      if (pending.length === 0) return;
+      if (pending.length === 0) return null;
       logger.info({ module: MODULE, operation: "escalateUnresolved", auditId, tier, claimCount: pending.length }, "Escalating unresolved claims to a wider candidate pool");
 
       // D026 §17/D030 §3h — one snapshot before this tier overwrites anything, feeding both guardEscalatedContradictionReversals (verdict) and the escalation-replacement floor (verdict+evidence-validity).
@@ -291,7 +292,8 @@ export class GrounnelPipelineService {
         const geminiRateLimit = await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX), protectedContradictionClaimIds, priorResultById);
         if (geminiRateLimit) {
           logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Gemini rate-limited during escalation — stopping further tiers");
-          return;
+          // The run records it like a base-pass stop: that batch is now unchecked (D034 §8).
+          return geminiRateLimit;
         }
       }
 
@@ -300,11 +302,12 @@ export class GrounnelPipelineService {
 
       if (tavilyRateLimitedThisTier) {
         logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Tavily rate-limited during escalation — stopping further tiers");
-        return;
+        return null;
       }
 
       pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
     }
+    return null;
   }
 
   /** Reads current Redis state rather than tracking in-memory. Excludes rate-limited claims (D026 §17) and reason_ordinal-protected ones (D030 §3d). */

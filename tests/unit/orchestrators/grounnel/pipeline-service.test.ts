@@ -3084,6 +3084,26 @@ describe("spec 017 — escalation pool union", () => {
     expect(finalRun?.failureReason).toBe("provider_quota");
   });
 
+  it("records a provider stop that happens during escalation as the run's failure reason (D034 §8)", async () => {
+    const claimId = uuid(1);
+    const store = new RedisGrounnelStore(new FakeRedisHashClient());
+    const { id: auditId } = await store.createAudit({ text: "article", maxClaims: 100, claims: [{ id: claimId, text: CLAIM }], truncated: false });
+    const search = new FakeSearchProvider(new Map([[CLAIM, [webSource({ url: "https://a.example", title: "A", text: cssText }), webSource({ url: "https://b.example", title: "B", text: netText })]]]));
+    let verifyCalls = 0;
+    provider.setResponseFn("You are a verification engine", (request) => {
+      verifyCalls++;
+      if (verifyCalls > 1) throw new ProviderError("no_balance", "The account has no balance for this model.");
+      return { results: idsFromRequest(request).map((id) => ({ id, verdict: "unsupported", evidenceCitations: [], reason: "r", confidence: 0.9 })) };
+    });
+    const historyStore = new FakeGrounnelHistoryStore();
+    const service = new GrounnelPipelineService(search, provider, new PromptRegistry(), store, historyStore, new NoopGrounnelLlmCallStore(), new NoopGrounnelGateEventStore());
+    await service.run(auditId, [{ id: claimId, text: CLAIM }]);
+
+    expect(verifyCalls).toBeGreaterThan(1);
+    const finalRun = historyStore.updateRunCalls.find((c) => c.data.status === "done")?.data;
+    expect(finalRun?.failureReason).toBe("provider_quota");
+  });
+
   it("leaves the failure reason empty when an outage only leaves claims unchecked", async () => {
     const { finalRun } = await runTwoVerifyBatches(() => new ProviderError("unavailable", "The provider is unavailable."));
     expect(finalRun).toBeDefined();
