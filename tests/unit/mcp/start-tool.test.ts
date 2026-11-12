@@ -73,7 +73,7 @@ describe("start_fact_check", () => {
   it("starts with the chosen provider and the caller's key, as an own-key MCP run", async () => {
     const result = await handleStartFactCheck({ text: "Paris is in France." }, headers("qwen", KEY), deps);
     expect(result.isError).toBeUndefined();
-    expect(result.structuredContent).toMatchObject({ shareToken: "share-1", status: "running", phase: "verifying", claimsFound: 1, readAfterSeconds: 15 });
+    expect(result.structuredContent).toMatchObject({ shareToken: "share-1", status: "running", phase: "extracting", claimsFound: 1, readAfterSeconds: 15 });
     expect(built).toEqual([{ id: "qwen", key: KEY }]);
     expect(startInputs[0]).toMatchObject({ keySource: "own", entryPoint: "mcp" });
   });

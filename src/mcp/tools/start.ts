@@ -137,5 +137,6 @@ export async function handleStartFactCheck(
 
   // 6. Reply. Eligibility and the pipeline already run after this, inside startCheck.
   const checkable = result.pendingClaims.length;
-  return started(result.shareToken, checkable > 0 ? "running" : "done", checkable > 0 ? "verifying" : null, checkable);
+  // "extracting" until the pipeline marks the run verifying, the same phase the first read reports.
+  return started(result.shareToken, checkable > 0 ? "running" : "done", checkable > 0 ? "extracting" : null, checkable);
 }

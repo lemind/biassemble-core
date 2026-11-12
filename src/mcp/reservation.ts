@@ -89,7 +89,15 @@ export class UpstashReservationRedisClient implements ReservationRedisClient {
   }
 
   async read(key: string): Promise<Record<string, string> | null> {
-    const fields = await this.redis.hgetall<Record<string, string>>(key);
+    // With automaticDeserialization:false HGETALL comes back as a flat [field, value, ...] array, as in UpstashRedisHashClient.
+    const raw = (await this.redis.hgetall<Record<string, string>>(key)) as unknown;
+    if (Array.isArray(raw)) {
+      if (raw.length === 0) return null;
+      const fields: Record<string, string> = {};
+      for (let i = 0; i < raw.length; i += 2) fields[String(raw[i])] = String(raw[i + 1]);
+      return fields;
+    }
+    const fields = raw as Record<string, string> | null;
     return fields && Object.keys(fields).length > 0 ? fields : null;
   }
 

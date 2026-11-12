@@ -40,7 +40,7 @@ checked by the handler, which returns the codes in the error table.
 **Output** (`structuredContent`, also serialised as one text block)
 ```json
 { "shareToken": "string", "shareUrl": "https://grounnel.n30sk.cc/check/<token>",
-  "status": "running", "phase": "verifying", "claimsFound": 7, "readAfterSeconds": 15 }
+  "status": "running", "phase": "extracting", "claimsFound": 7, "readAfterSeconds": 15 }
 ```
 `claimsFound` is 0 and `status` is `done` when the text had no checkable claims.
 

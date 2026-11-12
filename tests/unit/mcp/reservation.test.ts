@@ -94,3 +94,20 @@ describe("RequestTokenReservations", () => {
     expect(redis.store.get(KEY)?.fields.state).toBe("pending");
   });
 });
+
+describe("UpstashReservationRedisClient.read", () => {
+  it("zips the flat array Upstash returns without automatic deserialization", async () => {
+    const { UpstashReservationRedisClient } = await import("../../../src/mcp/reservation.js");
+    const fake = { createScript: () => ({}), hgetall: async () => ["state", "pending", "owner", "o1", "textHmac", "abc123"] };
+    const client = new UpstashReservationRedisClient(fake as never);
+    expect(await client.read("k")).toEqual({ state: "pending", owner: "o1", textHmac: "abc123" });
+  });
+
+  it("treats an empty array or null as absent", async () => {
+    const { UpstashReservationRedisClient } = await import("../../../src/mcp/reservation.js");
+    for (const empty of [[], null]) {
+      const client = new UpstashReservationRedisClient({ createScript: () => ({}), hgetall: async () => empty } as never);
+      expect(await client.read("k")).toBeNull();
+    }
+  });
+});
