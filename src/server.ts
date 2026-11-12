@@ -32,7 +32,13 @@ import { GrounnelExtractService } from "./orchestrators/grounnel/extract.service
 import { GrounnelPipelineService } from "./orchestrators/grounnel/pipeline.service";
 import { HybridSearchProvider } from "./providers/search/hybrid-provider";
 import { TavilySearchProvider } from "./providers/search/tavily-provider";
-import { RedisRateLimiter, UpstashRateLimitRedisClient, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, RATE_LIMIT_READS_PER_IP_PER_HOUR, WINDOW_SECONDS, type RateLimiter } from "./lib/rate-limit";
+import { RedisRateLimiter, RedisWindowLimiter, UpstashRateLimitRedisClient, RATE_LIMIT_OWN_KEY_PER_IP_PER_HOUR, RATE_LIMIT_READS_PER_IP_PER_HOUR, MCP_STARTS_PER_KEY_PER_HOUR, MCP_READS_PER_TOKEN_PER_HOUR, MCP_READS_GLOBAL_PER_MINUTE, WINDOW_SECONDS, type RateLimiter } from "./lib/rate-limit";
+import { startCheck } from "./orchestrators/grounnel/start-check";
+import { resolveProvider } from "./providers/registry";
+import { RequestTokenReservations, UpstashReservationRedisClient } from "./mcp/reservation";
+import { registerMcpRoute } from "./routes/mcp";
+import type { StartToolDeps } from "./mcp/tools/start";
+import type { ReadToolDeps } from "./mcp/tools/read";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -86,6 +92,7 @@ export function buildApp() {
         rateLimiter: RateLimiter;
         ownKeyRateLimiter: RateLimiter;
         assessmentRateLimiter: RateLimiter;
+        mcp: StartToolDeps & ReadToolDeps;
       }
     | undefined;
   if (env.TAVILY_API_KEY && upstashRedisConfig) {
@@ -100,9 +107,24 @@ export function buildApp() {
     const rerankDecisionStore = new DrizzleGrounnelRerankDecisionStore();
     const tavilyProvider = new TavilySearchProvider(env.TAVILY_API_KEY);
     const searchProvider = new HybridSearchProvider(env.GEMINI_API_KEY, modelName, tavilyProvider, searchCallStore);
+    const extractService = new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore);
+    const pipelineService = new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore);
+    const counter = new UpstashRateLimitRedisClient(redis);
     grounnel = {
-      extractService: new GrounnelExtractService(provider, prompts, grounnelStore, historyStore, llmCallStore),
-      pipelineService: new GrounnelPipelineService(searchProvider, provider, prompts, grounnelStore, historyStore, llmCallStore, gateEventStore, rerankDecisionStore),
+      extractService,
+      pipelineService,
+      // Spec 021: own key only, limits per key fingerprint and share token, search on the site keys (D034).
+      mcp: {
+        secret: env.MCP_HMAC_SECRET,
+        switchRedis: redis,
+        reservations: new RequestTokenReservations(new UpstashReservationRedisClient(redis)),
+        startLimiter: new RedisWindowLimiter(counter, MCP_STARTS_PER_KEY_PER_HOUR, WINDOW_SECONDS, "ratelimit:mcp-start"),
+        tokenLimiter: new RedisWindowLimiter(counter, MCP_READS_PER_TOKEN_PER_HOUR, WINDOW_SECONDS, "ratelimit:mcp-read"),
+        globalLimiter: new RedisWindowLimiter(counter, MCP_READS_GLOBAL_PER_MINUTE, 60, "ratelimit:mcp-read-global"),
+        buildProvider: (id, key) => resolveProvider(id, key),
+        startCheck: (input) => startCheck({ extractService, pipelineService }, input),
+        readAssessment: (shareToken) => historyStore.readAssessmentByToken(shareToken),
+      },
       grounnelStore,
       // Spec 019 — the shared-assessment route reads Postgres directly; Redis expires after 7 days.
       historyStore,
@@ -163,6 +185,8 @@ export function buildApp() {
   // Grounnel routes (specs/009-grounnel, T012)
   if (grounnel) {
     registerGrounnelRoutes(server, grounnel);
+    // Spec 021 — outside authHook; the caller's own provider key is the credential (D034).
+    registerMcpRoute(server, grounnel.mcp);
   }
 
   // Inngest webhook
