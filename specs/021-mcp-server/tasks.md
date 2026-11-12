@@ -113,7 +113,7 @@ changed.
   `get_fact_check` call with the required request headers; a 2025-11-25 client runs `initialize`,
   `tools/list` and the same call. Both get the same tool list and result.
 - [ ] T2120 Operator: add `mcp.grounnel.n30sk.cc` as a domain on the core Vercel project.
-- [ ] T2121 Preview deploy. From Claude Code: connect with both headers, check a 3-claim text,
+- [x] T2121 Preview deploy. From Claude Code: connect with both headers, check a 3-claim text,
   read it to `done`, open the share link. Fix what breaks.
 
 **Checkpoint**: both tools work end to end on a preview from a real client.
