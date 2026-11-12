@@ -138,8 +138,8 @@ changed.
   `production`.
 - [ ] T2130 SC-001: the same 10-claim text, same provider, over MCP and the website; pipeline time
   within 10%.
-- [ ] T2131 SC-006a: 40-claim runs per provider. **Ask for spend approval first** with a cost
-  estimate (60 runs at full size, plus site-paid search). Record provider, model, function config,
+- [ ] T2131 SC-006a: 5 deployed 40-claim runs: 2 DeepSeek, 2 Qwen, 1 Gemini (approved 2026-11-12,
+  about $0.30 in model cost plus site-paid search). Record provider, model, function config,
   elapsed time, outcome.
 - [ ] T2139 SC-006a, interrupted run: on a preview with the function's `maxDuration` lowered (e.g. 60 s)
   so a 40-claim check is cut short mid-verification, confirm after the reaper runs: status

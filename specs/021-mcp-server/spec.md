@@ -362,9 +362,10 @@ reach a finished check.
   Fastify route.
 - **SC-006**: 5 concurrent checks with 5 different share tokens, read through the same Claude
   connector at the advised interval to completion, never hit a read limit.
-- **SC-006a**: A deployed 40-claim check finishes within the function's time limit in at least 19 of
-  20 runs on each provider (Gemini, DeepSeek, Qwen), timed from the start of the invocation. Each run
-  records provider, model, function configuration, elapsed time and outcome. Separately, a run cut
+- **SC-006a**: A deployed 40-claim check finishes within the function's time limit in all of 5 runs
+  (2 DeepSeek, 2 Qwen, 1 Gemini), timed from the start of the invocation. Each run records provider,
+  model, function configuration, elapsed time and outcome. Cut from 20 runs per provider on
+  2026-11-12 to keep the spend near $0.30; a smoke test, not a rate. Separately, a run cut
   short ends as failed with its finished claims, not stuck as running.
 - **SC-006b**: Two identical starts with the same request token, sent at the same moment, produce one
   extraction, one stored run, one allowance used and one share token.

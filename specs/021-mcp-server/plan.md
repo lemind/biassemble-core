@@ -219,9 +219,8 @@ claims. The website's limit is unchanged.
 
 ## Risks
 
-- **Spend in the release checks.** SC-006a asks for 20 deployed 40-claim runs per provider (60
-  runs, plus site-paid search). That is a budget decision, not run by default: T2131 asks for
-  approval with a cost estimate first.
+- **Spend in the release checks.** SC-006a is 5 deployed 40-claim runs (about $0.30 in model cost
+  plus site-paid search), cut from 60 on 2026-11-12. It shows the limit holds, not how often.
 - **Client support moves.** Clients may switch to 2026-07-28 at any time; the SDK serves both, and
   T2134 re-checks before launch.
 - **Untested cloud clients.** Claude's connector and Grok-via-API weren't measured (research R2).
