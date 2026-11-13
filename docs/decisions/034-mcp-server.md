@@ -41,6 +41,12 @@ while the check runs, at most 45 minutes, then deleted; never written to our dat
 Without Inngest or `RUN_KEY_SECRET`, or when the event can't be sent, a check falls back to the old
 in-process path. The reaper now waits 45 minutes, past a queued check's wait plus its steps.
 
+Deploy order matters. Inngest drops an event for a function it doesn't know yet. After a deploy that
+adds or renames a function, sync (`PUT /api/inngest`) only once the production alias serves the new
+build; a sync that reaches the old build registers the old list, and checks started before the next
+good sync stay at `extracting` until the reaper fails them. Seen on 2026-11-13 with the first two
+queued checks.
+
 ## §4. Limits per key fingerprint
 
 Claude's connectors and Cursor call from cloud addresses shared by all their users (spec research
