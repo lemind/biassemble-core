@@ -145,7 +145,7 @@ changed.
   so a 40-claim check is cut short mid-verification, confirm after the reaper runs: status
   `failed`, `failure_reason` `time_limit`, finished claims intact, and the run no longer reported as
   running by `get_fact_check`.
-- [ ] T2132 [US4] Site repo: About page section "Use Grounnel from your assistant": address, Claude
+- [x] T2132 [US4] Site repo: About page section "Use Grounnel from your assistant": address, Claude
   connector steps, Claude Code and Cursor snippets (one LLM key; search is on Grounnel), the
   data-flow and public-page warnings, the key
   fingerprint note, and keeping keys out of shared config (FR-021).
