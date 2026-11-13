@@ -42,8 +42,8 @@ Prior plan (008-b2b, audit mode) remains at specs/008-b2b/ if still relevant to 
 
 **Versioning (from 2026-11-13)**: every PR is a release. Bump `version` in package.json and add a
 dated entry at the top of CHANGELOG.md in the same PR: a feature bumps the middle number, a fix-only
-PR the last; spec/docs-only PRs are not releases. Plain language, like a PR description. After the
-merge, tag the merge commit `vX.Y.Z` and push the tag.
+PR the last; spec/docs-only PRs are not releases. Plain language, like a PR description. Date the
+entry with the merge day (fix it at merge if it slipped). After the merge, tag the merge commit `vX.Y.Z` and push the tag.
 
 **Commit messages**: one line, `feat|fix|chore|docs(018-T001): <short desc>` — task ID is spec number + task (IDs restart per spec). `docs` may omit it when the commit spans multiple tasks or isn't task-scoped (e.g. an ADR-only update). Never commit without explicit user request.
 
