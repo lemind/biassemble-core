@@ -12,8 +12,18 @@ import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { PipelineClaimInput } from "./pipeline.service.js";
+import { failureReasonOf } from "./failure-reason.js";
+import type { GrounnelEntryPoint } from "../../db/schema.js";
 
 const MODULE = "grounnel-extract-service";
+
+/** The run row could not be written, so its share token would read as not found (D034 §5). */
+export class RunNotRecordedError extends Error {
+  constructor(runId: string) {
+    super(`Run ${runId} has no Postgres row`);
+    this.name = "RunNotRecordedError";
+  }
+}
 
 function runProviderId(mode: string): "gemini" | "deepseek" | "qwen" | undefined {
   if (mode === "gemini" || mode === "deepseek" || mode === "qwen") return mode;
@@ -79,8 +89,8 @@ export class GrounnelExtractService {
     private llmCallStore: GrounnelLlmCallStore
   ) {}
 
-  /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033). */
-  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own"): Promise<GrounnelExtractResult> {
+  /** source distinguishes real runs from golden-set eval runs (D023 §3); sessionId is null until the caller has one (T028). provider is this run's judge (D033); entryPoint is the door that started it (D034). */
+  async run(text: string, source: "production" | "eval" = "production", sessionId: string | null = null, provider: Provider = this.provider, keySource?: "site" | "own", entryPoint: GrounnelEntryPoint = source === "eval" ? "eval" : "website", onRunCreated?: (shareToken: string) => Promise<void>): Promise<GrounnelExtractResult> {
     // Minted upfront, not left to createAudit's randomUUID() — one id shared by Redis and Postgres (D023 §3).
     const runId = randomUUID();
     // Minted here, not at completion, so an in-flight run is already addressable (FR-001) and the
@@ -90,7 +100,7 @@ export class GrounnelExtractService {
     // resolves before reply.send(), and Vercel can freeze the container the instant it does.
     const providerId = runProviderId(provider.mode);
     // Model is the one this client calls. A test double's mode is not a run provider, so that column stays at its default (D033).
-    waitUntil(this.historyStore.createRun({
+    const runCreated = this.historyStore.createRun({
       runId,
       shareToken,
       sessionId,
@@ -102,7 +112,17 @@ export class GrounnelExtractService {
       model: provider.model,
       // Visitor key → own. Omitted keeps the column default site (D033).
       ...(keySource ? { keySource } : {}),
-    }));
+      entryPoint,
+    })
+      .then(async (written) => {
+        if (written) await onRunCreated?.(shareToken);
+        return written;
+      })
+      .catch((err) => {
+        logger.warn({ module: MODULE, operation: "run", runId, err }, "onRunCreated failed — the run continues");
+        return true;
+      });
+    waitUntil(runCreated);
 
     const extractVersion = this.prompts.getGrounnelExtractVersion();
     const system = this.prompts.render("grounnel-extract", { text, maxClaims: String(MAX_CLAIMS) });
@@ -135,7 +155,7 @@ export class GrounnelExtractService {
     } catch (err) {
       // Reviewed finding: status otherwise never reaches "failed" — the row would stay stuck
       // at "extracting" forever on any EXTRACT failure (D023 §3's own enum names this state).
-      waitUntil(this.historyStore.updateRun(runId, { status: "failed", completedAt: new Date() }));
+      waitUntil(this.historyStore.updateRun(runId, { status: "failed", completedAt: new Date(), failureReason: failureReasonOf(err) }));
       throw err;
     }
 
@@ -184,6 +204,8 @@ export class GrounnelExtractService {
     const OPINION_REASON = "This reads as an opinion, prediction, or vague statement rather than a checkable fact.";
     await Promise.all(opinionClaims.map((claim) => this.writeExcludedClaim(id, claim, OPINION_REASON)));
 
+    // The caller's reservation must be settled before it replies; no row means no shareable run (D034 §5).
+    if (onRunCreated && !(await runCreated)) throw new RunNotRecordedError(runId);
     return { id, shareToken, pendingClaims };
   }
 
@@ -219,7 +241,7 @@ export class GrounnelExtractService {
       // mode pipeline.service.ts's own catch (line ~226) already guards against. waitUntil, not
       // await (round-2 review finding): an await here would let a second failure on this same
       // write path replace and obscure the original error `err` being rethrown below.
-      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
+      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date(), failureReason: failureReasonOf(err) }));
       throw err;
     }
   }

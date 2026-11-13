@@ -11,8 +11,9 @@ export class FakeGrounnelHistoryStore implements GrounnelHistoryStore {
   // background eligibility-write path, not just the LLM classifier's own fail-open path.
   failCreateClaim = false;
 
-  async createRun(data: Parameters<GrounnelHistoryStore["createRun"]>[0]): Promise<void> {
+  async createRun(data: Parameters<GrounnelHistoryStore["createRun"]>[0]): Promise<boolean> {
     this.createRunCalls.push(data);
+    return true;
   }
   async updateRun(runId: string, data: Parameters<GrounnelHistoryStore["updateRun"]>[1]): Promise<void> {
     this.updateRunCalls.push({ runId, data });

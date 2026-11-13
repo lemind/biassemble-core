@@ -95,9 +95,10 @@ sentence, and none echoes the key.
    gets "preflight failed: no balance".
 3. **Given** the hourly limit is used up, **When** the assistant starts a check, **Then** it gets
    "rate limited" and when it can try again.
-4. **Given** a provider that fails partway through a check, **When** the assistant reads it, **Then**
-   the status is "failed" with the provider reason (quota, rate limit, outage, unreadable answer),
-   and claims finished before the failure are still returned.
+4. **Given** a provider that stops partway through a check (quota or balance used up, rate limit,
+   key revoked), **When** the assistant reads it, **Then** the status is "done" as on the website,
+   the remaining claims are unchecked, and `failureReason` names the stop. Claims finished before
+   it are returned with their verdicts.
 
 ---
 
@@ -159,8 +160,10 @@ reach a finished check.
 - **Preflight or extraction fails before a check exists** (provider throttling, provider down,
   extraction error): the start tool returns the error and no share token, because there is no check
   to read.
-- **The key passes preflight but the provider fails later**: the check ends as failed with the
-  provider reason; claims finished before it are kept.
+- **The key passes preflight but the provider stops it later**: the check ends done, as on the
+  website, with the rest of its claims unchecked and the stop recorded as its failure reason
+  (decided 2026-11-11, option B: the website's behaviour does not change). A run that ends failed
+  (extraction or eligibility error, time limit, crash) carries its reason the same way.
 - **Unknown share token**: "not found". The result tool returns only what the public share page
   shows, so a token gives no access the link doesn't already give.
 - **The assistant reads too often**: reads have their own limit and never count against checks.
@@ -234,13 +237,11 @@ reach a finished check.
   `X-Grounnel-Provider` header. No other header names are accepted. On a start, a
   missing provider is refused as "provider not chosen", any other value as "unsupported provider".
   There is no default provider over MCP.
-- **FR-012**: The key MUST reach the check only through the existing own-key execution path: held in
-  memory by the request that starts the check, which finishes the check in the same process after
-  replying (Vercel `waitUntil`, within the function's 300-second limit). It MUST NOT appear in any
-  job queue payload, database record, cache, log line, trace or stored error. A run whose invocation
-  ends early MUST reach a terminal failed state with its finished claims, through the existing
-  stuck-run reaper. If an implementation needs a background job for MCP checks, that design must be
-  settled before implementation, without putting the key in the job.
+- **FR-012** (revised 2026-11-13, D034 §3): A check MUST run as a queued job in steps, each within
+  the function's time limit. The key MUST NOT appear in the job payload, a database record, a log
+  line, a trace or a stored error. While the check runs it MAY be held encrypted (AES-256-GCM) in
+  Redis for at most 45 minutes, and MUST be deleted when the check ends. A run whose key expires or
+  whose job fails MUST reach a terminal failed state with its finished claims.
 
 **Same rules as the website**
 
@@ -292,8 +293,9 @@ reach a finished check.
   - Read errors: not found, rate limited, service temporarily unavailable (storage unreachable).
   - Start errors also include: in progress (another start with the same request token is running),
     and service temporarily unavailable (FR-014a, or MCP starts switched off, FR-014b).
-  - A check that was created and then failed is NOT a tool error. Reading it succeeds and returns
-    status "failed", one reason (provider quota or balance used up, provider rate limit, provider
+  - A check that was created and then failed, or that the provider stopped partway (status
+    "done" with unchecked claims), is NOT a tool error. Reading it succeeds and returns its status,
+    one reason (provider quota or balance used up, provider rate limit, provider
     unavailable, unreadable provider answer, time limit reached, or pipeline failure) and every
     claim that finished. Only a failure of the start or read call itself is marked as an error.
 
@@ -358,9 +360,10 @@ reach a finished check.
   Fastify route.
 - **SC-006**: 5 concurrent checks with 5 different share tokens, read through the same Claude
   connector at the advised interval to completion, never hit a read limit.
-- **SC-006a**: A deployed 40-claim check finishes within the function's time limit in at least 19 of
-  20 runs on each provider (Gemini, DeepSeek, Qwen), timed from the start of the invocation. Each run
-  records provider, model, function configuration, elapsed time and outcome. Separately, a run cut
+- **SC-006a**: A deployed 40-claim check finishes within the function's time limit in all of 5 runs
+  (2 DeepSeek, 2 Qwen, 1 Gemini), timed from the start of the invocation. Each run records provider,
+  model, function configuration, elapsed time and outcome. Cut from 20 runs per provider on
+  2026-11-12 to keep the spend near $0.30; a smoke test, not a rate. Separately, a run cut
   short ends as failed with its finished claims, not stuck as running.
 - **SC-006b**: Two identical starts with the same request token, sent at the same moment, produce one
   extraction, one stored run, one allowance used and one share token.

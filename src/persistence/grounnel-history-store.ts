@@ -10,6 +10,7 @@ import { ownKeyTokensAtServe } from "../lib/own-key-tokens.js";
 import { logger } from "../observability/logger.js";
 import { SharedCountsSchema } from "../contracts/grounnel.schemas.js";
 import type { ClaimCitation, ClaimSource, SharedAssessment } from "../contracts/grounnel.schemas.js";
+import type { GrounnelEntryPoint, GrounnelFailureReason } from "../db/schema.js";
 
 const MODULE = "grounnel-history-store";
 
@@ -28,7 +29,9 @@ export interface GrounnelHistoryStore {
     model?: string;
     // Whose account paid. Omitted keeps the column default site (D033).
     keySource?: "site" | "own";
-  }): Promise<void>;
+    // Which door started the run (D034). Omitted leaves the column null.
+    entryPoint?: GrounnelEntryPoint;
+  }): Promise<boolean>;
 
   updateRun(
     runId: string,
@@ -39,6 +42,7 @@ export interface GrounnelHistoryStore {
       promptVersionVerify: string;
       score: unknown;
       completedAt: Date;
+      failureReason: GrounnelFailureReason | null;
     }>
   ): Promise<void>;
 
@@ -71,11 +75,14 @@ export interface GrounnelHistoryStore {
  * exists. Spec 019 is the first thing to read these rows back.
  */
 export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
-  async createRun(data: Parameters<GrounnelHistoryStore["createRun"]>[0]): Promise<void> {
+  /** False when the row could not be written; still never throws. */
+  async createRun(data: Parameters<GrounnelHistoryStore["createRun"]>[0]): Promise<boolean> {
     try {
       await insertGrounnelRun(data);
+      return true;
     } catch (err) {
       logger.warn({ module: MODULE, operation: "createRun", runId: data.runId, err }, "Failed to write grounnel_runs row — Redis remains authoritative (D023 §7)");
+      return false;
     }
   }
 
@@ -117,6 +124,8 @@ export class DrizzleGrounnelHistoryStore implements GrounnelHistoryStore {
       provider: run.provider ?? "gemini",
       model: run.model ?? null,
       ownKeyTokens,
+      truncated: run.truncated,
+      failureReason: run.failureReason ?? null,
       ...(counts.success ? { counts: counts.data } : {}),
       claims: claims.map((c) => ({
         text: c.claimText,

@@ -40,7 +40,7 @@ checked by the handler, which returns the codes in the error table.
 **Output** (`structuredContent`, also serialised as one text block)
 ```json
 { "shareToken": "string", "shareUrl": "https://grounnel.n30sk.cc/check/<token>",
-  "status": "running", "phase": "verifying", "claimsFound": 7, "readAfterSeconds": 15 }
+  "status": "running", "phase": "extracting", "claimsFound": 7, "readAfterSeconds": 15 }
 ```
 `claimsFound` is 0 and `status` is `done` when the text had no checkable claims.
 
@@ -55,7 +55,7 @@ Annotations: `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false
 {
   "status": "running | done | failed",
   "phase": "extracting | verifying | null",
-  "progress": { "finished": 3, "total": 7 },
+  "progress": { "finished": 3, "total": null },
   "readAfterSeconds": 10,
   "failureReason": "null | provider_quota | provider_rate_limited | provider_unavailable | provider_invalid_response | time_limit | pipeline",
   "provider": "qwen", "model": "qwen3.7-flash",
@@ -71,8 +71,11 @@ Annotations: `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false
   }]
 }
 ```
+Claims are stored as they finish, so `progress.total` is null while the check runs (the start reply's
+`claimsFound` is the total to expect) and equals `finished` at the end.
 `readAfterSeconds` is null once `status` is `done` or `failed`. A `failed` check is a successful
-read (no `isError`), with `failureReason` and every finished claim.
+read (no `isError`), with `failureReason` and every finished claim. A `done` check carries a
+non-null `failureReason` when the provider stopped it partway; its remaining claims are unchecked.
 
 ## Errors
 

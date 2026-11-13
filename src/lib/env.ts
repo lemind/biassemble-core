@@ -43,6 +43,10 @@ const envSchema = z.object({
   // this one means "authorized to assert x-grounnel-client-ip on someone else's behalf." Optional;
   // unset (or a header mismatch) fails closed to request.ip, never to trusting an unverified header.
   GROUNNEL_INTERNAL_PROXY_SECRET: z.string().min(1).optional(),
+  // Spec 021: names MCP limit buckets and request-token reservations. Unset refuses every MCP start (D034).
+  MCP_HMAC_SECRET: z.string().min(1).optional(),
+  // Encrypts an own key while its queued check runs (D034 §3). Unset: own-key checks run in one invocation.
+  RUN_KEY_SECRET: z.string().min(1).optional(),
 });
 
 function loadEnv() {

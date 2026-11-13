@@ -37,6 +37,8 @@ import type { Provider } from "../../providers/types.js";
 import type { PromptRegistry } from "../../prompts/registry.js";
 import type { GrounnelStore } from "../../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../../persistence/grounnel-history-store.js";
+import { failureReasonOf } from "./failure-reason.js";
+import type { GrounnelFailureReason } from "../../db/schema.js";
 import type { GrounnelLlmCallStore } from "../../persistence/grounnel-llm-call-store.js";
 import type { GrounnelGateEventStore, GateEventInput } from "../../persistence/grounnel-gate-event-store.js";
 import type { GateReason } from "../../persistence/types.js";
@@ -157,75 +159,40 @@ export class GrounnelPipelineService {
     return withJudgingProvider(provider ?? this.provider, () => this.executeRun(auditId, claims, searchEngine, inputText));
   }
 
+  /** One step of a queued check (D034 §3): verifies these claims, writes no terminal status. Returns the provider stop, if any. */
+  async runChunk(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily", inputText?: string, provider?: Provider): Promise<GrounnelFailureReason | undefined> {
+    return withJudgingProvider(provider ?? this.provider, async () => {
+      await this.grounnelStore.setEscalating(auditId, true);
+      return this.verifyClaims(auditId, claims, searchEngine, inputText);
+    });
+  }
+
+  /** Last step of a queued check: counts snapshot, then done (with the stop reason, if a chunk was stopped). */
+  async finishRun(auditId: string, stoppedBy?: GrounnelFailureReason): Promise<void> {
+    await this.settleDone(auditId, stoppedBy);
+  }
+
+  /** Marks claims a stopped check never reached as unchecked, with the stop's sentence. */
+  async markUnchecked(auditId: string, claims: PipelineClaimInput[], reason: string): Promise<void> {
+    await this.degradeBatch(auditId, claims.map((claim) => ({ claim, sources: [], passages: [] }) as unknown as ResolvedWithPassage), reason);
+  }
+
+  /** A queued check that could not finish: failed, with its reason. */
+  async failRun(auditId: string, reason: GrounnelFailureReason): Promise<void> {
+    try {
+      await this.grounnelStore.setEscalating(auditId, false);
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "failRun", auditId, err }, "Could not clear escalating after a failed run");
+    }
+    await this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date(), failureReason: reason });
+  }
+
   private async executeRun(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily", inputText?: string): Promise<void> {
     try {
       // D026 §14/§15 — set before the verify loop to avoid a "done" poll race; stays inside this try so a Redis failure still hits the catch below.
       await this.grounnelStore.setEscalating(auditId, true);
-      // spec 017 T017 — run-scoped: a page that failed for one claim has failed for the run. Lives
-      // here, not in the provider, so it dies with the run instead of leaking across runs.
-      const failedUrlKeys = new Set<string>();
-      try {
-        const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine, inputText, failedUrlKeys);
-
-        const noEvidence = resolved.filter((r) => !hasPassage(r));
-        await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
-
-        const needsVerify = resolved.filter(hasPassage);
-        // T32 — without this, Postgres status jumps extracting -> done, so a maxDuration kill (which
-        // skips the terminal write) is indistinguishable from a run that never started.
-        if (needsVerify.length > 0) waitUntil(this.historyStore.updateRun(auditId, { status: "verifying" }));
-        // D030 §3d — run-scoped so reason_ordinal-protected claim ids survive across escalation tiers.
-        const protectedContradictionClaimIds = new Set<string>();
-        let rateLimitedMidRun = false;
-        for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
-          const batch = needsVerify.slice(i, i + BATCH_MAX);
-          const geminiRateLimit = await this.runBatch(auditId, batch, protectedContradictionClaimIds);
-          if (geminiRateLimit) {
-            rateLimitedMidRun = true;
-            const remaining = needsVerify.slice(i + BATCH_MAX);
-            if (remaining.length > 0) {
-              logger.warn(
-                { module: MODULE, operation: "run", auditId, remaining: remaining.length },
-                geminiRateLimit instanceof RateLimitError
-                  ? "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
-                  : "Provider stopped the check — stopping remaining batches"
-              );
-              await this.degradeBatch(auditId, remaining, messageForRunStop(geminiRateLimit));
-            }
-            break;
-          }
-        }
-
-        // D026 §13 — skip escalation entirely if the primary pass already hit a rate limit.
-        if (!rateLimitedMidRun) {
-          const escalationT0 = Date.now();
-          // spec 017 — seed the carry from the base pass: CSS/B lost its deciding page HERE, not between escalation tiers.
-          const carriedByClaimId = new Map(resolved.filter((r) => r.rankedPool?.length).map((r) => [r.claim.id, r.rankedPool!]));
-          await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText, carriedByClaimId, failedUrlKeys);
-          logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
-        }
-      } finally {
-        // The G1 cache holds this document's whole shingle set; nothing else evicts it.
-        clearInputShingleCache();
-      }
-      // Postgres done before Redis can read as done, so /status and the share page see one run (T2018).
-      // Authoritative counts from Redis: grounnel_claims rows are best-effort, so a dropped one
-      // shrinks every denominator. Own try — a Redis blip must not stop the "done" write below.
-      let snapshot: Record<string, unknown> | undefined;
-      try {
-        const settled = await this.grounnelStore.getStatus(auditId);
-        if (settled) snapshot = { ...settled.score, counts: countVerdicts(settled.claims) };
-      } catch (err) {
-        logger.warn({ module: MODULE, operation: "run", auditId, err }, "Could not snapshot counts — run still completes without them");
-      }
-      // Best-effort (D023 §7). `score` is OMITTED, never nulled: a blind overwrite would erase a snapshot we cannot rebuild.
-      await this.historyStore.updateRun(auditId, {
-        status: "done",
-        completedAt: new Date(),
-        ...(snapshot ? { score: snapshot } : {}),
-      });
-      // D026 §15 — clear only after the row is terminal, or a poll can see done while the share is still extracting.
-      await this.grounnelStore.setEscalating(auditId, false);
+      const stoppedBy = await this.verifyClaims(auditId, claims, searchEngine, inputText);
+      await this.settleDone(auditId, stoppedBy);
     } catch (err) {
       // Otherwise status never reaches "failed" on an uncaught error — stuck at its prior status forever.
       try {
@@ -233,9 +200,87 @@ export class GrounnelPipelineService {
       } catch (clearErr) {
         logger.warn({ module: MODULE, operation: "run", auditId, err: clearErr }, "Could not clear escalating after a failed run");
       }
-      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date() }));
+      waitUntil(this.historyStore.updateRun(auditId, { status: "failed", completedAt: new Date(), failureReason: failureReasonOf(err) }));
       throw err;
     }
+  }
+
+  /** Search, verify and escalate these claims. Returns the provider stop as a failure reason; the run still ends done (D034 §8). */
+  private async verifyClaims(auditId: string, claims: PipelineClaimInput[], searchEngine: "defaultFlow" | "tavily", inputText?: string): Promise<GrounnelFailureReason | undefined> {
+    // spec 017 T017 — run-scoped: a page that failed for one claim has failed for the run. Lives
+    // here, not in the provider, so it dies with the run instead of leaking across runs.
+    const failedUrlKeys = new Set<string>();
+    let stoppedBy: GrounnelFailureReason | undefined;
+    try {
+      const resolved = await this.resolveAllEvidence(auditId, claims, searchEngine, inputText, failedUrlKeys);
+
+      const noEvidence = resolved.filter((r) => !hasPassage(r));
+      await Promise.all(noEvidence.map((r) => this.writeNoEvidence(auditId, r)));
+
+      const needsVerify = resolved.filter(hasPassage);
+      // T32 — without this, Postgres status jumps extracting -> done, so a maxDuration kill (which
+      // skips the terminal write) is indistinguishable from a run that never started.
+      if (needsVerify.length > 0) waitUntil(this.historyStore.updateRun(auditId, { status: "verifying" }));
+      // D030 §3d — run-scoped so reason_ordinal-protected claim ids survive across escalation tiers.
+      const protectedContradictionClaimIds = new Set<string>();
+      let rateLimitedMidRun = false;
+      for (let i = 0; i < needsVerify.length; i += BATCH_MAX) {
+        const batch = needsVerify.slice(i, i + BATCH_MAX);
+        const geminiRateLimit = await this.runBatch(auditId, batch, protectedContradictionClaimIds);
+        if (geminiRateLimit) {
+          rateLimitedMidRun = true;
+          stoppedBy = failureReasonOf(geminiRateLimit);
+          const remaining = needsVerify.slice(i + BATCH_MAX);
+          if (remaining.length > 0) {
+            logger.warn(
+              { module: MODULE, operation: "run", auditId, remaining: remaining.length },
+              geminiRateLimit instanceof RateLimitError
+                ? "Gemini rate-limited mid-run — stopping remaining batches instead of attempting each one"
+                : "Provider stopped the check — stopping remaining batches"
+            );
+            await this.degradeBatch(auditId, remaining, messageForRunStop(geminiRateLimit));
+          }
+          break;
+        }
+      }
+
+      // D026 §13 — skip escalation entirely if the primary pass already hit a rate limit.
+      if (!rateLimitedMidRun) {
+        const escalationT0 = Date.now();
+        // spec 017 — seed the carry from the base pass: CSS/B lost its deciding page HERE, not between escalation tiers.
+        const carriedByClaimId = new Map(resolved.filter((r) => r.rankedPool?.length).map((r) => [r.claim.id, r.rankedPool!]));
+        const escalationStop = await this.escalateUnresolved(auditId, claims, searchEngine, protectedContradictionClaimIds, inputText, carriedByClaimId, failedUrlKeys);
+        if (escalationStop) stoppedBy = failureReasonOf(escalationStop);
+        logger.info({ module: MODULE, operation: "run", auditId, durationMs: Date.now() - escalationT0 }, "Escalation phase finished");
+      }
+    } finally {
+      // The G1 cache holds this document's whole shingle set; nothing else evicts it.
+      clearInputShingleCache();
+    }
+    return stoppedBy;
+  }
+
+  private async settleDone(auditId: string, stoppedBy?: GrounnelFailureReason): Promise<void> {
+    // Postgres done before Redis can read as done, so /status and the share page see one run (T2018).
+    // Authoritative counts from Redis: grounnel_claims rows are best-effort, so a dropped one
+    // shrinks every denominator. Own try — a Redis blip must not stop the "done" write below.
+    let snapshot: Record<string, unknown> | undefined;
+    try {
+      const settled = await this.grounnelStore.getStatus(auditId);
+      if (settled) snapshot = { ...settled.score, counts: countVerdicts(settled.claims) };
+    } catch (err) {
+      logger.warn({ module: MODULE, operation: "run", auditId, err }, "Could not snapshot counts — run still completes without them");
+    }
+    // Best-effort (D023 §7). `score` is OMITTED, never nulled: a blind overwrite would erase a snapshot we cannot rebuild.
+    await this.historyStore.updateRun(auditId, {
+      status: "done",
+      completedAt: new Date(),
+      ...(snapshot ? { score: snapshot } : {}),
+      // Always written: clears a reason an earlier failed attempt left on a run that a retry then finished.
+      failureReason: stoppedBy ?? null,
+    });
+    // D026 §15 — clear only after the row is terminal, or a poll can see done while the share is still extracting.
+    await this.grounnelStore.setEscalating(auditId, false);
   }
 
   /** D026 §13 — re-tries an unresolved claim against a wider DIY candidate pool; widens evidence only, no new verification logic. Bounded at 2 tiers. */
@@ -249,12 +294,12 @@ export class GrounnelPipelineService {
     // spec 017 — seeded from the base pass; each tier ranks over it and replaces it with its own pool.
     carriedByClaimId: Map<string, ScoredSource[]> = new Map(),
     failedUrlKeys?: Set<string>
-  ): Promise<void> {
+  ): Promise<RateLimitError | ProviderError | null> {
     const byId = new Map(claims.map((c) => [c.id, c]));
     let pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
 
     for (const tier of ESCALATION_TIERS) {
-      if (pending.length === 0) return;
+      if (pending.length === 0) return null;
       logger.info({ module: MODULE, operation: "escalateUnresolved", auditId, tier, claimCount: pending.length }, "Escalating unresolved claims to a wider candidate pool");
 
       // D026 §17/D030 §3h — one snapshot before this tier overwrites anything, feeding both guardEscalatedContradictionReversals (verdict) and the escalation-replacement floor (verdict+evidence-validity).
@@ -285,7 +330,8 @@ export class GrounnelPipelineService {
         const geminiRateLimit = await this.runBatch(auditId, needsVerify.slice(i, i + BATCH_MAX), protectedContradictionClaimIds, priorResultById);
         if (geminiRateLimit) {
           logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Gemini rate-limited during escalation — stopping further tiers");
-          return;
+          // The run records it like a base-pass stop: that batch is now unchecked (D034 §8).
+          return geminiRateLimit;
         }
       }
 
@@ -294,11 +340,12 @@ export class GrounnelPipelineService {
 
       if (tavilyRateLimitedThisTier) {
         logger.warn({ module: MODULE, operation: "escalateUnresolved", auditId, tier }, "Tavily rate-limited during escalation — stopping further tiers");
-        return;
+        return null;
       }
 
       pending = await this.findUnresolvedClaims(auditId, byId, protectedContradictionClaimIds);
     }
+    return null;
   }
 
   /** Reads current Redis state rather than tracking in-memory. Excludes rate-limited claims (D026 §17) and reason_ordinal-protected ones (D030 §3d). */

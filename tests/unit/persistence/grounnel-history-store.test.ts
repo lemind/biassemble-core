@@ -35,12 +35,12 @@ describe("DrizzleGrounnelHistoryStore (T024) — D023 §7: best-effort, never th
     expect(mockInsertRun).toHaveBeenCalledWith(data);
   });
 
-  it("createRun swallows a DB failure instead of throwing", async () => {
+  it("createRun swallows a DB failure and reports it as false", async () => {
     mockInsertRun.mockRejectedValue(new Error("connection refused"));
     const store = new DrizzleGrounnelHistoryStore();
     await expect(
       store.createRun({ runId: "r1", sessionId: null, text: "article", source: "production", maxClaims: 100, truncated: false })
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
   });
 
   it("updateRun calls updateGrounnelRun with the exact patch given", async () => {

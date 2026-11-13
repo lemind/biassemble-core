@@ -177,6 +177,9 @@ export const SharedAssessmentSchema = z.object({
   // Null only on a row stored before the column existed (D033).
   model: z.string().nullable(),
   ownKeyTokens: OwnKeyTokensSchema,
+  // Read by the MCP tool; the share page ignores both (spec 021 T2107).
+  truncated: z.boolean().optional(),
+  failureReason: z.enum(["provider_quota", "provider_rate_limited", "provider_unavailable", "provider_invalid_response", "time_limit", "pipeline"]).nullable().optional(),
 });
 
 export type SharedAssessment = z.infer<typeof SharedAssessmentSchema>;

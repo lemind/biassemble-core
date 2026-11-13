@@ -7,7 +7,7 @@
 | Column | Change | Values | Notes |
 |---|---|---|---|
 | `entry_point` | new, nullable text enum | `website`, `mcp`, `eval` | Set by the server at run creation. Existing rows stay null (FR-019): their origin can't be proven. Independent of `source` (`production`/`eval`). |
-| `failure_reason` | new, nullable text enum | `provider_quota`, `provider_rate_limited`, `provider_unavailable`, `provider_invalid_response`, `time_limit`, `pipeline` | Written once, when a run ends `failed`. Null for `done` runs and for historical rows. |
+| `failure_reason` | new, nullable text enum | `provider_quota`, `provider_rate_limited`, `provider_unavailable`, `provider_invalid_response`, `time_limit`, `pipeline` | Written once: when a run ends `failed`, or when the provider stopped a run that still ends `done` with unchecked claims. Null for a normal `done` run and for historical rows. |
 | `truncated` | unchanged | boolean | Already the cap flag. Now also returned to MCP readers. |
 
 No column holds a key, a key fingerprint, or a request token. Only the user's LLM key arrives;
@@ -22,6 +22,7 @@ search uses the existing site keys, so no search key is handled anywhere.
 | `ratelimit:mcp-read-global` | counter | 60 s | Global read ceiling (FR-015). |
 | `mcp:reqtok:{provider}:{keyHmac}:{requestToken}` | JSON `{ state, owner, textHmac, shareToken? }` | 120 s while `pending`, 3600 s once `created` | Retry-token reservation (FR-003a). Created with `SET NX`. `owner` is a random id; only the owner advances or releases it. `textHmac` = HMAC-SHA-256(`MCP_HMAC_SECRET`, `"text:" + exact UTF-8 text`), hex. |
 | `grounnel:mcp:starts-disabled` | `"1"` when present | none | Emergency switch (FR-014b). Absent means starts are on. |
+| `grounnel:runkey:{runId}` | own key, AES-256-GCM sealed (`iv.tag.body`, base64) | 2700 s | Held only while a queued check runs; deleted by its finish step or failure handler (FR-012, D034 §3). Website and MCP own-key checks alike. |
 
 The `"key:"` and `"text:"` prefixes keep the two HMAC purposes apart under one secret.
 
@@ -43,4 +44,5 @@ The `"key:"` and `"text:"` prefixes keep the two HMAC purposes apart under one s
 
 | Name | Where | Notes |
 |---|---|---|
+| `RUN_KEY_SECRET` | core, Production and Preview | 32+ random bytes. Seals own keys in `grounnel:runkey:*`. Rotating it fails checks queued at that moment. |
 | `MCP_HMAC_SECRET` | core, Production and Preview | 32+ random bytes, the same everywhere, stable across deploys. Rotating it resets all allowances and orphans open reservations (FR-014a). |
