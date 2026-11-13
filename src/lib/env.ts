@@ -45,6 +45,8 @@ const envSchema = z.object({
   GROUNNEL_INTERNAL_PROXY_SECRET: z.string().min(1).optional(),
   // Spec 021: names MCP limit buckets and request-token reservations. Unset refuses every MCP start (D034).
   MCP_HMAC_SECRET: z.string().min(1).optional(),
+  // Encrypts an own key while its queued check runs (D034 §3). Unset: own-key checks run in one invocation.
+  RUN_KEY_SECRET: z.string().min(1).optional(),
 });
 
 function loadEnv() {

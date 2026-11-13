@@ -16,12 +16,30 @@ Search stays on the site's keys: Gemini grounding and Tavily. Every MCP check th
 site its search share. The per-key limit (§4) and the switch (§6) bound that spend; there is no
 global spend ceiling in this slice. Decided 2026-11-02.
 
-## §3. No queue
+## §3. Queued checks, key held encrypted while they run
 
-The start tool runs the same start path as `POST /extract`: preflight, extraction, reply, then
-`waitUntil` for eligibility and the pipeline. The key stays in the memory of that one invocation and
-is never written into a job payload, row, cache, log or stored error. A run the invocation does not
-finish is settled by the stuck-run reaper (spec 018) as failed with `failure_reason = time_limit`.
+Revised 2026-11-13. The first design finished each check inside the start invocation (`waitUntil`).
+The release check (spec 021 T2131) killed 4 of 6 concurrent runs at Vercel's 300 s limit, even a
+10-claim one: concurrent runs share the site's Gemini and Tavily limits, verification slows, and the
+pipeline has no budget of its own. The fix is durable execution.
+
+`startCheck` (website and MCP alike) does preflight and extraction, then hands the rest to the
+Inngest function `grounnel-check`: eligibility in one step, claims in steps of 8, then a finish
+step. Each step is its own invocation with its own 300 s. At most 3 checks are verified at once, so
+concurrent checks no longer starve each other.
+
+An own key cannot ride in the event. Before sending it, `startCheck` seals the key with AES-256-GCM
+(key derived from `RUN_KEY_SECRET`, the run id as authenticated data) and stores it in Redis under
+`grounnel:runkey:{runId}` for at most 45 minutes. Each step decrypts it for that step only; the
+finish step and the failure handler delete it. The event carries the run id, the claims and the
+text (all public on the share page), never the key. If the key is gone before a step, the run fails
+as `time_limit`.
+
+This changes the website's promise from "never saved, not even hashed" to "held encrypted only
+while the check runs, at most 45 minutes, then deleted; never written to our database".
+
+Without Inngest or `RUN_KEY_SECRET`, or when the event can't be sent, a check falls back to the old
+in-process path. The reaper now waits 45 minutes, past a queued check's wait plus its steps.
 
 ## §4. Limits per key fingerprint
 

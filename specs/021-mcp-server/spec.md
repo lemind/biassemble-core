@@ -237,13 +237,11 @@ reach a finished check.
   `X-Grounnel-Provider` header. No other header names are accepted. On a start, a
   missing provider is refused as "provider not chosen", any other value as "unsupported provider".
   There is no default provider over MCP.
-- **FR-012**: The key MUST reach the check only through the existing own-key execution path: held in
-  memory by the request that starts the check, which finishes the check in the same process after
-  replying (Vercel `waitUntil`, within the function's 300-second limit). It MUST NOT appear in any
-  job queue payload, database record, cache, log line, trace or stored error. A run whose invocation
-  ends early MUST reach a terminal failed state with its finished claims, through the existing
-  stuck-run reaper. If an implementation needs a background job for MCP checks, that design must be
-  settled before implementation, without putting the key in the job.
+- **FR-012** (revised 2026-11-13, D034 §3): A check MUST run as a queued job in steps, each within
+  the function's time limit. The key MUST NOT appear in the job payload, a database record, a log
+  line, a trace or a stored error. While the check runs it MAY be held encrypted (AES-256-GCM) in
+  Redis for at most 45 minutes, and MUST be deleted when the check ends. A run whose key expires or
+  whose job fails MUST reach a terminal failed state with its finished claims.
 
 **Same rules as the website**
 

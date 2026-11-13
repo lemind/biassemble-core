@@ -167,3 +167,13 @@ changed.
   T2119, T2138 and T2121. T2120 any time before T2134.
 - Phase 4 after T2121. T2131 needs spend approval. T2135 needs an explicit deploy order.
 - IDs T2137–T2139 were added after review; they sit in the phase where they belong, not in ID order.
+
+## Phase 5: Queued checks (added 2026-11-13, D034 §3)
+
+- [x] T2140 Pipeline split into `runChunk`, `finishRun`, `markUnchecked`, `failRun`; single-invocation `run` unchanged.
+- [x] T2141 `RunKeyVault`: AES-256-GCM, run id as AAD, 45-minute TTL. Unit test.
+- [x] T2142 Inngest function `grounnel-check`: eligibility, steps of 8 claims, finish; concurrency 3; failure handler. Unit test with a fake step runner.
+- [x] T2143 `startCheck` seals the own key and sends the event; falls back in-process. Reaper waits 45 minutes. Unit test.
+- [ ] T2144 Operator: `RUN_KEY_SECRET` in Vercel Production and Preview.
+- [ ] T2145 Site repo: key-privacy copy on the picker and the About page; the own-key article line.
+- [ ] T2146 Deploy, then two 40-claim checks one after the other and two at once; every run finishes inside its steps.

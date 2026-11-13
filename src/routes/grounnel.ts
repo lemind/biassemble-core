@@ -18,7 +18,7 @@ import { sumGrounnelJudgingTokens } from "../db/queries.js";
 import { ownKeyTokensAtServe } from "../lib/own-key-tokens.js";
 import { buildGeminiRateLimitMessage, type GrounnelPipelineService } from "../orchestrators/grounnel/pipeline.service.js";
 import type { GrounnelExtractService } from "../orchestrators/grounnel/extract.service.js";
-import { startCheck } from "../orchestrators/grounnel/start-check.js";
+import { startCheck, type CheckQueue } from "../orchestrators/grounnel/start-check.js";
 import type { GrounnelStore } from "../persistence/grounnel-store.js";
 import type { GrounnelHistoryStore } from "../persistence/grounnel-history-store.js";
 import type { RateLimiter } from "../lib/rate-limit.js";
@@ -106,6 +106,8 @@ export function registerGrounnelRoutes(
   services: {
     extractService: GrounnelExtractService;
     pipelineService: GrounnelPipelineService;
+    /** Absent: checks finish in the starting invocation (D034 §3). */
+    queue?: CheckQueue;
     grounnelStore: GrounnelStore;
     historyStore: GrounnelHistoryStore;
     rateLimiter: RateLimiter;
@@ -153,6 +155,7 @@ export function registerGrounnelRoutes(
       provider: decision.provider,
       keySource: decision.keySource,
       entryPoint: "website",
+      ...(decision.keySource === "own" ? { ownKey: (request.headers["x-grounnel-provider-key"] as string).trim() } : {}),
     });
     if (!started.ok) {
       if (started.kind === "preflight") {

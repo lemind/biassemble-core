@@ -120,6 +120,7 @@ export async function handleStartFactCheck(
       provider: deps.buildProvider(provider, key),
       keySource: "own",
       entryPoint: "mcp",
+      ownKey: key,
       ...(held ? { onRunCreated: async (shareToken: string) => void (await deps.reservations.markCreated(held.key, held.owner, shareToken)) } : {}),
     });
   } catch (err) {

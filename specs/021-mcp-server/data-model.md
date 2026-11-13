@@ -22,6 +22,7 @@ search uses the existing site keys, so no search key is handled anywhere.
 | `ratelimit:mcp-read-global` | counter | 60 s | Global read ceiling (FR-015). |
 | `mcp:reqtok:{provider}:{keyHmac}:{requestToken}` | JSON `{ state, owner, textHmac, shareToken? }` | 120 s while `pending`, 3600 s once `created` | Retry-token reservation (FR-003a). Created with `SET NX`. `owner` is a random id; only the owner advances or releases it. `textHmac` = HMAC-SHA-256(`MCP_HMAC_SECRET`, `"text:" + exact UTF-8 text`), hex. |
 | `grounnel:mcp:starts-disabled` | `"1"` when present | none | Emergency switch (FR-014b). Absent means starts are on. |
+| `grounnel:runkey:{runId}` | own key, AES-256-GCM sealed (`iv.tag.body`, base64) | 2700 s | Held only while a queued check runs; deleted by its finish step or failure handler (FR-012, D034 §3). Website and MCP own-key checks alike. |
 
 The `"key:"` and `"text:"` prefixes keep the two HMAC purposes apart under one secret.
 
@@ -43,4 +44,5 @@ The `"key:"` and `"text:"` prefixes keep the two HMAC purposes apart under one s
 
 | Name | Where | Notes |
 |---|---|---|
+| `RUN_KEY_SECRET` | core, Production and Preview | 32+ random bytes. Seals own keys in `grounnel:runkey:*`. Rotating it fails checks queued at that moment. |
 | `MCP_HMAC_SECRET` | core, Production and Preview | 32+ random bytes, the same everywhere, stable across deploys. Rotating it resets all allowances and orphans open reservations (FR-014a). |

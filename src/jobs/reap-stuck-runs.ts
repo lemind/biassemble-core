@@ -8,8 +8,8 @@ import { countVerdicts } from "../orchestrators/grounnel/pipeline.service.js";
 import { logger } from "../observability/logger.js";
 
 const MODULE = "reap-stuck-runs";
-/** Comfortably past the 300s function ceiling, so a live run can never be caught by this. */
-const ABANDONED_AFTER_MINUTES = 15;
+/** Past a queued check's wait plus its steps, and the run key's lifetime (D034 §3). */
+const ABANDONED_AFTER_MINUTES = 45;
 const MAX_PER_SWEEP = 200;
 
 export function createReapStuckRunsJob(grounnelStore: GrounnelStore, historyStore: GrounnelHistoryStore) {
