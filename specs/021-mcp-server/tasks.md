@@ -112,7 +112,7 @@ changed.
   v2 `@modelcontextprotocol/client` as a dev dependency) runs `server/discover`, `tools/list` and a
   `get_fact_check` call with the required request headers; a 2025-11-25 client runs `initialize`,
   `tools/list` and the same call. Both get the same tool list and result.
-- [ ] T2120 Operator: add `mcp.grounnel.n30sk.cc` as a domain on the core Vercel project.
+- [x] T2120 Operator: add `mcp.grounnel.n30sk.cc` as a domain on the core Vercel project.
 - [x] T2121 Preview deploy. From Claude Code: connect with both headers, check a 3-claim text,
   read it to `done`, open the share link. Fix what breaks.
 
@@ -120,25 +120,25 @@ changed.
 
 ## Phase 4: Release checks and docs (US4)
 
-- [ ] T2122 SC-002: one check read over MCP and on the share page; claims, verdicts and citations
+- [x] T2122 SC-002: one check read over MCP and on the share page; claims, verdicts and citations
   match.
-- [ ] T2123 SC-003: 5 concurrent starts; start latency p95 under 30 s; each check finishes after its
+- [x] T2123 SC-003: 5 concurrent starts; start latency p95 under 30 s; each check finishes after its
   start returned.
-- [ ] T2124 SC-004, SC-005: a wrong key causes no extraction call (`grounnel_llm_calls`) and no
+- [x] T2124 SC-004, SC-005: a wrong key causes no extraction call (`grounnel_llm_calls`) and no
   search; after a full deployed run with a synthetic key (discovery, listing, starts, reads), search
   the database, Redis, Vercel logs and stored errors for it: nothing.
-- [ ] T2125 SC-006: 5 checks with different share tokens through one client, read every 10 s to the
+- [x] T2125 SC-006: 5 checks with different share tokens through one client, read every 10 s to the
   end; no `rate_limited`.
-- [ ] T2126 SC-006b: two simultaneous starts with one request token give one extraction, one run,
+- [x] T2126 SC-006b: two simultaneous starts with one request token give one extraction, one run,
   one allowance, one share token.
 - [ ] T2127 SC-006c: on a preview pointed at an unreachable Redis, every start is refused with
   `service_unavailable` and no run row appears.
-- [ ] T2128 SC-007: produce every start and read error code on purpose.
+- [x] T2128 SC-007: produce every start and read error code on purpose.
 - [ ] T2129 SC-009: website, MCP and eval runs carry `website`, `mcp`, `eval`; website and MCP are
   `production`.
 - [ ] T2130 SC-001: the same 10-claim text, same provider, over MCP and the website; pipeline time
   within 10%.
-- [ ] T2131 SC-006a: 5 deployed 40-claim runs: 2 DeepSeek, 2 Qwen, 1 Gemini (approved 2026-11-12,
+- [x] T2131 SC-006a: 5 deployed 40-claim runs: 2 DeepSeek, 2 Qwen, 1 Gemini (approved 2026-11-12,
   about $0.30 in model cost plus site-paid search). Record provider, model, function config,
   elapsed time, outcome.
 - [ ] T2139 SC-006a, interrupted run: on a preview with the function's `maxDuration` lowered (e.g. 60 s)
@@ -151,11 +151,11 @@ changed.
   fingerprint note, and keeping keys out of shared config (FR-021).
 - [ ] T2133 If the own-key article is published by then, add the one-line MCP fingerprint note
   (FR-021).
-- [ ] T2134 SC-008, SC-010: re-test Claude Code and Cursor against the production address with the
+- [x] T2134 SC-008, SC-010: re-test Claude Code and Cursor against the production address with the
   About page instructions, and re-check which protocol each client sends. Test Claude's connector
   if an account is available; if not, the About page lists Claude as unverified, not supported.
-- [ ] T2135 Production deploy, on explicit order.
-- [ ] T2136 Clean-up: delete branch `021-mcp-spike`; remove the `grounnel-spike` server from local
+- [x] T2135 Production deploy, on explicit order.
+- [x] T2136 Clean-up: delete branch `021-mcp-spike`; remove the `grounnel-spike` server from local
   Claude Code config.
 
 ## Dependencies
@@ -176,4 +176,4 @@ changed.
 - [x] T2143 `startCheck` seals the own key and sends the event; falls back in-process. Reaper waits 45 minutes. Unit test.
 - [x] T2144 Operator: `RUN_KEY_SECRET` in Vercel Production and Preview.
 - [x] T2145 Site repo: key-privacy copy on the picker and the About page; the own-key article line.
-- [ ] T2146 Deploy, then two 40-claim checks one after the other and two at once; every run finishes inside its steps.
+- [x] T2146 Deploy, then two 40-claim checks one after the other and two at once; every run finishes inside its steps.
