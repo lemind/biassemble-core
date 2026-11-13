@@ -276,7 +276,8 @@ export class GrounnelPipelineService {
       status: "done",
       completedAt: new Date(),
       ...(snapshot ? { score: snapshot } : {}),
-      ...(stoppedBy ? { failureReason: stoppedBy } : {}),
+      // Always written: clears a reason an earlier failed attempt left on a run that a retry then finished.
+      failureReason: stoppedBy ?? null,
     });
     // D026 §15 — clear only after the row is terminal, or a poll can see done while the share is still extracting.
     await this.grounnelStore.setEscalating(auditId, false);

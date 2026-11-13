@@ -42,7 +42,7 @@ export interface GrounnelHistoryStore {
       promptVersionVerify: string;
       score: unknown;
       completedAt: Date;
-      failureReason: GrounnelFailureReason;
+      failureReason: GrounnelFailureReason | null;
     }>
   ): Promise<void>;
 

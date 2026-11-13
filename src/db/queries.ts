@@ -726,7 +726,7 @@ export async function updateGrounnelRun(
     promptVersionVerify: string;
     score: unknown;
     completedAt: Date;
-    failureReason: GrounnelFailureReason;
+    failureReason: GrounnelFailureReason | null;
   }>
 ): Promise<void> {
   await db().update(grounnelRuns).set(data).where(eq(grounnelRuns.runId, runId));

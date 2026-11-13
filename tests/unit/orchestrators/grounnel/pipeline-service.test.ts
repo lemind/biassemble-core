@@ -3107,7 +3107,7 @@ describe("spec 017 — escalation pool union", () => {
   it("leaves the failure reason empty when an outage only leaves claims unchecked", async () => {
     const { finalRun } = await runTwoVerifyBatches(() => new ProviderError("unavailable", "The provider is unavailable."));
     expect(finalRun).toBeDefined();
-    expect(finalRun?.failureReason).toBeUndefined();
+    expect(finalRun?.failureReason).toBeNull();
   });
 
   it("retries an outage, leaves that batch unchecked, and still runs the next batch", async () => {
