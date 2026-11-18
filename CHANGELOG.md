@@ -4,7 +4,7 @@ The engine behind Grounnel and Biassemble. One release per merged pull request: 
 middle number, a fix-only release bumps the last. Pull requests that only changed specs or docs are
 not releases. Versions before 0.28.1 were assigned on 2026-11-13 from the merge history.
 
-## 0.28.1 — 2026-11-13
+## 0.28.1 — 2026-11-18
 
 - The service reports its version on its health check and to MCP clients.
 
