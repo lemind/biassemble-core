@@ -97,6 +97,11 @@ Examples:
 
 **Single-line commit messages only.** No multi-line bodies.
 
+**Versioning (from 2026-11-13)**: every PR is a release. Bump `version` in package.json and add an
+entry at the top of CHANGELOG.md in the same PR: a feature bumps the middle number, a fix-only PR the
+last; spec/docs-only PRs are not releases. Date the entry with the merge day (fix it at merge if it slipped). After the merge, tag the merge commit
+`vX.Y.Z` and push the tag.
+
 ## Code Comments
 
 Max ~200 chars per comment. State what/why in one line; point to the relevant ADR (`docs/decisions/0NN-*.md` §X) for rationale, incident history, or design tradeoffs — never restate them inline. If a comment needs more than one line to justify itself, that justification belongs in the ADR, not the code.
@@ -112,7 +117,7 @@ Max ~200 chars per comment. State what/why in one line; point to the relevant AD
 ### Ask before acting:
 - Changes affecting >3 files or >2 services
 - Modifying configs, CI/CD, or deployment scripts
-- Adding/removing dependencies or changing versions
+- Adding/removing dependencies or changing dependency versions (the release version bump is required, not asked)
 - Altering public APIs, DB schemas, or auth flows
 - Committing code — show summary first
 - **Any work beyond the explicitly stated task**

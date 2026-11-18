@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { VERSION } from "../lib/version.js";
 import { handleStartFactCheck, type StartToolDeps } from "./tools/start.js";
 import { handleGetFactCheck, type ReadToolDeps } from "./tools/read.js";
 
@@ -57,7 +58,7 @@ const readOutput = z.object({
 
 /** One server per request (stateless). The handlers read the connection headers from the HTTP request, never from arguments. */
 export function createGrounnelMcpServer(deps: StartToolDeps & ReadToolDeps): McpServer {
-  const server = new McpServer({ name: "grounnel", version: "1.0.0" });
+  const server = new McpServer({ name: "grounnel", version: VERSION });
 
   server.registerTool(
     "start_fact_check",

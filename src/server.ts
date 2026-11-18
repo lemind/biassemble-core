@@ -41,6 +41,7 @@ import { RequestTokenReservations, UpstashReservationRedisClient } from "./mcp/r
 import { registerMcpRoute } from "./routes/mcp";
 import type { StartToolDeps } from "./mcp/tools/start";
 import type { ReadToolDeps } from "./mcp/tools/read";
+import { VERSION } from "./lib/version";
 
 /**
  * Build and configure a Fastify instance with all routes and DI.
@@ -178,8 +179,10 @@ export function buildApp() {
   // ─── Routes ────────────────────────────────────────────────
 
   // Health route
-  server.get("/health", async () => {
-    return { status: "ok" };
+  // Public and cross-origin so the site footer can show the engine version.
+  server.get("/health", async (_req, reply) => {
+    reply.header("access-control-allow-origin", "*");
+    return { status: "ok", version: VERSION };
   });
 
   // Reflection routes
