@@ -8,6 +8,8 @@ LLM-powered reasoning engine for cognitive bias detection. Structured, evaluable
 
 🔗 **Live**: [frontend-topaz-eight-10.vercel.app](https://frontend-topaz-eight-10.vercel.app/)
 📦 **Main repo**: [github.com/lemind/biassemble](https://github.com/lemind/biassemble)
+🔎 **Grounnel**: [grounnel.n30sk.cc](https://grounnel.n30sk.cc) · MCP at `https://mcp.grounnel.n30sk.cc/mcp`
+🏷️ **Version**: in `package.json`, reported by `GET /health`; history in [CHANGELOG.md](CHANGELOG.md)
 
 ## What It Does
 
@@ -82,9 +84,13 @@ See `specs/008-b2b/quickstart.md` for example `curl` commands and `docs/decision
 - **Deterministic gate chain**: reason/verdict consistency, implicit negation, cross-claim contamination (a flags-only counterfact check plus a claim/reason overlap backstop), evidence-groundedness, numeric threshold/equality comparison, temporal-scope comparability (both evidence-side and reason-side year mismatch), ordinal/sequence-position mismatch, and a subject-entity backstop for claims about one of several similar events — each backed by real production incidents, see `docs/decisions/026-verify-retrieval-first-grounding.md`
 - **Ordinal/instance-selector fix** (`docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md`): retrieval used to score only capitalized words/numbers as a claim's "key terms," so a claim like "the first flight covered 852 feet" — sharing a subject with several similar events in the same article — could retrieve and confirm evidence about the wrong one of those events. Fixed with a dedicated selector/anchor signal that scopes retrieval to the instance the claim actually names, plus a subject-entity gate as a deterministic backstop.
 
-**Public MVP (alpha)** — live at [grounnel.vercel.app](https://grounnel.vercel.app), no accounts. A run is capped at **40 claims**, sized to Vercel Hobby's hard 300s function ceiling (~6.5s/claim measured, 2026-09-10); longer texts are checked in part and the response says so. Every run mints a durable share token (`GET /assessment/:token`, spec 019) so a result opens for anyone with the link — a public shape carrying no run id, session id or telemetry. An Inngest cron settles runs whose container died before writing a terminal status, consulting Redis for the real outcome rather than assuming failure.
+**Public MVP (alpha)** — live at [grounnel.n30sk.cc](https://grounnel.n30sk.cc), no accounts. A run is capped at **40 claims**; longer texts are checked in part and the response says so. Extraction runs on the request; verification runs as the Inngest function `grounnel-check` in steps of 8 claims, at most 3 checks at once, so no check is bound by the 300s function ceiling (`docs/decisions/034-mcp-server.md` §3). Every run mints a durable share token (`GET /assessment/:token`, spec 019) so a result opens for anyone with the link — a public shape carrying no run id, session id or telemetry. An Inngest cron settles runs still unfinished after 45 minutes, consulting Redis for the real outcome rather than assuming failure, and records why a run stopped (`failure_reason`).
 
-The judge is Gemini, DeepSeek, or Qwen (`specs/020-multi-provider-keys/`). A check with no visitor key stays on Gemini, and the result names the provider. A visitor who brings a key picks the provider; that key pays for the check and is not stored. There is no control that spends the site key on DeepSeek or Qwen. Web search stays on the site Gemini account.
+The judge is Gemini, DeepSeek, or Qwen (`specs/020-multi-provider-keys/`). A check with no visitor key stays on Gemini, and the result names the provider. A visitor who brings a key picks the provider; that key pays for the check. It is never written to the database or logs; while a queued check runs it is held AES-256-GCM-encrypted in Redis for at most 45 minutes, then deleted. There is no control that spends the site key on DeepSeek or Qwen. Web search stays on the site Gemini account.
+
+### MCP server — spec 021
+
+Grounnel is also an MCP server at `https://mcp.grounnel.n30sk.cc/mcp` (stateless Streamable HTTP, `@modelcontextprotocol/server` v2), so an AI assistant can fact-check text. Two tools: `start_fact_check` (text plus an optional request token) and `get_fact_check` (by share token). Own key only: the client sends `X-Grounnel-Provider` and `X-Grounnel-Provider-Key` headers. Limits are counted per HMAC fingerprint of the key (30 starts an hour), a repeated request token returns the same check, a Redis switch can stop new starts (`scripts/mcp-starts.ts`), and starts fail closed when Redis is unreachable. Setup for users is on the site's About page (`/about#mcp`). Design: `docs/decisions/034-mcp-server.md`, `specs/021-mcp-server/`.
 
 See `specs/009-grounnel/` for the full spec, `specs/012-grounnel-ordinal-eligibility-gates/` for the eligibility/ordinal-gate feature spec, and `docs/decisions/026-verify-retrieval-first-grounding.md` / `docs/decisions/030-grounnel-claim-eligibility-and-reason-grounded-ordinal-gate.md` for the design history.
 
@@ -93,6 +99,7 @@ See `specs/009-grounnel/` for the full spec, `specs/012-grounnel-ordinal-eligibi
 - **Golden set**: 5 curated stories in `evaluations/golden/reflection/` (work-conflict, relationship-decision, financial-regret, health-uncertainty, creative-block)
 - **Eval script**: `scripts/eval-reflection.ts` — runs stories through real orchestrators + mock provider, computes metrics
 - **Metrics**: `computeEvaluationMetrics()` + `computeSystemMetrics()` — evidence grounding, false positives, parse rates, repair rates
+- **Grounnel golden set**: 28 trap cases (33 scored claims) in `evaluations/golden/grounnel/live-eval-golden-set.json`, run deployed via Inngest with repeats; the site's Stats page shows the results
 
 ## Architecture
 
@@ -113,7 +120,9 @@ Public App → Public API (Next.js) → AI Core (Fastify) → LLM Provider
 - **LLM**: Provider-agnostic adapter. Grounnel's judge is Gemini, DeepSeek, or Qwen, defaulting to Gemini, including a visitor's own key. Reflection and audit stay on Gemini.
 - **Validation**: Zod 4
 - **DB**: Drizzle ORM + PostgreSQL (reasoning traces, eval results, RAG provenance)
-- **Background jobs**: Inngest (eval runs + async RAG retrieval)
+- **Background jobs**: Inngest (queued Grounnel checks, stuck-run reaper, eval runs, async RAG retrieval)
+- **Run state & limits**: Upstash Redis
+- **MCP**: `@modelcontextprotocol/server` v2
 - **Logging**: Pino
 - **Testing**: Vitest (unit + integration)
 - **Deploy**: Vercel Functions
@@ -128,11 +137,11 @@ pnpm dev
 
 # verify
 curl http://localhost:3001/health
-# → {"status":"ok"}
+# → {"status":"ok","version":"<package.json version>"}
 
 # run tests
 pnpm test
-# → all tests passing (1136 as of this writing — grows with each feature)
+# → all tests passing (1544 as of 0.28.1 — grows with each feature)
 ```
 
 ### Local Dev vs Vercel Deployment
@@ -170,7 +179,8 @@ src/
 ├── observability/   # Structured logging + retrieval_comparisons provenance recorder
 ├── persistence/     # Grounnel durable-write stores (runs, claims, LLM calls, search calls, gate events)
 ├── db/              # Drizzle schema + queries
-├── jobs/            # Inngest jobs (eval runs, async RAG retrieval)
+├── jobs/            # Inngest jobs (queued Grounnel checks, reaper, eval runs, async RAG retrieval)
+├── mcp/             # MCP server: tools, limits, reservations, kill switch
 └── routes/          # Fastify HTTP routes
 
 evaluations/
