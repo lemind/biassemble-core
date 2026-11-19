@@ -97,10 +97,12 @@ Examples:
 
 **Single-line commit messages only.** No multi-line bodies.
 
-**Versioning (from 2026-11-13)**: every PR is a release. Bump `version` in package.json and add an
-entry at the top of CHANGELOG.md in the same PR: a feature bumps the middle number, a fix-only PR the
-last; spec/docs-only PRs are not releases. Date the entry with the merge day (fix it at merge if it slipped). After the merge, tag the merge commit
-`vX.Y.Z` and push the tag.
+**Versioning (from 2026-11-13)**: every merged PR is a release; spec/docs-only PRs are not. A feature
+bumps the middle number, a fix-only PR the last. Write the release only when the PR is ready to merge,
+not while it is open: as the last commit, bump `version` in package.json and add one entry at the top of
+CHANGELOG.md, dated with the merge day. Write it for someone using the product: each notable change gets
+its own line, and small fixes and tweaks share one line (e.g. "Smaller fixes and wording changes."). Never
+list every commit. After the merge, tag the merge commit `vX.Y.Z` and push the tag.
 
 ## Code Comments
 
